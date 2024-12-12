@@ -10,26 +10,22 @@ class GexController extends Controller
     public function getGexLevels(Request $request)
     {
         $symbol = $request->query('symbol', 'SPY'); 
-        // In a real scenario, you might also need to specify which expiration you want or automatically pick the earliest next-week expiry from the DB.
 
-        // 1. Fetch option data for the symbol and earliest next-week expiration
-        // For simplicity, let's pick the earliest expiration date available in DB for that symbol.
-        $expirationDate = DB::table('option_chains')
-            ->where('symbol', $symbol)
-            ->orderBy('expiration_date', 'asc')
-            ->value('expiration_date');
+        // Define a 14-day window
+        $now = now();
+        $fourteenDaysFromNow = now()->addDays(14);
 
-        if (!$expirationDate) {
-            return response()->json(['error' => 'No data for selected symbol'], 404);
-        }
-
+        // Fetch all options for this symbol with expiration within the next 14 days
         $options = DB::table('option_chains')
             ->where('symbol', $symbol)
-            ->where('expiration_date', $expirationDate)
+            ->whereBetween('expiration_date', [$now->toDateString(), $fourteenDaysFromNow->toDateString()])
             ->get();
 
-        // 2. Compute Net GEX per strike
-        // Group by strike and sum gamma * OI * 100 for calls and puts
+        if ($options->isEmpty()) {
+            return response()->json(['error' => 'No data found for the selected symbol in the next 14 days'], 404);
+        }
+
+        // Aggregate GEX per strike across ALL expirations
         $strikes = [];
         foreach ($options as $opt) {
             if (!isset($strikes[$opt->strike])) {
@@ -40,6 +36,7 @@ class GexController extends Controller
             }
 
             // GEX contribution = gamma * OI * 100
+            // Note: This aggregates over all expirations, since we're looping through all retrieved options.
             $contribution = ($opt->gamma ?? 0) * ($opt->open_interest ?? 0) * 100;
 
             if ($opt->option_type == 'call') {
@@ -49,62 +46,61 @@ class GexController extends Controller
             }
         }
 
-        // Compute net GEX (call - put or call + put depending on your definition)
+        // Compute net GEX (example: call_gamma_sum + put_gamma_sum)
         $strikeData = [];
         foreach ($strikes as $strike => $vals) {
-            $netGEX = $vals['call_gamma_sum'] + $vals['put_gamma_sum']; 
-            // Depending on your methodology, you might do: $vals['call_gamma_sum'] - $vals['put_gamma_sum']
+            $netGEX = $vals['call_gamma_sum'] - $vals['put_gamma_sum']; 
+            // If you prefer call - put, just change the above line.
             $strikeData[] = [
                 'strike' => $strike,
                 'net_gex' => $netGEX
             ];
         }
 
-        // Sort by strike ascending
+        // Sort by strike
         usort($strikeData, fn($a, $b) => $a['strike'] <=> $b['strike']);
 
-        // 3. Identify HVL: find where net_gex crosses from negative to positive
+        // Identify HVL: find where net_gex crosses from negative to positive
         $HVL = null;
         for ($i = 0; $i < count($strikeData) - 1; $i++) {
             if ($strikeData[$i]['net_gex'] < 0 && $strikeData[$i+1]['net_gex'] >= 0) {
-                // Simple linear interpolation (optional)
                 $HVL = $strikeData[$i+1]['strike'];
                 break;
             }
         }
 
-        // If HVL not found, pick a default or leave it null
         if (!$HVL && count($strikeData) > 0) {
-            // If all negative or all positive, HVL might be the lowest strike or something else
+            // If no crossover found, pick the first strike as a fallback
             $HVL = $strikeData[0]['strike'];
         }
 
-        // 4. Find top positive GEX strikes (Call Resistance)
+        // Find top positive GEX strikes (Call Resistance / Walls)
         $positiveStrikes = array_filter($strikeData, fn($d) => $d['net_gex'] > 0);
-        usort($positiveStrikes, fn($a, $b) => $b['net_gex'] <=> $a['net_gex']); 
-        // Highest positive (call resistance)
+        usort($positiveStrikes, fn($a, $b) => $b['net_gex'] <=> $a['net_gex']);
+
         $callResistance = $positiveStrikes[0]['strike'] ?? null;
         $callWall2 = $positiveStrikes[1]['strike'] ?? null;
         $callWall3 = $positiveStrikes[2]['strike'] ?? null;
 
-        // 5. Find top negative GEX strikes (Put Support)
+        // Find top negative GEX strikes (Put Support / Walls)
         $negativeStrikes = array_filter($strikeData, fn($d) => $d['net_gex'] < 0);
-        // Sort by absolute negative first
         usort($negativeStrikes, fn($a, $b) => abs($b['net_gex']) <=> abs($a['net_gex']));
+
         $putSupport = $negativeStrikes[0]['strike'] ?? null;
         $putWall2 = $negativeStrikes[1]['strike'] ?? null;
         $putWall3 = $negativeStrikes[2]['strike'] ?? null;
-
+        
+        // Return aggregated GEX levels
         return response()->json([
             'symbol' => $symbol,
-            'expiration_date' => $expirationDate,
+            'timeframe' => 'Next 14 days',
             'HVL' => $HVL,
-            'call_resistance' => $callResistance,
-            'call_wall_2' => $callWall2,
-            'call_wall_3' => $callWall3,
-            'put_support' => $putSupport,
-            'put_wall_2' => $putWall2,
-            'put_wall_3' => $putWall3
+            'call_resistance' => $callResistance !== null ? floatval($callResistance) : null,
+            'call_wall_2' => $callWall2 !== null ? floatval($callWall2) : null,
+            'call_wall_3' => $callWall3 !== null ? floatval($callWall3) : null,
+            'put_support' => $putSupport !== null ? floatval($putSupport) : null,
+            'put_wall_2' => $putWall2 !== null ? floatval($putWall2) : null,
+            'put_wall_3' => $putWall3 !== null ? floatval($putWall3) : null,
         ]);
     }
 }

@@ -42,7 +42,7 @@
   <script setup>
   import { ref } from 'vue'
   
-  const symbols = ['spy', 'iwm', 'qqq']
+  const symbols = ['spy', 'iwm', 'qqq', 'amd', 'intc', 'mchi', 'kweb']
   const symbol = ref('spy')
   const levels = ref(null)
   const loading = ref(false)

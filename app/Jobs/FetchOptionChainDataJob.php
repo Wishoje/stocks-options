@@ -26,9 +26,9 @@ class FetchOptionChainDataJob implements ShouldQueue
         $date = now()->toDateString();
         $apiKey = env('FINNHUB_API_KEY');
 
-        // Define the "next week" window: from now to 7 days in the future
+        // Define a 14-day window
         $now = now();
-        $sevenDaysFromNow = now()->addDays(14);
+        $fourteenDaysFromNow = now()->addDays(14);
 
         foreach ($this->symbols as $symbol) {
             $url = "https://finnhub.io/api/v1/stock/option-chain";
@@ -56,8 +56,8 @@ class FetchOptionChainDataJob implements ShouldQueue
                 continue;
             }
 
-            // Filter to find the earliest expiration within the next 7 days
-            $filteredExpirations = [];
+            // Filter all expiration sets within the next 14 days
+            $selectedExpirations = [];
             foreach ($data['data'] as $expirationSet) {
                 $expirationDate = $expirationSet['expirationDate'] ?? null;
                 if (!$expirationDate) {
@@ -65,52 +65,37 @@ class FetchOptionChainDataJob implements ShouldQueue
                 }
                 $expirationTimestamp = strtotime($expirationDate);
 
-                // Check if expiration date is within the next 7 days
-                if ($expirationTimestamp >= $now->timestamp && $expirationTimestamp <= $sevenDaysFromNow->timestamp) {
-                    $filteredExpirations[] = $expirationSet;
+                // Check if expiration date is within the next 14 days
+                if ($expirationTimestamp >= $now->timestamp && $expirationTimestamp <= $fourteenDaysFromNow->timestamp) {
+                    $selectedExpirations[] = $expirationSet;
                 }
             }
 
-            if (empty($filteredExpirations)) {
-                \Log::warning("No expiration within next week for $symbol.");
+            if (empty($selectedExpirations)) {
+                \Log::warning("No expiration within next 14 days for $symbol.");
                 continue;
             }
 
-            // Sort by expiration date to pick the earliest one
-            usort($filteredExpirations, function($a, $b) {
-                $tA = isset($a['expirationDate']) ? strtotime($a['expirationDate']) : PHP_INT_MAX;
-                $tB = isset($b['expirationDate']) ? strtotime($b['expirationDate']) : PHP_INT_MAX;
-                return $tA <=> $tB;
-            });
+            // Process all filtered expiration sets
+            foreach ($selectedExpirations as $expirationSet) {
+                $expirationDate = $expirationSet['expirationDate'];
+                $expirationTimestamp = strtotime($expirationDate);
 
-            // Process only the earliest next-week expiration set
-            $earliestSet = $filteredExpirations[0];
-            $expirationDate = $earliestSet['expirationDate'];
-            $expirationTimestamp = strtotime($expirationDate);
+                $calls = $expirationSet['options']['CALL'] ?? [];
+                $puts = $expirationSet['options']['PUT'] ?? [];
 
-            // According to the Finnhub response structure, options are nested under:
-            // $earliestSet['options']['CALL'] and $earliestSet['options']['PUT']
-            // Note: In your posted sample, data was structured as:
-            // "options" => array:2 [
-            //   "CALL" => [...],
-            //   "PUT" => [...]
-            // ]
-            // Adjust accordingly if the structure differs.
+                // Process calls
+                foreach ($calls as $call) {
+                    $this->storeOptionData($symbol, $date, 'call', $call, $underlyingPrice, $expirationDate, $expirationTimestamp);
+                }
 
-            $calls = $earliestSet['options']['CALL'] ?? [];
-            $puts = $earliestSet['options']['PUT'] ?? [];
+                // Process puts
+                foreach ($puts as $put) {
+                    $this->storeOptionData($symbol, $date, 'put', $put, $underlyingPrice, $expirationDate, $expirationTimestamp);
+                }
 
-            // Process calls
-            foreach ($calls as $call) {
-                $this->storeOptionData($symbol, $date, 'call', $call, $underlyingPrice, $expirationDate, $expirationTimestamp);
+                \Log::info("Processed $symbol options for expiration $expirationDate (within 14 days).");
             }
-
-            // Process puts
-            foreach ($puts as $put) {
-                $this->storeOptionData($symbol, $date, 'put', $put, $underlyingPrice, $expirationDate, $expirationTimestamp);
-            }
-
-            \Log::info("Processed $symbol options for expiration $expirationDate (next week).");
         }
     }
 
@@ -118,9 +103,8 @@ class FetchOptionChainDataJob implements ShouldQueue
     {
         $strike = $option['strike'] ?? null;
         $openInterest = $option['openInterest'] ?? null;
-        // Finnhub gives impliedVolatility in decimal form (e.g., 0.20 = 20%)
         $iv = $option['impliedVolatility'] ?? null; 
-        // Construct a unique option symbol
+
         $optionSymbol = $symbol . "_" . $expirationDate . "_" . $strike . "_" . $optionType;
 
         // Compute gamma if possible
@@ -142,7 +126,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'expiration_date' => $expirationDate,
                 'open_interest' => $openInterest,
                 'gamma' => $gamma,
-                'delta' => null, // If needed, compute similarly
+                'delta' => null,
                 'iv' => $iv,
                 'underlying_price' => $underlyingPrice,
                 'updated_at' => now(),
@@ -161,26 +145,18 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     protected function computeGamma($S, $K, $T, $sigma, $r)
     {
-        // If T=0 or sigma=0, gamma not defined
         if ($T <= 0 || $sigma <= 0 || $S <= 0) {
             return null;
         }
 
-        // Compute d1
         $d1 = (log($S/$K) + ($r + 0.5 * $sigma * $sigma)*$T) / ($sigma * sqrt($T));
-
-        // N'(d1) = PDF of standard normal at d1
         $nd1 = $this->normPdf($d1);
-
-        // Gamma formula: Gamma = N'(d1)/(S*sigma*sqrt(T)) for r=0
         $gamma = $nd1 / ($S * $sigma * sqrt($T));
-
         return $gamma;
     }
 
     protected function normPdf($x)
     {
-        // Standard normal PDF
         return (1.0 / sqrt(2.0 * M_PI)) * exp(-0.5 * $x * $x);
     }
 }
