@@ -9,16 +9,25 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use App\Models\OptionExpiration;
+use App\Models\OptionChainData;
+use Carbon\Carbon;
 
 class FetchOptionChainDataJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     protected $symbols;
+    protected $days;   // for example, we might specify 7 or 14 if we want to restrict fetch
 
-    public function __construct(array $symbols = ['SPY', 'IWM', 'QQQ'])
+    /**
+     * @param array $symbols Array of symbols (e.g. ['SPY','AMZN','TSLA'])
+     * @param int|null $days Number of days from now to filter expirations (optional)
+     */
+    public function __construct(array $symbols, ?int $days = null)
     {
-        $this->symbols = $symbols; 
+        $this->symbols = $symbols;
+        $this->days = $days;  // if null, we might fetch all available or have a default
     }
 
     public function handle()
@@ -26,9 +35,12 @@ class FetchOptionChainDataJob implements ShouldQueue
         $date = now()->toDateString();
         $apiKey = env('FINNHUB_API_KEY');
 
-        // Define a 14-day window
+        // If $days is specified, define an end window
+        // Otherwise, you could skip filtering or use a default
         $now = now();
-        $fourteenDaysFromNow = now()->addDays(14);
+        $endWindow = $this->days 
+            ? now()->addDays($this->days) 
+            : now()->addDays(14);  // fallback default
 
         foreach ($this->symbols as $symbol) {
             $url = "https://finnhub.io/api/v1/stock/option-chain";
@@ -44,7 +56,6 @@ class FetchOptionChainDataJob implements ShouldQueue
             }
 
             $data = $response->json();
-
             if (!isset($data['data']) || !is_array($data['data']) || count($data['data']) === 0) {
                 \Log::warning("No option data for $symbol from Finnhub.");
                 continue;
@@ -56,7 +67,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 continue;
             }
 
-            // Filter all expiration sets within the next 14 days
+            // Filter all expiration sets within our defined window
             $selectedExpirations = [];
             foreach ($data['data'] as $expirationSet) {
                 $expirationDate = $expirationSet['expirationDate'] ?? null;
@@ -65,24 +76,24 @@ class FetchOptionChainDataJob implements ShouldQueue
                 }
                 $expirationTimestamp = strtotime($expirationDate);
 
-                // Check if expiration date is within the next 14 days
-                if ($expirationTimestamp >= $now->timestamp && $expirationTimestamp <= $fourteenDaysFromNow->timestamp) {
+                if ($expirationTimestamp >= $now->timestamp && $expirationTimestamp <= $endWindow->timestamp) {
                     $selectedExpirations[] = $expirationSet;
                 }
             }
 
+            // If no expirations match, skip
             if (empty($selectedExpirations)) {
-                \Log::warning("No expiration within next 14 days for $symbol.");
+                \Log::warning("No expiration within next {$this->days} days for $symbol.");
                 continue;
             }
 
-            // Process all filtered expiration sets
+            // Process each set
             foreach ($selectedExpirations as $expirationSet) {
                 $expirationDate = $expirationSet['expirationDate'];
                 $expirationTimestamp = strtotime($expirationDate);
 
                 $calls = $expirationSet['options']['CALL'] ?? [];
-                $puts = $expirationSet['options']['PUT'] ?? [];
+                $puts  = $expirationSet['options']['PUT']  ?? [];
 
                 // Process calls
                 foreach ($calls as $call) {
@@ -93,69 +104,86 @@ class FetchOptionChainDataJob implements ShouldQueue
                 foreach ($puts as $put) {
                     $this->storeOptionData($symbol, $date, 'put', $put, $underlyingPrice, $expirationDate, $expirationTimestamp);
                 }
-
-                \Log::info("Processed $symbol options for expiration $expirationDate (within 14 days).");
             }
+
+            \Log::info("Processed $symbol options for up to {$this->days} days out.");
         }
     }
 
-    protected function storeOptionData($symbol, $date, $optionType, $option, $underlyingPrice, $expirationDate, $expirationTimestamp)
-    {
-        $strike = $option['strike'] ?? null;
+    protected function storeOptionData(
+        string $symbol, 
+        string $date, 
+        string $optionType, 
+        array $option, 
+        float $underlyingPrice, 
+        string $expirationDate, 
+        int $expirationTimestamp
+    ) {
+        // 1) Find or create the expiration row
+        $expiration = OptionExpiration::firstOrCreate(
+            [
+                'symbol'          => $symbol,
+                'expiration_date' => $expirationDate,
+            ]
+        );
+
+        // 2) Build an "identifier" for the chain data if needed
+        // But usually, you'll do an updateOrCreate with a unique "data_date + strike + option_type"
+        // because you might have multiple daily records for the same strike. 
+        // Or if you only store 1 row per day, that's your condition.
+    
+        $strike     = $option['strike'] ?? null;
         $openInterest = $option['openInterest'] ?? null;
-        $iv = $option['impliedVolatility'] ?? null; 
-
-        $optionSymbol = $symbol . "_" . $expirationDate . "_" . $strike . "_" . $optionType;
-
-        // Compute gamma if possible
+        $iv         = $option['impliedVolatility'] ?? null;
+        $volume     = $option['volume'] ?? null;
+    
+        // Compute gamma
         $gamma = null;
-        if ($expirationDate && $underlyingPrice && $iv && $strike && $iv > 0 && $underlyingPrice > 0) {
+        if ($iv && $iv > 0 && $strike && $strike > 0 && $underlyingPrice > 0) {
             $T = $this->timeToExpirationYears($expirationTimestamp);
             $gamma = $this->computeGamma($underlyingPrice, $strike, $T, $iv, 0.0);
         }
-
-        DB::table('option_chains')->updateOrInsert(
+    
+        // 3) Upsert into option_chain_data
+        OptionChainData::updateOrCreate(
             [
-                'symbol' => $symbol,
-                'data_date' => $date,
-                'option_symbol' => $optionSymbol,
+                'expiration_id' => $expiration->id,
+                'data_date'     => $date,
+                'option_type'   => $optionType,
+                'strike'        => $strike,
             ],
             [
-                'option_type' => $optionType,
-                'strike' => $strike,
-                'expiration_date' => $expirationDate,
-                'open_interest' => $openInterest,
-                'gamma' => $gamma,
-                'delta' => null,
-                'iv' => $iv,
-                'underlying_price' => $underlyingPrice,
-                'updated_at' => now(),
-                'created_at' => now(),
+                'open_interest'     => $openInterest,
+                'volume'            => $volume,
+                'gamma'             => $gamma,
+                'delta'             => null,
+                'iv'                => $iv,
+                'underlying_price'  => $underlyingPrice,
             ]
         );
     }
 
-    protected function timeToExpirationYears($expirationTimestamp)
+    protected function timeToExpirationYears(int $expirationTimestamp)
     {
         $now = time();
         $secondsToExp = max($expirationTimestamp - $now, 0);
-        $yearInSeconds = 365 * 24 * 3600; 
+        $yearInSeconds = 365 * 24 * 3600;
         return $secondsToExp / $yearInSeconds;
     }
 
-    protected function computeGamma($S, $K, $T, $sigma, $r)
+    protected function computeGamma(float $S, float $K, float $T, float $sigma, float $r)
     {
-        if ($T <= 0 || $sigma <= 0 || $S <= 0) {
+        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) {
             return null;
         }
 
-        $d1 = (log($S/$K) + ($r + 0.5 * $sigma * $sigma)*$T) / ($sigma * sqrt($T));
+        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
         $nd1 = $this->normPdf($d1);
         $gamma = $nd1 / ($S * $sigma * sqrt($T));
         return $gamma;
     }
 
-    protected function normPdf($x)
+    protected function normPdf(float $x)
     {
         return (1.0 / sqrt(2.0 * M_PI)) * exp(-0.5 * $x * $x);
     }
