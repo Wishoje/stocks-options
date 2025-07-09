@@ -159,6 +159,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'delta'             => null,
                 'iv'                => $iv,
                 'underlying_price'  => $underlyingPrice,
+                'data_timestamp'   => now(),
             ]
         );
     }

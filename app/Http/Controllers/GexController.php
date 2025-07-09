@@ -12,172 +12,172 @@ class GexController extends Controller
 {
     public function getGexLevels(Request $request)
     {
-        $symbol = strtoupper($request->query('symbol', 'SPY'));
-        $timeframeParam = $request->query('timeframe', '14d');
+        $symbol    = strtoupper($request->query('symbol', 'SPY'));
+        $timeframe = $request->query('timeframe', '14d');
 
-        // 1) Determine relevant expiration dates based on timeframe
-        $expirationDates = []; 
-        switch ($timeframeParam) {
-            case '0d': // Today only
-                $expirationDates = $this->getExpirationsWithinDays($symbol, 0); 
-                break;
-            case '1d': // Next day
-                $expirationDates = $this->getExpirationsWithinDays($symbol, 1);
-                break;
-            case '7d':
-                $expirationDates = $this->getExpirationsWithinDays($symbol, 7);
-                break;
-            case '14d':
-                $expirationDates = $this->getExpirationsWithinDays($symbol, 14);
-                break;
-            case 'monthly':
-                $expirationDates = $this->getNextMonthlyExpiration($symbol);
-                break;
-            default:
-                $expirationDates = $this->getExpirationsWithinDays($symbol, 14);
-                break;
-        }
+        // ← now resolves dates + IDs for you
+        $expirationIds = $this->resolveExpirationIds($symbol, $timeframe);
 
-        if (empty($expirationDates)) {
-            return response()->json([
-                'error' => "No data found for $symbol in timeframe: $timeframeParam"
-            ], 404);
-        }
-
-        // 2) Fetch the OptionExpiration rows that match these dates
-        $expirations = OptionExpiration::where('symbol', $symbol)
-            ->whereIn('expiration_date', $expirationDates)
-            ->get();
-
-        if ($expirations->isEmpty()) {
-            return response()->json([
-                'error' => "No data found for $symbol in timeframe: $timeframeParam"
-            ], 404);
-        }
-
-        // 3) Get the IDs of these expiration rows
-        $expirationIds = $expirations->pluck('id');
-
-        /*
-         * 4) Subquery: find the latest (MAX) data_date for each expiration_id
-         *    We’ll call it "ld" (latest dates).
-         */
-        $latestDatesQuery = OptionChainData::select(
-                'expiration_id',
-                DB::raw('MAX(data_date) as max_date')
-            )
-            ->whereIn('expiration_id', $expirationIds)
+        // 1) Today's snapshot
+        $latestDates = OptionChainData::select('expiration_id', DB::raw('MAX(data_date) as max_date'))
+            ->whereIn('option_chain_data.expiration_id', $expirationIds)
             ->groupBy('expiration_id');
 
-        /*
-         * 5) Join that subquery to get only rows
-         *    where option_chain_data.data_date = subquery.max_date.
-         *    This fetches the MOST RECENT data for each expiration.
-         */
-        $chainData = OptionChainData::joinSub($latestDatesQuery, 'ld', function ($join) {
+        $todayData = OptionChainData::joinSub($latestDates, 'ld', function($join) {
                 $join->on('option_chain_data.expiration_id', '=', 'ld.expiration_id')
-                     ->on('option_chain_data.data_date', '=', 'ld.max_date');
+                     ->on('option_chain_data.data_date',      '=', 'ld.max_date');
             })
             ->whereIn('option_chain_data.expiration_id', $expirationIds)
             ->get();
 
-        if ($chainData->isEmpty()) {
-            return response()->json([
-                'error' => "No option data found for $symbol in timeframe: $timeframeParam"
-            ], 404);
+        if ($todayData->isEmpty()) {
+            return response()->json(['error'=>"No data for {$symbol}/{$timeframe}"], 404);
         }
 
-        // ---- Now compute your GEX logic as before ----
+        // 2) Core metrics
+        $callOI  = $todayData->where('option_type','call')->sum('open_interest');
+        $putOI   = $todayData->where('option_type','put' )->sum('open_interest');
+        $callVol = $todayData->where('option_type','call')->sum('volume');
+        $putVol  = $todayData->where('option_type','put' )->sum('volume');
+        $totalOI = $callOI + $putOI;
 
-        // 6) Basic sums
-        $callOpenInterestTotal = $chainData
-            ->where('option_type', 'call')
-            ->sum('open_interest');
+        $pct = fn($x) => $totalOI > 0 ? round($x / $totalOI * 100, 2) : 0;
 
-        $putOpenInterestTotal  = $chainData
-            ->where('option_type', 'put')
-            ->sum('open_interest');
-
-        $totalOpenInterest = $callOpenInterestTotal + $putOpenInterestTotal;
-
-        $callInterestPercentage = $totalOpenInterest > 0
-            ? round(($callOpenInterestTotal / $totalOpenInterest) * 100, 2)
-            : 0;
-
-        $putInterestPercentage = $totalOpenInterest > 0
-            ? round(($putOpenInterestTotal / $totalOpenInterest) * 100, 2)
-            : 0;
-
-        // 7) Volume-based metrics
-        $callVolumeTotal = $chainData->where('option_type', 'call')->sum('volume');
-        $putVolumeTotal  = $chainData->where('option_type', 'put')->sum('volume');
-        $pcrVolume = ($callVolumeTotal > 0)
-            ? round($putVolumeTotal / $callVolumeTotal, 2)
-            : null;
-
-        // 8) Aggregate GEX at each strike
-        $strikes = [];
-        foreach ($chainData as $opt) {
-            $strike   = $opt->strike;
-            $type     = $opt->option_type;
-            $oi       = $opt->open_interest ?? 0;
-            $gammaVal = $opt->gamma ?? 0;
-
-            if (!isset($strikes[$strike])) {
-                $strikes[$strike] = [
-                    'call_gamma_sum' => 0,
-                    'put_gamma_sum'  => 0,
-                ];
-            }
-
-            $contribution = $gammaVal * $oi * 100; 
-            if ($type === 'call') {
-                $strikes[$strike]['call_gamma_sum'] += $contribution;
-            } else {
-                $strikes[$strike]['put_gamma_sum']  += $contribution;
-            }
+        // 3) Net-GEX per strike
+        $strikesRaw = [];
+        foreach ($todayData as $opt) {
+            $s = $opt->strike;
+            $strikesRaw[$s]['call_gamma'] = ($strikesRaw[$s]['call_gamma'] ?? 0)
+                + ($opt->option_type==='call' ? $opt->gamma * $opt->open_interest * 100 : 0);
+            $strikesRaw[$s]['put_gamma']  = ($strikesRaw[$s]['put_gamma']  ?? 0)
+                + ($opt->option_type==='put'  ? $opt->gamma * $opt->open_interest * 100 : 0);
         }
 
-        // 9) Build strikeData array to find net_gex
-        $strikeData = [];
-        foreach ($strikes as $strikeVal => $vals) {
-            $netGEX = $vals['call_gamma_sum'] - $vals['put_gamma_sum'];
-            $strikeData[] = [
-                'strike'  => $strikeVal,
-                'net_gex' => $netGEX
+        $strikeList = [];
+        foreach ($strikesRaw as $strike => $g) {
+            $strikeList[] = [
+                'strike'  => $strike,
+                'net_gex' => $g['call_gamma'] - $g['put_gamma'],
+            ];
+        }
+        usort($strikeList, fn($a,$b)=> $a['strike'] <=> $b['strike']);
+
+        // 4) HVL & walls
+        $HVL          = $this->findHVL($strikeList);
+        [$c1,$c2,$c3] = $this->getTop3($strikeList, 'call');
+        [$p1,$p2,$p3] = $this->getTop3($strikeList, 'put');
+
+        // 5) Prepare prior snapshots
+        $latestDate = $todayData->first()->data_date;
+        $yesterday  = Carbon::parse($latestDate)->subDay()->toDateString();
+        $lastWeek   = Carbon::parse($latestDate)->subWeek()->toDateString();
+
+        $fetchPrior = fn($date) => OptionChainData::whereIn('expiration_id', $expirationIds)
+            ->where('data_date', $date)
+            ->select('strike', 'option_type',
+                     DB::raw('SUM(open_interest) as oi'),
+                     DB::raw('SUM(volume)       as vol'))
+            ->groupBy('strike','option_type')
+            ->get()
+            ->groupBy('strike');
+
+        $dayAgo  = $fetchPrior($yesterday);
+        $weekAgo = $fetchPrior($lastWeek);
+
+        // 6) Assemble full strike data with call/put deltas
+        $fullStrike = [];
+        foreach ($strikeList as $row) {
+            $s = $row['strike'];
+
+            // current totals
+            $curCallOi  = $todayData->where('strike',$s)->where('option_type','call')->sum('open_interest');
+            $curPutOi   = $todayData->where('strike',$s)->where('option_type','put' )->sum('open_interest');
+            $curCallVol = $todayData->where('strike',$s)->where('option_type','call')->sum('volume');
+            $curPutVol  = $todayData->where('strike',$s)->where('option_type','put' )->sum('volume');
+
+            // prior day
+            $pd = $dayAgo->get($s, collect());
+            $pCallOi  = $pd->first(fn($r)=>$r->option_type==='call')->oi ?? 0;
+            $pPutOi   = $pd->first(fn($r)=>$r->option_type==='put')->oi  ?? 0;
+            $pCallVol = $pd->first(fn($r)=>$r->option_type==='call')->vol?? 0;
+            $pPutVol  = $pd->first(fn($r)=>$r->option_type==='put')->vol ?? 0;
+
+            // prior week
+            $pw = $weekAgo->get($s, collect());
+            $wCallOi  = $pw->first(fn($r)=>$r->option_type==='call')->oi ?? 0;
+            $wPutOi   = $pw->first(fn($r)=>$r->option_type==='put')->oi  ?? 0;
+            $wCallVol = $pw->first(fn($r)=>$r->option_type==='call')->vol?? 0;
+            $wPutVol  = $pw->first(fn($r)=>$r->option_type==='put')->vol ?? 0;
+
+            // deltas
+            $dCallOi  = $curCallOi  - $pCallOi;
+            $dPutOi   = $curPutOi   - $pPutOi;
+            $dCallVol = $curCallVol - $pCallVol;
+            $dPutVol  = $curPutVol  - $pPutVol;
+
+            $pctOr0 = fn($n,$d) => $d>0 ? round($n/$d*100,2) : 0;
+
+            $fullStrike[] = [
+                'strike'              => $s,
+                'net_gex'             => $row['net_gex'],
+                'call_oi_delta'       => $dCallOi,
+                'put_oi_delta'        => $dPutOi,
+                'call_oi_delta_pct'   => $pctOr0($dCallOi, $pCallOi),
+                'put_oi_delta_pct'    => $pctOr0($dPutOi,  $pPutOi),
+                'call_vol_delta'      => $dCallVol,
+                'put_vol_delta'       => $dPutVol,
+                'call_vol_delta_pct'  => $pctOr0($dCallVol,$pCallVol),
+                'put_vol_delta_pct'   => $pctOr0($dPutVol, $pPutVol),
+                'call_oi_wow'         => $curCallOi  - $wCallOi,
+                'put_oi_wow'          => $curPutOi   - $wPutOi,
+                'call_vol_wow'        => $curCallVol - $wCallVol,
+                'put_vol_wow'         => $curPutVol  - $wPutVol,
             ];
         }
 
-        // Sort by strike ascending
-        usort($strikeData, fn($a, $b) => $a['strike'] <=> $b['strike']);
-
-        // 10) Find HVL
-        $HVL = $this->findHVL($strikeData);
-
-        // 11) Call/Put walls
-        [$callResistance, $callWall2, $callWall3] = $this->getTop3($strikeData, 'call');
-        [$putSupport, $putWall2, $putWall3]       = $this->getTop3($strikeData, 'put');
-
-        // Return JSON
+        // 7) Send it all back
         return response()->json([
-            'symbol'                  => $symbol,
-            'timeframe'               => $timeframeParam,
-            'expiration_dates'        => $expirationDates,
-            'HVL'                     => $HVL,
-            'call_resistance'         => $callResistance,
-            'call_wall_2'            => $callWall2,
-            'call_wall_3'            => $callWall3,
-            'put_support'             => $putSupport,
-            'put_wall_2'              => $putWall2,
-            'put_wall_3'              => $putWall3,
-            'call_open_interest_total'=> $callOpenInterestTotal,
-            'put_open_interest_total' => $putOpenInterestTotal,
-            'call_interest_percentage'=> $callInterestPercentage,
-            'put_interest_percentage' => $putInterestPercentage,
-            'call_volume_total'       => $callVolumeTotal,
-            'put_volume_total'        => $putVolumeTotal,
-            'pcr_volume'              => $pcrVolume
-        ]);
+            'symbol'                   => $symbol,
+            'timeframe'                => $timeframe,
+            'expiration_dates'         => $this->getExpirationsWithinDays($symbol, $timeframe),
+            'hvl'                      => $HVL,
+            'call_resistance'          => $c1,
+            'call_wall_2'              => $c2,
+            'call_wall_3'              => $c3,
+            'put_support'              => $p1,
+            'put_wall_2'               => $p2,
+            'put_wall_3'               => $p3,
+            'call_open_interest_total' => $callOI,
+            'put_open_interest_total'  => $putOI,
+            'call_interest_percentage' => $pct($callOI),
+            'put_interest_percentage'  => $pct($putOI),
+            'call_volume_total'        => $callVol,
+            'put_volume_total'         => $putVol,
+            'pcr_volume'               => $callVol>0 ? round($putVol/$callVol,2) : null,
+            'date_prev'                => $yesterday,
+            'date_prev_week'           => $lastWeek,
+            'strike_data'              => $fullStrike,
+        ], 200);
+    }
+
+    /**
+     * Turn symbol + timeframe into a list of expiration_ids.
+     */
+    protected function resolveExpirationIds(string $symbol, string $tf): array
+    {
+        switch ($tf) {
+            case '0d':     $dates = $this->getExpirationsWithinDays($symbol, 0); break;
+            case '1d':     $dates = $this->getExpirationsWithinDays($symbol, 1); break;
+            case '7d':     $dates = $this->getExpirationsWithinDays($symbol, 7); break;
+            case '14d':    $dates = $this->getExpirationsWithinDays($symbol, 14); break;
+            case 'monthly':$dates = $this->getNextMonthlyExpiration($symbol);   break;
+            default:       $dates = $this->getExpirationsWithinDays($symbol, 14); break;
+        }
+
+        return OptionExpiration::where('symbol', $symbol)
+            ->whereIn('expiration_date', $dates)
+            ->pluck('id')
+            ->toArray();
     }
 
     // Helper: find expirations within X days
