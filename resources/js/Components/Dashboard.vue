@@ -74,6 +74,17 @@
 
       <div v-if="levels && !loading && !error" class="space-y-6">
 
+        <!-- NEW: Expiration Dates List -->
+        <div v-if="levels && levels.expiration_dates && levels.expiration_dates.length" class="text-sm text-gray-300">
+            <span class="font-semibold">Expirations:</span>
+            <ul class="inline-flex flex-wrap gap-2 ml-2">
+            <li v-for="d in levels.expiration_dates" :key="d"
+                class="px-2 py-1 bg-gray-700 rounded">
+                {{ d }}
+            </li>
+            </ul>
+        </div>
+
         <!-- 1) Key Metrics Row -->
         <div class="grid grid-cols-1 sm:grid-cols-7 gap-4">
           <MetricCard title="HVL" :value="levels.hvl" />
@@ -164,6 +175,10 @@ const error           = ref(null)
 const newSymbol       = ref('')
 const newTimeframe    = ref('14d')
 const watchlistItems  = ref([])
+
+const fetchingData   = ref(false)
+const fetchSuccess   = ref('')
+const fetchError     = ref('')
 
 onMounted(async () => {
   await fetch('/sanctum/csrf-cookie', { credentials: 'include' })

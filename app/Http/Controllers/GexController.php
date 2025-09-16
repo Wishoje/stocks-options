@@ -16,9 +16,19 @@ class GexController extends Controller
         $timeframe = $request->query('timeframe', '14d');
 
         // ← now resolves dates + IDs for you
-        $expirationIds = $this->resolveExpirationIds($symbol, $timeframe);
+        $dates = $this->resolveExpirationDates($symbol, $timeframe);
 
-        // 1) Today's snapshot
+        if (empty($dates)) {
+            return response()->json([
+                'error' => "No expirations found for {$symbol}/{$timeframe}"
+            ], 404);
+        }
+
+        $expirationIds = OptionExpiration::where('symbol', $symbol)
+            ->whereIn('expiration_date', $dates)
+            ->pluck('id')
+            ->toArray();
+
         $latestDates = OptionChainData::select('expiration_id', DB::raw('MAX(data_date) as max_date'))
             ->whereIn('option_chain_data.expiration_id', $expirationIds)
             ->groupBy('expiration_id');
@@ -139,7 +149,7 @@ class GexController extends Controller
         return response()->json([
             'symbol'                   => $symbol,
             'timeframe'                => $timeframe,
-            'expiration_dates'         => $this->getExpirationsWithinDays($symbol, $timeframe),
+            'expiration_dates'         => $dates,
             'hvl'                      => $HVL,
             'call_resistance'          => $c1,
             'call_wall_2'              => $c2,
@@ -163,31 +173,32 @@ class GexController extends Controller
     /**
      * Turn symbol + timeframe into a list of expiration_ids.
      */
-    protected function resolveExpirationIds(string $symbol, string $tf): array
+    protected function resolveExpirationDates(string $symbol, string $tf): array
     {
         switch ($tf) {
-            case '0d':     $dates = $this->getExpirationsWithinDays($symbol, 0); break;
-            case '1d':     $dates = $this->getExpirationsWithinDays($symbol, 1); break;
-            case '7d':     $dates = $this->getExpirationsWithinDays($symbol, 7); break;
-            case '14d':    $dates = $this->getExpirationsWithinDays($symbol, 14); break;
-            case 'monthly':$dates = $this->getNextMonthlyExpiration($symbol);   break;
-            default:       $dates = $this->getExpirationsWithinDays($symbol, 14); break;
+            case '0d':      $days = 0;   break;
+            case '1d':      $days = 1;   break;
+            case '7d':      $days = 7;   break;
+            case '14d':     $days = 14;  break;
+            case 'monthly':
+                return $this->getNextMonthlyExpiration($symbol);
+            default:
+                $days = 14;
         }
 
-        return OptionExpiration::where('symbol', $symbol)
-            ->whereIn('expiration_date', $dates)
-            ->pluck('id')
-            ->toArray();
+        return $this->getExpirationsWithinDays($symbol, $days);
     }
 
     // Helper: find expirations within X days
-    protected function getExpirationsWithinDays($symbol, $days)
+    protected function getExpirationsWithinDays(string $symbol, int $days): array
     {
-        $now = now();
-        $endDate = now()->addDays($days);
+        $now       = now();
+        $startDate = $now->toDateString();
+        $endDate   = $now->copy()->addDays($days)->toDateString();  // ← clone before mutating!
 
         return OptionExpiration::where('symbol', $symbol)
-            ->whereBetween('expiration_date', [$now->toDateString(), $endDate->toDateString()])
+            ->whereBetween('expiration_date', [$startDate, $endDate])
+            ->orderBy('expiration_date')
             ->pluck('expiration_date')
             ->unique()
             ->values()
