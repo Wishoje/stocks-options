@@ -85,6 +85,10 @@
             </ul>
         </div>
 
+        <div v-if="levels?.date_prev" class="text-xs text-gray-400">
+          Data: {{ levels.date_prev }} (EOD)
+        </div>
+
         <!-- 1) Key Metrics Row -->
         <div class="grid grid-cols-1 sm:grid-cols-7 gap-4">
           <MetricCard title="HVL" :value="levels.hvl" />

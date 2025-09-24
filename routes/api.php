@@ -5,6 +5,16 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\GexController;
 use App\Http\Controllers\WatchlistController;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+
+Route::get('/health/ingest', function () {
+    $rows = DB::table('option_chain_data as o')
+        ->join('option_expirations as e','e.id','=','o.expiration_id')
+        ->selectRaw('e.symbol, MAX(o.data_timestamp) as last_ts, MAX(o.data_date) as last_date')
+        ->groupBy('e.symbol')
+        ->get();
+    return response()->json($rows);
+});
 
 Route::get('/me', function () {
     return response()->json([

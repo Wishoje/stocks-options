@@ -20,8 +20,10 @@ class OptionChainData extends Model
         'volume',
         'gamma',
         'delta',
+        'vega',
         'iv',
         'underlying_price',
+        'data_timestamp',
     ];
 
     public function expiration()
