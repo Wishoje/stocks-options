@@ -10,21 +10,19 @@ class WatchlistController extends Controller
 {
     public function index()
     {
-        // Show all watchlist items for the logged-in user
-        $items = Watchlist::where('user_id', 1)->get();
+        $items = Watchlist::where('user_id', Auth::id())->get();
         return response()->json($items);
     }
 
     public function store(Request $request)
     {
-        // Add symbol/timeframe
         $request->validate([
             'symbol' => 'required|string|max:10',
             'timeframe' => 'nullable|string'
         ]);
 
         $item = Watchlist::create([
-            'user_id'   => 1,
+            'user_id'   => Auth::id(),
             'symbol'    => strtoupper($request->symbol),
             'timeframe' => $request->timeframe ?? '14d'
         ]);
@@ -34,14 +32,17 @@ class WatchlistController extends Controller
 
     public function destroy($id)
     {
-        $item = Watchlist::where('id', $id)->where('user_id', 1)->firstOrFail();
+        $item = Watchlist::where('id', $id)
+            ->where('user_id', Auth::id())
+            ->firstOrFail();
+
         $item->delete();
         return response()->json(['message' => 'Deleted'], 200);
     }
 
     public function fetchAllData()
     {
-        $userId = 1;
+        $userId = Auth::id();
         $items = Watchlist::where('user_id', $userId)->get();
 
         if ($items->isEmpty()) {

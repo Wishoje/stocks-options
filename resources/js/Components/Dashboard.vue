@@ -159,6 +159,8 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import axios from 'axios'
+
 import MetricCard from './MetricCard.vue'
 import StrikeDeltaChart    from './StrikeDeltaChart.vue'
 import VolumeDeltaChart    from './VolumeDeltaChart.vue'
@@ -166,73 +168,114 @@ import NetGexChart         from './NetGexChart.vue'
 import OiDistributionChart from './OiDistributionChart.vue'
 import VolDistributionChart from './VolDistributionChart.vue'
 
-const userSymbol      = ref('SPY')
-const timeframe       = ref('14d')
-const levels          = ref(null)
-const loading         = ref(false)
-const error           = ref(null)
+// ---- axios defaults for Sanctum / Fortify
+axios.defaults.withCredentials = true
+axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest'
+// if you changed Sanctum defaults, also set:
+// axios.defaults.xsrfCookieName = 'XSRF-TOKEN'
+// axios.defaults.xsrfHeaderName = 'X-XSRF-TOKEN'
 
-const newSymbol       = ref('')
-const newTimeframe    = ref('14d')
-const watchlistItems  = ref([])
+const userSymbol     = ref('SPY')
+const timeframe      = ref('14d')
+const levels         = ref(null)
+const loading        = ref(false)
+const error          = ref(null)
+
+const newSymbol      = ref('')
+const newTimeframe   = ref('14d')
+const watchlistItems = ref([])
 
 const fetchingData   = ref(false)
 const fetchSuccess   = ref('')
 const fetchError     = ref('')
 
 onMounted(async () => {
-  await fetch('/sanctum/csrf-cookie', { credentials: 'include' })
-  const res = await fetch('/api/watchlist', { credentials: 'include' })
-  watchlistItems.value = await res.json()
+  try {
+    // 1) Get CSRF cookie (required for any state-changing request with Sanctum)
+    await axios.get('/sanctum/csrf-cookie')
+
+    try {
+      const { data } = await axios.get('/api/me')
+      console.log('API sees user:', data)
+    } catch (e) {
+      console.log('API auth failed', e?.response?.status, e?.response?.data)
+    }
+
+
+    // 2) Load watchlist (requires authenticated session)
+    const { data } = await axios.get('/api/watchlist')
+    watchlistItems.value = data
+  } catch (e) {
+    console.error(e)
+  }
 })
 
 async function loadWatchlist() {
-  const res = await fetch('/api/watchlist',{ credentials:'include' })
-  watchlistItems.value = await res.json()
+  try {
+    const { data } = await axios.get('/api/watchlist')
+    watchlistItems.value = data
+  } catch (e) {
+    console.error(e)
+  }
 }
 
 async function addWatchlist() {
-  const res = await fetch('/api/watchlist', {
-    method: 'POST',
-    headers:{'Content-Type':'application/json'},
-    credentials:'include',
-    body: JSON.stringify({symbol:newSymbol.value, timeframe:newTimeframe.value})
-  })
-  if (res.ok) {
-    watchlistItems.value.push(await res.json())
+  try {
+    await axios.get('/sanctum/csrf-cookie')
+    const payload = { symbol: newSymbol.value.trim().toUpperCase(), timeframe: newTimeframe.value }
+    if (!payload.symbol) return
+
+    // prevent duplicates client-side
+    if (watchlistItems.value.some(i => i.symbol === payload.symbol && i.timeframe === payload.timeframe)) return
+
+    const { data } = await axios.post('/api/watchlist', payload)
+    watchlistItems.value.push(data)
     newSymbol.value = ''
+  } catch (e) {
+    if (e?.response?.status === 401) window.location.href = '/login'
+    console.error(e)
   }
 }
 
 async function removeWatchlist(id) {
-  const res = await fetch(`/api/watchlist/${id}`,{
-    method:'DELETE', credentials:'include'
-  })
-  if (res.ok) {
-    watchlistItems.value = watchlistItems.value.filter(i=>i.id!==id)
+  try {
+    await axios.get('/sanctum/csrf-cookie')
+    await axios.delete(`/api/watchlist/${id}`)
+    watchlistItems.value = watchlistItems.value.filter(i => i.id !== id)
+  } catch (e) {
+    console.error(e)
   }
 }
 
 async function fetchWatchlistData() {
   fetchingData.value = true
-  const res = await fetch('/api/watchlist/fetch',{ method:'POST', credentials:'include' })
-  fetchSuccess.value = (await res.json()).message || 'Started'
-  fetchingData.value = false
+  fetchSuccess.value = ''
+  fetchError.value   = ''
+  try {
+    await axios.get('/sanctum/csrf-cookie')
+    const { data } = await axios.post('/api/watchlist/fetch')
+    fetchSuccess.value = data?.message || 'Started'
+  } catch (e) {
+    fetchError.value = e?.response?.data?.message || e.message
+  } finally {
+    fetchingData.value = false
+  }
 }
 
 async function fetchGexLevels(sym, tf) {
   loading.value = true
   error.value   = null
   levels.value  = null
-
   try {
-    const res = await fetch(`/api/gex-levels?symbol=${sym}&timeframe=${tf}`)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    levels.value = await res.json()
+    const { data } = await axios.get('/api/gex-levels', {
+      params: { symbol: sym, timeframe: tf }
+    })
+    levels.value = data
   } catch (e) {
-    error.value = e.message
+    error.value = e?.response?.data?.error || e.message
   } finally {
     loading.value = false
   }
 }
 </script>
+

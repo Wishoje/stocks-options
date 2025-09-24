@@ -1,8 +1,10 @@
 <?php
 
 use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Http\Middleware\HandleCors;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -12,12 +14,20 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        $middleware->web(append: [
-            \App\Http\Middleware\HandleInertiaRequests::class,
-            \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
+        // Global middleware
+        $middleware->use([
+            HandleCors::class, // <- CORS
+            // ... (whatever else you use globally)
         ]);
 
-        //
+        // Add Sanctum's "stateful" middleware to the API group
+        $middleware->api(prepend: [
+            EnsureFrontendRequestsAreStateful::class,
+        ]);
+
+        // If you use Jetstream's session auth, you can ensure its middleware is in the web group:
+        // use Laravel\Jetstream\Http\Middleware\AuthenticateSession;
+        // $middleware->appendToGroup('web', AuthenticateSession::class);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

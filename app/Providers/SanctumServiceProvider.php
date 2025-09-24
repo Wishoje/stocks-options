@@ -16,9 +16,9 @@ class SanctumServiceProvider extends ServiceProvider
 
     public function boot()
     {
-        // A) Alias the middleware so "auth.sanctum" can be used in routes:
+        // A) Alias the middleware so "auth:sanctum" can be used in routes:
         $router = $this->app->make(Router::class);
-        $router->aliasMiddleware('auth.sanctum', EnsureFrontendRequestsAreStateful::class);
+        $router->aliasMiddleware('auth:sanctum', EnsureFrontendRequestsAreStateful::class);
 
         // B) Optionally push Sanctum’s middleware globally 
         //    if you want session-based checks for all requests:
