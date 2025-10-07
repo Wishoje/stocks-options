@@ -133,6 +133,7 @@
           :date="season.date"
           :d1="season.d1" :d2="season.d2" :d3="season.d3" :d4="season.d4" :d5="season.d5"
           :cum5="season.cum5" :z="season.z"
+          :note="seasonNote"
         />
         <div v-if="volErr" class="text-red-400 text-sm">Vol metrics error: {{ volErr }}</div>
 
@@ -228,18 +229,15 @@ const fetchError     = ref('')
 const term   = ref({ date:null, items:[] })
 const vrp    = ref({ date:null, iv1m:null, rv20:null, vrp:null, z:null })
 const volErr = ref(null)
-const season = ref({
-  date: null, d1: null, d2: null, d3: null, d4: null, d5: null, cum5: null, z: null
-});
+const season     = ref(null) 
+const seasonNote = ref('')
 
 async function loadSeasonality(sym) {
   try {
-    const { data } = await axios.get('/api/seasonality/5d', { params: { symbol: sym } });
-    // expected: { date, d1..d5, cum5, z }
-    season.value = data || season.value;
-  } catch (e) {
-    console.error('seasonality fetch error', e);
-  }
+    const { data } = await axios.get('/api/seasonality/5d', { params: { symbol: sym } })
+    season.value     = data?.variant || null    // { date, d1..d5, cum5, z }
+    seasonNote.value = data?.note || ''
+  } catch (e) { console.error('seasonality fetch error', e) }
 }
 
 onMounted(async () => {

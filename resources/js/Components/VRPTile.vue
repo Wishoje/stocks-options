@@ -5,7 +5,11 @@
       <span class="text-xs text-gray-400" v-if="date">EOD: {{ date }}</span>
     </div>
 
-    <div class="text-xs text-gray-400 mb-3">IV(1M) − RV(20). Positive = IV rich.</div>
+    <div class="text-xs text-gray-400 mb-3 flex items-center gap-2">
+      IV(1M) − RV(20). Positive = IV rich.
+      <span class="text-gray-500 cursor-help" title="IV(1M): ATM implied vol near 21 trading days out. RV(20): past 20d realized (annualized). VRP positive often favors selling premium; negative favors buying.">ⓘ</span>
+    </div>
+
 
     <div class="grid grid-cols-3 gap-3 text-center">
       <div>

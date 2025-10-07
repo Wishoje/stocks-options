@@ -50,6 +50,9 @@ class Seasonality5DJob implements ShouldQueue
                             'reason'=>'not_enough_history',
                             'obs'=>$rows->count()
                         ]),
+                        'lookback_years' => $this->lookbackYears,
+                        'lookback_days'  => null,
+                        'window_days'    => $this->calWindowDays,
                         'updated_at'=>now(),'created_at'=>now()
                     ]
                 );

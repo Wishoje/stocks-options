@@ -16,8 +16,8 @@
 
 <script setup>
 import { onMounted, onBeforeUnmount, watch, ref, computed } from 'vue'
-import { Chart, LineElement, PointElement, CategoryScale, LinearScale, Tooltip } from 'chart.js'
-Chart.register(LineElement, PointElement, CategoryScale, LinearScale, Tooltip)
+import { Chart, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, LineController } from 'chart.js'
+Chart.register(LineElement, PointElement, CategoryScale, LinearScale, Tooltip, LineController)
 
 const props = defineProps({
   items: { type: Array, default: () => [] }, // [{exp, iv}]
@@ -32,20 +32,24 @@ const ivData  = computed(() => props.items.map(i => (i.iv ?? 0) * 100))    // %
 
 function draw () {
   if (!canvas.value) return
-  if (chart) chart.destroy()
+  const existing = Chart.getChart(canvas.value)
+  if (existing) existing.destroy()
+  if (chart) { chart.destroy(); chart = null }
   chart = new Chart(canvas.value.getContext('2d'), {
     type: 'line',
     data: { labels: labels.value, datasets: [{ data: ivData.value, fill: false, tension: 0.25 }] },
     options: {
       responsive: true,
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y.toFixed(2)}%` } } },
-      scales: { x: { ticks: { maxTicksLimit: 6 } }, y: { title: { display: true, text: 'IV %' } } }
+      scales: { x: { ticks: { maxTicksLimit: 10 } }, y: { title: { display: true, text: 'IV %' } } }
     }
   })
 }
 
 onMounted(draw)
 watch(() => props.items, draw) // reference changes trigger redraw
-onBeforeUnmount(() => { if (chart) chart.destroy() })
+onBeforeUnmount(() => {
+  if (chart) { chart.destroy(); chart = null }
+})
 
 </script>
