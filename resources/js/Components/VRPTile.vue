@@ -1,69 +1,48 @@
 <template>
-  <div class="bg-gray-800 rounded-2xl p-4">
-    <div class="flex items-center justify-between mb-1">
-      <h3 class="font-semibold">VRP</h3>
-      <span class="text-xs text-gray-400" v-if="date">EOD: {{ date }}</span>
-    </div>
+  <Card title="VRP" :asOf="date ? `EOD: ${date}` : ''"
+        subtitle="IV(1M) – RV(20)">
+    <InfoTip
+      tip="IV(1M): ATM implied vol ~21 trading days forward.
+        RV(20): past 20d realized (annualized).
+        VRP > 0 ⇒ IV rich vs realized (edge to selling premium).
+        VRP < 0 ⇒ IV cheap vs realized (edge to buying).">
+      <span class="text-[11px] text-gray-400">Positive = IV rich.</span>
+    </InfoTip>
 
-    <div class="text-xs text-gray-400 mb-3 flex items-center gap-2">
-      IV(1M) − RV(20). Positive = IV rich.
-      <span class="text-gray-500 cursor-help" title="IV(1M): ATM implied vol near 21 trading days out. RV(20): past 20d realized (annualized). VRP positive often favors selling premium; negative favors buying.">ⓘ</span>
-    </div>
-
-
-    <div class="grid grid-cols-3 gap-3 text-center">
-      <div>
-        <div class="text-xs text-gray-400">IV(1M)</div>
-        <div class="text-lg">{{ fmtPct(iv1m) }}</div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-400">RV(20)</div>
-        <div class="text-lg">{{ fmtPct(rv20) }}</div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-400">VRP</div>
-        <div class="text-lg">{{ fmtPct(vrp) }}</div>
-      </div>
+    <div class="grid grid-cols-3 gap-3 text-center mt-3">
+      <div><div class="text-xs text-gray-400">IV(1M)</div><div class="text-lg">{{ pct(iv1m) }}</div></div>
+      <div><div class="text-xs text-gray-400">RV(20)</div><div class="text-lg">{{ pct(rv20) }}</div></div>
+      <div><div class="text-xs text-gray-400">VRP</div><div class="text-lg">{{ pct(vrp) }}</div></div>
     </div>
 
     <div class="mt-3 text-center">
-      <span
-        class="px-3 py-1 rounded-full text-sm"
-        :class="badgeClass"
-        :title="hint"
-      >{{ badgeText }}</span>
-      <div class="text-xs text-gray-400 mt-1">z: {{ fmtNum(z) }}</div>
+      <span class="px-3 py-1 rounded-full text-sm" :class="badgeClass" :title="hint">{{ badgeText }}</span>
+      <div class="text-xs text-gray-400 mt-1">z: {{ num(z) }}</div>
     </div>
-  </div>
+
+    <HowTo>
+      <ul class="list-disc ml-4 space-y-1">
+        <li><b>VRP ≥ +1σ</b>: favor short credit (iron condors, short strangles, credit spreads), calendars/diagonals where carry is positive.</li>
+        <li><b>VRP ≤ −1σ</b>: favor long debit (calls/puts), broken-wing butterflies, long calendars to own gamma/vega.</li>
+        <li>Combine with <i>Term</i>: upward term (contango) + positive VRP → classic premium-selling environment.</li>
+        <li>Combine with <i>Momentum</i>: if trend is weak, short premium is safer; if trend is strong, prefer defined risk.</li>
+      </ul>
+      <p><b>Example:</b> IV(1M)=24%, RV(20)=14% → VRP=+10%. z=+1.4 ⇒ consider 20–30Δ iron condor 2–4w out; take profit at 30–50%.</p>
+    </HowTo>
+  </Card>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import Card from '../Components/Card.vue'
+import InfoTip from '../Components/InfoTip.vue'
+import HowTo from '../Components/HowTo.vue'
 
-const props = defineProps({
-  date: String,
-  iv1m: Number,
-  rv20: Number,
-  vrp:  Number,
-  z:    Number
-})
-
-const fmtPct = v => (v ?? null) === null ? '—' : `${(v*100).toFixed(1)}%`
-const fmtNum = v => (v ?? null) === null ? '—' : v.toFixed(2)
-
-const badgeText = computed(() => {
-  if (props.z >= 1) return 'SELL premium'
-  if (props.z <= -1) return 'BUY premium'
-  return 'Neutral'
-})
-const badgeClass = computed(() => {
-  if (props.z >= 1)  return 'bg-green-700'
-  if (props.z <= -1) return 'bg-blue-700'
-  return 'bg-gray-700'
-})
-const hint = computed(() => {
-  if (props.z >= 1)  return 'IV rich vs realized → short credit (condors/puts/calendars).'
-  if (props.z <= -1) return 'IV cheap vs realized → long debit (calls/puts/diagonals).'
-  return 'Little edge; be selective on structure.'
-})
+const props = defineProps({ date:String, iv1m:Number, rv20:Number, vrp:Number, z:Number })
+const pct = v => v==null ? '—' : `${(v*100).toFixed(1)}%`
+const num = v => v==null ? '—' : v.toFixed(2)
+const badgeText  = computed(()=> props.z>=1 ? 'SELL premium' : (props.z<=-1 ? 'BUY premium' : 'Neutral'))
+const badgeClass = computed(()=> props.z>=1 ? 'bg-green-700' : (props.z<=-1 ? 'bg-blue-700' : 'bg-gray-700'))
+const hint = computed(()=> props.z>=1 ? 'IV rich vs realized → sell credit / positive carry'
+  : (props.z<=-1 ? 'IV cheap vs realized → own gamma/vega' : 'Little edge; be selective'))
 </script>

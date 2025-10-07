@@ -47,7 +47,14 @@
 
     <!-- GEX DASHBOARD CARD -->
     <div class="bg-gray-800 rounded-2xl shadow-lg p-6 space-y-6">
-      <h2 class="text-2xl font-bold">GEX Levels & Charts</h2>
+      <h2 class="text-2xl font-bold flex items-center gap-3">
+        GEX Levels & Charts
+        <span class="text-[11px] text-gray-400">SPY — {{ timeframe.toUpperCase() }}</span>
+      </h2>
+      <div v-if="levels?.expiration_dates?.length" class="flex flex-wrap gap-2">
+        <span v-for="d in levels.expiration_dates" :key="d"
+              class="px-2 py-1 rounded-full bg-gray-700 text-xs">{{ d }}</span>
+      </div>
 
       <!-- Controls -->
       <div class="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0">
