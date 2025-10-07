@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\GexController;
 use App\Http\Controllers\WatchlistController;
+use App\Http\Controllers\VolController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -23,7 +24,7 @@ Route::get('/me', function () {
     ]);
 })->middleware('auth:sanctum');
 
-Route::get('/user', function (Request $request) {
+Route::get('/user', function (Request $request): User {
     return $request->user();
 })->middleware('auth:sanctum');
 
@@ -37,3 +38,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/watchlist', [WatchlistController::class, 'store']);
     Route::delete('/watchlist/{id}', [WatchlistController::class, 'destroy']);
 });
+
+Route::get('/iv/term', [VolController::class,'term']);
+Route::get('/vrp',     [VolController::class,'vrp']);
+Route::get('/qscore', [\App\Http\Controllers\QScoreController::class, 'show']);
+Route::get('/seasonality/5d', [\App\Http\Controllers\SeasonalityController::class, 'fiveDay']);
+

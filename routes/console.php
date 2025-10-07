@@ -5,6 +5,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 use App\Console\Commands\BuildDailyChainSnapshot;
 use App\Jobs\FetchOptionChainDataJob;
+use App\Jobs\ComputeVolMetricsJob;
 
 class Kernel extends ConsoleKernel
 {
@@ -26,6 +27,21 @@ class Kernel extends ConsoleKernel
             ->weekdays()
             ->timezone('America/New_York')
             ->at('16:30'); // 4:30pm ET
+
+        $schedule->job(new ComputeVolMetricsJob(['SPY','QQQ','IWM']))->dailyAt('20:40');
+
+        Schedule::command('prices:seed SPY QQQ IWM')
+            ->weekdays()
+            ->timezone('America/New_York')
+            ->at('16:15');  // 1) seed prices first
+
+        Schedule::command('vol:compute SPY QQQ IWM')
+            ->weekdays()
+            ->timezone('America/New_York')
+            ->at('16:20');  // 2) then compute term + VRP (needs prices)
+
+        $schedule->command('seasonality:5d SPY QQQ IWM MSFT AAPL')->weekdays()->timezone('America/New_York')->at('06:10');
+
     }
 
     protected function commands(): void

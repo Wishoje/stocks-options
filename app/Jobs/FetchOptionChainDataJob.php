@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -15,7 +16,7 @@ use Carbon\Carbon;
 
 class FetchOptionChainDataJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
     protected $symbols;
     protected $days;   // for example, we might specify 7 or 14 if we want to restrict fetch
@@ -26,7 +27,7 @@ class FetchOptionChainDataJob implements ShouldQueue
      */
     public function __construct(array $symbols, ?int $days = null)
     {
-        $this->symbols = $symbols;
+        $this->symbols = array_map(fn($s)=>\App\Support\Symbols::canon($s), $symbols);
         $this->days = $days;  // if null, we might fetch all available or have a default
     }
 

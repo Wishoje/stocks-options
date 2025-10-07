@@ -175,18 +175,39 @@ class GexController extends Controller
      */
     protected function resolveExpirationDates(string $symbol, string $tf): array
     {
-        switch ($tf) {
-            case '0d':      $days = 0;   break;
-            case '1d':      $days = 1;   break;
-            case '7d':      $days = 7;   break;
-            case '14d':     $days = 14;  break;
-            case 'monthly':
-                return $this->getNextMonthlyExpiration($symbol);
-            default:
-                $days = 14;
+        $map = [
+            '0d'=>0,'1d'=>1,'7d'=>7,'14d'=>14,'21d'=>21,'30d'=>30,
+            '45d'=>45,'60d'=>60,'90d'=>90,
+        ];
+        if (isset($map[$tf])) {
+            return $this->getExpirationsWithinDays($symbol, $map[$tf]);
         }
+        if ($tf === 'monthly') {
+            $d = $this->thirdFriday(\Carbon\Carbon::now());
+            // if the third Friday is in the past, take next month’s third Friday
+            if ($d->lt(\Carbon\Carbon::now()->startOfDay())) {
+                $d = $this->thirdFriday(\Carbon\Carbon::now()->addMonth());
+            }
+            return \App\Models\OptionExpiration::where('symbol',$symbol)
+                ->whereDate('expiration_date', $d->toDateString())
+                ->orderBy('expiration_date')
+                ->pluck('expiration_date')
+                ->unique()->values()->toArray();
+        }
+        // default
+        return $this->getExpirationsWithinDays($symbol, 14);
+    }
 
-        return $this->getExpirationsWithinDays($symbol, $days);
+    
+    protected function thirdFriday(Carbon $dt): Carbon
+    {
+        // third Friday of the month of $dt
+        $first = $dt->copy()->startOfMonth();
+        // weekday() 0=Sun..6=Sat, we want Friday (5)
+        $firstFriday = $first->copy()->next(Carbon::FRIDAY);
+        if ($first->isFriday()) $firstFriday = $first; // if the 1st IS Friday
+        // third Friday = first Friday + 2 weeks
+        return $firstFriday->copy()->addWeeks(2);
     }
 
     // Helper: find expirations within X days

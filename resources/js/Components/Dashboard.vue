@@ -19,7 +19,11 @@
             <option value="1d">1DTE</option>
             <option value="7d">7D</option>
             <option value="14d">14D</option>
-            <option value="monthly">Monthly</option>
+            <option value="21d">21D</option>
+            <option value="30d">30D</option>
+            <option value="45d">45D</option>
+            <option value="60d">60D</option>
+            <option value="90d">90D</option>
           </select>
         </div>
         <button @click="addWatchlist"
@@ -60,7 +64,11 @@
             <option value="1d">1DTE</option>
             <option value="7d">7D</option>
             <option value="14d">14D</option>
-            <option value="monthly">Monthly</option>
+            <option value="21d">21D</option>
+            <option value="30d">30D</option>
+            <option value="45d">45D</option>
+            <option value="60d">60D</option>
+            <option value="90d">90D</option>
           </select>
         </div>
         <button @click="fetchGexLevels(userSymbol, timeframe)"
@@ -107,6 +115,26 @@
             <p class="text-xl">{{ levels.pcr_volume }}</p>
           </div>
         </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <TermTile :items="term.items" :date="term.date" />
+          <VRPTile
+            :date="vrp.date"
+            :iv1m="vrp.iv1m"
+            :rv20="vrp.rv20"
+            :vrp="vrp.vrp"
+            :z="vrp.z"
+          />
+        </div>
+        <QScorePanel :symbol="userSymbol" />
+
+        <Seasonality5Tile
+          v-if="season"
+          :date="season.date"
+          :d1="season.d1" :d2="season.d2" :d3="season.d3" :d4="season.d4" :d5="season.d5"
+          :cum5="season.cum5" :z="season.z"
+        />
+        <div v-if="volErr" class="text-red-400 text-sm">Vol metrics error: {{ volErr }}</div>
 
         <!-- 2) Distribution Pie Charts -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -171,6 +199,10 @@ import VolumeDeltaChart    from './VolumeDeltaChart.vue'
 import NetGexChart         from './NetGexChart.vue'
 import OiDistributionChart from './OiDistributionChart.vue'
 import VolDistributionChart from './VolDistributionChart.vue'
+import QScorePanel from './QScorePanel.vue'
+import Seasonality5Tile from './Seasonality5Tile.vue'
+import TermTile from './TermTile.vue'
+import VRPTile  from './VRPTile.vue'
 
 // ---- axios defaults for Sanctum / Fortify
 axios.defaults.withCredentials = true
@@ -193,6 +225,23 @@ const fetchingData   = ref(false)
 const fetchSuccess   = ref('')
 const fetchError     = ref('')
 
+const term   = ref({ date:null, items:[] })
+const vrp    = ref({ date:null, iv1m:null, rv20:null, vrp:null, z:null })
+const volErr = ref(null)
+const season = ref({
+  date: null, d1: null, d2: null, d3: null, d4: null, d5: null, cum5: null, z: null
+});
+
+async function loadSeasonality(sym) {
+  try {
+    const { data } = await axios.get('/api/seasonality/5d', { params: { symbol: sym } });
+    // expected: { date, d1..d5, cum5, z }
+    season.value = data || season.value;
+  } catch (e) {
+    console.error('seasonality fetch error', e);
+  }
+}
+
 onMounted(async () => {
   try {
     // 1) Get CSRF cookie (required for any state-changing request with Sanctum)
@@ -213,6 +262,34 @@ onMounted(async () => {
     console.error(e)
   }
 })
+
+
+
+async function loadTermAndVRP(sym) {
+  try {
+    const t = await axios.get('/api/iv/term', { params: { symbol: sym } });
+    term.value = {
+      date: t.data?.date ?? null,
+      items: Array.isArray(t.data?.items) ? t.data.items : []
+    };
+
+    const v = await axios.get('/api/vrp', { params: { symbol: sym } });
+    vrp.value = {
+      date: v.data?.date ?? null,
+      iv1m: v.data?.iv1m ?? null,
+      rv20: v.data?.rv20 ?? null,
+      vrp:  v.data?.vrp  ?? null,
+      z:    v.data?.z    ?? null
+    };
+  } catch (e) {
+    volErr.value = e?.response?.data || e.message
+  }
+}
+
+onMounted(() => {
+  loadTermAndVRP(userSymbol.value);
+  loadSeasonality(userSymbol.value);
+});
 
 async function loadWatchlist() {
   try {
@@ -258,6 +335,10 @@ async function fetchWatchlistData() {
   try {
     await axios.get('/sanctum/csrf-cookie')
     const { data } = await axios.post('/api/watchlist/fetch')
+    for (const row of watchlistItems.value) {
+      await loadTermAndVRP(row.symbol); // this will fill VRP even if Term is empty
+      await loadSeasonality(row.symbol);
+    }
     fetchSuccess.value = data?.message || 'Started'
   } catch (e) {
     fetchError.value = e?.response?.data?.message || e.message
@@ -280,6 +361,9 @@ async function fetchGexLevels(sym, tf) {
   } finally {
     loading.value = false
   }
+  await loadTermAndVRP(sym)
+  await loadSeasonality(sym);
+  
 }
 </script>
 
