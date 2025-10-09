@@ -191,6 +191,7 @@
             </p>
             <NetGexChart :strikeData="levels.strike_data" />
           </div>
+          <SkewTile :symbol="userSymbol" />
         </div>
       </div>
     </div>
@@ -211,6 +212,7 @@ import QScorePanel from './QScorePanel.vue'
 import Seasonality5Tile from './Seasonality5Tile.vue'
 import TermTile from './TermTile.vue'
 import VRPTile  from './VRPTile.vue'
+import SkewTile from './SkewTile.vue'
 
 // ---- axios defaults for Sanctum / Fortify
 axios.defaults.withCredentials = true
@@ -267,8 +269,6 @@ onMounted(async () => {
     console.error(e)
   }
 })
-
-
 
 async function loadTermAndVRP(sym) {
   try {
@@ -334,6 +334,7 @@ async function removeWatchlist(id) {
 }
 
 async function fetchWatchlistData() {
+  loading.value = true
   fetchingData.value = true
   fetchSuccess.value = ''
   fetchError.value   = ''
@@ -349,6 +350,7 @@ async function fetchWatchlistData() {
     fetchError.value = e?.response?.data?.message || e.message
   } finally {
     fetchingData.value = false
+    loading.value = false
   }
 }
 

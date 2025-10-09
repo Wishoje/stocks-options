@@ -43,4 +43,10 @@ Route::get('/iv/term', [VolController::class,'term']);
 Route::get('/vrp',     [VolController::class,'vrp']);
 Route::get('/qscore', [\App\Http\Controllers\QScoreController::class, 'show']);
 Route::get('/seasonality/5d', [\App\Http\Controllers\SeasonalityController::class, 'fiveDay']);
+Route::get('/iv/skew', [\App\Http\Controllers\VolController::class, 'skew']);
+Route::get('/iv/skew/debug', [\App\Http\Controllers\VolController::class, 'skewDebug']);
+Route::get('/iv/skew/by-bucket', [\App\Http\Controllers\VolController::class, 'skewByBucket']);
+Route::get('/iv/skew/history', [VolController::class, 'skewHistory']);
+Route::get('/iv/skew/history/bucket', [VolController::class, 'skewHistoryBucket']);
+
 
