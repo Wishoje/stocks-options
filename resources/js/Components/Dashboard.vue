@@ -100,6 +100,7 @@
             </ul>
         </div>
 
+        <DexTile :symbol="userSymbol" />
         <div v-if="levels?.date_prev" class="text-xs text-gray-400">
           Data: {{ levels.date_prev }} (EOD)
         </div>
@@ -213,6 +214,7 @@ import Seasonality5Tile from './Seasonality5Tile.vue'
 import TermTile from './TermTile.vue'
 import VRPTile  from './VRPTile.vue'
 import SkewTile from './SkewTile.vue'
+import DexTile from './DexTile.vue'
 
 // ---- axios defaults for Sanctum / Fortify
 axios.defaults.withCredentials = true

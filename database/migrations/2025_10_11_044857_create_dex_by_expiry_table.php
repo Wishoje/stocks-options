@@ -1,0 +1,27 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void
+    {
+        Schema::create('dex_by_expiry', function (Blueprint $t) {
+            $t->id();
+            $t->string('symbol', 16)->index();
+            $t->date('data_date')->index();
+            $t->date('exp_date')->index();
+            // Sum(Delta × OI × 100). Use decimal to avoid overflow & preserve sign.
+            $t->decimal('dex_total', 20, 6)->nullable();
+            $t->timestamps();
+
+            $t->unique(['symbol','data_date','exp_date']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('dex_by_expiry');
+    }
+};

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use App\Models\OptionExpiration;
 use App\Models\OptionChainData;
+use Illuminate\Support\Facades\Cache;
 
 class GexController extends Controller
 {
@@ -144,6 +145,14 @@ class GexController extends Controller
                 'put_vol_wow'         => $curPutVol  - $wPutVol,
             ];
         }
+
+        $date = Carbon::now('America/New_York')->isWeekend()
+            ? Carbon::now('America/New_York')->previousWeekday()->toDateString()
+            : Carbon::now('America/New_York')->toDateString();
+
+        $gs = Cache::get("gamma_strength:{$symbol}:{$date}");
+        $payload['regime_strength'] = $gs['strength'] ?? null;
+        $payload['gamma_sign']      = $gs['sign']     ?? null; // +1 pos gamma, -1 neg gamma
 
         // 7) Send it all back
         return response()->json([

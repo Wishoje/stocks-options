@@ -3,6 +3,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use App\Jobs\ComputePositioningJob;   // ← add
 
 class BuildDailyChainSnapshot extends Command
 {
@@ -13,10 +14,8 @@ class BuildDailyChainSnapshot extends Command
     {
         $date = $this->argument('date') ?? now()->toDateString();
 
-        // delete/replace for idempotency
         DB::table('daily_chain_snapshot')->where('data_date', $date)->delete();
 
-        // aggregate by symbol + expiry
         $rows = DB::table('option_chain_data as o')
             ->join('option_expirations as e','e.id','=','o.expiration_id')
             ->selectRaw("
@@ -35,7 +34,6 @@ class BuildDailyChainSnapshot extends Command
             ->groupBy('e.symbol','o.data_date','o.expiration_id')
             ->get();
 
-        // bulk insert
         $payload = $rows->map(fn($r)=>[
             'symbol'=>$r->symbol,
             'data_date'=>$r->data_date,
@@ -46,7 +44,14 @@ class BuildDailyChainSnapshot extends Command
             'created_at'=>now(),'updated_at'=>now(),
         ])->all();
 
-        if (!empty($payload)) DB::table('daily_chain_snapshot')->insert($payload);
+        if (!empty($payload)) {
+            DB::table('daily_chain_snapshot')->insert($payload);
+
+            // After snapshot, recompute positioning for all touched symbols
+            $symbols = collect($payload)->pluck('symbol')->unique()->values()->all();
+            (new ComputePositioningJob($symbols))->handle();
+            // or async: foreach (array_chunk($symbols,25) as $chunk) ComputePositioningJob::dispatch($chunk);
+        }
 
         $this->info("Snapshot built for {$date} (rows: ".count($payload).")");
         return self::SUCCESS;

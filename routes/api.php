@@ -5,6 +5,10 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\GexController;
 use App\Http\Controllers\WatchlistController;
 use App\Http\Controllers\VolController;
+use App\Http\Controllers\PositioningController;
+use App\Http\Controllers\SeasonalityController;
+use App\Http\Controllers\QScoreController;
+use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -41,12 +45,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
 Route::get('/iv/term', [VolController::class,'term']);
 Route::get('/vrp',     [VolController::class,'vrp']);
-Route::get('/qscore', [\App\Http\Controllers\QScoreController::class, 'show']);
-Route::get('/seasonality/5d', [\App\Http\Controllers\SeasonalityController::class, 'fiveDay']);
-Route::get('/iv/skew', [\App\Http\Controllers\VolController::class, 'skew']);
-Route::get('/iv/skew/debug', [\App\Http\Controllers\VolController::class, 'skewDebug']);
-Route::get('/iv/skew/by-bucket', [\App\Http\Controllers\VolController::class, 'skewByBucket']);
+Route::get('/qscore', [QScoreController::class, 'show']);
+Route::get('/seasonality/5d', [SeasonalityController::class, 'fiveDay']);
+Route::get('/iv/skew', [VolController::class, 'skew']);
+Route::get('/iv/skew/debug', [VolController::class, 'skewDebug']);
+Route::get('/iv/skew/by-bucket', [VolController::class, 'skewByBucket']);
 Route::get('/iv/skew/history', [VolController::class, 'skewHistory']);
 Route::get('/iv/skew/history/bucket', [VolController::class, 'skewHistoryBucket']);
+Route::get('/dex', [PositioningController::class, 'dex']);
 
 

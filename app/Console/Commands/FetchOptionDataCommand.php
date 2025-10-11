@@ -4,41 +4,27 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Jobs\FetchOptionChainDataJob;
+use App\Jobs\ComputePositioningJob;   // ← add
 
 class FetchOptionDataCommand extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
     protected $signature = 'options:fetch {symbols?*}';
-
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
     protected $description = 'Fetch option chain data from Yahoo Finance and store it in the database';
 
-    /**
-     * Execute the console command.
-     *
-     * @return int
-     */
     public function handle()
     {
-        // Retrieve symbols from the command line input, fallback to default symbols
-        $symbols = $this->argument('symbols');
-        if (empty($symbols)) {
-            $symbols = ['SPY', 'IWM', 'QQQ'];
-        }
+        $symbols = $this->argument('symbols') ?: ['SPY','IWM','QQQ'];
+        $symbols = array_values(array_unique(array_map('strtoupper', $symbols)));
 
-        // Dispatch the job to fetch data (sync for simplicity)
+        // 1) Ingest (your existing fetch)
         FetchOptionChainDataJob::dispatchSync($symbols);
 
-        $this->info('Option chain data fetch job dispatched for: ' . implode(', ', $symbols));
+        // 2) Compute DEX/Gamma regime for those symbols (immediate for testing)
+        //    Use dispatch() if you prefer async with a queue worker.
+        (new ComputePositioningJob($symbols))->handle();
+        // or: foreach (array_chunk($symbols, 25) as $chunk) ComputePositioningJob::dispatch($chunk);
 
+        $this->info('Fetched and computed positioning for: '.implode(', ', $symbols));
         return 0;
     }
 }
