@@ -8,6 +8,7 @@ use App\Http\Controllers\VolController;
 use App\Http\Controllers\PositioningController;
 use App\Http\Controllers\SeasonalityController;
 use App\Http\Controllers\QScoreController;
+use App\Http\Controllers\ExpiryController;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -53,5 +54,7 @@ Route::get('/iv/skew/by-bucket', [VolController::class, 'skewByBucket']);
 Route::get('/iv/skew/history', [VolController::class, 'skewHistory']);
 Route::get('/iv/skew/history/bucket', [VolController::class, 'skewHistoryBucket']);
 Route::get('/dex', [PositioningController::class, 'dex']);
+Route::get('/expiry-pressure', [ExpiryController::class, 'pressure']);
+Route::get('/expiry-pressure/batch',  [ExpiryController::class, 'pressureBatch']); // ← new
 
 

@@ -3,7 +3,8 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use App\Jobs\ComputePositioningJob;   // ← add
+use App\Jobs\ComputePositioningJob;
+use App\Jobs\ComputeExpiryPressureJob;
 
 class BuildDailyChainSnapshot extends Command
 {
@@ -44,13 +45,17 @@ class BuildDailyChainSnapshot extends Command
             'created_at'=>now(),'updated_at'=>now(),
         ])->all();
 
-        if (!empty($payload)) {
+       if (!empty($payload)) {
             DB::table('daily_chain_snapshot')->insert($payload);
 
-            // After snapshot, recompute positioning for all touched symbols
             $symbols = collect($payload)->pluck('symbol')->unique()->values()->all();
+
+            // Positioning (already there)
             (new ComputePositioningJob($symbols))->handle();
-            // or async: foreach (array_chunk($symbols,25) as $chunk) ComputePositioningJob::dispatch($chunk);
+
+            // ✅ Expiry Pressure (pin risk + max pain)
+            // if you prefer async: ComputeExpiryPressureJob::dispatch($symbols, 3);
+            (new ComputeExpiryPressureJob($symbols, 3))->handle();
         }
 
         $this->info("Snapshot built for {$date} (rows: ".count($payload).")");
