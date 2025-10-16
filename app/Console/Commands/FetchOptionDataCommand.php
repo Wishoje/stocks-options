@@ -4,7 +4,8 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Jobs\FetchOptionChainDataJob;
-use App\Jobs\ComputePositioningJob;   // ← add
+use App\Jobs\ComputePositioningJob;
+use App\Jobs\ComputeUAJob;
 
 class FetchOptionDataCommand extends Command
 {
@@ -23,6 +24,8 @@ class FetchOptionDataCommand extends Command
         //    Use dispatch() if you prefer async with a queue worker.
         (new ComputePositioningJob($symbols))->handle();
         // or: foreach (array_chunk($symbols, 25) as $chunk) ComputePositioningJob::dispatch($chunk);
+
+        (new ComputeUAJob($symbols))->handle();
 
         $this->info('Fetched and computed positioning for: '.implode(', ', $symbols));
         return 0;

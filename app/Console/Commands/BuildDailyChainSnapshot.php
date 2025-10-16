@@ -5,6 +5,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use App\Jobs\ComputePositioningJob;
 use App\Jobs\ComputeExpiryPressureJob;
+use App\Jobs\ComputeUAJob;
 
 class BuildDailyChainSnapshot extends Command
 {
@@ -56,6 +57,8 @@ class BuildDailyChainSnapshot extends Command
             // ✅ Expiry Pressure (pin risk + max pain)
             // if you prefer async: ComputeExpiryPressureJob::dispatch($symbols, 3);
             (new ComputeExpiryPressureJob($symbols, 3))->handle();
+
+            (new ComputeUAJob($symbols))->handle();
         }
 
         $this->info("Snapshot built for {$date} (rows: ".count($payload).")");

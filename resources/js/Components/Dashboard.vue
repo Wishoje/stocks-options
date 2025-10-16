@@ -61,6 +61,10 @@
                 Pin {{ pinMap[item.symbol].headline_pin }}
               </span>
             </template>
+            <!-- 🔔 bell should NOT depend on pinMap -->
+            <template v-if="uaMap[item.symbol]?.count > 0">
+              <span class="ml-2 text-amber-300" title="Unusual activity detected today">🔔</span>
+            </template>
           </span>
 
           <button @click="removeWatchlist(item.id)"
@@ -156,6 +160,29 @@
 
         <QScorePanel :symbol="userSymbol" />
 
+        <!-- Unusual Activity tile -->
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-gray-300">Expiry</label>
+          <select v-model="uaExp"
+                  class="px-2 py-1 bg-gray-700 rounded text-sm focus:outline-none">
+            <option value="ALL">All expiries</option>
+            <option v-for="d in (levels?.expiration_dates || [])" :key="d" :value="d">
+              {{ d }}
+            </option>
+          </select>
+          <button @click="loadUA(userSymbol, uaExp==='ALL'?null:uaExp)"
+                  class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm">
+            Refresh
+          </button>
+        </div>
+        <div v-if="uaLoading" class="text-center text-gray-400 py-6">Loading UA…</div>
+        <template v-else>
+          <div v-if="!uaDate" class="text-sm text-gray-400 mb-2">
+            No UA data yet for today — the pipeline may not have produced EOD flags.
+          </div>
+          <UnusualActivityTable :rows="uaRows" :dataDate="uaDate" :symbol="userSymbol" />
+        </template>
+
         <!-- 3) Seasonality -->
         <Seasonality5Tile
           v-if="season"
@@ -207,7 +234,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import axios from 'axios'
 
 import MetricCard from './MetricCard.vue'
@@ -223,6 +250,7 @@ import VRPTile  from './VRPTile.vue'
 import SkewTile from './SkewTile.vue'
 import DexTile from './DexTile.vue'
 import ExpiryPressureTile from './ExpiryPressureTile.vue'
+import UnusualActivityTable from './UnusualActivityTable.vue'
 
 // ---- axios defaults for Sanctum / Fortify
 axios.defaults.withCredentials = true
@@ -254,6 +282,24 @@ const seasonNote = ref('')
 // ---- Pin risk batch (for watchlist chips)
 const pinMap  = ref({})       // { SPY: { data_date:'YYYY-MM-DD', headline_pin: 78 }, ... }
 const pinDays = 3             // next N trading days window for headline
+
+const uaMap = ref({}) // { SPY: { data_date: 'YYYY-MM-DD', count: 3 } }
+const uaRows = ref([])
+const uaDate = ref(null)
+const uaExp  = ref('ALL')
+const uaLoading = ref(false)
+
+// async function loadUABadge(symbols) {
+//   // simple fan-out; for many symbols you can make a batch endpoint later
+//   const out = {}
+//   for (const s of symbols) {
+//     try {
+//       const { data } = await axios.get('/api/ua', { params: { symbol: s } })
+//       out[s] = { data_date: data?.data_date || null, count: (data?.items || []).length }
+//     } catch (e) { out[s] = { data_date:null, count:0 } }
+//   }
+//   uaMap.value = out
+// }
 
 function pinBadgeClass(score) {
   if (score >= 70) return 'bg-yellow-400/20 text-yellow-300 ring-1 ring-yellow-400/30'
@@ -309,6 +355,7 @@ async function loadWatchlist() {
   try {
     const { data } = await axios.get('/api/watchlist')
     watchlistItems.value = data
+    await loadUABadge([...new Set(watchlistItems.value.map(i=>i.symbol))])
   } catch (e) {
     console.error(e)
   }
@@ -323,7 +370,7 @@ async function addWatchlist() {
     const { data } = await axios.post('/api/watchlist', payload)
     watchlistItems.value.push(data)
     newSymbol.value = ''
-    await loadPinBatch() // refresh chips after change
+    await Promise.all([loadPinBatch(), loadUABadge([data.symbol])]) // refresh both
   } catch (e) {
     if (e?.response?.status === 401) window.location.href = '/login'
     console.error(e)
@@ -335,7 +382,10 @@ async function removeWatchlist(id) {
     await axios.get('/sanctum/csrf-cookie')
     await axios.delete(`/api/watchlist/${id}`)
     watchlistItems.value = watchlistItems.value.filter(i => i.id !== id)
-    await loadPinBatch() // refresh chips after change
+    await Promise.all([
+      loadPinBatch(),
+      loadUABadge([...new Set(watchlistItems.value.map(i=>i.symbol))])
+    ])
   } catch (e) {
     console.error(e)
   }
@@ -362,6 +412,33 @@ async function fetchWatchlistData() {
   }
 }
 
+async function loadUABadge(symbols) {
+  const uniq = [...new Set(symbols)]
+  const out = {}
+  const reqs = uniq.map(async (s) => {
+    try {
+      const { data } = await axios.get('/api/ua', { params: { symbol: s } })
+      out[s] = { data_date: data?.data_date || null, count: (data?.items || []).length }
+    } catch { out[s] = { data_date: null, count: 0 } }
+  })
+  await Promise.all(reqs)
+  uaMap.value = out
+}
+
+async function loadUA(sym, exp=null) {
+  uaLoading.value = true
+  try {
+    const { data } = await axios.get('/api/ua', { params: { symbol: sym, exp } })
+    uaDate.value = data?.data_date || null
+    uaRows.value = data?.items || []
+  } catch {
+    uaDate.value = null
+    uaRows.value = []
+  } finally {
+    uaLoading.value = false
+  }
+}
+
 // ---- GEX Levels
 async function fetchGexLevels(sym, tf) {
   loading.value = true
@@ -370,13 +447,19 @@ async function fetchGexLevels(sym, tf) {
   try {
     const { data } = await axios.get('/api/gex-levels', { params: { symbol: sym, timeframe: tf } })
     levels.value = data
+    // Default UA expiry selector to "ALL" or nearest upcoming expiry
+    const exps = Array.isArray(data?.expiration_dates) ? data.expiration_dates : []
+    uaExp.value = exps.length ? 'ALL' : 'ALL'
   } catch (e) {
     error.value = e?.response?.data?.error || e.message
   } finally {
     loading.value = false
   }
-  await loadTermAndVRP(sym)
-  await loadSeasonality(sym)
+  await Promise.all([
+    loadTermAndVRP(sym),
+    loadSeasonality(sym),
+    loadUA(sym, uaExp.value === 'ALL' ? null : uaExp.value)
+  ])
 }
 
 // ---- Initial load
@@ -389,10 +472,22 @@ onMounted(async () => {
     await loadPinBatch()
 
     // also prefill for the initial selected symbol
-    loadTermAndVRP(userSymbol.value)
-    loadSeasonality(userSymbol.value)
+    await Promise.all([
+      loadTermAndVRP(userSymbol.value),
+      loadSeasonality(userSymbol.value),
+      loadUA(userSymbol.value, null)
+    ])
   } catch (e) {
     console.error(e)
   }
+})
+
+watch(userSymbol, async (s) => {
+  await loadUA(s, uaExp.value === 'ALL' ? null : uaExp.value)
+})
+
+// Reactivity: when the UA expiry filter changes, reload UA
+watch(uaExp, async (e) => {
+  await loadUA(userSymbol.value, e === 'ALL' ? null : e)
 })
 </script>

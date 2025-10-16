@@ -10,13 +10,14 @@ return new class extends Migration {
       $t->id();
       $t->string('symbol', 16)->index();
       $t->date('data_date')->index();
-      $t->float('iv1m')->nullable(); // 1M tenor IV (decimal)
-      $t->float('rv20')->nullable(); // realized vol 20d (decimal)
-      $t->float('vrp')->nullable();  // iv1m - rv20
-      $t->float('z')->nullable();    // z-score of VRP over trailing 252d
+      $t->float('iv1m')->nullable();
+      $t->float('rv20')->nullable();
+      $t->float('vrp')->nullable();
+      $t->float('z')->nullable();
       $t->timestamps();
       $t->unique(['symbol','data_date']);
     });
   }
   public function down(): void { Schema::dropIfExists('vrp_daily'); }
 };
+

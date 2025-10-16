@@ -9,6 +9,7 @@ use App\Http\Controllers\PositioningController;
 use App\Http\Controllers\SeasonalityController;
 use App\Http\Controllers\QScoreController;
 use App\Http\Controllers\ExpiryController;
+use App\Http\Controllers\ActivityController;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -55,6 +56,21 @@ Route::get('/iv/skew/history', [VolController::class, 'skewHistory']);
 Route::get('/iv/skew/history/bucket', [VolController::class, 'skewHistoryBucket']);
 Route::get('/dex', [PositioningController::class, 'dex']);
 Route::get('/expiry-pressure', [ExpiryController::class, 'pressure']);
-Route::get('/expiry-pressure/batch',  [ExpiryController::class, 'pressureBatch']); // ← new
+Route::get('/expiry-pressure/batch',  [ExpiryController::class, 'pressureBatch']);
+Route::get('/ua', [ActivityController::class, 'index']);
 
+Route::get('/ua/debug', function (\Illuminate\Http\Request $req) {
+  $symbol = \App\Support\Symbols::canon($req->query('symbol','spy'));
+  $latest = DB::table('option_chain_data as o')
+    ->join('option_expirations as e','e.id','=','o.expiration_id')
+    ->where('e.symbol',$symbol)
+    ->max('o.data_date');
 
+  $expiries = DB::table('option_chain_data as o')
+    ->join('option_expirations as e','e.id','=','o.expiration_id')
+    ->where('e.symbol',$symbol)
+    ->whereDate('o.data_date',$latest)
+    ->distinct()->pluck('e.expiration_date');
+
+  return response()->json(compact('symbol','latest','expiries'));
+});

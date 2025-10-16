@@ -15,6 +15,7 @@ use App\Jobs\FetchOptionChainDataJob;
 use App\Jobs\ComputeVolMetricsJob;
 use App\Jobs\Seasonality5DJob;
 use App\Jobs\ComputeExpiryPressureJob;
+use App\Jobs\ComputeUAJob; 
 
 class WatchlistController extends Controller
 {
@@ -92,6 +93,7 @@ class WatchlistController extends Controller
         $batch->add(new ComputeVolMetricsJob($symbols));
         $batch->add(new Seasonality5DJob($symbols, 15, 2));
         $batch->add(new ComputeExpiryPressureJob($symbols, 3));
+        $batch->add(new ComputeUAJob($symbols));
 
 
         return response()->json(['message'=>'Fetch pipeline queued', 'batch_id'=>$batch->id], 202);
