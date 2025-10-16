@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Bus\Batch;
 use Throwable;
@@ -25,7 +26,7 @@ class WatchlistController extends Controller
             '0d' => 0,  '1d' => 1,  '7d' => 7,  '14d' => 14,
             '21d' => 21,'30d' => 30,'45d' => 45,'60d' => 60,
             '90d' => 90,
-            default => 14,
+            default => 90,
         };
     }
 
@@ -40,12 +41,12 @@ class WatchlistController extends Controller
     public function store(Request $req)
     {
         $symbol = \App\Support\Symbols::canon($req->input('symbol'));
-        $timeframe = $req->input('timeframe', '14d');
+        $timeframe = $req->input('timeframe', '90d');
 
-        // prevent dupes per user
+        // prevent dupes per user (by symbol only; timeframe is implicit)
         $row = Watchlist::firstOrCreate(
-            ['user_id'=>Auth::id(), 'symbol'=>$symbol, 'timeframe'=>$timeframe],
-            []
+            ['user_id'=>Auth::id(), 'symbol'=>$symbol],
+            ['timeframe' => $timeframe]
         );
 
         return response()->json($row->fresh(), 201);
@@ -59,6 +60,21 @@ class WatchlistController extends Controller
 
     public function fetchAllData(Request $req)
     {
+        $userId = Auth::id();
+
+        // Throttle to avoid excessive queueing (15 minutes window)
+        $ttlMinutes = 15;
+        $throttleKey = "watchlist:fetch_throttle:".$userId;
+        if (! $req->boolean('force')) {
+            // Cache::add returns false if the key already exists
+            if (! Cache::add($throttleKey, now()->toIso8601String(), now()->addMinutes($ttlMinutes))) {
+                return response()->json([
+                    'message' => 'Fetch recently queued; try again later.',
+                    'throttle_minutes' => $ttlMinutes,
+                ], 202);
+            }
+        }
+
         $rows = Watchlist::where('user_id', Auth::id())->get(['symbol','timeframe']);
         if ($rows->isEmpty()) {
             return response()->json(['message'=>'Nothing to fetch (watchlist empty).'], 200);
