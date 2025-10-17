@@ -40,3 +40,9 @@ Schedule::command('seasonality:5d SPY QQQ IWM MSFT AAPL')
     ->weekdays()
     ->timezone('America/New_York')
     ->at('06:10');
+
+// Run on weekdays at 06:30 ET (adjust to your pipeline timing)
+Schedule::command('watchlist:preload')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('16:15');

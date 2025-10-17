@@ -10,6 +10,8 @@ use App\Http\Controllers\SeasonalityController;
 use App\Http\Controllers\QScoreController;
 use App\Http\Controllers\ExpiryController;
 use App\Http\Controllers\ActivityController;
+use App\Http\Controllers\SymbolSearchController;
+use App\Jobs\PrimeSymbolJob;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -38,13 +40,21 @@ Route::get('/user', function (Request $request): User {
 Route::get('/gex-levels', [GexController::class, 'getGexLevels']);
 
 
-Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/watchlist/fetch', [WatchlistController::class, 'fetchAllData']);
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Watchlist
     Route::get('/watchlist', [WatchlistController::class, 'index']);
     Route::post('/watchlist', [WatchlistController::class, 'store']);
     Route::delete('/watchlist/{id}', [WatchlistController::class, 'destroy']);
-});
 
+    // Prime a symbol on-demand
+    Route::post('/prime', function (Request $req) {
+        $sym = \App\Support\Symbols::canon($req->input('symbol',''));
+        if (!$sym) return response()->noContent(204);
+        dispatch(new PrimeSymbolJob($sym));
+        return response()->noContent(204);
+    });
+});
+Route::get('/symbols', [SymbolSearchController::class, 'lookup']);
 Route::get('/iv/term', [VolController::class,'term']);
 Route::get('/vrp',     [VolController::class,'vrp']);
 Route::get('/qscore', [QScoreController::class, 'show']);
@@ -59,7 +69,7 @@ Route::get('/expiry-pressure', [ExpiryController::class, 'pressure']);
 Route::get('/expiry-pressure/batch',  [ExpiryController::class, 'pressureBatch']);
 Route::get('/ua', [ActivityController::class, 'index']);
 
-Route::get('/ua/debug', function (\Illuminate\Http\Request $req) {
+Route::get('/ua/debug', function (Request $req) {
   $symbol = \App\Support\Symbols::canon($req->query('symbol','spy'));
   $latest = DB::table('option_chain_data as o')
     ->join('option_expirations as e','e.id','=','o.expiration_id')

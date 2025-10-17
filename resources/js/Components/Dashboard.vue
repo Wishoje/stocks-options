@@ -1,77 +1,6 @@
-<template>
+﻿<template>
   <div class="p-6 bg-gray-900 text-white min-h-screen space-y-6">
 
-    <!-- WATCHLIST CARD -->
-    <div class="bg-gray-800 rounded-2xl shadow-lg p-6">
-      <h2 class="text-2xl font-bold mb-4">Watchlist</h2>
-
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-        <div>
-          <label class="block text-sm font-semibold mb-1">Symbol</label>
-          <input v-model="newSymbol" type="text"
-                 class="w-full px-3 py-2 bg-gray-700 rounded focus:outline-none"
-                 placeholder="SPY"/>
-        </div>
-        <div>
-          <label class="block text-sm font-semibold mb-1">Timeframe</label>
-          <select v-model="newTimeframe"
-                  class="w-full px-3 py-2 bg-gray-700 rounded focus:outline-none">
-            <option value="0d">0DTE</option>
-            <option value="1d">1DTE</option>
-            <option value="7d">7D</option>
-            <option value="14d">14D</option>
-            <option value="21d">21D</option>
-            <option value="30d">30D</option>
-            <option value="45d">45D</option>
-            <option value="60d">60D</option>
-            <option value="90d">90D</option>
-          </select>
-        </div>
-
-        <button @click="addWatchlist"
-                class="px-4 py-2 bg-green-600 rounded hover:bg-green-500">
-          + Add
-        </button>
-
-        <div class="flex items-end gap-2">
-          <button @click="fetchWatchlistData"
-                  class="flex-1 px-4 py-2 bg-blue-600 rounded hover:bg-blue-500">
-            Fetch All
-          </button>
-          <button @click="loadPinBatch"
-                  class="px-3 py-2 bg-amber-600 rounded hover:bg-amber-500"
-                  title="Refresh Pin scores for the watchlist">
-            Refresh Pins
-          </button>
-        </div>
-      </div>
-
-      <ul class="mt-4 space-y-2">
-        <li v-for="item in watchlistItems" :key="item.id"
-            class="flex justify-between items-center bg-gray-700 px-4 py-2 rounded">
-          <span class="flex items-center gap-3">
-            {{ item.symbol }} — {{ item.timeframe }}
-
-            <!-- Pin risk chip -->
-            <template v-if="pinMap[item.symbol]?.headline_pin != null">
-              <span
-                class="text-[11px] px-2 py-0.5 rounded-full"
-                :class="pinBadgeClass(pinMap[item.symbol].headline_pin)"
-                :title="`Pin risk (0–100) across next ${pinDays} trading days. Data: ${pinMap[item.symbol].data_date || '—'}`">
-                Pin {{ pinMap[item.symbol].headline_pin }}
-              </span>
-            </template>
-            <!-- 🔔 bell should NOT depend on pinMap -->
-            <template v-if="uaMap[item.symbol]?.count > 0">
-              <span class="ml-2 text-amber-300" title="Unusual activity detected today">🔔</span>
-            </template>
-          </span>
-
-          <button @click="removeWatchlist(item.id)"
-                  class="px-2 py-1 bg-red-600 rounded hover:bg-red-500">×</button>
-        </li>
-      </ul>
-    </div>
 
     <!-- GEX DASHBOARD CARD -->
     <div class="bg-gray-800 rounded-2xl shadow-lg p-6 space-y-6">
@@ -234,7 +163,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import axios from 'axios'
 
 import MetricCard from './MetricCard.vue'
@@ -260,7 +189,7 @@ axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest'
 // axios.defaults.xsrfHeaderName = 'X-XSRF-TOKEN'
 
 const userSymbol     = ref('SPY')
-const timeframe      = ref('14d')
+const timeframe      = ref('90d')
 const levels         = ref(null)
 const loading        = ref(false)
 const error          = ref(null)
@@ -301,11 +230,25 @@ const uaLoading = ref(false)
 //   uaMap.value = out
 // }
 
+function onSymbolPicked(e) {
+  const sym = String(e.detail?.symbol || '').trim().toUpperCase()
+  if (!sym) return
+  userSymbol.value = sym
+  fetchGexLevels(sym, timeframe.value)
+}
+
 function pinBadgeClass(score) {
   if (score >= 70) return 'bg-yellow-400/20 text-yellow-300 ring-1 ring-yellow-400/30'
   if (score >= 40) return 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/20'
   return 'bg-gray-600/40 text-gray-200 ring-1 ring-gray-500/30'
 }
+
+function selectSymbol(sym) {
+  const s = sym.toUpperCase()
+  userSymbol.value = s
+  fetchGexLevels(s, timeframe.value)
+}
+defineExpose({ selectSymbol })
 
 async function loadPinBatch() {
   const syms = [...new Set(watchlistItems.value.map(i => i.symbol))]
@@ -447,7 +390,6 @@ async function fetchGexLevels(sym, tf) {
   try {
     const { data } = await axios.get('/api/gex-levels', { params: { symbol: sym, timeframe: tf } })
     levels.value = data
-    // Default UA expiry selector to "ALL" or nearest upcoming expiry
     const exps = Array.isArray(data?.expiration_dates) ? data.expiration_dates : []
     uaExp.value = exps.length ? 'ALL' : 'ALL'
   } catch (e) {
@@ -455,12 +397,23 @@ async function fetchGexLevels(sym, tf) {
   } finally {
     loading.value = false
   }
+  // Load the side tiles (these don’t use timeframe)
   await Promise.all([
     loadTermAndVRP(sym),
     loadSeasonality(sym),
     loadUA(sym, uaExp.value === 'ALL' ? null : uaExp.value)
   ])
 }
+
+onMounted(() => {
+  window.addEventListener('select-symbol', onSymbolPicked)
+  // initial load (90d by default)
+  fetchGexLevels(userSymbol.value, timeframe.value)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('select-symbol', onSymbolPicked)
+})
 
 // ---- Initial load
 onMounted(async () => {
@@ -490,4 +443,6 @@ watch(userSymbol, async (s) => {
 watch(uaExp, async (e) => {
   await loadUA(userSymbol.value, e === 'ALL' ? null : e)
 })
+
+watch(timeframe, tf => fetchGexLevels(userSymbol.value, tf))
 </script>
