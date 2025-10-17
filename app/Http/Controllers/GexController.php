@@ -14,7 +14,7 @@ class GexController extends Controller
     public function getGexLevels(Request $request)
     {
         $symbol    = strtoupper($request->query('symbol', 'SPY'));
-        $timeframe = $request->query('timeframe', '90d');
+        $timeframe = $request->query('timeframe', '14d');
 
         // ← now resolves dates + IDs for you
         $dates = $this->resolveExpirationDates($symbol, $timeframe);
@@ -204,7 +204,7 @@ class GexController extends Controller
                 ->unique()->values()->toArray();
         }
         // default
-        return $this->getExpirationsWithinDays($symbol, 90);
+        return $this->getExpirationsWithinDays($symbol, 14);
     }
 
     

@@ -5,12 +5,27 @@
     <div class="bg-gray-800 rounded-2xl shadow-lg p-6">
       <h2 class="text-2xl font-bold mb-4">Watchlist</h2>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
         <div>
           <label class="block text-sm font-semibold mb-1">Symbol</label>
           <input v-model="newSymbol" type="text"
                  class="w-full px-3 py-2 bg-gray-700 rounded focus:outline-none"
                  placeholder="SPY"/>
+        </div>
+        <div>
+          <label class="block text-sm font-semibold mb-1">Timeframe</label>
+          <select v-model="newTimeframe"
+                  class="w-full px-3 py-2 bg-gray-700 rounded focus:outline-none">
+            <option value="0d">0DTE</option>
+            <option value="1d">1DTE</option>
+            <option value="7d">7D</option>
+            <option value="14d">14D</option>
+            <option value="21d">21D</option>
+            <option value="30d">30D</option>
+            <option value="45d">45D</option>
+            <option value="60d">60D</option>
+            <option value="90d">90D</option>
+          </select>
         </div>
 
         <button @click="addWatchlist"
@@ -19,7 +34,7 @@
         </button>
 
         <div class="flex items-end gap-2">
-          <button @click="fetchWatchlistData(true)"
+          <button @click="fetchWatchlistData"
                   class="flex-1 px-4 py-2 bg-blue-600 rounded hover:bg-blue-500">
             Fetch All
           </button>
@@ -35,7 +50,7 @@
         <li v-for="item in watchlistItems" :key="item.id"
             class="flex justify-between items-center bg-gray-700 px-4 py-2 rounded">
           <span class="flex items-center gap-3">
-            {{ item.symbol }}
+            {{ item.symbol }} — {{ item.timeframe }}
 
             <!-- Pin risk chip -->
             <template v-if="pinMap[item.symbol]?.headline_pin != null">
@@ -245,12 +260,13 @@ axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest'
 // axios.defaults.xsrfHeaderName = 'X-XSRF-TOKEN'
 
 const userSymbol     = ref('SPY')
-const timeframe      = ref('90d')
+const timeframe      = ref('14d')
 const levels         = ref(null)
 const loading        = ref(false)
 const error          = ref(null)
 
 const newSymbol      = ref('')
+const newTimeframe   = ref('14d')
 const watchlistItems = ref([])
 
 const fetchingData   = ref(false)
@@ -348,14 +364,13 @@ async function loadWatchlist() {
 async function addWatchlist() {
   try {
     await axios.get('/sanctum/csrf-cookie')
-    const payload = { symbol: newSymbol.value.trim().toUpperCase() }
+    const payload = { symbol: newSymbol.value.trim().toUpperCase(), timeframe: newTimeframe.value }
     if (!payload.symbol) return
-    if (watchlistItems.value.some(i => i.symbol === payload.symbol)) return
+    if (watchlistItems.value.some(i => i.symbol === payload.symbol && i.timeframe === payload.timeframe)) return
     const { data } = await axios.post('/api/watchlist', payload)
     watchlistItems.value.push(data)
     newSymbol.value = ''
     await Promise.all([loadPinBatch(), loadUABadge([data.symbol])]) // refresh both
-    await fetchWatchlistData(true)
   } catch (e) {
     if (e?.response?.status === 401) window.location.href = '/login'
     console.error(e)
@@ -376,14 +391,14 @@ async function removeWatchlist(id) {
   }
 }
 
-async function fetchWatchlistData(force = false) {
+async function fetchWatchlistData() {
   loading.value = true
   fetchingData.value = true
   fetchSuccess.value = ''
   fetchError.value   = ''
   try {
     await axios.get('/sanctum/csrf-cookie')
-    const { data } = await axios.post('/api/watchlist/fetch', { force })
+    const { data } = await axios.post('/api/watchlist/fetch')
     for (const row of watchlistItems.value) {
       await loadTermAndVRP(row.symbol)
       await loadSeasonality(row.symbol)
@@ -462,8 +477,6 @@ onMounted(async () => {
       loadSeasonality(userSymbol.value),
       loadUA(userSymbol.value, null)
     ])
-
-    await fetchWatchlistData()
   } catch (e) {
     console.error(e)
   }
