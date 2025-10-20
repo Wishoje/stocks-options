@@ -53,21 +53,43 @@ class ComputeUAJob implements ShouldQueue
                     ->where('e.symbol', $symbol)
                     ->whereDate('e.expiration_date', $exp)
                     ->whereDate('o.data_date', $latest)
-                    ->get(['o.strike','o.option_type','o.volume','o.open_interest']);
+                    ->get(['o.strike','o.option_type','o.volume','o.open_interest','o.mid_price','o.last_price','o.close']);
 
                 if ($todayRows->isEmpty()) continue;
 
                 $aggToday = [];
                 $oiToday  = [];
-                $cp = ['call'=>0,'put'=>0]; // scratch
                 foreach ($todayRows as $r) {
                     $k = (float)$r->strike;
-                    $aggToday[$k]['call_vol'] = ($aggToday[$k]['call_vol'] ?? 0) + ( $r->option_type==='call' ? (int)$r->volume : 0);
-                    $aggToday[$k]['put_vol']  = ($aggToday[$k]['put_vol']  ?? 0) + ( $r->option_type==='put'  ? (int)$r->volume : 0);
-                    $oiToday[$k]  = ($oiToday[$k] ?? 0) + (int)($r->open_interest ?? 0);
+
+                    // volumes
+                    $isCall = $r->option_type === 'call';
+                    $vol    = (int)($r->volume ?? 0);
+
+                    $aggToday[$k]['call_vol'] = ($aggToday[$k]['call_vol'] ?? 0) + ($isCall ? $vol : 0);
+                    $aggToday[$k]['put_vol']  = ($aggToday[$k]['put_vol']  ?? 0) + (!$isCall ? $vol : 0);
+
+                    // OI
+                    $oiToday[$k] = ($oiToday[$k] ?? 0) + (int)($r->open_interest ?? 0);
+
+                    // pick a unit price for premium calc
+                    $px = null;
+                    if (isset($r->mid_price) && $r->mid_price !== null) $px = (float)$r->mid_price;
+                    elseif (isset($r->last_price) && $r->last_price !== null) $px = (float)$r->last_price;
+                    elseif (isset($r->close) && $r->close !== null) $px = (float)$r->close;
+
+                    // accumulate premium if we have a price
+                    if ($px !== null) {
+                        $aggToday[$k]['call_prem'] = ($aggToday[$k]['call_prem'] ?? 0) + ($isCall ? $vol * $px * 100 : 0);
+                        $aggToday[$k]['put_prem']  = ($aggToday[$k]['put_prem']  ?? 0) + (!$isCall ? $vol * $px * 100 : 0);
+                    }
                 }
                 foreach ($aggToday as $k=>$v) {
-                    $aggToday[$k]['total_vol'] = (int)($v['call_vol'] ?? 0) + (int)($v['put_vol'] ?? 0);
+                    $aggToday[$k]['total_vol']   = (int)($v['call_vol'] ?? 0) + (int)($v['put_vol'] ?? 0);
+                    $aggToday[$k]['total_prem']  = null;
+                    if (array_key_exists('call_prem',$v) || array_key_exists('put_prem',$v)) {
+                        $aggToday[$k]['total_prem'] = (float)($v['call_prem'] ?? 0) + (float)($v['put_prem'] ?? 0);
+                    }
                 }
 
                 // 3) Build 30d baseline of total volume per strike
@@ -103,23 +125,27 @@ class ComputeUAJob implements ShouldQueue
                     $ratio = (int)$v['total_vol'] / $oi;
 
                     if ($v['total_vol'] >= $this->VOL_MIN && ($z >= $this->Z_SCORE_MIN || $ratio >= $this->VOL_OI_MIN)) {
-                        $payload[] = [
-                            'symbol'    => $symbol,
-                            'data_date' => $latest,
-                            'exp_date'  => $exp,
-                            'strike'    => $k,
-                            'z_score'   => round($z, 3),
-                            'vol_oi'    => round($ratio, 4),
-                            'meta'      => json_encode([
-                                'call_vol' => (int)$v['call_vol'],
-                                'put_vol'  => (int)$v['put_vol'],
-                                'total_vol'=> (int)$v['total_vol'],
-                                'mu'       => round($mu,2),
-                                'sigma'    => round($sigma,2),
-                            ], JSON_THROW_ON_ERROR),
-                            'created_at'=> now(),
-                            'updated_at'=> now(),
+                      $payload[] = [
+                        'symbol'    => $symbol,
+                        'data_date' => $latest,
+                        'exp_date'  => $exp,
+                        'strike'    => $k,
+                        'z_score'   => round($z, 3),
+                        'vol_oi'    => round($ratio, 4),
+                        'meta'      => json_encode([
+                            'call_vol'    => (int)$v['call_vol'],
+                            'put_vol'     => (int)$v['put_vol'],
+                            'total_vol'   => (int)$v['total_vol'],
+                            'premium_usd' => $v['total_prem'] !== null ? round($v['total_prem'], 2) : null,
+                            'call_prem'   => isset($v['call_prem']) ? round($v['call_prem'],2) : null,
+                            'put_prem'    => isset($v['put_prem'])  ? round($v['put_prem'],2) : null,
+                            'mu'          => round($mu,2),
+                            'sigma'       => round($sigma,2),
+                        ], JSON_THROW_ON_ERROR),
+                        'created_at'=> now(),
+                        'updated_at'=> now(),
                         ];
+
                     }
                 }
 

@@ -1,7 +1,5 @@
 ﻿<template>
   <div class="p-6 bg-gray-900 text-white min-h-screen space-y-6">
-
-
     <!-- GEX DASHBOARD CARD -->
     <div class="bg-gray-800 rounded-2xl shadow-lg p-6 space-y-6">
       <h2 class="text-2xl font-bold flex items-center gap-3">
@@ -90,6 +88,64 @@
         <QScorePanel :symbol="userSymbol" />
 
         <!-- Unusual Activity tile -->
+        <div class="flex items-center gap-2 text-xs mb-3">
+          <label>Expiry</label>
+          <select v-model="uaExp" class="px-2 py-1 bg-gray-700 rounded text-sm">
+            <option value="ALL">All</option>
+            <option v-for="d in (levels?.expiration_dates || [])" :key="d" :value="d">{{ d }}</option>
+          </select>
+
+          <label>Top</label>
+          <input type="number" v-model.number="uaTop" class="w-16 bg-gray-700 rounded px-2 py-1">
+
+          <label>Sort</label>
+          <select v-model="uaSort" class="bg-gray-700 rounded px-2 py-1">
+            <option value="z_score">Z-Score</option>
+            <option value="premium">Premium ($)</option>
+            <option value="vol_oi">Vol/OI</option>
+          </select>
+
+          <button @click="loadUA(userSymbol, uaExp==='ALL'?null:uaExp)"
+                  class="ml-auto px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded">
+            Apply
+          </button>
+
+          <button @click="showAdvanced = !showAdvanced"
+                  class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded">
+            {{ showAdvanced ? 'Hide' : 'Advanced' }}
+          </button>
+        </div>
+
+        <!-- Advanced panel -->
+        <div v-if="showAdvanced" class="flex flex-wrap items-center gap-2 text-xs mb-2">
+          <label>min Z</label>
+          <input type="number" step="0.1" v-model.number="uaMinZ" class="w-16 bg-gray-700 rounded px-2 py-1">
+
+          <label>min Vol/OI</label>
+          <input type="number" step="0.1" v-model.number="uaMinVolOI" class="w-16 bg-gray-700 rounded px-2 py-1">
+
+          <label>min Vol</label>
+          <input type="number" v-model.number="uaMinVol" class="w-20 bg-gray-700 rounded px-2 py-1">
+
+          <label>min $</label>
+          <input type="number" v-model.number="uaMinPrem" class="w-24 bg-gray-700 rounded px-2 py-1" placeholder="premium">
+
+          <label>near ±%</label>
+          <input type="number" v-model.number="uaNearPct" class="w-16 bg-gray-700 rounded px-2 py-1" placeholder="10">
+
+          <label>Side</label>
+          <select v-model="uaSide" class="bg-gray-700 rounded px-2 py-1">
+            <option value="">Both</option>
+            <option value="call">Call-led</option>
+            <option value="put">Put-led</option>
+          </select>
+
+          <div class="ml-auto flex gap-2">
+            <button @click="presetConservative" class="px-2 py-1 bg-gray-700 rounded">Conservative</button>
+            <button @click="presetAggressive" class="px-2 py-1 bg-gray-700 rounded">Aggressive</button>
+          </div>
+        </div>
+
         <div class="flex items-center gap-2">
           <label class="text-xs text-gray-300">Expiry</label>
           <select v-model="uaExp"
@@ -217,18 +273,31 @@ const uaRows = ref([])
 const uaDate = ref(null)
 const uaExp  = ref('ALL')
 const uaLoading = ref(false)
+const uaTop      = ref(5)
+const uaLimit    = ref(50)
+const uaMinZ     = ref(2.5)
+const uaMinVolOI = ref(2.0)
+const uaMinVol   = ref(500)
+const uaNearPct  = ref(10)      // ±10% around spot, good default for SPY/QQQ
+const uaSide     = ref('')      // '', 'call', 'put'
+const uaSort     = ref('z_score') // 'z_score' | 'premium' | 'vol_oi'
+const uaMinPrem  = ref(0)       // optional floor on premium $
+const showAdvanced = ref(false)
 
-// async function loadUABadge(symbols) {
-//   // simple fan-out; for many symbols you can make a batch endpoint later
-//   const out = {}
-//   for (const s of symbols) {
-//     try {
-//       const { data } = await axios.get('/api/ua', { params: { symbol: s } })
-//       out[s] = { data_date: data?.data_date || null, count: (data?.items || []).length }
-//     } catch (e) { out[s] = { data_date:null, count:0 } }
-//   }
-//   uaMap.value = out
-// }
+function presetConservative() {
+  uaMinZ.value = 3.0
+  uaMinVolOI.value = 0.75
+  uaMinVol.value = 1000
+  uaNearPct.value = 5
+  uaSide.value = ''
+}
+function presetAggressive() {
+  uaMinZ.value = 2.0
+  uaMinVolOI.value = 0.25
+  uaMinVol.value = 0
+  uaNearPct.value = 0
+  uaSide.value = ''
+}
 
 function onSymbolPicked(e) {
   const sym = String(e.detail?.symbol || '').trim().toUpperCase()
@@ -261,6 +330,12 @@ async function loadPinBatch() {
   } catch (e) {
     console.error('pin batch error', e)
   }
+}
+
+function showMore(){
+  uaTop.value   = Math.min(uaTop.value + 3, 20)
+  uaLimit.value = Math.min(uaLimit.value + 30, 200)
+  loadUA(userSymbol.value, uaExp.value==='ALL'?null:uaExp.value)
 }
 
 // ---- Seasonality / Term / VRP helpers
@@ -371,15 +446,28 @@ async function loadUABadge(symbols) {
 async function loadUA(sym, exp=null) {
   uaLoading.value = true
   try {
-    const { data } = await axios.get('/api/ua', { params: { symbol: sym, exp } })
+    const { data } = await axios.get('/api/ua', {
+      params: {
+        symbol: sym,
+        exp,
+        per_expiry: uaTop.value,
+        limit: uaLimit.value,
+        min_z: uaMinZ.value,
+        min_vol_oi: uaMinVolOI.value,
+        min_vol: uaMinVol.value,
+        min_premium: uaMinPrem.value,
+        near_spot_pct: uaNearPct.value || 0,
+        only_side: uaSide.value || null,
+        with_premium: true,
+        sort: uaSort.value
+      }
+    })
     uaDate.value = data?.data_date || null
     uaRows.value = data?.items || []
   } catch {
     uaDate.value = null
     uaRows.value = []
-  } finally {
-    uaLoading.value = false
-  }
+  } finally { uaLoading.value = false }
 }
 
 // ---- GEX Levels
