@@ -83,7 +83,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             // build, sort, and cap nearest expiries
             $expDates = array_keys($rawExpirations);
             sort($expDates);                 // chronological
-            $expDates = array_slice($expDates, 0, length: 1); // keep nearest 16
+            $expDates = array_slice($expDates, 0, length: 16); // keep nearest 16
 
             if (!$expDates) {
                 Log::warning("No expirations within next {$this->days}d for {$symbol}.");
