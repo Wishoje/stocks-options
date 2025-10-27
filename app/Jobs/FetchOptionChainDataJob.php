@@ -10,230 +10,273 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Artisan;
 use App\Models\OptionExpiration;
-use App\Models\OptionChainData;
-use Carbon\Carbon;
 
 class FetchOptionChainDataJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
+    protected array $symbols;
+    protected ?int  $days;
 
-    protected $symbols;
-    protected $days;   // for example, we might specify 7 or 14 if we want to restrict fetch
+    protected array $buffer = [];
+    protected int   $bufferLimit = 1500;
 
-    /**
-     * @param array $symbols Array of symbols (e.g. ['SPY','AMZN','TSLA'])
-     * @param int|null $days Number of days from now to filter expirations (optional)
-     */
+    public $timeout = 900;
+    public $tries   = 1;
+
     public function __construct(array $symbols, ?int $days = null)
     {
         $this->symbols = array_map(fn($s)=>\App\Support\Symbols::canon($s), $symbols);
-        $this->days = $days;  // if null, we might fetch all available or have a default
+        $this->days    = $days;
+        $this->onQueue('ingest');
     }
 
-    public function handle()
+    public function handle(): void
     {
-        $date = $this->tradingDate(now());
-        $apiKey = env('FINNHUB_API_KEY');
+        foreach (DB::getConnections() as $conn) {
+            $conn->disableQueryLog();
+        }
 
-        // If $days is specified, define an end window
-        // Otherwise, you could skip filtering or use a default
-        $now = now();
-        $endWindow = $this->days 
-            ? now()->addDays($this->days) 
-            : now()->addDays(14);  // fallback default
+        $date      = $this->tradingDate(now());
+        $apiKey    = env('FINNHUB_API_KEY');
+        $now       = now();
+        $endWindow = $this->days ? now()->addDays($this->days) : now()->addDays(14);
 
         foreach ($this->symbols as $symbol) {
-            $url = "https://finnhub.io/api/v1/stock/option-chain";
             $response = Http::retry(3, 250, throw: false)
-                ->get($url, ['symbol' => $symbol, 'token' => $apiKey]);
+                ->timeout(25)->connectTimeout(10)
+                ->get('https://finnhub.io/api/v1/stock/option-chain', [
+                    'symbol' => $symbol,
+                    'token'  => $apiKey,
+                ]);
 
             if ($response->failed()) {
-                \Log::error("Failed to fetch data for $symbol from Finnhub. HTTP Status: " . $response->status());
-                \Log::error("Response Body: " . $response->body());
+                Log::error("Finnhub fail {$symbol} ({$response->status()}): ".$response->body());
                 continue;
             }
 
             $data = $response->json();
-            if (!isset($data['data']) || !is_array($data['data']) || count($data['data']) === 0) {
-                \Log::warning("No option data for $symbol from Finnhub.");
+            if (!isset($data['data']) || !is_array($data['data']) || !count($data['data'])) {
+                Log::warning("No option data for {$symbol}.");
                 continue;
             }
 
-            $underlyingPrice = $data['lastTradePrice'] ?? null;
-            if (!$underlyingPrice) {
-                \Log::warning("No underlying price available for $symbol. Skipping gamma computation.");
+            $S = $data['lastTradePrice'] ?? null;
+            if (!$S) {
+                Log::warning("No underlying price for {$symbol}. Skipping greeks.");
                 continue;
             }
 
-            // Filter all expiration sets within our defined window
-            $selectedExpirations = [];
-            foreach ($data['data'] as $expirationSet) {
-                $expirationDate = $expirationSet['expirationDate'] ?? null;
-                if (!$expirationDate) {
-                    continue;
-                }
-                $expirationTimestamp = strtotime($expirationDate);
-
-                if ($expirationTimestamp >= $now->timestamp && $expirationTimestamp <= $endWindow->timestamp) {
-                    $selectedExpirations[] = $expirationSet;
+            // filter expiries within window
+            $rawExpirations = [];
+            foreach ($data['data'] as $set) {
+                $ed = $set['expirationDate'] ?? null;
+                if (!$ed) continue;
+                $ts = strtotime($ed);
+                if ($ts >= $now->timestamp && $ts <= $endWindow->timestamp) {
+                    $rawExpirations[$ed] = true;
                 }
             }
 
-            // If no expirations match, skip
-            if (empty($selectedExpirations)) {
-                \Log::warning("No expiration within next {$this->days} days for $symbol.");
+            // build, sort, and cap nearest expiries
+            $expDates = array_keys($rawExpirations);
+            sort($expDates);                 // chronological
+            $expDates = array_slice($expDates, 0, length: 1); // keep nearest 16
+
+            if (!$expDates) {
+                Log::warning("No expirations within next {$this->days}d for {$symbol}.");
                 continue;
             }
 
-            // Process each set
-            foreach ($selectedExpirations as $expirationSet) {
-                $expirationDate = $expirationSet['expirationDate'];
-                $expirationTimestamp = strtotime($expirationDate);
+            $expIds = $this->ensureExpirationIds($symbol, $expDates);
 
-                $calls = $expirationSet['options']['CALL'] ?? [];
-                $puts  = $expirationSet['options']['PUT']  ?? [];
+            $already = DB::table('option_chain_data as o')
+                ->whereIn('o.expiration_id', array_values($expIds))
+                ->whereDate('o.data_date', $date)
+                ->exists();
 
-                // Process calls
-                foreach ($calls as $call) {
-                    $this->storeOptionData($symbol, $date, 'call', $call, $underlyingPrice, $expirationDate, $expirationTimestamp);
+            if ($already) {
+                Log::info("Skip {$symbol}: already ingested for {$date}.");
+                continue;
+            }
+
+            foreach ($data['data'] as $set) {
+                $expDate = $set['expirationDate'] ?? null;
+                if (!$expDate || !isset($expIds[$expDate])) continue;
+
+                 $hasThisExpiryToday = DB::table('option_chain_data')
+                    ->where('expiration_id', $expIds[$expDate])
+                    ->whereDate('data_date', $date)
+                    ->limit(1)
+                    ->exists();
+                if ($hasThisExpiryToday) continue;
+
+                $expId = $expIds[$expDate];
+                $tsExp = strtotime($expDate);
+
+                $calls = $set['options']['CALL'] ?? [];
+                $puts  = $set['options']['PUT']  ?? [];
+
+                foreach ($calls as $row) {
+                    if (
+                        (!isset($row['volume']) || (int)$row['volume'] === 0) &&
+                        (!isset($row['openInterest']) || (int)$row['openInterest'] === 0)
+                    ) {
+                        // nothing to aggregate later; skip persisting
+                        continue;
+                    }
+                    $this->bufferRow($date, 'call', $row, $S, $expId, $tsExp);
+                }
+                foreach ($puts  as $row) {
+                    if (
+                        (!isset($row['volume']) || (int)$row['volume'] === 0) &&
+                        (!isset($row['openInterest']) || (int)$row['openInterest'] === 0)
+                    ) {
+                        // nothing to aggregate later; skip persisting
+                        continue;
+                    }
+                    $this->bufferRow($date, 'put',  $row, $S, $expId, $tsExp);
                 }
 
-                // Process puts
-                foreach ($puts as $put) {
-                    $this->storeOptionData($symbol, $date, 'put', $put, $underlyingPrice, $expirationDate, $expirationTimestamp);
+                if (count($this->buffer) >= $this->bufferLimit) {
+                    $this->flushBuffer();
                 }
             }
 
-             \Artisan::call('chain:snapshot', ['date' => $date]);
-
-            \Log::info("Processed $symbol options for up to {$this->days} days out.");
+            $this->flushBuffer();
+            Log::info("Processed {$symbol} options (<= {$this->days}d).");
         }
+
+        // run snapshot once
+        Artisan::call('chain:snapshot', ['date' => $date]);
     }
 
-    protected function storeOptionData(
-        string $symbol, 
-        string $date, 
-        string $optionType, 
-        array $option, 
-        float $underlyingPrice, 
-        string $expirationDate, 
-        int $expirationTimestamp
-    ) {
-        // 1) Find or create the expiration row
-        $expiration = OptionExpiration::firstOrCreate(
-            [
-                'symbol'          => $symbol,
-                'expiration_date' => $expirationDate,
-            ]
-        );
-
-        // 2) Build an "identifier" for the chain data if needed
-        // But usually, you'll do an updateOrCreate with a unique "data_date + strike + option_type"
-        // because you might have multiple daily records for the same strike. 
-        // Or if you only store 1 row per day, that's your condition.
-    
-        $strike     = $option['strike'] ?? null;
-        $openInterest = $option['openInterest'] ?? null;
-        $ivRaw = $option['impliedVolatility'] ?? null;
-        if ($ivRaw !== null) {
-            $iv = ($ivRaw > 1.0) ? $ivRaw / 100.0 : $ivRaw; // percent -> decimal
-        } else {
-            $iv = null;
-        }
-        $volume     = $option['volume'] ?? null;
-    
-        $T    = $this->timeToExpirationYears($expirationTimestamp);
-        $delta = null;
-        $vega  = null;
-        $gamma = null;
-
-        if ($iv && $iv > 0 && $strike && $strike > 0 && $underlyingPrice > 0 && $T > 0) {
-            $gamma = $this->computeGamma($underlyingPrice, $strike, $T, $iv, 0.0);
-            $delta = $this->computeDelta($optionType, $underlyingPrice, $strike, $T, $iv, 0.0);
-            $vega  = $this->computeVega($underlyingPrice, $strike, $T, $iv, 0.0);
-        }
-
-        OptionChainData::updateOrCreate(
-            [
-                'expiration_id' => $expiration->id,
-                'data_date'     => $date,
-                'option_type'   => $optionType,
-                'strike'        => $strike,
-            ],
-            [
-                'open_interest'    => $openInterest,
-                'volume'           => $volume,
-                'gamma'            => $gamma,
-                'delta'            => $delta,
-                'vega'             => $vega,
-                'iv'               => $iv,
-                'underlying_price' => $underlyingPrice,
-                'data_timestamp'   => now(),
-            ]
-        );
-
-    }
-
-    protected function timeToExpirationYears(int $expirationTimestamp)
+    protected function ensureExpirationIds(string $symbol, array $dates): array
     {
-        $now = time();
-        $secondsToExp = max($expirationTimestamp - $now, 0);
-        $yearInSeconds = 365 * 24 * 3600;
-        return $secondsToExp / $yearInSeconds;
+        $existing = OptionExpiration::where('symbol',$symbol)
+            ->whereIn('expiration_date', $dates)
+            ->get(['id','expiration_date'])
+            ->keyBy('expiration_date');
+
+        $toInsert = [];
+        foreach ($dates as $d) {
+            if (!$existing->has($d)) {
+                $toInsert[] = [
+                    'symbol' => $symbol,
+                    'expiration_date' => $d,
+                    'created_at'=>now(), 'updated_at'=>now()
+                ];
+            }
+        }
+        if ($toInsert) {
+            DB::table('option_expirations')->insert($toInsert);
+            $existing = OptionExpiration::where('symbol',$symbol)
+                ->whereIn('expiration_date', $dates)
+                ->get(['id','expiration_date'])
+                ->keyBy('expiration_date');
+        }
+
+        $map = [];
+        foreach ($dates as $d) $map[$d] = $existing[$d]->id ?? null;
+        return $map;
+    }
+
+    protected function bufferRow(string $date, string $type, array $opt, float $S, int $expirationId, int $expTs): void
+    {
+        $K   = $opt['strike'] ?? null;
+        if (!$K) return;
+
+        $ivR = $opt['impliedVolatility'] ?? null;
+        $iv  = $ivR !== null ? ($ivR > 1.0 ? $ivR/100.0 : $ivR) : null;
+        $oi  = $opt['openInterest'] ?? null;
+        $vol = $opt['volume'] ?? null;
+
+        $T = $this->timeToExpirationYears($expTs);
+        $delta = $vega = $gamma = null;
+        if ($iv && $iv > 0 && $K > 0 && $S > 0 && $T > 0) {
+            $gamma = $this->computeGamma($S, $K, $T, $iv, 0.0);
+            $delta = $this->computeDelta($type, $S, $K, $T, $iv, 0.0);
+            $vega  = $this->computeVega($S, $K, $T, $iv, 0.0);
+        }
+
+        $this->buffer[] = [
+            'expiration_id'    => $expirationId,
+            'data_date'        => $date,
+            'option_type'      => $type,
+            'strike'           => $K,
+            'open_interest'    => $oi,
+            'volume'           => $vol,
+            'gamma'            => $gamma,
+            'delta'            => $delta,
+            'vega'             => $vega,
+            'iv'               => $iv,
+            'underlying_price' => $S,
+            'data_timestamp'   => now(),
+        ];
+    }
+
+    protected function flushBuffer(): void
+    {
+        if (!$this->buffer) return;
+
+        // canonical order to reduce lock thrash
+        usort($this->buffer, fn($a,$b) =>
+            ($a['expiration_id'] <=> $b['expiration_id']) ?:
+            strcmp($a['data_date'], $b['data_date'])      ?:
+            strcmp($a['option_type'], $b['option_type'])  ?:
+            ($a['strike'] <=> $b['strike'])
+        );
+
+        foreach (array_chunk($this->buffer, 600) as $chunk) {
+
+           $this->withDeadlockRetry(function() use ($chunk) {
+               DB::transaction(function () use ($chunk) {
+                   DB::table('option_chain_data')->upsert(
+                       $chunk,
+                       ['expiration_id','data_date','option_type','strike'],
+                       ['open_interest','volume','gamma','delta','vega','iv','underlying_price','data_timestamp']
+                   );
+               }, 1);
+           });
+
+        }
+        $this->buffer = [];
+    }
+
+    protected function timeToExpirationYears(int $expTs): float
+    {
+        $secondsToExp = max($expTs - time(), 0);
+        return $secondsToExp / (365 * 24 * 3600);
     }
 
     protected function computeGamma(float $S, float $K, float $T, float $sigma, float $r)
     {
-        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) {
-            return null;
-        }
-
-        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
-        $nd1 = $this->normPdf($d1);
-        $gamma = $nd1 / ($S * $sigma * sqrt($T));
-        return $gamma;
+        if ($T<=0 || $sigma<=0 || $S<=0 || $K<=0) return null;
+        $d1 = (log($S/$K) + ($r + 0.5*$sigma*$sigma)*$T) / ($sigma*sqrt($T));
+        $nd1= (1.0/sqrt(2.0*M_PI))*exp(-0.5*$d1*$d1);
+        return $nd1 / ($S * $sigma * sqrt($T));
     }
 
-    protected function normPdf(float $x)
+    protected function computeDelta(string $type, float $S, float $K, float $T, float $sigma, float $r=0.0): ?float
     {
-        return (1.0 / sqrt(2.0 * M_PI)) * exp(-0.5 * $x * $x);
+        if ($T<=0 || $sigma<=0 || $S<=0 || $K<=0) return null;
+        $d1 = (log($S/$K) + ($r + 0.5*$sigma*$sigma)*$T) / ($sigma*sqrt($T));
+        $Nd1 = $this->normCdf($d1);  // restored from old code
+        return $type==='call' ? $Nd1 : ($type==='put' ? $Nd1 - 1.0 : null);
     }
 
-    protected function computeDelta(string $type, float $S, float $K, float $T, float $sigma, float $r = 0.0): ?float
+    protected function computeVega(float $S, float $K, float $T, float $sigma, float $r=0.0): ?float
     {
-        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) return null;
-
-        // if your API returns IV in percent (e.g., 24.5), convert: $sigma /= 100.0;
-        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
-        $Nd1 = $this->normCdf($d1);
-        if ($type === 'call') return $Nd1;
-        if ($type === 'put')  return $Nd1 - 1.0;
-        return null;
-    }
-
-    protected function computeVega(float $S, float $K, float $T, float $sigma, float $r = 0.0): ?float
-    {
-        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) return null;
-        $d1  = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
-        $nd1 = $this->normPdf($d1);
-        // Black–Scholes vega is per 1 vol (i.e., per 100%); multiply by 0.01 if you want per 1 vol point
+        if ($T<=0 || $sigma<=0 || $S<=0 || $K<=0) return null;
+        $d1 = (log($S/$K) + ($r + 0.5*$sigma*$sigma)*$T) / ($sigma*sqrt($T));
+        $nd1= (1.0/sqrt(2.0*M_PI))*exp(-0.5*$d1*$d1);
         return $S * $nd1 * sqrt($T);
     }
 
-    protected function tradingDate(\Carbon\Carbon $now): string
+    private function normCdf(float $x): float
     {
-        // Use America/New_York and roll back to previous business day on weekends.
-        $ny = $now->copy()->setTimezone('America/New_York');
-        if ($ny->isWeekend()) {
-            $ny->previousWeekday();
-        }
-        return $ny->toDateString();
-    }
-
-    protected function normCdf(float $x): float
-    {
-        // constants for A&S 7.1.26
         $p = 0.2316419;
         $b1 = 0.319381530;
         $b2 = -0.356563782;
@@ -242,11 +285,31 @@ class FetchOptionChainDataJob implements ShouldQueue
         $b5 = 1.330274429;
 
         $t = 1.0 / (1.0 + $p * abs($x));
-        $nd = $this->normPdf($x); // 1/sqrt(2π) * e^{-x^2/2}
+        $nd = (1.0 / sqrt(2.0 * M_PI)) * exp(-0.5 * $x * $x);
         $poly = ($b1*$t) + ($b2*$t*$t) + ($b3*$t*$t*$t) + ($b4*$t*$t*$t*$t) + ($b5*$t*$t*$t*$t*$t);
         $cdf = 1.0 - $nd * $poly;
 
         return ($x >= 0.0) ? $cdf : 1.0 - $cdf;
     }
 
+    protected function tradingDate(\Carbon\Carbon $now): string
+    {
+        $ny = $now->copy()->setTimezone('America/New_York');
+        if ($ny->isWeekend()) $ny->previousWeekday();
+        return $ny->toDateString();
+    }
+
+    protected function withDeadlockRetry(callable $fn, int $tries = 3, int $sleepMs = 150) {
+        beginning:
+        try { return $fn(); }
+        catch (\Illuminate\Database\QueryException $e) {
+            if ($tries > 1 && str_contains($e->getMessage(), 'Deadlock')) {
+                usleep($sleepMs * 1000);
+                $tries--;
+                $sleepMs *= 2; // backoff
+                goto beginning;
+            }
+            throw $e;
+        }
+    }
 }

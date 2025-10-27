@@ -42,7 +42,7 @@ class PrimeSymbolJob implements ShouldQueue
 
         $batch->add(new \App\Jobs\PricesBackfillJob([$s], 400));
         $batch->add(new \App\Jobs\PricesDailyJob([$s]));
-        $batch->add(new \App\Jobs\FetchOptionChainDataJob([$s], 90));
+        $batch->add((new \App\Jobs\FetchOptionChainDataJob([$s], 90))->onQueue('ingest')); // always 90 days
         $batch->add(new \App\Jobs\ComputeVolMetricsJob([$s]));
         $batch->add(new \App\Jobs\Seasonality5DJob([$s], 15, 2));
         $batch->add(new \App\Jobs\ComputeExpiryPressureJob([$s], 3));
