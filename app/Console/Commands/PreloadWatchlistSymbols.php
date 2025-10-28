@@ -24,7 +24,7 @@ class PreloadWatchlistSymbols extends Command
 
         $batch->add(new PricesBackfillJob($symbols, 400));
         $batch->add(new PricesDailyJob($symbols));
-        $batch->add(new FetchOptionChainDataJob($symbols, 90))->onQueue('ingest'); // always 90 days
+        $batch->add((new FetchOptionChainDataJob($symbols, 90))->onQueue('ingest')); // always 90 days
         $batch->add(new ComputeVolMetricsJob($symbols));
         $batch->add(new Seasonality5DJob($symbols, 15, 2));
         $batch->add(new ComputeExpiryPressureJob($symbols, 3));

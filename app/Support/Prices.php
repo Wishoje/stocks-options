@@ -19,30 +19,43 @@ class Prices
         $symbol = \App\Support\Symbols::canon($symbol);
         $date   = Carbon::parse($date)->toDateString();
 
-        // 1) Polygon (preferred)
-        if ($out = self::polygonDaily($symbol, $date)) return $out;
+        // If you only have Options Starter, skip Polygon for equity OHLC entirely:
+        $usePolygonEquities = (bool) env('POLYGON_EQUITIES_ENABLED', false);
 
-        // 2) Finnhub (skip if we cached a 403 for this symbol)
+        if ($usePolygonEquities) {
+            if ($out = self::polygonDaily($symbol, $date)) return $out;
+        }
+
+        // (optional) keep Finnhub if you still want it as a second provider
         $denyKey = "px:finnhub:deny:{$symbol}";
         if (!Cache::get($denyKey)) {
             $out = self::finnhubDaily($symbol, $date, $denyKey);
             if ($out) return $out;
         }
 
-        // 3) Yahoo (best-effort)
+        // Yahoo fallback
         return self::yahooDaily($symbol, $date);
-    }
+}
+
 
     protected static function polygonDaily(string $symbol, string $date): ?array
     {
         $apiKey = env('POLYGON_API_KEY');
         if (!$apiKey) return null;
 
-        // v2 aggregates, 1 day range
+        // bail early if we previously saw NOT_AUTHORIZED
+        if (Cache::get("px:polygon:deny:{$symbol}")) return null;
+
         $url = "https://api.polygon.io/v2/aggs/ticker/{$symbol}/range/1/day/{$date}/{$date}";
-        $resp = Http::retry(2, 200, throw:false)
+        $resp = Http::retry(1, 200, throw:false)
             ->timeout(15)->connectTimeout(10)
             ->get($url, ['adjusted'=>true, 'sort'=>'asc', 'apiKey'=>$apiKey]);
+
+        if ($resp->status() === 403) {
+            Cache::put("px:polygon:deny:{$symbol}", 1, now()->addDay());
+            Log::notice("Polygon equities denied {$symbol} {$date} (cached 24h)");
+            return null;
+        }
 
         if ($resp->failed()) {
             Log::warning("Polygon daily fail {$symbol} {$date}: {$resp->status()} ".$resp->body());
@@ -62,6 +75,7 @@ class Prices
             'volume' => $r['v'] ?? null,
         ];
     }
+
 
     protected static function finnhubDaily(string $symbol, string $date, string $denyKey): ?array
     {
@@ -134,4 +148,37 @@ class Prices
             'volume' => $q['volume'][0]?? null,
         ];
     }
+
+    protected static function polygonSpot(string $symbol): ?array
+    {
+        $apiKey = env('POLYGON_API_KEY');
+        if (!$apiKey) return null;
+
+        $url = "https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/{$symbol}";
+        $resp = Http::retry(1, 250, throw:false)
+            ->timeout(10)->connectTimeout(5)
+            ->get($url, ['apiKey'=>$apiKey]);
+
+        if ($resp->failed()) {
+            Log::warning("Polygon spot fail {$symbol}: {$resp->status()} ".$resp->body());
+            return null;
+        }
+
+        $j = $resp->json();
+        $t = $j['ticker'] ?? [];
+
+        // 15-minute delayed last trade price
+        $p = $t['lastTrade']['p'] ?? ($t['day']['c'] ?? null);
+        if (!$p) return null;
+
+        return [
+            'date'   => now('America/New_York')->toDateString(),
+            'open'   => $t['day']['o'] ?? null,
+            'high'   => $t['day']['h'] ?? null,
+            'low'    => $t['day']['l'] ?? null,
+            'close'  => $p,
+            'volume' => $t['day']['v'] ?? null,
+        ];
+    }
+
 }
