@@ -318,7 +318,4 @@ class ActivityController extends Controller
 
         return 0.0;
     }
-
-
-
 }

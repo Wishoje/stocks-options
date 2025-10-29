@@ -56,7 +56,7 @@
     </div>
     </div>
 
-    <DexByExpiryDiverging v-if="byExpiry.length" :items="byExpiry" />
+    <DexByExpiryDiverging v-if="byExpiry.length" :items="byExpiry" :today="dataDate || ''" />
     <div v-if="byExpiry.length" class="grid grid-cols-2 gap-4 mt-2">
         <div>
             <div class="text-xs text-gray-400 mb-1">Top +DEX</div>
