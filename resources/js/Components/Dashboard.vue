@@ -6,42 +6,46 @@
         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div class="space-y-1">
             <h2 class="text-2xl font-bold tracking-tight">GEX Levels & Analytics</h2>
-            <p class="text-xs text-gray-400">{{ userSymbol }} — {{ gexTf.value.toUpperCase() }}</p>
+            <p class="text-xs text-gray-400">{{ userSymbol }} — {{ timeframe.toUpperCase() }}</p>
           </div>
           <!-- Controls -->
-          <div class="px-6 pt-6 pb-4 border-b border-gray-700/50">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div class="space-y-1">
-                <h2 class="text-2xl font-bold tracking-tight">GEX Levels & Analytics</h2>
-                <p class="text-xs text-gray-400">{{ userSymbol }}</p>
-              </div>
-
-              <!-- Group-local timeframe control (applies to GEX Levels + Strikes only) -->
-              <div class="flex items-end gap-2">
-                <div>
-                  <label class="block text-xs font-semibold mb-1 text-gray-300">GEX/Strikes Timeframe</label>
-                  <select v-model="gexTf" class="px-3 py-2 bg-gray-700 rounded focus:outline-none">
-                    <option value="0d">0DTE</option><option value="1d">1DTE</option><option value="7d">7D</option>
-                    <option value="14d">14D</option><option value="21d">21D</option><option value="30d">30D</option>
-                    <option value="45d">45D</option><option value="60d">60D</option><option value="90d">90D</option>
-                  </select>
-                </div>
-              </div>
+          <div class="w-full sm:w-auto grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs font-semibold mb-1 text-gray-300">Symbol</label>
+              <input v-model="userSymbol" type="text"
+                     class="w-full px-3 py-2 bg-gray-700 rounded focus:outline-none uppercase tracking-wider"
+                     placeholder="SPY" />
             </div>
-
-            <!-- Expiration chips -->
-            <div v-if="levels?.expiration_dates?.length" class="mt-4 flex flex-wrap gap-2">
-              <span v-for="d in levels.expiration_dates" :key="d"
-                    class="px-2 py-1 rounded-full bg-gray-700 text-[11px] text-gray-200">{{ d }}</span>
+            <div>
+              <label class="block text-xs font-semibold mb-1 text-gray-300">Timeframe</label>
+              <select v-model="timeframe" class="w-full px-3 py-2 bg-gray-700 rounded focus:outline-none">
+                <option value="0d">0DTE</option><option value="1d">1DTE</option><option value="7d">7D</option>
+                <option value="14d">14D</option><option value="21d">21D</option><option value="30d">30D</option>
+                <option value="45d">45D</option><option value="60d">60D</option><option value="90d">90D</option>
+              </select>
             </div>
-
-            <!-- Data freshness -->
-            <div class="mt-2 text-[11px] text-gray-500" v-if="levels?.date_prev || lastUpdated">
-              <span v-if="levels?.date_prev">Data: {{ levels.date_prev }} (EOD)</span>
-              <span v-if="levels?.date_prev && lastUpdated"> • </span>
-              <span v-if="lastUpdated">Updated {{ fromNow(lastUpdated) }}</span>
+            <div class="flex items-end">
+              <button @click="fetchGexLevels(userSymbol, timeframe)"
+                      class="w-full px-4 py-2 bg-blue-600 rounded hover:bg-blue-500 transition"
+                      :disabled="loading">
+                <span v-if="loading">Loading…</span>
+                <span v-else>Load</span>
+              </button>
             </div>
           </div>
+        </div>
+
+        <!-- Expiration chips -->
+        <div v-if="levels?.expiration_dates?.length" class="mt-4 flex flex-wrap gap-2">
+          <span v-for="d in levels.expiration_dates" :key="d"
+                class="px-2 py-1 rounded-full bg-gray-700 text-[11px] text-gray-200">{{ d }}</span>
+        </div>
+
+        <!-- Data freshness -->
+        <div class="mt-2 text-[11px] text-gray-500" v-if="levels?.date_prev || lastUpdated">
+          <span v-if="levels?.date_prev">Data: {{ levels.date_prev }} (EOD)</span>
+          <span v-if="levels?.date_prev && lastUpdated"> • </span>
+          <span v-if="lastUpdated">Updated {{ fromNow(lastUpdated) }}</span>
         </div>
       </div>
 
@@ -60,9 +64,9 @@
       <!-- Body -->
       <div class="p-6 space-y-6">
         <!-- Top-level loading / error -->
-        <ui-error-block v-if="topError" :message="'Failed to load levels'" :detail="topError"
-                       :onRetry="() => fetchGexLevels(userSymbol, gexTf.value)" />
-        <ui-spinner v-else-if="loading" />
+        <ui-ErrorBlock v-if="topError" :message="'Failed to load levels'" :detail="topError"
+                       :onRetry="() => fetchGexLevels(userSymbol, timeframe)" />
+        <ui-Spinner v-else-if="loading" />
 
         <template v-else>
           <!-- OVERVIEW -->
@@ -105,25 +109,23 @@
           </section>
 
           <!-- POSITIONING -->
-          <Suspense>
-            <section v-show="activeTab==='positioning'" class="space-y-6">
-              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div class="bg-gray-700/60 rounded-xl p-4">
-                  <h4 class="font-semibold mb-2">Dealer Positioning</h4>
-                  <component :is="busy.positioning ? uiSkeletonCard : DexTile" :symbol="userSymbol" />
+          <section v-show="activeTab==='positioning'" class="space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div class="bg-gray-700/60 rounded-xl p-4">
+                <h4 class="font-semibold mb-2">Dealer Positioning</h4>
+                <component :is="busy.positioning ? uiSkeletonCard : DexTile" :symbol="userSymbol" />
 
-                </div>
-                <div class="bg-gray-700/60 rounded-xl p-4">
-                  <h4 class="font-semibold mb-2">Expiry Pressure ({{ pinDays }}D)</h4>
-                  <component :is="busy.positioning ? uiSkeletonCard : ExpiryPressureTile" :symbol="userSymbol" :days="pinDays" />
-                </div>
               </div>
               <div class="bg-gray-700/60 rounded-xl p-4">
-                <h4 class="font-semibold mb-2">IV Skew</h4>
-                <component :is="busy.positioning ? uiSkeletonCard : SkewTile" :symbol="userSymbol" />
+                <h4 class="font-semibold mb-2">Expiry Pressure ({{ pinDays }}D)</h4>
+                <component :is="busy.positioning ? uiSkeletonCard : ExpiryPressureTile" :symbol="userSymbol" :days="pinDays" />
               </div>
-            </section>
-          </Suspense>
+            </div>
+            <div class="bg-gray-700/60 rounded-xl p-4">
+              <h4 class="font-semibold mb-2">IV Skew</h4>
+              <component :is="busy.positioning ? uiSkeletonCard : SkewTile" :symbol="userSymbol" />
+            </div>
+          </section>
 
           <!-- VOLATILITY -->
           <section v-show="activeTab==='volatility'" class="space-y-6">
@@ -134,9 +136,9 @@
                   <span v-if="term?.date" class="text-xs text-gray-400">as of {{ term.date }}</span>
                 </div>
 
-                <ui-error-block v-if="errors.volatility" :message="'Failed to load volatility data'"
-                              :detail="errors.volatility" :onRetry="ensureVolatility" />
-                <ui-skeleton-card v-else-if="!loaded.volatility" />
+                <ui-ErrorBlock v-if="errors.volatility" :message="'Failed to load volatility data'"
+                               :detail="errors.volatility" :onRetry="ensureVolatility" />
+                <ui-SkeletonCard v-else-if="!loaded.volatility" />
                 <TermTile v-else :items="term.items || []" :date="term.date" />
               </div>
 
@@ -146,18 +148,18 @@
                   <span v-if="vrp?.date" class="text-xs text-gray-400">as of {{ vrp.date }}</span>
                 </div>
 
-                <ui-error-block v-if="errors.volatility" :message="'Failed to load volatility data'"
-                              :detail="errors.volatility" :onRetry="ensureVolatility" />
-                <ui-skeleton-card v-else-if="!loaded.volatility" />
+                <ui-ErrorBlock v-if="errors.volatility" :message="'Failed to load volatility data'"
+                               :detail="errors.volatility" :onRetry="ensureVolatility" />
+                <ui-SkeletonCard v-else-if="!loaded.volatility" />
                 <VRPTile v-else :date="vrp.date" :iv1m="vrp.iv1m" :rv20="vrp.rv20" :vrp="vrp.vrp" :z="vrp.z" />
               </div>
             </div>
 
             <div class="bg-gray-700 rounded p-4">
               <h4 class="font-semibold mb-2">Seasonality (5D)</h4>
-              <ui-error-block v-if="errors.volatility" :message="'Failed to load seasonality'"
-                            :detail="errors.volatility" :onRetry="ensureVolatility" />
-              <ui-skeleton-card v-else-if="!loaded.volatility" />
+              <ui-ErrorBlock v-if="errors.volatility" :message="'Failed to load seasonality'"
+                             :detail="errors.volatility" :onRetry="ensureVolatility" />
+              <ui-SkeletonCard v-else-if="!loaded.volatility" />
               <template v-else>
                 <Seasonality5Tile
                   v-if="season"
@@ -215,8 +217,8 @@
               </div>
             </div>
 
-            <ui-error-block v-if="errors.ua" :message="'Failed to load UA'" :detail="errors.ua" :onRetry="ensureUA" />
-            <ui-spinner v-else-if="uaLoading" />
+            <ui-ErrorBlock v-if="errors.ua" :message="'Failed to load UA'" :detail="errors.ua" :onRetry="ensureUA" />
+            <ui-Spinner v-else-if="uaLoading" />
             <template v-else>
               <div v-if="!uaDate" class="text-sm text-gray-400 mb-2">No UA data yet for today.</div>
               <UnusualActivityTable :rows="uaRows || []" :dataDate="uaDate" :symbol="userSymbol" />
@@ -242,6 +244,10 @@
               <h4 class="font-semibold mb-2">Net GEX by Strike</h4>
               <p class="text-sm text-gray-400 mb-4">Net gamma exposure per strike (calls − puts).</p>
               <NetGexChart :strikeData="levels?.strike_data || []" />
+              <div class="bg-gray-700 rounded p-4">
+              <h4 class="font-semibold mb-2">IV Skew</h4>
+              <SkewTile :symbol="userSymbol" />
+            </div>
             </div>
           </section>
         </template>
@@ -263,15 +269,14 @@ import VolDistributionChart from './VolDistributionChart.vue'
 import Seasonality5Tile from './Seasonality5Tile.vue'
 import TermTile from './TermTile.vue'
 import VRPTile  from './VRPTile.vue'
-const SkewTile = defineAsyncComponent(() => import('./SkewTile.vue'))
-const DexTile = defineAsyncComponent(() => import('./DexTile.vue'))
+import SkewTile from './SkewTile.vue'
+import DexTile from './DexTile.vue'
 import QScorePanel from './QScorePanel.vue'
-const ExpiryPressureTile = defineAsyncComponent(() => import('./ExpiryPressureTile.vue'))
+import ExpiryPressureTile from './ExpiryPressureTile.vue'
 import UnusualActivityTable from './UnusualActivityTable.vue'
 import uiSpinner from './Spinner.vue'
 import uiSkeletonCard from './SkeletonCard.vue'
 import uiErrorBlock from './ErrorBlock.vue'
-import { defineAsyncComponent } from 'vue'
 
 axios.defaults.withCredentials = true
 axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest'
@@ -292,6 +297,8 @@ function activate(key) {
 }
 
 // state
+const userSymbol     = ref('SPY')
+const timeframe      = ref('14d')
 const levels         = ref(null)
 const loading        = ref(false)
 const topError       = ref('')
@@ -329,18 +336,6 @@ const watchlistItems = ref([])
 const pinMap = ref({})
 const uaMap  = ref({})
 
-const symbol          = ref('SPY')           // rename for clarity (ui)
-const gexTf = ref('14d')         // ← only for /gex-levels + strikes
-const userSymbol      = symbol               // keep template usage
-const cache = new Map()
-const cacheTerm  = new Map() // key: term|SYM
-const cacheVRP   = new Map() // key: vrp|SYM
-const cacheSeas  = new Map() // key: seas|SYM
-const cacheUA    = new Map() // key: ua|SYM|EXP|top|minZ|minVOI|minVol|minPrem|near|side|sort|limit
-const TTL_MS = 300_000
-const volErr = ref(null)
-const inflight = new Map()
-
 // Abort controllers per request-type
 const controllers = {
   gex:      null,
@@ -351,17 +346,6 @@ const controllers = {
 }
 
 // utils
-function withInflight(key, fn){
-  const hit = inflight.get(key);
-  if (hit) return hit;
-  const p = fn().finally(() => inflight.delete(key));
-  inflight.set(key, p);
-  return p;
-}
-function now(){ return Date.now() }
-function setCache(map, key, data){ map.set(key, { t: now(), data }) }
-function getCache(map, key, ttl){ const h = map.get(key); return (h && now()-h.t < ttl) ? h.data : null }
-function cacheKeyGex(sym, tf){ return `gex|${sym}|${tf}` }
 function num(v){ return Number(v || 0) }
 function fmtPct(v){ return (v === null || v === undefined) ? '—' : `${v}%` }
 function fromNow(ts) {
@@ -381,13 +365,6 @@ function fromNow(ts) {
 function cancel(type){
   try { controllers[type]?.abort() } catch {}
   controllers[type] = new AbortController()
-  return controllers[type]
-}
-
-function ensureController(type){
-  if (!controllers[type] || controllers[type].signal.aborted) {
-    controllers[type] = new AbortController()
-  }
   return controllers[type]
 }
 
@@ -421,27 +398,19 @@ async function loadUABadge(symbols) {
 }
 
 // data loaders with cancellation + error capture
-async function fetchGexLevels(sym, tf = gexTf.value) {
-  const key = cacheKeyGex(sym, tf)
-  const hit = cache.get(key)
-  if (hit && Date.now() - hit.t < TTL_MS) {
-    levels.value = hit.data
-    lastUpdated.value = new Date().toISOString()
-    return
-  }
-  loading.value = true; topError.value=''; levels.value=null
+async function fetchGexLevels(sym, tf) {
+  cancel('gex')
+  loading.value = true
+  topError.value = ''
+  levels.value  = null
   try {
-    await withInflight(`gex:${key}`, async () => {
-      const ctl = ensureController('gex')
-      const { data } = await axios.get('/api/gex-levels', {
-        params: { symbol: sym, timeframe: tf }, signal: ctl.signal
-      })
-      levels.value = data || {}
-      cache.set(key, { t: Date.now(), data: levels.value })
-      uaExp.value = 'ALL'
-      lastUpdated.value = new Date().toISOString()
-      return data
+    const { data } = await axios.get('/api/gex-levels', {
+      params: { symbol: sym, timeframe: tf },
+      signal: controllers.gex.signal
     })
+    levels.value = data || {}
+    uaExp.value = 'ALL'
+    lastUpdated.value = new Date().toISOString()
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
       topError.value = e?.response?.data?.error || e.message
@@ -453,44 +422,26 @@ async function fetchGexLevels(sym, tf = gexTf.value) {
 
 async function loadTermAndVRP(sym) {
   errors.value.volatility = ''
-  const termCtl = ensureController('term')
-  const vrpCtl  = ensureController('vrp')
-
-  const tKey = `term|${sym}`; const vKey = `vrp|${sym}`
-  const tHit = getCache(cacheTerm, tKey, 60_000)
-  const vHit = getCache(cacheVRP, vKey, 60_000)
-  if (tHit && vHit) { term.value = tHit; vrp.value = vHit; return }
+  const termCtl = cancel('term')
+  const vrpCtl  = cancel('vrp')
   try {
-    const t = await withInflight(`term:${sym}`, () =>
-      axios.get('/api/iv/term', { params: { symbol: sym }, signal: termCtl.signal })
-    )
+    const t = await axios.get('/api/iv/term', { params: { symbol: sym }, signal: termCtl.signal })
     term.value = { date: t.data?.date ?? null, items: Array.isArray(t.data?.items) ? t.data.items : [] }
-    setCache(cacheTerm, tKey, term.value)
-    const v = await withInflight(`vrp:${sym}`, () =>
-      axios.get('/api/vrp', { params: { symbol: sym }, signal: vrpCtl.signal })
-    )
+    const v = await axios.get('/api/vrp', { params: { symbol: sym }, signal: vrpCtl.signal })
     vrp.value = { date: v.data?.date ?? null, iv1m: v.data?.iv1m ?? null, rv20: v.data?.rv20 ?? null, vrp: v.data?.vrp ?? null, z: v.data?.z ?? null }
-    setCache(cacheVRP, vKey, vrp.value)
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
       errors.value.volatility = e?.response?.data || e.message
-      volErr.value = errors.value.volatility
     }
   }
 }
 
 async function loadSeasonality(sym) {
-  const ctl = ensureController('season')
-  const sKey = `seas|${sym}`
-  const sHit = getCache(cacheSeas, sKey, 300_000) // 5 min; slow-changing
-  if (sHit) { season.value = sHit.variant; seasonNote.value = sHit.note; return }
+  const ctl = cancel('season')
   try {
-    const { data } = await withInflight(`season:${sym}`, () =>
-      axios.get('/api/seasonality/5d', { params: { symbol: sym }, signal: ctl.signal })
-    )
+    const { data } = await axios.get('/api/seasonality/5d', { params: { symbol: sym }, signal: ctl.signal })
     season.value     = data?.variant || null
     seasonNote.value = data?.note || ''
-    setCache(cacheSeas, sKey, data || {})
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
       errors.value.volatility = errors.value.volatility || e.message
@@ -498,48 +449,23 @@ async function loadSeasonality(sym) {
   }
 }
 
-async function loadUA(sym, exp = null) {
-  const ctl = ensureController('ua')
+async function loadUA(sym, exp=null) {
+  const ctl = cancel('ua')
   uaLoading.value = true
   errors.value.ua = ''
-
-  const k = [
-    'ua', sym, exp ?? 'ALL', uaTop.value, uaMinZ.value, uaMinVolOI.value,
-    uaMinVol.value, uaMinPrem.value, uaNearPct.value || 0, uaSide.value || '',
-    uaSort.value, uaLimit.value
-  ].join('|')
-
-  const hit = getCache(cacheUA, k, 60_000)
-  if (hit) {
-    uaDate.value = hit.data_date || null
-    uaRows.value = hit.items || []
-    uaLoading.value = false
-    return
-  }
-
   try {
-    const { data } = await withInflight(`ua:${k}`, () =>
-      axios.get('/api/ua', {
-        params: {
-          symbol: sym,
-          exp,
-          per_expiry: uaTop.value,
-          limit: uaLimit.value,
-          min_z: uaMinZ.value,
-          min_vol_oi: uaMinVolOI.value,
-          min_vol: uaMinVol.value,
-          min_premium: uaMinPrem.value,
-          near_spot_pct: uaNearPct.value || 0,
-          only_side: uaSide.value || null,
-          with_premium: true,
-          sort: uaSort.value
-        },
-        signal: ctl.signal
-      })
-    )
+    const { data } = await axios.get('/api/ua', {
+      params: {
+        symbol: sym, exp,
+        per_expiry: uaTop.value, limit: uaLimit.value,
+        min_z: uaMinZ.value, min_vol_oi: uaMinVolOI.value, min_vol: uaMinVol.value,
+        min_premium: uaMinPrem.value, near_spot_pct: uaNearPct.value || 0,
+        only_side: uaSide.value || null, with_premium: true, sort: uaSort.value
+      },
+      signal: ctl.signal
+    })
     uaDate.value = data?.data_date || null
     uaRows.value = data?.items || []
-    setCache(cacheUA, k, data || {})
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
       errors.value.ua = e?.response?.data || e.message
@@ -550,7 +476,6 @@ async function loadUA(sym, exp = null) {
     if (!ctl.signal.aborted) uaLoading.value = false
   }
 }
-
 
 // lazy triggers
 async function ensureVolatility() {
@@ -577,34 +502,25 @@ function onSymbolPicked(e){
   if (!sym) return
   userSymbol.value = sym
   loaded.value = { volatility: false, ua: false }
-  fetchGexLevels(sym, gexTf.value)
+  fetchGexLevels(sym, timeframe.value)
 }
-
 onMounted(() => {
   loadWatchlist()
   window.addEventListener('select-symbol', onSymbolPicked)
-  fetchGexLevels(userSymbol.value, gexTf.value)
+    fetchGexLevels(userSymbol.value, timeframe.value).then(() => {
+    // Eager-load like the old screen
+    ensureVolatility()
+  })
 })
 onUnmounted(() => { window.removeEventListener('select-symbol', onSymbolPicked); Object.keys(controllers).forEach(cancel) })
 
-let symbolTimer
-watch(userSymbol, (s) => {
-  clearTimeout(symbolTimer)
-  symbolTimer = setTimeout(() => {
-    fetchGexLevels(s, gexTf.value)
-    // only reload UA if the UA tab was already loaded once
-    if (loaded.value.ua && activeTab.value === 'ua') ensureUA()
-    // no reload of volatility or positioning here
-  }, 250)
-})
+watch(timeframe, tf => { loaded.value = { volatility:false, ua:false }; fetchGexLevels(userSymbol.value, tf) })
+watch(userSymbol, () => { if (loaded.value.ua) ensureUA() })
 watch(uaExp, () => { if (activeTab.value==='ua') ensureUA() })
-watch([userSymbol], () => {
+watch([userSymbol, timeframe], () => {
   busy.value.positioning = true
   // give child tiles a render frame; turn off a bit later
   requestAnimationFrame(() => setTimeout(() => { busy.value.positioning = false }, 250))
-})
-watch(gexTf, tf => {
-  fetchGexLevels(userSymbol.value, tf)
 })
 </script>
 

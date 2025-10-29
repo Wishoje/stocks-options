@@ -1,24 +1,23 @@
 <?php
 
 use Illuminate\Support\Facades\Schedule;
+use App\Console\Commands\BuildDailyChainSnapshot;
 use App\Jobs\FetchOptionChainDataJob;
 use App\Jobs\ComputeVolMetricsJob;
 
-// 1) Ingest options (nearest expiries) after the close on weekdays
-Schedule::call(function () {
-        FetchOptionChainDataJob::dispatch(['SPY','QQQ'], 90)->onQueue('ingest');
-    })
-    ->name('options-ingest-postclose')     // <-- required by withoutOverlapping
+// Route-based scheduling for Laravel 11
+
+// 1) Kick off the ingest after market close (weekdays, ET)
+Schedule::job(new FetchOptionChainDataJob(['SPY','QQQ','IWM','DIA']))
     ->weekdays()
     ->timezone('America/New_York')
-    ->at('16:05')
-    ->withoutOverlapping();
+    ->at('16:10'); // 4:10pm ET
 
 // 2) Build the daily snapshot a bit later
 Schedule::command('chain:snapshot')
     ->weekdays()
     ->timezone('America/New_York')
-    ->at('16:30');
+    ->at('16:30'); // 4:30pm ET
 
 // 3) Compute vol metrics nightly
 Schedule::job(new ComputeVolMetricsJob(['SPY','QQQ','IWM']))
@@ -36,14 +35,14 @@ Schedule::command('vol:compute SPY QQQ IWM')
     ->timezone('America/New_York')
     ->at('16:20');
 
-// 5) Seasonality data (pre-market)
+// 5) Seasonality data
 Schedule::command('seasonality:5d SPY QQQ IWM MSFT AAPL')
     ->weekdays()
     ->timezone('America/New_York')
     ->at('06:10');
 
-// 6) Watchlist preload
+// Run on weekdays at 06:30 ET (adjust to your pipeline timing)
 Schedule::command('watchlist:preload')
     ->weekdays()
     ->timezone('America/New_York')
-    ->at('06:30');
+    ->at('16:15');
