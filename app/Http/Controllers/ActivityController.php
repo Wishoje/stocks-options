@@ -23,15 +23,22 @@ class ActivityController extends Controller
         $withPrem    = filter_var($req->query('with_premium', true), FILTER_VALIDATE_BOOLEAN);
         $nearPct     = (float)($req->query('near_spot_pct', 0)); // e.g. 10 => ±10%
         $sort        = $req->query('sort', 'z_score');      // z_score|vol_oi|premium
+        $useIntraday = (bool)$req->boolean('intraday');
 
         $ttl = now()->addMinutes(15);
         $key = 'ua:v2:'.md5(json_encode([
-            $symbol,$exp,$minZ,$minVolOI,$minVol,$minPremium,$limit,$perExp,$sideFilter,$withPrem,$nearPct,$sort
+            $symbol,$exp,$minZ,$minVolOI,$minVol,$minPremium,$limit,$perExp,$sideFilter,$withPrem,$nearPct,$sort,$useIntraday
         ]));
 
-        return Cache::remember($key, $ttl, function () use ($symbol,$exp,$minZ,$minVolOI,$minVol,$minPremium,$limit,$perExp,$sideFilter,$withPrem,$nearPct,$sort) {
+        return Cache::remember($key, $ttl, function () use (
+            $symbol,$exp,$minZ,$minVolOI,$minVol,$minPremium,$limit,$perExp,$sideFilter,$withPrem,$nearPct,$sort,$useIntraday
+        ) {
             $latest = DB::table('unusual_activity')->where('symbol',$symbol)->max('data_date');
             if (!$latest) return response()->json(['symbol'=>$symbol,'data_date'=>null,'items'=>[]], 200);
+
+            // Determine if "today" (ET) matches the latest UA day
+            $todayEt = $this->tradingDate(now());
+            $isToday = ($latest === $todayEt);
 
             // optional near-spot filter boundaries
             $spot = null; $lo = null; $hi = null;
@@ -43,13 +50,14 @@ class ActivityController extends Controller
                 }
             }
 
+            // Base query for EOD UA rows
             $q = DB::table('unusual_activity')
                 ->where('symbol',$symbol)
                 ->where('data_date',$latest);
 
             if ($exp) $q->where('exp_date',$exp);
 
-            // OR logic to match the job (see #2)
+            // Match the job's OR logic on z / vol_oi
             if ($minZ>0 && $minVolOI>0) {
                 $q->where(function($w) use ($minZ,$minVolOI) {
                     $w->where('z_score','>=',$minZ)
@@ -65,24 +73,80 @@ class ActivityController extends Controller
                 $q->whereBetween('strike', [$lo,$hi]);
             }
 
-            if ($sideFilter === 'call') {
-                $q->whereRaw("(JSON_EXTRACT(meta,'$.call_vol') + 0) > (JSON_EXTRACT(meta,'$.put_vol') + 0)");
-             } elseif ($sideFilter === 'put') {
-                $q->whereRaw("(JSON_EXTRACT(meta,'$.put_vol') + 0) > (JSON_EXTRACT(meta,'$.call_vol') + 0)");
+            // IMPORTANT:
+            // If intraday override will happen, DO NOT side-filter in SQL (we'll do it after overriding meta).
+            if (!($useIntraday && $isToday)) {
+                if ($sideFilter === 'call') {
+                    $q->whereRaw("(JSON_EXTRACT(meta,'$.call_vol') + 0) > (JSON_EXTRACT(meta,'$.put_vol') + 0)");
+                } elseif ($sideFilter === 'put') {
+                    $q->whereRaw("(JSON_EXTRACT(meta,'$.put_vol') + 0) > (JSON_EXTRACT(meta,'$.call_vol') + 0)");
+                }
             }
 
             $rows = $q->orderByDesc('z_score')
-                      ->orderByDesc('vol_oi')
-                      ->get(['exp_date','strike','z_score','vol_oi','meta']);
+                    ->orderByDesc('vol_oi')
+                    ->get(['exp_date','strike','z_score','vol_oi','meta']);
 
-            // group + per-expiry pick
+            // If intraday & today, pull live volumes per strike and override row meta before filtering/picking.
+            $liveByStrike = [];
+            if ($useIntraday && $isToday) {
+                $live = DB::table('option_live_counters')
+                    ->where('symbol', $symbol)
+                    ->where('trade_date', $todayEt)
+                    ->whereNotNull('strike')
+                    ->select('strike','option_type','volume','premium_usd')
+                    ->get();
+
+                foreach ($live as $r) {
+                    $k = (float)$r->strike;
+                    $liveByStrike[$k] = $liveByStrike[$k] ?? ['call'=>0,'put'=>0,'call_prem'=>0.0,'put_prem'=>0.0];
+                    if ($r->option_type === 'call') {
+                        $liveByStrike[$k]['call'] += (int)$r->volume;
+                        if ($r->premium_usd !== null) $liveByStrike[$k]['call_prem'] += (float)$r->premium_usd;
+                    } elseif ($r->option_type === 'put') {
+                        $liveByStrike[$k]['put']  += (int)$r->volume;
+                        if ($r->premium_usd !== null) $liveByStrike[$k]['put_prem']  += (float)$r->premium_usd;
+                    }
+                }
+            }
+
+            // group + per-expiry pick (with intraday overrides + PHP sideFilter if needed)
             $grouped = [];
             foreach ($rows as $r) {
                 $m = json_decode($r->meta ?? '[]', true) ?: [];
+
+                // Intraday override of volumes/premium by strike (aggregated across expiries)
+                if ($liveByStrike) {
+                    $k = (float)$r->strike;
+                    if (isset($liveByStrike[$k])) {
+                        $lv = $liveByStrike[$k];
+                        $m['call_vol']    = (int)$lv['call'];
+                        $m['put_vol']     = (int)$lv['put'];
+                        $m['total_vol']   = (int)$lv['call'] + (int)$lv['put'];
+                        // prefer live premium if available; else leave as-is (estimation later if requested)
+                        $livePrem = (float)$lv['call_prem'] + (float)$lv['put_prem'];
+                        if ($livePrem > 0) {
+                            $m['call_prem']   = round((float)$lv['call_prem'], 2);
+                            $m['put_prem']    = round((float)$lv['put_prem'], 2);
+                            $m['premium_usd'] = round($livePrem, 2);
+                        }
+                    }
+                }
+
+                // Apply minVol after potential intraday override
                 if ($minVol > 0 && (int)($m['total_vol'] ?? 0) < $minVol) continue;
 
-                // optional min premium prefilter (uses stored premium if present)
+                // If we deferred sideFilter (intraday), apply it now on overridden meta
+                if ($useIntraday && $isToday) {
+                    if ($sideFilter === 'call' && ((int)($m['call_vol'] ?? 0) <= (int)($m['put_vol'] ?? 0))) continue;
+                    if ($sideFilter === 'put'  && ((int)($m['put_vol']  ?? 0) <= (int)($m['call_vol'] ?? 0))) continue;
+                }
+
+                // Optional min premium prefilter (meta or live-premium may already be present)
                 if ($minPremium > 0 && isset($m['premium_usd']) && (float)$m['premium_usd'] < $minPremium) continue;
+
+                // Re-attach overridden meta back to the row (so downstream sees it)
+                $r->meta = json_encode($m);
 
                 $grouped[$r->exp_date] = $grouped[$r->exp_date] ?? [];
                 $grouped[$r->exp_date][] = $r;
@@ -109,13 +173,12 @@ class ActivityController extends Controller
 
             $picked = array_slice($picked, 0, max(1,$limit));
 
-            // attach premium if requested (prefer stored meta)
-           $items = array_map(function($r) use ($withPrem, $symbol) {
+            // attach premium if requested (prefer stored/live meta)
+            $items = array_map(function($r) use ($withPrem, $symbol) {
                 $meta = json_decode($r->meta ?? '[]', true) ?: [];
 
                 if ($withPrem && (!isset($meta['premium_usd']) || $meta['premium_usd'] === null)) {
                     [$callVol,$putVol] = [(int)($meta['call_vol'] ?? 0), (int)($meta['put_vol'] ?? 0)];
-                    // uses the new estimator that reads option_chain_data
                     [$callPrem, $putPrem] = $this->estimatePremiumUSD(
                         $symbol,
                         $r->exp_date,
@@ -317,5 +380,12 @@ class ActivityController extends Controller
         }
 
         return 0.0;
+    }
+
+    protected function tradingDate(\Carbon\Carbon $now): string
+    {
+        $ny = $now->copy()->setTimezone('America/New_York');
+        if ($ny->isWeekend()) $ny->previousWeekday();
+        return $ny->toDateString();
     }
 }

@@ -11,6 +11,9 @@ use App\Http\Controllers\QScoreController;
 use App\Http\Controllers\ExpiryController;
 use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\SymbolSearchController;
+use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Http\Controllers\IntradayController;
+
 use App\Jobs\PrimeSymbolJob;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
@@ -38,7 +41,10 @@ Route::get('/user', function (Request $request): User {
 
 
 Route::get('/gex-levels', [GexController::class, 'getGexLevels']);
-
+Route::post('/intraday/pull', [IntradayController::class, 'pull']);
+Route::get('/intraday/summary', [IntradayController::class, 'summary']);
+Route::get('/intraday/volume-by-strike', [IntradayController::class, 'volumeByStrike']);
+Route::get('/intraday/ua', [IntradayController::class, 'ua']);
 
 Route::middleware(['auth:sanctum'])->group(function () {
     // Watchlist
@@ -83,4 +89,11 @@ Route::get('/ua/debug', function (Request $req) {
     ->distinct()->pluck('e.expiration_date');
 
   return response()->json(compact('symbol','latest','expiries'));
+});
+
+Route::post('/intraday/pull', function (Request $req) {
+    $symbols = (array) $req->input('symbols', ['SPY']);
+    $symbols = array_map(fn($s)=>\App\Support\Symbols::canon($s), $symbols);
+    dispatch(new FetchPolygonIntradayOptionsJob($symbols));
+    return response()->json(['ok'=>true,'symbols'=>$symbols]);
 });
