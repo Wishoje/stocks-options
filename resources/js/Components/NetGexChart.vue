@@ -20,7 +20,7 @@ export default {
         datasets: [
           {
             label: 'Net GEX',
-            data: this.strikeData.map(r => r.net_gex),
+            data: this.strikeData.map(r => r.net_gex ?? r.netGex ?? 0),
             backgroundColor: 'rgba(100,150,250,0.6)'
           }
         ]

@@ -13,14 +13,33 @@ export default {
       const labels = []
       const vals = []
       for (const r of this.strikeData) {
-        const oi = Number(r.oi_call_eod || 0) + Number(r.oi_put_eod || 0)
-        const vol = Number(r.call_vol_delta || 0) + Number(r.put_vol_delta || 0)
-        if (oi > 0) { labels.push(r.strike); vals.push(vol / oi) }
+        // Volume: accept both field variants
+        const vol = Number(r.call_vol_delta ?? r.call_volume_delta ?? 0)
+                + Number(r.put_vol_delta  ?? r.put_volume_delta  ?? 0)
+
+        // OI: prefer precomputed vol_oi if available; else compute vol / (oi_call_eod + oi_put_eod)
+        const oiSum = Number(r.oi_call_eod ?? 0) + Number(r.oi_put_eod ?? 0)
+        const volOverOi = (r.vol_oi === 0 || r.vol_oi) ? Number(r.vol_oi)
+                        : (oiSum > 0 ? vol / oiSum : null)
+
+        if (volOverOi !== null && Number.isFinite(volOverOi)) {
+          labels.push(r.strike)
+          vals.push(volOverOi)
+        }
       }
       return { labels, datasets: [{ label: 'Vol/OI (Live)', data: vals }] }
     },
-    chartOptions() { return { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:true } },
-      scales:{ x:{ title:{ display:true, text:'Strike' } }, y:{ title:{ display:true, text:'Vol/OI' } } } } }
+    chartOptions() {
+      return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: true } },
+        scales: {
+          x: { title: { display: true, text: 'Strike' } },
+          y: { title: { display: true, text: 'Vol/OI' } }
+        }
+      }
+    }
   }
 }
 </script>

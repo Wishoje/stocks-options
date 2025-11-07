@@ -305,29 +305,27 @@
 
           <!-- Intraday: only ΔVol (Live) -->
           <template v-else>
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-3">ΔVol by Strike (Live)</h4>
-              <VolumeDeltaChart :strikeData="levels?.strike_data || []" />
-            </div>
+            <div class="space-y-4">
+              <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+                <h4 class="font-semibold mb-3">Vol / OI (Live) by Strike</h4>
+                <div class="h-1/3">
+                  <VolOverOiChart :strikeData="normalizeStrikes(levels?.strike_data)" />
+                </div>
+              </div>
 
-            <div v-if="(levels?.strike_gex_live?.length || 0) > 0" class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-3">Net GEX by Strike (Repriced, Live)</h4>
-              <NetGexChart :strikeData="toNetGexSeries(levels?.strike_gex_live || [])" />
-            </div>
+              <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+                <h4 class="font-semibold mb-3">PCR (Live) by Strike</h4>
+                <div class="h-1/3">
+                  <PcrByStrikeChart :strikeData="normalizeStrikes(levels?.strike_data)" />
+                </div>
+              </div>
 
-            <!-- The 3-grid -->
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <VolOverOiChart
-                class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
-                :strikeData="toVolOiSeries(levels?.strike_data || [])" />
-
-              <PcrByStrikeChart
-                class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
-                :strikeData="toPcrSeries(levels?.strike_data || [])" />
-
-              <PremiumByStrikeChart
-                class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
-                :strikeData="toPremiumSeries(levels?.strike_data || [])" />
+              <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+                <h4 class="font-semibold mb-3">Premium (Live) by Strike</h4>
+                <div class="h-1/3">
+                  <PremiumByStrikeChart :strikeData="normalizeStrikes(levels?.strike_data)" />
+                </div>
+              </div>
             </div>
           </template>
         </section>
@@ -966,6 +964,24 @@ function toPremiumSeries(arr) {
     premiumPut:  n(r.put_prem  ?? r.premium_put  ?? 0),
   }))
 }
+
+const normalizeStrikes = (arr = []) => arr.map(r => ({
+  strike: r.strike,
+
+  // volume deltas (your feed sometimes uses *_vol_delta)
+  call_volume_delta: r.call_volume_delta ?? r.call_vol_delta ?? 0,
+  put_volume_delta:  r.put_volume_delta  ?? r.put_vol_delta  ?? 0,
+
+  // OI deltas (not in your payload — will be 0 unless you compute them)
+  call_oi_delta: r.call_oi_delta ?? r.call_open_interest_delta ?? 0,
+  put_oi_delta:  r.put_oi_delta  ?? r.put_open_interest_delta  ?? 0,
+
+  // other fields used by tiles
+  vol_oi: r.vol_oi ?? 0,
+  pcr: r.pcr ?? null,
+  premium_call: r.premium_call ?? 0,
+  premium_put: r.premium_put ?? 0,
+}));
 </script>
 
 <style scoped>
