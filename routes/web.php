@@ -16,3 +16,7 @@ Route::middleware([
         return Inertia::render('Dashboard');
     })->name('dashboard');
 });
+
+Route::get('/options-calculator', function () {
+    return Inertia::render('Options/Calculator');
+})->middleware(['auth:sanctum'])->name('options.calculator');

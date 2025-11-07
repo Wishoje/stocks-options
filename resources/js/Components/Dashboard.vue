@@ -116,8 +116,9 @@
     <div class="p-4 space-y-6">
       <!-- Loading / Error -->
       <ui-error-block v-if="topError" :message="'Failed to load data'" :detail="topError"
-                     :onRetry="() => dataMode === 'eod' ? fetchGexLevels(userSymbol, gexTf) : refreshIntraday()" />
-      <ui-spinner v-else-if="loading" />
+                     :onRetry="() => dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : refreshIntraday()" />
+      <ui-spinner v-else-if="dataMode==='intraday' ? (!firstIntradayLoadDone && intradayLoading) : loading" />
+
 
       <template v-else>
         <!-- OVERVIEW (EOD) -->
@@ -284,19 +285,53 @@
 
         <!-- STRIKES -->
         <section v-show="activeTab==='strikes'" class="space-y-4">
-          <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-            <h4 class="font-semibold mb-3">ΔOI by Strike (EOD)</h4>
-            <StrikeDeltaChart :strikeData="levels?.strike_data || []" />
-          </div>
-          <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-            <h4 class="font-semibold mb-3">ΔVol by Strike {{ dataMode === 'intraday' ? '(Live)' : '(EOD)' }}</h4>
-            <VolumeDeltaChart :strikeData="levels?.strike_data || []" />
-          </div>
-          <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-            <h4 class="font-semibold mb-3">Net GEX by Strike</h4>
-            <NetGexChart :strikeData="levels?.strike_data || []" />
-          </div>
+          <!-- EOD: OI + Net GEX + ΔVol (EOD) -->
+          <template v-if="dataMode==='eod'">
+            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+              <h4 class="font-semibold mb-3">ΔOI by Strike (EOD)</h4>
+              <StrikeDeltaChart :strikeData="levels?.strike_data || []" />
+            </div>
+
+            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+              <h4 class="font-semibold mb-3">ΔVol by Strike (EOD)</h4>
+              <VolumeDeltaChart :strikeData="levels?.strike_data || []" />
+            </div>
+
+            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+              <h4 class="font-semibold mb-3">Net GEX by Strike (EOD)</h4>
+              <NetGexChart :strikeData="levels?.strike_data || []" />
+            </div>
+          </template>
+
+          <!-- Intraday: only ΔVol (Live) -->
+          <template v-else>
+            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+              <h4 class="font-semibold mb-3">ΔVol by Strike (Live)</h4>
+              <VolumeDeltaChart :strikeData="levels?.strike_data || []" />
+            </div>
+
+            <div v-if="(levels?.strike_gex_live?.length || 0) > 0" class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+              <h4 class="font-semibold mb-3">Net GEX by Strike (Repriced, Live)</h4>
+              <NetGexChart :strikeData="toNetGexSeries(levels?.strike_gex_live || [])" />
+            </div>
+
+            <!-- The 3-grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <VolOverOiChart
+                class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
+                :strikeData="toVolOiSeries(levels?.strike_data || [])" />
+
+              <PcrByStrikeChart
+                class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
+                :strikeData="toPcrSeries(levels?.strike_data || [])" />
+
+              <PremiumByStrikeChart
+                class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
+                :strikeData="toPremiumSeries(levels?.strike_data || [])" />
+            </div>
+          </template>
         </section>
+
 
         <!-- FLOW (Intraday) -->
         <section v-show="activeTab==='flow' && dataMode==='intraday'" class="space-y-4">
@@ -336,8 +371,8 @@
             <VolumeDeltaChart
               :strikeData="(levels?.strike_data || []).map(r => ({
                 strike: r.strike,
-                call_volume_delta: r.call_volume_delta,
-                put_volume_delta: r.put_volume_delta,
+                call_vol_delta: r.call_vol_delta ?? r.call_volume_delta ?? 0,
+                put_vol_delta:  r.put_vol_delta  ?? r.put_volume_delta  ?? 0,
               }))"
             />
           </div>
@@ -380,6 +415,9 @@ import NetGexChart from './NetGexChart.vue'
 import OiDistributionChart from './OiDistributionChart.vue'
 import VolDistributionChart from './VolDistributionChart.vue'
 import Seasonality5Tile from './Seasonality5Tile.vue'
+import VolOverOiChart from './VolOverOiChart.vue'
+import PcrByStrikeChart from './PcrByStrikeChart.vue'
+import PremiumByStrikeChart from './PremiumByStrikeChart.vue'
 import TermTile from './TermTile.vue'
 import VRPTile from './VRPTile.vue'
 const SkewTile = defineAsyncComponent(() => import('./SkewTile.vue'))
@@ -424,9 +462,21 @@ const currentTabs = computed(() => dataMode.value === 'eod' ? tabsEOD : tabsIntr
 
 // State
 const activeTab = ref('overview')
-const levels = ref(null)
-const loading = ref(false)
-const topError = ref('')
+const eodLevels = ref(null)
+const intradayLevels = ref(null)
+const levels = computed(() => dataMode.value === 'eod' ? eodLevels.value : intradayLevels.value)
+// Separate loading states
+const eodLoading = ref(false)
+const intradayLoading = ref(false)
+const intradayRefreshing = ref(false)
+const firstIntradayLoadDone = ref(false)
+const loading = computed(() => dataMode.value === 'eod' ? eodLoading.value : intradayLoading.value)
+
+// Separate error states
+const eodError = ref('')
+const intradayError = ref('')
+const topError = computed(() => dataMode.value === 'eod' ? eodError.value : intradayError.value)
+
 const lastUpdated = ref(null)
 const dataMode = ref('eod')
 const refreshTimer = ref(null)
@@ -466,6 +516,7 @@ const cacheUA = new Map()
 const TTL_MS = 300_000
 const volErr = ref(null)
 const inflight = new Map()
+
 
 // Symbol picker
 const showSymbolPicker = ref(false)
@@ -508,21 +559,26 @@ function setMode(mode) {
 
 // Data refresh on mode/tab change
 watch([dataMode, activeTab], async ([mode, tab], [oldMode, oldTab]) => {
+  // Mode change
   if (mode !== oldMode) {
     if (mode === 'intraday') {
-      await axios.post('/api/intraday/pull', { symbols: [userSymbol.value] })
+      await axios.post('/api/intraday/pull', { symbols: [userSymbol.value] }).catch(() => {})
       await refreshIntraday()
       startAutoRefresh()
     } else {
       stopRefresh()
-      await fetchGexLevels(userSymbol.value, gexTf.value)
+      await fetchGexLevelsEOD(userSymbol.value, gexTf.value)
     }
   }
 
+  // Tab change - only refresh if data might be stale
   if (tab !== oldTab) {
     if (tab === 'ua' && !loaded.value.ua) ensureUA()
     if (tab === 'volatility' && mode === 'eod' && !loaded.value.volatility) ensureVolatility()
-    if (tab === 'strikes' && mode === 'intraday') await refreshIntraday()
+    if (tab === 'strikes') {
+      if (mode === 'intraday') await refreshIntraday()
+      if (mode === 'eod') await fetchGexLevelsEOD(userSymbol.value, gexTf.value)
+    }
   }
 }, { immediate: false })
 
@@ -563,32 +619,37 @@ function ensureController(type) {
 }
 
 // Data loaders
-async function fetchGexLevels(sym, tf = gexTf.value) {
+async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
   const key = `gex|${sym}|${tf}`
   const hit = cache.get(key)
   if (hit && Date.now() - hit.t < TTL_MS) {
-    levels.value = hit.data
+    eodLevels.value = hit.data
     lastUpdated.value = new Date().toISOString()
     return
   }
-  loading.value = true; topError.value = ''; levels.value = null
+
+  eodLoading.value = true
+  eodError.value = ''
+  eodLevels.value = null
+
   try {
     await withInflight(`gex:${key}`, async () => {
       const ctl = ensureController('gex')
       const { data } = await axios.get('/api/gex-levels', {
-        params: { symbol: sym, timeframe: tf }, signal: ctl.signal
+        params: { symbol: sym, timeframe: tf },
+        signal: ctl.signal
       })
-      levels.value = data || {}
-      cache.set(key, { t: Date.now(), data: levels.value })
+      eodLevels.value = data || {}
+      cache.set(key, { t: Date.now(), data: eodLevels.value })
       uaExp.value = 'ALL'
       lastUpdated.value = new Date().toISOString()
     })
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
-      topError.value = e?.response?.data?.error || e.message
+      eodError.value = e?.response?.data?.error || e.message
     }
   } finally {
-    if (!controllers.gex.signal.aborted) loading.value = false
+    if (!controllers.gex?.signal.aborted) eodLoading.value = false
   }
 }
 
@@ -702,13 +763,17 @@ function onSymbolPicked(e) {
   if (!sym) return
   userSymbol.value = sym
   loaded.value = { volatility: false, ua: false }
-  fetchGexLevels(sym, gexTf.value)
+  if (dataMode.value === 'intraday') {
+    refreshIntraday()
+  } else {
+    fetchGexLevelsEOD(sym, gexTf.value)
+  }
 }
 
 onMounted(() => {
   loadWatchlist()
   window.addEventListener('select-symbol', onSymbolPicked)
-  fetchGexLevels(userSymbol.value, gexTf.value)
+  fetchGexLevelsEOD(userSymbol.value, gexTf.value)
 })
 
 onUnmounted(() => {
@@ -731,28 +796,52 @@ function startAutoRefresh() {
 
 async function refreshIntraday() {
   const sym = userSymbol.value
+  await axios.post('/api/intraday/pull', { symbols: [sym] }).catch(() => {})
+
+  const ctl = ensureController('gex') // or a new 'intraday' controller
+  const soft = firstIntradayLoadDone.value
+  if (!soft) intradayLoading.value = true; else intradayRefreshing.value = true
+  intradayError.value = ''
+
   try {
-    const [sum, byK] = await Promise.all([
-      axios.get('/api/intraday/summary', { params: { symbol: sym } }),
-      axios.get('/api/intraday/volume-by-strike', { params: { symbol: sym } }),
+    const [comp] = await Promise.all([
+      axios.get('/api/intraday/strikes', { params: { symbol: sym }, signal: ctl.signal }),
     ])
 
-    levels.value = levels.value || {}
-    levels.value.call_volume_total = sum.data?.totals?.call_vol ?? 0
-    levels.value.put_volume_total = sum.data?.totals?.put_vol ?? 0
-    levels.value.total_volume_delta = sum.data?.totals?.total ?? 0
-    levels.value.pcr_volume = sum.data?.totals?.pcr_vol ?? null
-    levels.value.premium_total = sum.data?.totals?.premium ?? 0
+    // IMPORTANT: mutate existing object to avoid remounts
+    const next = {
+      call_volume_total: comp.data?.totals?.call_vol ?? 0,
+      put_volume_total:  comp.data?.totals?.put_vol  ?? 0,
+      pcr_volume:        comp.data?.totals?.pcr_vol  ?? null,
+      premium_total:     comp.data?.totals?.premium ?? 0,
+      strike_data:       (comp.data?.items || []).map(r => ({
+        strike: r.strike,
+        call_vol_delta: r.call_vol,
+        put_vol_delta:  r.put_vol,
+        oi_call_eod:    r.oi_call_eod,
+        oi_put_eod:     r.oi_put_eod,
+        vol_oi:         r.vol_oi,
+        pcr:            r.pcr,
+        premium_call:   r.call_prem,
+        premium_put:    r.put_prem,
+      })),
+      strike_gex_live: (comp.data?.items || []).map(r => ({
+        strike: r.strike,
+        net_gex: r.net_gex_live,
+        net_gex_delta: r.net_gex_delta,
+      })),
+    }
 
-    levels.value.strike_data = (byK.data?.items || []).map(r => ({
-      strike: r.strike,
-      call_volume_delta: r.call_vol,
-      put_volume_delta: r.put_vol,
-    }))
+    if (!intradayLevels.value) intradayLevels.value = {}
+    Object.assign(intradayLevels.value, next) // mutate, don’t replace
 
-    lastUpdated.value = sum.data?.asof || new Date().toISOString()
+    lastUpdated.value = comp.data?.asof || new Date().toISOString()
+    firstIntradayLoadDone.value = true
   } catch (e) {
-    topError.value = e?.response?.data?.error || e.message
+    intradayError.value = e?.response?.data?.error || e.message
+  } finally {
+    intradayLoading.value = false
+    intradayRefreshing.value = false
   }
 }
 
@@ -769,7 +858,11 @@ let symbolTimer
 watch(userSymbol, (s) => {
   clearTimeout(symbolTimer)
   symbolTimer = setTimeout(() => {
-    fetchGexLevels(s, gexTf.value)
+    if (dataMode.value === 'eod') {
+      fetchGexLevelsEOD(s, gexTf.value)
+    } else {
+      refreshIntraday()
+    }
     if (loaded.value.ua && activeTab.value === 'ua') ensureUA()
   }, 250)
 })
@@ -781,7 +874,11 @@ watch([userSymbol], () => {
 })
 
 watch(gexTf, tf => {
-  fetchGexLevels(userSymbol.value, tf)
+  if (dataMode.value === 'eod')
+    fetchGexLevelsEOD(userSymbol.value, tf)
+  else {
+    refreshIntraday()
+  }
 })
 
 watch(dataMode, async () => {
@@ -793,7 +890,7 @@ watch(dataMode, async () => {
     startAutoRefresh()
   } else {
     stopRefresh()
-    fetchGexLevels(userSymbol.value, gexTf.value)
+    fetchGexLevelsEOD(userSymbol.value, gexTf.value)
   }
 })
 
@@ -831,6 +928,43 @@ async function loadUABadge(symbols) {
     } catch { out[s] = { data_date: null, count: 0 } }
   }))
   uaMap.value = out
+}
+
+function n(v, d = 0) { return Number.isFinite(Number(v)) ? Number(v) : d }
+
+// --- Normalizers for chart inputs ---
+function toNetGexSeries(arr) {
+  // Accept {strike, net_gex, net_gex_delta} OR {strike, net_gex_live, net_gex_delta}
+  return (arr || []).map(r => ({
+    strike: n(r.strike),
+    netGex: n(r.net_gex ?? r.net_gex_live ?? 0),
+    netGexDelta: n(r.net_gex_delta ?? 0),
+  }))
+}
+
+function toVolOiSeries(arr) {
+  // Accept {strike, vol_oi} OR {strike, volOI}
+  return (arr || []).map(r => ({
+    strike: n(r.strike),
+    volOi: n(r.vol_oi ?? r.volOI ?? 0),
+  }))
+}
+
+function toPcrSeries(arr) {
+  // Accept {strike, pcr} (null allowed -> will be filtered in the chart)
+  return (arr || []).map(r => ({
+    strike: n(r.strike),
+    pcr: (r.pcr === null || r.pcr === undefined) ? null : Number(r.pcr),
+  }))
+}
+
+function toPremiumSeries(arr) {
+  // Accept {call_prem, put_prem} or camelCase
+  return (arr || []).map(r => ({
+    strike: n(r.strike),
+    premiumCall: n(r.call_prem ?? r.premium_call ?? 0),
+    premiumPut:  n(r.put_prem  ?? r.premium_put  ?? 0),
+  }))
 }
 </script>
 

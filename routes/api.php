@@ -41,7 +41,6 @@ Route::get('/user', function (Request $request): User {
 
 
 Route::get('/gex-levels', [GexController::class, 'getGexLevels']);
-Route::post('/intraday/pull', [IntradayController::class, 'pull']);
 Route::get('/intraday/summary', [IntradayController::class, 'summary']);
 Route::get('/intraday/volume-by-strike', [IntradayController::class, 'volumeByStrike']);
 Route::get('/intraday/ua', [IntradayController::class, 'ua']);
@@ -74,6 +73,8 @@ Route::get('/dex', [PositioningController::class, 'dex']);
 Route::get('/expiry-pressure', [ExpiryController::class, 'pressure']);
 Route::get('/expiry-pressure/batch',  [ExpiryController::class, 'pressureBatch']);
 Route::get('/ua', [ActivityController::class, 'index']);
+Route::get('/intraday/strikes', [IntradayController::class, 'strikesComposite']);
+Route::get('/intraday/repriced-gex-by-strike', [IntradayController::class, 'repricedGexByStrike']);
 
 Route::get('/ua/debug', function (Request $req) {
   $symbol = \App\Support\Symbols::canon($req->query('symbol','spy'));
@@ -96,4 +97,58 @@ Route::post('/intraday/pull', function (Request $req) {
     $symbols = array_map(fn($s)=>\App\Support\Symbols::canon($s), $symbols);
     dispatch(new FetchPolygonIntradayOptionsJob($symbols));
     return response()->json(['ok'=>true,'symbols'=>$symbols]);
+});
+
+// routes/api.php
+Route::get('/option-chain', function () {
+    $symbol = strtoupper(request('symbol', 'SPY'));
+    $expiry = request('expiry');
+
+    $base = DB::table('option_snapshots')
+        ->where('symbol', $symbol)
+        ->where('fetched_at', '>=', now()->subMinutes(20));
+
+    $chain = $base->clone()
+        ->select(
+            'strike',
+            'type',
+            'bid',
+            'ask',
+            'mid',
+            DB::raw("DATE_FORMAT(expiry, '%m-%d') as expiry")
+        );
+
+    if ($expiry) {
+        $chain->whereRaw("DATE_FORMAT(expiry, '%m-%d') = ?", [$expiry]);
+    }
+
+    $chain = $chain->orderBy('strike')->get();
+
+    $price = $base->value('underlying_price') ?? 100;
+
+    $expirations = DB::table('option_snapshots')
+        ->where('symbol', $symbol)
+        ->where('expiry', '>=', today())
+        ->select('expiry')
+        ->distinct()
+        ->orderBy('expiry')
+        ->get()
+        ->map(fn($r) => \Carbon\Carbon::parse($r->expiry)->format('m-d'))
+        ->toArray();
+
+    return [
+        'underlying' => ['symbol' => $symbol, 'price' => round($price, 2)],
+        'chain' => $chain,
+        'expirations' => $expirations,
+    ];
+});
+
+Route::post('/prime-calculator', function (Request $req) {
+    $sym = \App\Support\Symbols::canon($req->input('symbol', 'SPY'));
+    if (!$sym) return response()->json(['error' => 'Invalid symbol'], 400);
+
+    // Only dispatch calculator job
+    dispatch(new \App\Jobs\FetchCalculatorChainJob($sym));
+
+    return response()->json(['ok' => true, 'symbol' => $sym]);
 });

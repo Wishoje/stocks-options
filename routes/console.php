@@ -4,6 +4,7 @@ namespace App\Console\Kernel;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+use Illuminate\Support\Facades\DB;
 
 class Kernel extends ConsoleKernel
 {
@@ -51,6 +52,14 @@ class Kernel extends ConsoleKernel
             ->weekdays()
             ->timezone('America/New_York')
             ->at('16:15');
+
+            
+        $schedule->call(function () {
+            $symbols = DB::table('watchlists')->distinct()->pluck('symbol')->take(10);
+            foreach ($symbols as $sym) {
+                dispatch(new \App\Jobs\FetchCalculatorChainJob($sym));
+            }
+        })->everyFifteenMinutes()->name('Refresh Calculator Chains');
 
         
         // ---------------------------------------------------------

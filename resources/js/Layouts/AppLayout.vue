@@ -22,6 +22,14 @@ const switchToTeam = (team) => {
     });
 };
 
+async function dispatchLastSymbol() {
+  try {
+    const { data } = await axios.get('/api/watchlist')
+    const sym = data?.[0]?.symbol || 'SPY'
+    window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: sym } }))
+  } catch {}
+}
+
 const logout = () => {
     router.post(route('logout'));
 };
@@ -51,6 +59,13 @@ const logout = () => {
                                 <NavLink :href="route('dashboard')" :active="route().current('dashboard')">
                                     Dashboard
                                 </NavLink>
+                                <NavLink 
+                                    :href="route('options.calculator')" 
+                                    :active="route().current('options.calculator')"
+                                    @click="dispatchLastSymbol"
+                                    >
+                                    Options Calculator
+                                    </NavLink>
                             </div>
                         </div>
 

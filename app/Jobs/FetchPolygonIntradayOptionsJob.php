@@ -53,6 +53,22 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
 
             DB::transaction(function () use ($symbol, $tradeDate, $snap) {
                 $now = now();
+                $capturedAt = \Carbon\Carbon::parse($snap['asof'] ?? now('America/New_York'))
+                    ->setTimezone('UTC');
+
+                $ingestor = app(\App\Services\IntradayOptionVolumeIngestor::class);
+                $requestId = (string)($snap['request_id'] ?? '');
+
+                foreach ($snap['contracts'] as $contract) {
+                    try {
+                        $ingestor->ingest($contract, $requestId, $capturedAt);
+                    } catch (\Throwable $e) {
+                        Log::warning('FetchPolygonIntradayOptionsJob.ingestError', [
+                            'symbol' => $symbol,
+                            'err'    => $e->getMessage(),
+                        ]);
+                    }
+                }
 
                 $totCall = (int)($snap['totals']['call_vol'] ?? 0);
                 $totPut  = (int)($snap['totals']['put_vol'] ?? 0);

@@ -8,6 +8,8 @@
       >
         <LeftPanel
           :watchlist="watchlistItems"
+          :pinMap="pinMap"
+          :uaMap="uaMap"
           @select="handleSelectSymbol"
           @add="reloadWatchlist"
           @remove="handleRemoveFromWatchlist"
@@ -75,12 +77,13 @@ async function loadPinsAndUA() {
 }
 
 async function handleSelectSymbol(sym) {
-  // Tell main page via event bus/store OR call globally exposed loader.
-  // If this shell wraps your page, emit a custom event:
-  window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: sym } }))
+  // Kick off data producers first
+  await Promise.allSettled([
+    axios.post('/api/intraday/pull', { symbols: [sym] }),
+    axios.post('/api/prime-calculator', { symbol: sym }),
+  ])
 
-  // Prime server if missing
-  axios.post('/api/prime', { symbol: sym }).catch(()=>{})
+  window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: sym } }))
 }
 
 async function handleRemoveFromWatchlist(id) {
