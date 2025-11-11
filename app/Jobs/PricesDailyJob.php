@@ -60,7 +60,7 @@ class PricesDailyJob implements ShouldQueue
 
         // Use last completed session if before ~4:15pm ET
         $cutoff = $ny->copy()->startOfDay()->setTime(16, 15);
-        if ($ny->lt($cutoff)) {
+        if ($ny->lte($cutoff)) {
             $ny->previousWeekday();
         }
 

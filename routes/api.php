@@ -11,6 +11,7 @@ use App\Http\Controllers\QScoreController;
 use App\Http\Controllers\ExpiryController;
 use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\SymbolSearchController;
+use App\Http\Controllers\PositionController;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Http\Controllers\IntradayController;
 
@@ -75,6 +76,7 @@ Route::get('/expiry-pressure/batch',  [ExpiryController::class, 'pressureBatch']
 Route::get('/ua', [ActivityController::class, 'index']);
 Route::get('/intraday/strikes', [IntradayController::class, 'strikesComposite']);
 Route::get('/intraday/repriced-gex-by-strike', [IntradayController::class, 'repricedGexByStrike']);
+Route::post('/position/analyze', [PositionController::class, 'analyze']);
 
 Route::get('/ua/debug', function (Request $req) {
   $symbol = \App\Support\Symbols::canon($req->query('symbol','spy'));
@@ -102,45 +104,76 @@ Route::post('/intraday/pull', function (Request $req) {
 // routes/api.php
 Route::get('/option-chain', function () {
     $symbol = strtoupper(request('symbol', 'SPY'));
-    $expiry = request('expiry');
+    $filterExpiry = request('expiry'); // "MM-DD" (optional)
 
-    $base = DB::table('option_snapshots')
-        ->where('symbol', $symbol)
-        ->where('fetched_at', '>=', now()->subMinutes(20));
+    $all = DB::table('option_snapshots')->where('symbol', $symbol);
 
-    $chain = $base->clone()
-        ->select(
-            'strike',
-            'type',
-            'bid',
-            'ask',
-            'mid',
-            DB::raw("DATE_FORMAT(expiry, '%m-%d') as expiry")
-        );
+    // prefer last 20m, else latest timestamp for that symbol
+    $recent = (clone $all)->where('fetched_at', '>=', now()->subMinutes(20));
+    $base = $recent->exists()
+        ? $recent
+        : (clone $all)->where('fetched_at', (clone $all)->max('fetched_at'));
 
-    if ($expiry) {
-        $chain->whereRaw("DATE_FORMAT(expiry, '%m-%d') = ?", [$expiry]);
+    // If we've never seen this symbol: prime and return a priming hint
+    if (!$base->exists()) {
+        dispatch(new \App\Jobs\FetchCalculatorChainJob($symbol));
+        return response()->json([
+            'underlying'  => ['symbol' => $symbol, 'price' => null],
+            'expirations' => [],
+            'chain'       => [],
+            'grouped'     => new \stdClass(),
+            'priming'     => true,
+        ]);
     }
 
-    $chain = $chain->orderBy('strike')->get();
+    // Underlying from the same snapshot family
+    $price = (clone $base)->value('underlying_price');
 
-    $price = $base->value('underlying_price') ?? 100;
-
-    $expirations = DB::table('option_snapshots')
-        ->where('symbol', $symbol)
-        ->where('expiry', '>=', today())
-        ->select('expiry')
-        ->distinct()
-        ->orderBy('expiry')
-        ->get()
+    // Expirations (future only)
+    $expirations = (clone $all)
+        ->whereDate('expiry', '>=', today())
+        ->select('expiry')->distinct()->orderBy('expiry')->get()
         ->map(fn($r) => \Carbon\Carbon::parse($r->expiry)->format('m-d'))
-        ->toArray();
+        ->values()->toArray();
 
-    return [
-        'underlying' => ['symbol' => $symbol, 'price' => round($price, 2)],
-        'chain' => $chain,
+    // Full chain for that snapshot family
+    $rows = (clone $base)
+        ->select(
+            'strike', 'type', 'bid', 'ask', 'mid',
+            DB::raw("DATE_FORMAT(expiry, '%Y-%m-%d') as expiry_ymd"),
+            DB::raw("DATE_FORMAT(expiry, '%m-%d') as expiry_md")
+        )
+        ->orderBy('expiry')->orderBy('strike')
+        ->get();
+
+    // Group by expiration for easy UI
+    $grouped = [];
+    foreach ($rows as $r) {
+        $k = $r->expiry_md;
+        $grouped[$k][] = [
+            'strike' => (float)$r->strike,
+            'type'   => $r->type,
+            'bid'    => is_null($r->bid) ? null : (float)$r->bid,
+            'ask'    => is_null($r->ask) ? null : (float)$r->ask,
+            'mid'    => is_null($r->mid) ? null : (float)$r->mid,
+            'expiry' => $r->expiry_md,
+            'expiry_ymd' => $r->expiry_ymd,
+        ];
+    }
+
+    // Optional single-expiry view
+    $chain = [];
+    if ($filterExpiry) {
+        $chain = array_values($grouped[$filterExpiry] ?? []);
+    }
+
+    return response()->json([
+        'underlying'  => ['symbol' => $symbol, 'price' => is_null($price)? null : round($price, 2)],
         'expirations' => $expirations,
-    ];
+        'chain'       => $chain,
+        'grouped'     => (object)$grouped,
+        'priming'     => false,
+    ]);
 });
 
 Route::post('/prime-calculator', function (Request $req) {

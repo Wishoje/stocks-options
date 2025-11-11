@@ -142,18 +142,22 @@ class FetchCalculatorChainJob implements ShouldQueue
             $details = $c['details'] ?? [];
             $quote   = $c['last_quote'] ?? [];
 
+            $strike  = (float)($details['strike_price'] ?? 0);
+            $type    = strtolower($details['contract_type'] ?? 'call');
+            $expiry  = $details['expiration_date'] ?? null;
+
+            if ($strike <= 0 || !$expiry) { $skipped++; continue; }
+
             $bid = (float)($quote['bid'] ?? 0);
             $ask = (float)($quote['ask'] ?? 0);
             $mid = $quote['midpoint'] ?? (($bid > 0 && $ask > 0) ? ($bid + $ask) / 2 : ($bid ?: $ask ?: 0));
 
-            if (empty($details['strike_price'])) { $skipped++; continue; }
-
             $inserts[] = [
                 'symbol'           => $symbol,
-                'ticker'           => $c['ticker'] ?? '',
-                'type'             => strtolower($details['contract_type'] ?? 'call'),
-                'strike'           => $details['strike_price'],
-                'expiry'           => $details['expiration_date'] ?? null,
+                'ticker'           => $c['ticker'] ?? null, // optional, don't rely on it
+                'type'             => $type,                // 'call' | 'put'
+                'strike'           => $strike,
+                'expiry'           => $expiry,              // store as DATE (recommended) or ISO string
                 'bid'              => round($bid, 2),
                 'ask'              => round($ask, 2),
                 'mid'              => round((float)$mid, 2),
@@ -168,8 +172,8 @@ class FetchCalculatorChainJob implements ShouldQueue
         if ($inserts) {
             DB::table('option_snapshots')->upsert(
                 $inserts,
-                ['ticker', 'fetched_at'],
-                ['bid', 'ask', 'mid', 'underlying_price', 'fetched_at']
+                ['symbol','type','strike','expiry','fetched_at'],
+                ['bid','ask','mid','underlying_price','fetched_at']
             );
         }
 

@@ -15,22 +15,37 @@ class PreloadWatchlistSymbols extends Command
     protected $signature = 'watchlist:preload';
     protected $description = 'Preload EOD datasets for all unique watchlisted symbols.';
 
+  // App/Console/Commands/PreloadWatchlistSymbols.php
     public function handle(): int
     {
-        $symbols = DB::table('watchlists')->select('symbol')->distinct()->pluck('symbol')->all();
-        if (!$symbols) { $this->info('No symbols to preload.'); return self::SUCCESS; }
+        $rows = DB::table('watchlists')->pluck('symbol')->all();
+
+        $symbols = collect($rows)
+            ->map(fn($s) => \App\Support\Symbols::canon((string)$s))
+            ->filter()                      // drop null/blank
+            ->unique()
+            ->values()
+            ->all();
+
+        if (!$symbols) {
+            $this->info('No symbols to preload.');
+            return self::SUCCESS;
+        }
 
         $batch = Bus::batch([])->name('Watchlist EOD Preload')->allowFailures()->dispatch();
 
-        $batch->add(new PricesBackfillJob($symbols, 400));
-        $batch->add(new PricesDailyJob($symbols));
-        $batch->add(new FetchOptionChainDataJob($symbols, 90)); // always 90 days
-        $batch->add(new ComputeVolMetricsJob($symbols));
-        $batch->add(new Seasonality5DJob($symbols, 15, 2));
-        $batch->add(new ComputeExpiryPressureJob($symbols, 3));
-        $batch->add(new ComputeUAJob($symbols));
+        // Chunk to keep jobs small and resilient
+        foreach (array_chunk($symbols, 50) as $chunk) {
+            $batch->add(new PricesBackfillJob($chunk, 400));
+            $batch->add(new PricesDailyJob($chunk));
+            $batch->add(new FetchOptionChainDataJob($chunk, 90));
+            $batch->add(new ComputeVolMetricsJob($chunk));
+            $batch->add(new Seasonality5DJob($chunk, 15, 2));
+            $batch->add(new ComputeExpiryPressureJob($chunk, 3));
+            $batch->add(new ComputeUAJob($chunk));
+        }
 
-        $this->info("Queued preload batch: {$batch->id}");
+        $this->info("Queued preload batch: {$batch->id} (".count($symbols)." symbols)");
         return self::SUCCESS;
     }
 }

@@ -308,21 +308,21 @@
             <div class="space-y-4">
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">Vol / OI (Live) by Strike</h4>
-                <div class="h-1/3">
+                <div class="h-[60vh]">
                   <VolOverOiChart :strikeData="normalizeStrikes(levels?.strike_data)" />
                 </div>
               </div>
 
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">PCR (Live) by Strike</h4>
-                <div class="h-1/3">
+                <div class="h-[60vh]">
                   <PcrByStrikeChart :strikeData="normalizeStrikes(levels?.strike_data)" />
                 </div>
               </div>
 
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">Premium (Live) by Strike</h4>
-                <div class="h-1/3">
+                <div class="h-[60vh]">
                   <PremiumByStrikeChart :strikeData="normalizeStrikes(levels?.strike_data)" />
                 </div>
               </div>
