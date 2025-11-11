@@ -39,4 +39,12 @@ return [
         'api_key' => env('FINNHUB_API_KEY'),
     ],
 
+    'massive' => [
+        'base'   => env('MASSIVE_BASE', 'https://api.massive.com'),
+        'key'    => env('MASSIVE_API_KEY'),
+        'mode'   => env('MASSIVE_AUTH_MODE', 'header'), // header|bearer|query
+        'header' => env('MASSIVE_API_HEADER', 'X-API-Key'),
+        'qparam' => env('MASSIVE_API_QUERY', 'apiKey'),
+    ],
+
 ];

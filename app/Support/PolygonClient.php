@@ -4,7 +4,6 @@ namespace App\Support;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 class PolygonClient
 {
@@ -19,21 +18,49 @@ class PolygonClient
         return strlen($s) > $max ? substr($s, 0, $max) . '…<clipped>' : $s;
     }
 
+    /** Build a preconfigured HTTP client (auth, UA, sane timeouts/retries). */
+   private function http()
+    {
+        $key  = config('services.massive.key');
+        $mode = config('services.massive.mode', 'header');
+        $hdr  = config('services.massive.header', 'X-API-Key');
+
+        if (empty($key)) {
+            Log::error('PolygonClient.auth.missingKey', ['has_key' => false]);
+            // Throwing makes the caller hit the noData path cleanly.
+            throw new \RuntimeException('Massive API key missing');
+        }
+
+        $client = Http::withHeaders([
+                'Accept'     => 'application/json',
+                'User-Agent' => 'Acceptd-Options/1.0 (+massive-snapshot)',
+            ])
+            ->timeout(15)
+            // Don’t aggressively retry auth failures; keep general retry for others
+            ->retry(3, fn () => random_int(250, 600), throw: false);
+
+        if ($mode === 'bearer') {
+            $client = $client->withToken($key); // sets Authorization: Bearer <key>
+        } elseif ($mode === 'header') {
+            $client = $client->withHeaders([$hdr => $key]);
+        }
+        return $client;
+    }
+
     public function intradayOptionVolumes(string $symbol): ?array
     {
         $uSym = strtoupper($symbol);
-        Log::debug('MassiveClient.intraday.start', ['symbol' => $uSym]);
+        Log::debug('PolygonClient.intraday.start', ['symbol' => $uSym]);
 
         $snap = $this->snapshotChainFromMassive($uSym);
 
         if (!$snap || empty($snap['results'])) {
-            Log::warning('MassiveClient.noData', [
-                'symbol' => $uSym,
+            Log::warning('PolygonClient.noData', [
+                'symbol'   => $uSym,
                 'has_snap' => (bool) $snap,
-                'keys' => $snap ? array_keys($snap) : [],
+                'keys'     => $snap ? array_keys($snap) : [],
             ]);
             $blank = $this->blankPayload();
-            // include empty contracts + request_id for consistent shape
             $blank['contracts']  = [];
             $blank['request_id'] = $snap['request_id'] ?? null;
             return $blank;
@@ -45,12 +72,12 @@ class PolygonClient
         $agg['contracts']  = $snap['results'];
         $agg['request_id'] = $snap['request_id'] ?? null;
 
-        Log::debug('MassiveClient.intraday.done', [
-            'symbol'  => $uSym,
-            'asof'    => $agg['asof'] ?? null,
-            'totals'  => $agg['totals'] ?? null,
-            'buckets' => isset($agg['by_strike']) ? count($agg['by_strike']) : 0,
-            'contracts' => count($agg['contracts'] ?? []),
+        Log::debug('PolygonClient.intraday.done', [
+            'symbol'     => $uSym,
+            'asof'       => $agg['asof'] ?? null,
+            'totals'     => $agg['totals'] ?? null,
+            'buckets'    => isset($agg['by_strike']) ? count($agg['by_strike']) : 0,
+            'contracts'  => count($agg['contracts'] ?? []),
         ]);
 
         return $agg;
@@ -65,81 +92,120 @@ class PolygonClient
         foreach ($contracts as $c) {
             $seen++;
 
-            $details = $c['details'] ?? [];
-            $day = $c['day'] ?? [];
-            $quote = $c['last_quote'] ?? [];
+            $details = (array)($c['details'] ?? []);
+            $day     = (array)($c['day'] ?? []);              // Massive sometimes returns []
+            $trade   = (array)($c['last_trade'] ?? []);
+            $quote   = (array)($c['quote'] ?? $c['last_quote'] ?? []); // support either key
 
-            $side = strtolower($details['contract_type'] ?? '');
+            $sideRaw = strtolower((string)($details['contract_type'] ?? ''));
+            // normalize side; skip unknown
+            $side = in_array($sideRaw, ['call', 'put'], true) ? $sideRaw : null;
+
             $strike = (float)($details['strike_price'] ?? 0);
-            $expiry = substr($details['expiration_date'] ?? '', 0, 10);
+            $expiry = substr((string)($details['expiration_date'] ?? ''), 0, 10);
 
-            // Volume: intraday cumulative
-            $vol = (int)($day['volume'] ?? 0);
-            if ($vol <= 0) { $skipped++; continue; }
+            // intraday volume (force non-negative int)
+            $vol = max(0, (int)($day['volume'] ?? 0));
 
-            // Price: midpoint -> last_trade.price -> bid/ask
-            $mid = $quote['midpoint'] ?? null;
-            if ($mid === null) {
-                $mid = $c['last_trade']['price'] ?? null;
+            // ---- Price selection hierarchy ----
+            // Keep earlier pick if we already found a price; do not overwrite later.
+            $mid = null;
+
+            // 1) prefer intraday VWAP
+            if (isset($day['vwap']) && is_numeric($day['vwap'])) {
+                $mid = (float)$day['vwap'];
             }
-            if ($mid === null) {
-                $bid = $quote['bid'] ?? 0;
-                $ask = $quote['ask'] ?? 0;
-                $mid = ($bid > 0 && $ask > 0) ? ($bid + $ask) / 2 : ($bid ?: $ask ?: 0);
-            }
-            $px = max(0.0, (float)$mid);
 
-            if ($strike <= 0 || !$expiry || !$side || $px <= 0) { $skipped++; continue; }
+            // 2) fall back to day.close
+            if ($mid === null && isset($day['close']) && is_numeric($day['close'])) {
+                $mid = (float)$day['close'];
+            }
+
+            // 3) fall back to last trade price
+            if ($mid === null && isset($trade['price']) && is_numeric($trade['price'])) {
+                $mid = (float)$trade['price'];
+            }
+
+            // 4) fall back to quote midpoint, or single-sided quote if needed
+            if ($mid === null) {
+                $qp = $quote['midpoint'] ?? null;
+                if (is_numeric($qp)) {
+                    $mid = (float)$qp;
+                } else {
+                    $bid = (float)($quote['bid'] ?? 0);
+                    $ask = (float)($quote['ask'] ?? 0);
+                    if ($bid > 0 && $ask > 0) {
+                        $mid = ($bid + $ask) / 2;
+                    } elseif ($bid > 0 || $ask > 0) {
+                        $mid = max($bid, $ask);
+                    }
+                }
+            }
+
+            // if both price and volume missing/useless, skip
+            if ($vol <= 0 && $mid === null) { $skipped++; continue; }
+
+            // If we still don't have a valid price, premium will be 0; allow volume counting.
+            $px = max(0.0, (float)($mid ?? 0));
+
+            // sanity for required fields
+            if ($strike <= 0 || !$expiry || !$side) { $skipped++; continue; }
 
             $notional = $px * $vol * 100;
 
             $key = "{$strike}|{$expiry}";
             if (!isset($byStrikeExp[$key])) {
                 $byStrikeExp[$key] = [
-                    'strike' => $strike,
-                    'exp_date' => $expiry,
-                    'call_vol' => 0, 'put_vol' => 0,
-                    'call_prem' => 0.0, 'put_prem' => 0.0,
+                    'strike'    => $strike,
+                    'exp_date'  => $expiry,
+                    'call_vol'  => 0,
+                    'put_vol'   => 0,
+                    'call_prem' => 0.0,
+                    'put_prem'  => 0.0,
                 ];
             }
 
             if ($side === 'call') {
-                $byStrikeExp[$key]['call_vol'] += $vol;
+                $byStrikeExp[$key]['call_vol']  += $vol;
                 $byStrikeExp[$key]['call_prem'] += $notional;
-                $totCall += (int)$vol;
+                $totCall += $vol;
             } else {
-                $byStrikeExp[$key]['put_vol'] += $vol;
+                $byStrikeExp[$key]['put_vol']  += $vol;
                 $byStrikeExp[$key]['put_prem'] += $notional;
-                $totPut += (int)$vol;
+                $totPut += $vol;
             }
             $totPrem += $notional;
             $used++;
         }
 
         $clean = array_values($byStrikeExp);
-        usort($clean, fn($a, $b) => $a['strike'] <=> $b['strike'] ?: strcmp($a['exp_date'], $b['exp_date']));
+        usort(
+            $clean,
+            fn($a, $b) => $a['strike'] <=> $b['strike'] ?: strcmp($a['exp_date'], $b['exp_date'])
+        );
+
         array_walk($clean, function (&$b) {
             $b['call_prem'] = round($b['call_prem'], 2);
             $b['put_prem']  = round($b['put_prem'], 2);
         });
 
-        Log::debug('MassiveClient.contracts.reduction', [
-            'request_id' => $requestId,
-            'seen' => $seen,
-            'used' => $used,
-            'skipped' => $skipped,
-            'buckets' => count($clean),
+        Log::debug('PolygonClient.contracts.reduction', [
+            'request_id'   => $requestId,
+            'seen'         => $seen,
+            'used'         => $used,
+            'skipped'      => $skipped,
+            'buckets'      => count($clean),
             'tot_call_vol' => $totCall,
-            'tot_put_vol' => $totPut,
-            'tot_prem' => round($totPrem, 2),
+            'tot_put_vol'  => $totPut,
+            'tot_prem'     => round($totPrem, 2),
         ]);
 
         return [
             'asof' => now('America/New_York')->subMinutes(1)->toIso8601String(),
             'totals' => [
                 'call_vol' => $totCall,
-                'put_vol' => $totPut,
-                'premium' => round($totPrem, 2),
+                'put_vol'  => $totPut,
+                'premium'  => round($totPrem, 2),
             ],
             'by_strike' => $clean,
         ];
@@ -148,128 +214,78 @@ class PolygonClient
     protected function blankPayload(): array
     {
         return [
-            'asof' => now('America/New_York')->toIso8601String(),
-            'totals' => ['call_vol' => 0, 'put_vol' => 0, 'premium' => 0.0],
+            'asof'    => now('America/New_York')->toIso8601String(),
+            'totals'  => ['call_vol' => 0, 'put_vol' => 0, 'premium' => 0.0],
             'by_strike' => [],
         ];
     }
 
-    private function snapshotChainFromMassive(string $underlying): ?array
+    /** Paginate through Massive options snapshot for a symbol. */
+   protected function snapshotChainFromMassive(string $symbol): ?array
     {
-        $apiKey  = env('MASSIVE_API_KEY');
-        $baseUrl = rtrim(env('MASSIVE_BASE', 'https://api.massive.com'), '/');
+        $base    = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
+        $mode    = config('services.massive.mode', 'header');
+        $qparam  = config('services.massive.qparam', 'apiKey');
+        $apiKey  = config('services.massive.key');
 
-        Log::debug('MassiveClient.config', [
-            'baseUrl' => $baseUrl,
-            'hasKey'  => $apiKey ? true : false,
-        ]);
+        $path    = "/v3/snapshot/options/{$symbol}";
+        $cursor  = null;
 
-        if (!$apiKey) {
-            Log::error('MassiveClient.missingKey', ['env' => 'MASSIVE_API_KEY']);
-            return null;
-        }
+        $all = ['results' => [], 'status' => null, 'request_id' => null];
 
-        $initialUrl = "{$baseUrl}/v3/snapshot/options/{$underlying}";
-        $allResults = [];
-        $requestId  = null;
-        $page       = 0;
-        $maxPages   = 50;
-        $perPage    = 250;
+        for ($hops = 0; $hops < 50; $hops++) {
+            $url = $cursor ?: ($base . $path);
 
-        $url = $initialUrl;
+            // attach ?apiKey=... if using query auth
+            if (!$cursor && $mode === 'query') {
+                $join = str_contains($url, '?') ? '&' : '?';
+                $url .= $join . urlencode($qparam) . '=' . urlencode($apiKey);
+            }
 
-        while ($url && $page < $maxPages) {
-            $page++;
+            $resp = $this->http()->get($url);
 
-            $http = Http::withHeaders([
-                'Authorization' => 'Bearer '.$apiKey,
-                'Accept'        => 'application/json',
-            ])->timeout(30);
+            // If unauthorized, don’t keep retrying needlessly
+            if ($resp->status() === 401) {
+                Log::warning('PolygonClient.auth.unauthorized', [
+                    'url' => $url,
+                    'hint' => 'Check MASSIVE_AUTH_MODE / header / query param and key value',
+                ]);
+                return null;
+            }
 
-            // Only page 1 gets query params
-            $params = ($page === 1) ? ['limit' => $perPage, 'sort' => 'strike_price', 'order' => 'asc'] : [];
-            Log::debug('MassiveClient.page.request', [
-                'symbol' => $underlying,
-                'page'   => $page,
-                'url'    => $url,
-                'params' => $params,
-            ]);
+            if ($resp->status() === 429) {
+                $retryAfter = (int)($resp->header('Retry-After') ?? 1);
+                usleep(max(1, $retryAfter) * 1_000_000);
+                $resp = $this->http()->get($url);
+            }
 
-            $resp = ($page === 1) ? $http->get($url, $params) : $http->get($url);
-
-            // Fallback if server rejects limit
-            if ($page === 1 && $resp->status() === 400 && str_contains($resp->body(), "'Limit' failed")) {
-                Log::warning('MassiveClient.limitRejected', [
-                    'attempted_limit' => $perPage,
-                    'status' => 400,
+            if (!$resp->ok()) {
+                Log::warning('PolygonClient.httpError', [
+                    'url'  => $url,
+                    'code' => $resp->status(),
                     'body' => self::clip($resp->body()),
                 ]);
-                $perPage = 100; // fallback
-                $params  = ['limit' => $perPage, 'sort' => 'strike_price', 'order' => 'asc'];
-                $resp    = $http->get($url, $params);
-                Log::debug('MassiveClient.limitRetry', ['new_limit' => $perPage, 'status' => $resp->status()]);
-            }
-
-            $ok = $resp->ok();
-            $status = $resp->status();
-            $body = self::clip($resp->body());
-
-            Log::debug('MassiveClient.page.response', [
-                'page' => $page,
-                'status' => $status,
-                'ok' => $ok,
-                'bodySnippet' => $body,
-            ]);
-
-            if (!$ok) {
-                // Special visibility for 429/5xx
-                if ($status == 429) {
-                    Log::warning('MassiveClient.rateLimited', ['page' => $page, 'body' => $body]);
-                } elseif ($status >= 500) {
-                    Log::error('MassiveClient.serverError', ['page' => $page, 'status' => $status, 'body' => $body]);
-                } else {
-                    Log::warning('MassiveClient.pageFailed', ['page' => $page, 'status' => $status, 'body' => $body]);
-                }
                 break;
             }
 
-            $json = $resp->json();
-            $results = $json['results'] ?? [];
-            $count = is_array($results) ? count($results) : 0;
+            $json = $resp->json() ?: [];
+            $all['status']     = $json['status']     ?? $all['status'];
+            $all['request_id'] = $json['request_id'] ?? $all['request_id'];
 
-            Log::debug('MassiveClient.page.results', [
-                'page' => $page,
-                'count' => $count,
-                'has_next_url' => !empty($json['next_url']),
-                'request_id' => $json['request_id'] ?? null,
-            ]);
-
-            if ($count === 0) {
-                Log::info('MassiveClient.noMoreResults', ['symbol' => $underlying, 'page' => $page]);
-                break;
+            if (!empty($json['results'])) {
+                array_push($all['results'], ...$json['results']);
             }
 
-            $allResults = array_merge($allResults, $results);
-            $requestId  = $json['request_id'] ?? $requestId;
-
-            // follow next_url as-is, normalize to absolute if necessary
-            $url = $json['next_url'] ?? null;
-            if ($url && !Str::startsWith($url, 'http')) {
-                $url = $baseUrl . $url;
-                Log::debug('MassiveClient.nextUrl.normalized', ['page' => $page, 'url' => $url]);
+            $cursor = $json['next_url'] ?? null;
+            if ($cursor && $mode === 'query') {
+                // ensure next_url also carries apiKey when in query mode
+                $cursor .= (str_contains($cursor, '?') ? '&' : '?')
+                    . urlencode($qparam) . '=' . urlencode($apiKey);
             }
+
+            if (!$cursor) break;
         }
 
-        Log::info('MassiveClient.fetchComplete', [
-            'symbol'     => $underlying,
-            'pages'      => $page,
-            'contracts'  => count($allResults),
-            'request_id' => $requestId,
-        ]);
-
-        return [
-            'request_id' => $requestId,
-            'results'    => $allResults,
-        ];
+        return $all['results'] ? $all : null;
     }
 }
