@@ -53,13 +53,14 @@ class Kernel extends ConsoleKernel
             ->timezone('America/New_York')
             ->at('16:15');
 
-            
-        $schedule->call(function () {
-            $symbols = DB::table('watchlists')->distinct()->pluck('symbol')->take(10);
-            foreach ($symbols as $sym) {
-                dispatch(new \App\Jobs\FetchCalculatorChainJob($sym));
-            }
-        })->everyFifteenMinutes()->name('Refresh Calculator Chains');
+        $schedule->command('intraday:prune-counters --days=7')->dailyAt('03:00');
+
+        // $schedule->call(function () {
+        //     $symbols = DB::table('watchlists')->distinct()->pluck('symbol')->take(10);
+        //     foreach ($symbols as $sym) {
+        //         dispatch(new \App\Jobs\FetchCalculatorChainJob($sym));
+        //     }
+        // })->everyFifteenMinutes()->name('Refresh Calculator Chains');
 
         
         // ---------------------------------------------------------
@@ -79,8 +80,8 @@ class Kernel extends ConsoleKernel
             $nowEt = \Carbon\Carbon::now('America/New_York');
 
             if ($nowEt->isWeekend()) return;
-            $hhmm = $nowEt->format('H:i');
-            if ($hhmm < '09:30' || $hhmm > '16:10') return;
+            // $hhmm = $nowEt->format('H:i');
+            // if ($hhmm < '09:30' || $hhmm > '16:10') return;
 
             // pull distinct symbols from watchlists
             $symbols = \Illuminate\Support\Facades\DB::table('watchlists')

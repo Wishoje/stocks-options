@@ -78,10 +78,10 @@ async function loadPinsAndUA() {
 
 async function handleSelectSymbol(sym) {
   // Kick off data producers first
-  await Promise.allSettled([
-    axios.post('/api/intraday/pull', { symbols: [sym] }),
-    axios.post('/api/prime-calculator', { symbol: sym }),
-  ])
+  // await Promise.allSettled([
+  //   axios.post('/api/intraday/pull', { symbols: [sym] }),
+  //   axios.post('/api/prime-calculator', { symbol: sym }),
+  // ])
 
   window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: sym } }))
 }

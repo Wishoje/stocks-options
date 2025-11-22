@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Support\Market;
 
 class IntradayController extends Controller
 {
@@ -21,8 +22,14 @@ class IntradayController extends Controller
             return response()->json(['error' => 'symbols[] required'], 422);
         }
 
-        // dispatch immediately (batch is fine or straight dispatch)
+        // hard gate: do nothing if market is closed
+        // if (!\App\Support\Market::isRthOpen(now())) {
+        //     return response()->json(['ok' => true, 'skipped' => 'market_closed'], 200);
+        // }
+
+        // RTH: run inline for snappy UX
         Bus::dispatch(new FetchPolygonIntradayOptionsJob($symbols));
+
 
         return response()->json(['ok' => true]);
     }
@@ -48,6 +55,8 @@ class IntradayController extends Controller
         if (!$row) {
             // nothing yet today
             return response()->json([
+                // 'open'   => $this->isMarketOpen(),
+                'open'   => true,
                 'asof'   => null,
                 'totals' => [
                     'call_vol' => 0,
@@ -75,6 +84,8 @@ class IntradayController extends Controller
         }
 
         return response()->json([
+            // 'open'   => $this->isMarketOpen(),
+            'open'   => true,
             'asof' => $row->asof,
             'totals' => [
                 'call_vol' => $callVol,
@@ -179,19 +190,23 @@ class IntradayController extends Controller
      */
     public function strikesComposite(Request $request)
     {
-        $symbol = strtoupper($request->query('symbol', 'SPY'));
+        $symbol    = strtoupper($request->query('symbol', 'SPY'));
         $tradeDate = $this->tradingDate(now());
 
         $cacheKey = "intraday:strikesComposite:{$symbol}:{$tradeDate}";
-        return Cache::remember($cacheKey, 15, function () use ($symbol, $tradeDate) {
+
+        $data = Cache::remember($cacheKey, 15, function () use ($symbol, $tradeDate) {
             // 1) Intraday volume & premium by strike (today)
             $rows = DB::table('option_live_counters')
                 ->where('symbol', $symbol)
                 ->where('trade_date', $tradeDate)
                 ->whereNotNull('strike')
-                ->select('strike', 'option_type',
-                         DB::raw('SUM(volume) as vol'),
-                         DB::raw('SUM(COALESCE(premium_usd,0)) as prem'))
+                ->select(
+                    'strike',
+                    'option_type',
+                    DB::raw('SUM(volume) as vol'),
+                    DB::raw('SUM(COALESCE(premium_usd,0)) as prem')
+                )
                 ->groupBy('strike', 'option_type')
                 ->get();
 
@@ -200,7 +215,7 @@ class IntradayController extends Controller
                 $k = $this->k2($r->strike);
                 if (!isset($byK[$k])) {
                     $byK[$k] = [
-                        'strike'         => (float)$r->strike,
+                        'strike'         => (float) $r->strike,
                         'call_vol'       => 0, 'put_vol' => 0,
                         'call_prem'      => 0.0, 'put_prem' => 0.0,
                         'oi_call_eod'    => 0, 'oi_put_eod' => 0,
@@ -209,33 +224,38 @@ class IntradayController extends Controller
                     ];
                 }
                 if ($r->option_type === 'call') {
-                    $byK[$k]['call_vol']  += (int)$r->vol;
-                    $byK[$k]['call_prem'] += (float)$r->prem;
+                    $byK[$k]['call_vol']  += (int) $r->vol;
+                    $byK[$k]['call_prem'] += (float) $r->prem;
                 } elseif ($r->option_type === 'put') {
-                    $byK[$k]['put_vol']  += (int)$r->vol;
-                    $byK[$k]['put_prem'] += (float)$r->prem;
+                    $byK[$k]['put_vol']  += (int) $r->vol;
+                    $byK[$k]['put_prem'] += (float) $r->prem;
                 }
             }
 
-            // 2) Join EOD OI by strike (sum over expiries)
+            // 2) EOD OI join
             $eodOi = $this->eodOiByStrike($symbol);
-           foreach ($eodOi as $kRaw => $oi) {
+            foreach ($eodOi as $kRaw => $oi) {
                 $k = $this->k2($kRaw);
                 if (!isset($byK[$k])) {
                     $byK[$k] = [
-                        'strike' => (float)$k,
-                        'call_vol'=>0,'put_vol'=>0,
-                        'call_prem'=>0.0,'put_prem'=>0.0,
-                        'oi_call_eod'=>0,'oi_put_eod'=>0,
-                        'vol_oi'=>null,'pcr'=>null,
-                        'net_gex_live'=>null,'net_gex_delta'=>null,
+                        'strike'        => (float) $k,
+                        'call_vol'      => 0,
+                        'put_vol'       => 0,
+                        'call_prem'     => 0.0,
+                        'put_prem'      => 0.0,
+                        'oi_call_eod'   => 0,
+                        'oi_put_eod'    => 0,
+                        'vol_oi'        => null,
+                        'pcr'           => null,
+                        'net_gex_live'  => null,
+                        'net_gex_delta' => null,
                     ];
                 }
-                $byK[$k]['oi_call_eod'] = (int)($oi['call'] ?? 0);
-                $byK[$k]['oi_put_eod']  = (int)($oi['put']  ?? 0);
+                $byK[$k]['oi_call_eod'] = (int) ($oi['call'] ?? 0);
+                $byK[$k]['oi_put_eod']  = (int) ($oi['put']  ?? 0);
             }
 
-            // 3) Compute convenience ratios
+            // 3) ratios
             foreach ($byK as &$row) {
                 $totVol = $row['call_vol'] + $row['put_vol'];
                 $totOi  = $row['oi_call_eod'] + $row['oi_put_eod'];
@@ -244,10 +264,8 @@ class IntradayController extends Controller
             }
             unset($row);
 
-            // 4) Repriced Net GEX by strike
+            // 4) repriced GEX
             $repriced = $this->repricedGexCompute($symbol, array_values($byK));
-
-            // merge back
             foreach ($repriced as $k => $vals) {
                 if (isset($byK[$k])) {
                     $byK[$k]['net_gex_live']  = $vals['net_gex_live'];
@@ -255,29 +273,34 @@ class IntradayController extends Controller
                 }
             }
 
-            // output
             $items = array_values($byK);
-            usort($items, fn($a,$b) => $a['strike'] <=> $b['strike']);
+            usort($items, fn ($a, $b) => $a['strike'] <=> $b['strike']);
 
-            // assemble totals ‘header’ similar to /intraday/summary for FE convenience
-            $totCall = array_sum(array_column($items,'call_vol'));
-            $totPut  = array_sum(array_column($items,'put_vol'));
-            $pcr = $totCall > 0 ? round($totPut / $totCall, 3) : null;
-            $asof = DB::table('option_live_counters')
-                ->where('symbol',$symbol)->where('trade_date',$tradeDate)
+            $totCall = array_sum(array_column($items, 'call_vol'));
+            $totPut  = array_sum(array_column($items, 'put_vol'));
+            $pcr     = $totCall > 0 ? round($totPut / $totCall, 3) : null;
+            $asof    = DB::table('option_live_counters')
+                ->where('symbol', $symbol)
+                ->where('trade_date', $tradeDate)
                 ->max('asof');
 
-            return response()->json([
-                'asof' => $asof,
+            return [
+                'open'   => true,
+                'asof'   => $asof,
                 'totals' => [
                     'call_vol' => $totCall,
                     'put_vol'  => $totPut,
                     'pcr_vol'  => $pcr,
-                    'premium'  => array_sum(array_map(fn($r)=>$r['call_prem']+$r['put_prem'],$items)),
+                    'premium'  => array_sum(array_map(
+                        fn ($r) => $r['call_prem'] + $r['put_prem'],
+                        $items
+                    )),
                 ],
-                'items' => $items,
-            ]);
+                'items'  => $items,
+            ];
         });
+
+        return response()->json($data);
     }
 
     /**
@@ -457,5 +480,8 @@ class IntradayController extends Controller
             ->value('underlying_price');
     }
 
-    
+    private function isMarketOpen(): bool
+    {
+        return \App\Support\Market::isRthOpen(now());
+    }
 }

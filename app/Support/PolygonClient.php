@@ -214,8 +214,8 @@ class PolygonClient
     protected function blankPayload(): array
     {
         return [
-            'asof'    => now('America/New_York')->toIso8601String(),
-            'totals'  => ['call_vol' => 0, 'put_vol' => 0, 'premium' => 0.0],
+            'asof'   => null,        // <-- no fake current time
+            'totals' => ['call_vol'=>0,'put_vol'=>0,'premium'=>0.0],
             'by_strike' => [],
         ];
     }

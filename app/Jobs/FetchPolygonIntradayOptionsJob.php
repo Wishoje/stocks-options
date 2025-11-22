@@ -10,6 +10,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Support\Market;
 
 class FetchPolygonIntradayOptionsJob implements ShouldQueue
 {
@@ -52,9 +53,9 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
             }
 
             DB::transaction(function () use ($symbol, $tradeDate, $snap) {
+                // $inRth = Market::isRthOpen(now());
                 $now = now();
-                $capturedAt = \Carbon\Carbon::parse($snap['asof'] ?? now('America/New_York'))
-                    ->setTimezone('UTC');
+                $capturedAt = \Carbon\Carbon::parse($snap['asof'] ?? now('America/New_York'))->setTimezone('UTC');
 
                 $ingestor = app(\App\Services\IntradayOptionVolumeIngestor::class);
                 $requestId = (string)($snap['request_id'] ?? '');
@@ -72,6 +73,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
 
                 $totCall = (int)($snap['totals']['call_vol'] ?? 0);
                 $totPut  = (int)($snap['totals']['put_vol'] ?? 0);
+                // $totPrem = $inRth ? ($snap['totals']['premium'] ?? null) : null;
                 $totPrem = $snap['totals']['premium'] ?? null;
 
                 Log::debug('FetchPolygonIntradayOptionsJob.totalsRow', [
@@ -80,7 +82,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                     'totCall'     => $totCall,
                     'totPut'      => $totPut,
                     'totPrem'     => $totPrem,
-                    'asof'        => $snap['asof'] ?? null,
+                    'asof' => $capturedAt,  
                 ]);
 
                 DB::table('option_live_counters')->upsert(
@@ -92,7 +94,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                         'option_type' => null,
                         'volume'      => $totCall + $totPut,
                         'premium_usd' => $totPrem,
-                        'asof'        => $snap['asof'] ?? null,
+                        'asof' => $capturedAt,  
                         'created_at'  => $now,
                         'updated_at'  => $now,
                     ]],
@@ -108,6 +110,8 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
 
                     $callVol   = (int)($row['call_vol']   ?? 0);
                     $putVol    = (int)($row['put_vol']    ?? 0);
+                    // $callPrem  = $inRth ? ($row['call_prem'] ?? null) : null;
+                    // $putPrem   = $inRth ? ($row['put_prem']  ?? null) : null;
                     $callPrem  = $row['call_prem'] ?? null;
                     $putPrem   = $row['put_prem']  ?? null;
 
@@ -120,7 +124,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                         'putVol'     => $putVol,
                         'callPrem'   => $callPrem,
                         'putPrem'    => $putPrem,
-                        'asof'       => $snap['asof'] ?? null,
+                        'asof' => $capturedAt,  
                     ]);
 
                     if ($K && $expDate) {
@@ -133,7 +137,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                                 'option_type' => 'call',
                                 'volume'      => $callVol,
                                 'premium_usd' => $callPrem,
-                                'asof'        => $snap['asof'] ?? null,
+                                'asof'        => $capturedAt,
                                 'created_at'  => $now,
                                 'updated_at'  => $now,
                             ];
@@ -148,7 +152,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                                 'option_type' => 'put',
                                 'volume'      => $putVol,
                                 'premium_usd' => $putPrem,
-                                'asof'        => $snap['asof'] ?? null,
+                                'asof' => $capturedAt,  
                                 'created_at'  => $now,
                                 'updated_at'  => $now,
                             ];

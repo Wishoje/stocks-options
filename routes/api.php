@@ -75,6 +75,8 @@ Route::get('/expiry-pressure/batch',  [ExpiryController::class, 'pressureBatch']
 Route::get('/ua', [ActivityController::class, 'index']);
 Route::get('/intraday/strikes', [IntradayController::class, 'strikesComposite']);
 Route::get('/intraday/repriced-gex-by-strike', [IntradayController::class, 'repricedGexByStrike']);
+Route::get('/symbol/status', [\App\Http\Controllers\SymbolStatusController::class, 'show']);
+
 
 Route::get('/ua/debug', function (Request $req) {
   $symbol = \App\Support\Symbols::canon($req->query('symbol','spy'));
@@ -92,12 +94,7 @@ Route::get('/ua/debug', function (Request $req) {
   return response()->json(compact('symbol','latest','expiries'));
 });
 
-Route::post('/intraday/pull', function (Request $req) {
-    $symbols = (array) $req->input('symbols', ['SPY']);
-    $symbols = array_map(fn($s)=>\App\Support\Symbols::canon($s), $symbols);
-    dispatch(new FetchPolygonIntradayOptionsJob($symbols));
-    return response()->json(['ok'=>true,'symbols'=>$symbols]);
-});
+Route::post('/intraday/pull', [IntradayController::class, 'pull']);
 
 // routes/api.php
 Route::get('/option-chain', function () {
@@ -143,12 +140,12 @@ Route::get('/option-chain', function () {
     ];
 });
 
-Route::post('/prime-calculator', function (Request $req) {
-    $sym = \App\Support\Symbols::canon($req->input('symbol', 'SPY'));
-    if (!$sym) return response()->json(['error' => 'Invalid symbol'], 400);
+// Route::post('/prime-calculator', function (Request $req) {
+//     $sym = \App\Support\Symbols::canon($req->input('symbol', 'SPY'));
+//     if (!$sym) return response()->json(['error' => 'Invalid symbol'], 400);
 
-    // Only dispatch calculator job
-    dispatch(new \App\Jobs\FetchCalculatorChainJob($sym));
+//     // Only dispatch calculator job
+//     dispatch(new \App\Jobs\FetchCalculatorChainJob($sym));
 
-    return response()->json(['ok' => true, 'symbol' => $sym]);
-});
+//     return response()->json(['ok' => true, 'symbol' => $sym]);
+// });

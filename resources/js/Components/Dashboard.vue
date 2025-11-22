@@ -13,6 +13,16 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
+              <span
+                v-if="dataMode === 'intraday' && intradayTransition"
+                class="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-100"
+              >
+                <svg class="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 4v2m0 12v2m8-8h-2M6 12H4m13.657-5.657l-1.414 1.414M7.757 16.243l-1.414 1.414m0-11.314l1.414 1.414M16.243 16.243l1.414 1.414" />
+                </svg>
+                Updating…
+            </span>
           </div>
         </div>
 
@@ -54,7 +64,7 @@
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              Live
+              Intraday (Live)
               <span v-if="dataMode === 'intraday'" class="text-[10px] opacity-80">15m</span>
             </button>
           </div>
@@ -65,7 +75,7 @@
               EOD: {{ levels.date_prev }}
             </span>
             <span v-else-if="dataMode === 'intraday'" class="flex items-center gap-1">
-              <span class="text-green-400 font-medium">LIVE</span>
+              <span class="text-green-400 font-medium">{{ marketOpen ? 'Live' : 'Market Closed' }}</span>
               <span v-if="lastUpdated">• {{ fromNow(lastUpdated) }}</span>
               <button @click="manualRefresh" class="ml-1 text-cyan-400 hover:text-cyan-300">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -118,7 +128,6 @@
       <ui-error-block v-if="topError" :message="'Failed to load data'" :detail="topError"
                      :onRetry="() => dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : refreshIntraday()" />
       <ui-spinner v-else-if="dataMode==='intraday' ? (!firstIntradayLoadDone && intradayLoading) : loading" />
-
 
       <template v-else>
         <!-- OVERVIEW (EOD) -->
@@ -378,6 +387,23 @@
       </template>
     </div>
 
+    <!-- Preparing overlay -->
+    <teleport to="body">
+      <div
+        v-if="preparing.active"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-gray-950/95 backdrop-blur-sm"
+      >
+        <div class="max-w-xl w-full px-4">
+          <PreparingBlock
+            :symbol="userSymbol"
+            :phase="preparing.phase"
+            @forceRefresh="manualRefresh"
+          />
+        </div>
+      </div>
+    </teleport>
+
+
     <!-- Symbol Picker Modal -->
     <teleport to="body">
       <div v-if="showSymbolPicker" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -424,6 +450,7 @@ import QScorePanel from './QScorePanel.vue'
 const ExpiryPressureTile = defineAsyncComponent(() => import('./ExpiryPressureTile.vue'))
 import UnusualActivityTable from './UnusualActivityTable.vue'
 import uiSpinner from './Spinner.vue'
+import PreparingBlock from './PreparingBlock.vue'
 import uiSkeletonCard from './SkeletonCard.vue'
 import uiErrorBlock from './ErrorBlock.vue'
 import { defineAsyncComponent } from 'vue'
@@ -473,6 +500,7 @@ const loading = computed(() => dataMode.value === 'eod' ? eodLoading.value : int
 // Separate error states
 const eodError = ref('')
 const intradayError = ref('')
+const preparing = ref({ active: false, phase: 'queued', timer: null })
 const topError = computed(() => dataMode.value === 'eod' ? eodError.value : intradayError.value)
 
 const lastUpdated = ref(null)
@@ -514,11 +542,22 @@ const cacheUA = new Map()
 const TTL_MS = 300_000
 const volErr = ref(null)
 const inflight = new Map()
-
+const marketOpen = ref(false)
+const inflightIntraday = new Map()
+const cacheIntraday = new Map()
+const INTRADAY_TTL_MS = 60_000 // 1 minute cache window
+const intradayDataSymbol = ref(null)
 
 // Symbol picker
 const showSymbolPicker = ref(false)
 const symbolSearch = ref('')
+
+const intradayTransition = computed(() =>
+  dataMode.value === 'intraday' &&
+  intradayRefreshing.value &&
+  intradayDataSymbol.value &&
+  userSymbol.value !== intradayDataSymbol.value
+)
 
 function pickSymbol(sym) {
   const s = sym.trim().toUpperCase()
@@ -594,10 +633,11 @@ function fromNow(ts) {
   if (!ts) return ''
   const then = new Date(ts).getTime()
   const diff = Math.round((then - Date.now()) / 1000)
-  const abs = Math.abs(diff)
+  const skewSafe = Math.abs(diff) <= 5 ? -Math.abs(diff) : diff
+  const abs = Math.abs(skewSafe)
   const steps = [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60], ['second', 1]]
   for (const [unit, s] of steps) {
-    const amt = Math.trunc(diff / s)
+    const amt = Math.trunc(skewSafe / s)
     if (abs >= s || unit === 'second') {
       return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(amt, unit)
     }
@@ -623,6 +663,8 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
   if (hit && Date.now() - hit.t < TTL_MS) {
     eodLevels.value = hit.data
     lastUpdated.value = new Date().toISOString()
+    preparing.value.active = false
+    stopPreparingPoll()
     return
   }
 
@@ -630,9 +672,10 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
   eodError.value = ''
   eodLevels.value = null
 
+  const ctl = ensureController('gex')
+
   try {
     await withInflight(`gex:${key}`, async () => {
-      const ctl = ensureController('gex')
       const { data } = await axios.get('/api/gex-levels', {
         params: { symbol: sym, timeframe: tf },
         signal: ctl.signal
@@ -644,10 +687,23 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
     })
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
-      eodError.value = e?.response?.data?.error || e.message
+      const msg = e?.response?.data?.error || e.message || ''
+      // If it looks like a first-time symbol, go into preparing mode
+    if ((e?.response?.status === 404) && /No data|No expirations/i.test(msg)) {
+      eodError.value = ''
+      // only start the poller if it’s not already running
+      if (!preparing.value.timer) {
+        await startPreparingPoll(sym, async () => {
+          // tiny backoff so the data that flipped "ready" actually becomes visible
+          setTimeout(() => fetchGexLevelsEOD(sym, tf), 750)
+        })
+      }
+    } else {
+        eodError.value = msg
+      }
     }
   } finally {
-    if (!controllers.gex?.signal.aborted) eodLoading.value = false
+    if (ctl === controllers.gex) eodLoading.value = false
   }
 }
 
@@ -702,7 +758,7 @@ async function loadUA(sym, exp = null) {
   uaLoading.value = true
   errors.value.ua = ''
   const uaUrl = dataMode.value === 'intraday' ? '/api/intraday/ua' : '/api/ua'
-  const k = ['ua', sym, exp ?? 'ALL', uaTop.value, uaMinZ.value, uaMinVolOI.value, uaMinVol.value, uaMinPrem.value, uaNearPct.value || 0, uaSide.value || '', uaSort.value, uaLimit.value].join('|')
+  const k = ['ua', sym, (exp || 'ALL'), uaTop.value, uaMinZ.value, uaMinVolOI.value, uaMinVol.value, uaMinPrem.value, uaNearPct.value || 0, uaSide.value || '', uaSort.value, uaLimit.value].join('|')
   const hit = getCache(cacheUA, k, 60_000)
   if (hit) {
     uaDate.value = hit.data_date || null
@@ -787,60 +843,152 @@ function stopRefresh() {
   }
 }
 
+function stopPreparingPoll() {
+  if (preparing.value.timer) {
+    clearInterval(preparing.value.timer)
+    preparing.value.timer = null
+  }
+}
+
+async function startPreparingPoll(sym, onReady) {
+  if (preparing.value.timer) return
+  preparing.value.active = true
+  preparing.value.phase = 'queued'
+  stopPreparingPoll()
+  const check = async () => {
+    try {
+      const { data, status } = await axios.get('/api/symbol/status', {
+        params: { symbol: sym, timeframe: gexTf.value }
+      })
+      const st = data?.status || (status === 200 ? 'ready' : 'queued')
+      preparing.value.phase = st
+      if (st === 'ready') {
+        stopPreparingPoll()
+        preparing.value.active = false
+        await onReady?.()
+      }
+    } catch {
+      // keep polling; backend might still be provisioning
+    }
+  }
+  await check()
+  const tick = async () => {
+    await check()
+    // 5s ± 1s jitter
+    const next = 5000 + Math.floor(Math.random() * 2000) - 1000
+    preparing.value.timer = setTimeout(tick, Math.max(2500, next))
+  }
+  preparing.value.timer = setTimeout(tick, 0)
+  // optional safety stop after 5 minutes:
+  setTimeout(() => stopPreparingPoll(), 5 * 60 * 1000)
+}
+
 function startAutoRefresh() {
   stopRefresh()
   refreshTimer.value = setInterval(refreshIntraday, 30_000)
 }
 
-async function refreshIntraday() {
+async function refreshIntraday({ force = false } = {}) {
   const sym = userSymbol.value
-  await axios.post('/api/intraday/pull', { symbols: [sym] }).catch(() => {})
+  const now = Date.now()
 
-  const ctl = ensureController('gex') // or a new 'intraday' controller
+  // 1) Use in-memory cache if recent and not forced
+  const cached = cacheIntraday.get(sym)
+  if (!force && cached && now - cached.t < INTRADAY_TTL_MS) {
+    if (!intradayLevels.value) intradayLevels.value = {}
+    Object.assign(intradayLevels.value, cached.payload)
+    lastUpdated.value = cached.asof || new Date(cached.t).toISOString()
+    firstIntradayLoadDone.value = true
+    return
+  }
+
+  // 2) Deduplicate in-flight calls for the same symbol
+  const existing = inflightIntraday.get(sym)
+  if (existing) return existing
+
+  const ctl = ensureController('gex') // reuse controller bucket
   const soft = firstIntradayLoadDone.value
-  if (!soft) intradayLoading.value = true; else intradayRefreshing.value = true
+  if (!soft) intradayLoading.value = true
+  else intradayRefreshing.value = true
   intradayError.value = ''
 
-  try {
-    const [comp] = await Promise.all([
-      axios.get('/api/intraday/strikes', { params: { symbol: sym }, signal: ctl.signal }),
-    ])
+  const p = (async () => {
+    try {
+      // Step A: lightweight summary to check freshness
+      const summaryResp = await axios.get('/api/intraday/summary', {
+        params: { symbol: sym },
+        signal: ctl.signal,
+      })
+      const sumData = summaryResp.data || {}
 
-    // IMPORTANT: mutate existing object to avoid remounts
-    const next = {
-      call_volume_total: comp.data?.totals?.call_vol ?? 0,
-      put_volume_total:  comp.data?.totals?.put_vol  ?? 0,
-      pcr_volume:        comp.data?.totals?.pcr_vol  ?? null,
-      premium_total:     comp.data?.totals?.premium ?? 0,
-      strike_data:       (comp.data?.items || []).map(r => ({
-        strike: r.strike,
-        call_vol_delta: r.call_vol,
-        put_vol_delta:  r.put_vol,
-        oi_call_eod:    r.oi_call_eod,
-        oi_put_eod:     r.oi_put_eod,
-        vol_oi:         r.vol_oi,
-        pcr:            r.pcr,
-        premium_call:   r.call_prem,
-        premium_put:    r.put_prem,
-      })),
-      strike_gex_live: (comp.data?.items || []).map(r => ({
-        strike: r.strike,
-        net_gex: r.net_gex_live,
-        net_gex_delta: r.net_gex_delta,
-      })),
+      marketOpen.value = !!sumData.open
+
+      const asofMs = sumData.asof ? new Date(sumData.asof).getTime() : null
+      const isFresh = !!asofMs && (now - asofMs) < INTRADAY_TTL_MS
+
+      // Step B: only hit heavy job if market is open AND snapshot is stale
+      if (marketOpen.value && !isFresh) {
+        await axios.post('/api/intraday/pull', { symbols: [sym] }).catch(() => {})
+      }
+
+      // Step C: get composite strikes snapshot
+      const comp = await axios.get('/api/intraday/strikes', {
+        params: { symbol: sym },
+        signal: ctl.signal,
+      })
+
+      const compData = comp.data || {}
+      marketOpen.value = !!compData.open
+
+      const next = {
+        call_volume_total: compData?.totals?.call_vol ?? 0,
+        put_volume_total:  compData?.totals?.put_vol  ?? 0,
+        pcr_volume:        compData?.totals?.pcr_vol  ?? compData?.totals?.pcr_vol ?? null,
+        premium_total:     compData?.totals?.premium ?? 0,
+        strike_data:       (compData.items || []).map(r => ({
+          strike:        r.strike,
+          call_vol_delta: r.call_vol,
+          put_vol_delta:  r.put_vol,
+          oi_call_eod:    r.oi_call_eod,
+          oi_put_eod:     r.oi_put_eod,
+          vol_oi:         r.vol_oi,
+          pcr:            r.pcr,
+          premium_call:   r.call_prem,
+          premium_put:    r.put_prem,
+        })),
+        strike_gex_live: (compData.items || []).map(r => ({
+          strike:       r.strike,
+          net_gex:      r.net_gex_live,
+          net_gex_delta: r.net_gex_delta,
+        })),
+      }
+
+      if (!intradayLevels.value) intradayLevels.value = {}
+      Object.assign(intradayLevels.value, next)
+
+      intradayDataSymbol.value = sym
+
+      lastUpdated.value = compData.asof || sumData.asof || new Date().toISOString()
+      firstIntradayLoadDone.value = true
+
+      // Step D: update cache for this symbol
+      cacheIntraday.set(sym, {
+        t: Date.now(),
+        asof: compData.asof || sumData.asof || null,
+        payload: next,
+      })
+    } catch (e) {
+      intradayError.value = e?.response?.data?.error || e.message
+    } finally {
+      intradayLoading.value = false
+      intradayRefreshing.value = false
     }
+  })().finally(() => {
+    inflightIntraday.delete(sym)
+  })
 
-    if (!intradayLevels.value) intradayLevels.value = {}
-    Object.assign(intradayLevels.value, next) // mutate, don’t replace
-
-    lastUpdated.value = comp.data?.asof || new Date().toISOString()
-    firstIntradayLoadDone.value = true
-  } catch (e) {
-    intradayError.value = e?.response?.data?.error || e.message
-  } finally {
-    intradayLoading.value = false
-    intradayRefreshing.value = false
-  }
+  inflightIntraday.set(sym, p)
+  return p
 }
 
 async function manualRefresh() {
@@ -848,7 +996,11 @@ async function manualRefresh() {
     await axios.post('/api/intraday/pull', { symbols: [userSymbol.value] })
     await refreshIntraday()
   } catch (e) {
-    topError.value = e?.response?.data?.error || e.message
+    if (dataMode.value === 'eod') {
+      eodError.value = e?.response?.data?.error || e.message
+    } else {
+      intradayError.value = e?.response?.data?.error || e.message
+    }
   }
 }
 
@@ -859,7 +1011,8 @@ watch(userSymbol, (s) => {
     if (dataMode.value === 'eod') {
       fetchGexLevelsEOD(s, gexTf.value)
     } else {
-      refreshIntraday()
+      // smart intraday load, reuse cache when possible
+      refreshIntraday({ force: false })
     }
     if (loaded.value.ua && activeTab.value === 'ua') ensureUA()
   }, 250)
