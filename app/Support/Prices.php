@@ -1,5 +1,4 @@
 <?php
-// app/Support/Prices.php
 
 namespace App\Support;
 
@@ -19,47 +18,72 @@ class Prices
         $symbol = \App\Support\Symbols::canon($symbol);
         $date   = Carbon::parse($date)->toDateString();
 
-        // 1) Polygon (preferred)
-        if ($out = self::polygonDaily($symbol, $date)) return $out;
-
-        // 2) Finnhub (skip if we cached a 403 for this symbol)
-        $denyKey = "px:finnhub:deny:{$symbol}";
-        if (!Cache::get($denyKey)) {
-            $out = self::finnhubDaily($symbol, $date, $denyKey);
-            if ($out) return $out;
+        // 1) Massive
+        if ($out = self::massiveDaily($symbol, $date)) {
+            return $out;
         }
 
-        // 3) Yahoo (best-effort)
+        // 2) Finnhub (skip if rate-limited/denied)
+        $denyKey = "px:finnhub:deny:{$symbol}";
+        if (!Cache::get($denyKey)) {
+            if ($out = self::finnhubDaily($symbol, $date, $denyKey)) {
+                return $out;
+            }
+        }
+
+        // 4) Yahoo
         return self::yahooDaily($symbol, $date);
     }
 
-    protected static function polygonDaily(string $symbol, string $date): ?array
+
+    protected static function massiveDaily(string $symbol, string $date): ?array
     {
-        $apiKey = env('POLYGON_API_KEY');
-        if (!$apiKey) return null;
+        $base   = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
+        $key    = config('services.massive.key');
+        $mode   = config('services.massive.mode', 'header'); // header|bearer|query
+        $header = config('services.massive.header', 'X-API-Key');
+        $qparam = config('services.massive.qparam', 'apiKey');
 
-        // v2 aggregates, 1 day range
-        $url = "https://api.polygon.io/v2/aggs/ticker/{$symbol}/range/1/day/{$date}/{$date}";
-        $resp = Http::retry(2, 200, throw:false)
-            ->timeout(15)->connectTimeout(10)
-            ->get($url, ['adjusted'=>true, 'sort'=>'asc', 'apiKey'=>$apiKey]);
+        if (empty($key)) {
+            return null;
+        }
 
+        $client = Http::acceptJson()
+            ->timeout(10)
+            ->retry(2, 250, throw: false);
+
+        if ($mode === 'bearer') {
+            $client = $client->withToken($key);
+        } elseif ($mode === 'header') {
+            $client = $client->withHeaders([$header => $key]);
+        }
+
+        $url = "{$base}/v1/open-close/{$symbol}/{$date}";
+        $params = ['adjusted' => true];
+
+        if ($mode === 'query') {
+            $params[$qparam] = $key;
+        }
+
+        $resp = $client->get($url, $params);
         if ($resp->failed()) {
-            Log::warning("Polygon daily fail {$symbol} {$date}: {$resp->status()} ".$resp->body());
+            Log::warning("Massive open-close fail {$symbol} {$date}: {$resp->status()} ".$resp->body());
             return null;
         }
 
         $j = $resp->json();
-        $r = $j['results'][0] ?? null;
-        if (!$r) return null;
+        $close = $j['close'] ?? null;
+        if ($close === null || $close <= 0) {
+            return null;
+        }
 
         return [
-            'date'   => $date,
-            'open'   => $r['o'] ?? null,
-            'high'   => $r['h'] ?? null,
-            'low'    => $r['l'] ?? null,
-            'close'  => $r['c'] ?? null,
-            'volume' => $r['v'] ?? null,
+            'date'   => $j['from'] ?? $date,
+            'open'   => $j['open']   ?? null,
+            'high'   => $j['high']   ?? null,
+            'low'    => $j['low']    ?? null,
+            'close'  => $close,
+            'volume' => $j['volume'] ?? null,
         ];
     }
 

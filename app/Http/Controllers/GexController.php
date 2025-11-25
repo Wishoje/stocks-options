@@ -79,25 +79,48 @@ class GexController extends Controller
         [$p1,$p2,$p3] = $this->getTop3($strikeList, 'put');
 
         // 5) Prepare prior snapshots
-        $latestDate = $todayData->max('data_date'); // e.g. 2025-11-21
-        $latest = \Carbon\Carbon::parse($latestDate, 'America/New_York');
+       $latestDate = $todayData->max('data_date'); // e.g. 2025-11-21
+
+        $latest = Carbon::parse($latestDate, 'America/New_York');
         $ageDays = $latest->diffInDays(
-            \Carbon\Carbon::now('America/New_York')->startOfDay()
+            Carbon::now('America/New_York')->startOfDay()
         );
-        $yesterday  = Carbon::parse($latestDate)->subDay()->toDateString();
-        $lastWeek   = Carbon::parse($latestDate)->subWeek()->toDateString();
 
-        $fetchPrior = fn($date) => OptionChainData::whereIn('expiration_id', $expirationIds)
-            ->where('data_date', $date)
-            ->select('strike', 'option_type',
-                     DB::raw('SUM(open_interest) as oi'),
-                     DB::raw('SUM(volume)       as vol'))
-            ->groupBy('strike','option_type')
-            ->get()
-            ->groupBy('strike');
+        // find actual previous snapshot date (not just "latest - 1 day")
+        $prevDate = OptionChainData::whereIn('expiration_id', $expirationIds)
+            ->where('data_date', '<', $latestDate)
+            ->max('data_date'); // could be null if only one snapshot ever
 
-        $dayAgo  = $fetchPrior($yesterday);
-        $weekAgo = $fetchPrior($lastWeek);
+        // find "week ago" snapshot – last snapshot on or before latest - 7d
+        $weekCutoff = Carbon::parse($latestDate)->subWeek()->toDateString();
+        $prevWeekDate = OptionChainData::whereIn('expiration_id', $expirationIds)
+            ->where('data_date', '<=', $weekCutoff)
+            ->max('data_date'); // may be null too
+
+        $fetchPrior = function (?string $date) use ($expirationIds) {
+            if (!$date) {
+                return collect(); // no prior snapshot
+            }
+
+            return OptionChainData::whereIn('expiration_id', $expirationIds)
+                ->where('data_date', $date)
+                ->select(
+                    'strike',
+                    'option_type',
+                    DB::raw('SUM(open_interest) as oi'),
+                    DB::raw('SUM(volume)       as vol')
+                )
+                ->groupBy('strike','option_type')
+                ->get()
+                ->groupBy('strike');
+        };
+
+        $dayAgo  = $fetchPrior($prevDate);
+        $weekAgo = $fetchPrior($prevWeekDate);
+
+        // for the response payload, keep your previous naming
+        $yesterday = $prevDate;
+        $lastWeek  = $prevWeekDate;
 
         // 6) Assemble full strike data with call/put deltas
         $fullStrike = [];
@@ -117,17 +140,21 @@ class GexController extends Controller
 
             // prior day
             $pd = $dayAgo->get($s, collect());
-            $pCallOi  = $pd->first(fn($r)=>$r->option_type==='call')->oi ?? 0;
-            $pPutOi   = $pd->first(fn($r)=>$r->option_type==='put')->oi  ?? 0;
-            $pCallVol = $pd->first(fn($r)=>$r->option_type==='call')->vol?? 0;
-            $pPutVol  = $pd->first(fn($r)=>$r->option_type==='put')->vol ?? 0;
+            $pCall  = $pd->firstWhere('option_type', 'call');
+            $pPut   = $pd->firstWhere('option_type', 'put');
+            $pCallOi  = $pCall?->oi ?? 0;
+            $pPutOi   = $pPut?->oi ?? 0;
+            $pCallVol = $pCall?->vol ?? 0;
+            $pPutVol  = $pPut?->vol ?? 0;
 
             // prior week
             $pw = $weekAgo->get($s, collect());
-            $wCallOi  = $pw->first(fn($r)=>$r->option_type==='call')->oi ?? 0;
-            $wPutOi   = $pw->first(fn($r)=>$r->option_type==='put')->oi  ?? 0;
-            $wCallVol = $pw->first(fn($r)=>$r->option_type==='call')->vol?? 0;
-            $wPutVol  = $pw->first(fn($r)=>$r->option_type==='put')->vol ?? 0;
+            $wCall  = $pw->firstWhere('option_type', 'call');
+            $wPut   = $pw->firstWhere('option_type', 'put');
+            $wCallOi  = $wCall?->oi ?? 0;
+            $wPutOi   = $wPut?->oi ?? 0;
+            $wCallVol = $wCall?->vol ?? 0;
+            $wPutVol  = $wPut?->vol ?? 0;
 
             // deltas
             $dCallOi  = $curCallOi  - $pCallOi;
@@ -140,7 +167,7 @@ class GexController extends Controller
             $totCallVolDelta += $dCallVol;
             $totPutVolDelta  += $dPutVol;
 
-            $pctOr0 = fn($n,$d) => $d>0 ? round($n/$d*100,2) : 0;
+            $pctOr0 = fn($n,$d) => $d > 0 ? round($n / $d * 100, 2) : 0;
 
             $fullStrike[] = [
                 'strike'              => $s,
@@ -151,14 +178,15 @@ class GexController extends Controller
                 'put_oi_delta_pct'    => $pctOr0($dPutOi,  $pPutOi),
                 'call_vol_delta'      => $dCallVol,
                 'put_vol_delta'       => $dPutVol,
-                'call_vol_delta_pct'  => $pctOr0($dCallVol,$pCallVol),
-                'put_vol_delta_pct'   => $pctOr0($dPutVol, $pPutVol),
+                'call_vol_delta_pct'  => $pctOr0($dCallVol, $pCallVol),
+                'put_vol_delta_pct'   => $pctOr0($dPutVol,  $pPutVol),
                 'call_oi_wow'         => $curCallOi  - $wCallOi,
                 'put_oi_wow'          => $curPutOi   - $wPutOi,
                 'call_vol_wow'        => $curCallVol - $wCallVol,
                 'put_vol_wow'         => $curPutVol  - $wPutVol,
             ];
         }
+
         $totalOiDelta  = $totCallOiDelta + $totPutOiDelta;
         $totalVolDelta = $totCallVolDelta + $totPutVolDelta;
 

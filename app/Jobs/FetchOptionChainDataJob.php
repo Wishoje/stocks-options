@@ -50,54 +50,41 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     public function handle(): void
     {
-        $apiKey = env('FINNHUB_API_KEY');
-        if (!$apiKey) {
-            Log::error('FINNHUB_API_KEY is missing.');
-            return;
-        }
-
-        $date = $this->tradingDate(now());
+        $date      = $this->tradingDate(now());
         $endWindow = ($this->days ? now()->addDays($this->days) : now()->addDays(90))->endOfDay();
 
         foreach ($this->symbols as $symbol) {
-            // Duplicate-work guard
+            // Duplicate-work guard per symbol/date
             if (!Cache::add("optchain:pulling:{$symbol}:{$date}", 1, now()->addMinutes($this->guardMinutes))) {
                 Log::info("Skip {$symbol} — another worker is already pulling for {$date}");
                 continue;
             }
 
-            // Pull whole chain once (Finnhub doesn’t let us server-filter by expiry in this endpoint)
-            $url = 'https://finnhub.io/api/v1/stock/option-chain';
-            $resp = Http::retry(3, 250, throw: false)
-                ->timeout(15)
-                ->acceptJson()
-                ->get($url, ['symbol' => $symbol, 'token' => $apiKey]);
+            // ---- Finnhub → Massive fallback with normalized chain ----
+            [$spot, $sets] = $this->fetchChain($symbol);
 
-            if ($resp->failed()) {
-                Log::error("Finnhub option-chain failed for {$symbol}: {$resp->status()} {$resp->body()}");
+            if (!$sets || !is_array($sets)) {
+                Log::warning("No option data for {$symbol} from Finnhub or Massive.");
                 continue;
             }
 
-            $json = $resp->json() ?? [];
-            $sets = $json['data'] ?? [];
-            if (!is_array($sets) || !$sets) {
-                Log::warning("No option data for {$symbol}");
-                continue;
-            }
-
-            $spot = (float)($json['lastTradePrice'] ?? 0);
             if ($spot <= 0) {
                 Log::warning("No/invalid spot for {$symbol}, skipping greeks and most filtering.");
             }
 
             // Filter expirations to our window
-            $nowTs = now()->timestamp;
+            $nowTs        = now()->timestamp;
             $expWindowSets = [];
             foreach ($sets as $set) {
                 $expDate = $set['expirationDate'] ?? null;
-                if (!$expDate) continue;
+                if (!$expDate) {
+                    continue;
+                }
+
                 $expTs = strtotime($expDate);
-                if ($expTs === false) continue;
+                if ($expTs === false) {
+                    continue;
+                }
 
                 if ($expTs >= $nowTs && $expTs <= $endWindow->timestamp) {
                     $expWindowSets[] = [
@@ -115,15 +102,21 @@ class FetchOptionChainDataJob implements ShouldQueue
 
             // Preload/create expiration ids in bulk
             $expDates = collect($expWindowSets)->pluck('date')->unique()->values();
-            $expMap = OptionExpiration::query()
+            $expMap   = OptionExpiration::query()
                 ->where('symbol', $symbol)
                 ->whereIn('expiration_date', $expDates)
                 ->pluck('id', 'expiration_date');
 
             $toInsert = [];
             foreach ($expDates as $d) {
-                if (!isset($expMap[$d])) $toInsert[] = ['symbol' => $symbol, 'expiration_date' => $d];
+                if (!isset($expMap[$d])) {
+                    $toInsert[] = [
+                        'symbol'          => $symbol,
+                        'expiration_date' => $d,
+                    ];
+                }
             }
+
             if ($toInsert) {
                 DB::table('option_expirations')->insert($toInsert);
                 // refresh map
@@ -142,32 +135,47 @@ class FetchOptionChainDataJob implements ShouldQueue
             $nearMax = $spot > 0 ? $spot * (1 + $this->greeksNearPct) : INF;
 
             $totalKept = 0;
+
             foreach ($expWindowSets as $set) {
                 $expDate = $set['date'];
                 $expTs   = $set['ts'];
-                $expId   = (int)$expMap[$expDate];
+                $expId   = (int) $expMap[$expDate];
 
                 $rows = [];
 
                 foreach (['CALL' => 'call', 'PUT' => 'put'] as $apiSide => $side) {
                     $list = $set['opts'][$apiSide] ?? [];
-                    if (!$list) continue;
+                    if (!$list) {
+                        continue;
+                    }
 
                     foreach ($list as $opt) {
                         $strike = (float)($opt['strike'] ?? 0);
-                        if ($strike <= 0 || $strike < $minStrike || $strike > $maxStrike) continue;
+                        if (
+                            $strike <= 0 ||
+                            $strike < $minStrike ||
+                            $strike > $maxStrike
+                        ) {
+                            continue;
+                        }
 
                         $oi  = (int)($opt['openInterest'] ?? 0);
                         $vol = (int)($opt['volume'] ?? 0);
-                        if ($oi < $this->minKeepOI && $vol < $this->minKeepVol) continue;
+                        if ($oi < $this->minKeepOI && $vol < $this->minKeepVol) {
+                            continue;
+                        }
 
                         // IV normalize
                         $ivRaw = $opt['impliedVolatility'] ?? null;
-                        $iv = null;
+                        $iv    = null;
                         if ($ivRaw !== null) {
-                            $iv = (float)$ivRaw;
-                            if ($iv > 1.0) $iv = $iv / 100.0;
-                            if ($iv <= 0) $iv = null;
+                            $iv = (float) $ivRaw;
+                            if ($iv > 1.0) {
+                                $iv = $iv / 100.0;
+                            }
+                            if ($iv <= 0) {
+                                $iv = null;
+                            }
                         }
 
                         // Time to expiry (years)
@@ -203,7 +211,16 @@ class FetchOptionChainDataJob implements ShouldQueue
                         DB::table('option_chain_data')->upsert(
                             $rows,
                             ['expiration_id', 'data_date', 'option_type', 'strike'],
-                            ['open_interest', 'volume', 'gamma', 'delta', 'vega', 'iv', 'underlying_price', 'data_timestamp']
+                            [
+                                'open_interest',
+                                'volume',
+                                'gamma',
+                                'delta',
+                                'vega',
+                                'iv',
+                                'underlying_price',
+                                'data_timestamp',
+                            ]
                         );
                     });
                     $totalKept += count($rows);
@@ -214,20 +231,242 @@ class FetchOptionChainDataJob implements ShouldQueue
         }
     }
 
+    // ---------- Provider selection + adapters ----------
+
+    /**
+     * Try Finnhub first, then Massive. Returns [spot, sets].
+     *
+     * sets is normalized to Finnhub-style:
+     * [
+     *   [
+     *     'expirationDate' => 'YYYY-MM-DD',
+     *     'options' => [
+     *       'CALL' => [ ['strike'=>..., 'openInterest'=>..., 'volume'=>..., 'impliedVolatility'=>...], ... ],
+     *       'PUT'  => [ ... ],
+     *     ],
+     *   ],
+     *   ...
+     * ]
+     */
+    protected function fetchChain(string $symbol): array
+    {
+        if ($chain = $this->fetchFinnhubChain($symbol)) {
+            return $chain;
+        }
+
+        if ($chain = $this->fetchMassiveChain($symbol)) {
+            return $chain;
+        }
+
+        return [0.0, []];
+    }
+
+    /**
+     * Finnhub adapter.
+     */
+    protected function fetchFinnhubChain(string $symbol): ?array
+    {
+        $apiKey = env('FINNHUB_API_KEY') ?: config('services.finnhub.api_key');
+        if (!$apiKey) {
+            return null;
+        }
+
+        $url  = 'https://finnhub.io/api/v1/stock/option-chain';
+        $resp = Http::retry(3, 250, throw: false)
+            ->timeout(15)
+            ->acceptJson()
+            ->get($url, [
+                'symbol' => $symbol,
+                'token'  => $apiKey,
+            ]);
+
+        if ($resp->failed()) {
+            Log::error("Finnhub option-chain failed for {$symbol}: {$resp->status()} {$resp->body()}");
+            return null;
+        }
+
+        $json = $resp->json() ?? [];
+        $sets = $json['data'] ?? [];
+        if (!is_array($sets) || !$sets) {
+            return null;
+        }
+
+        $spot = (float)($json['lastTradePrice'] ?? 0);
+
+        return [$spot, $sets];
+    }
+
+    /**
+     * Massive adapter (snapshot/options) normalized to Finnhub-style sets.
+     */
+    protected function fetchMassiveChain(string $symbol): ?array
+    {
+        $base   = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
+        $key    = config('services.massive.key');
+        $mode   = config('services.massive.mode', 'header'); // header|bearer|query
+        $header = config('services.massive.header', 'X-API-Key');
+        $qparam = config('services.massive.qparam', 'apiKey');
+
+        if (empty($key)) {
+            Log::error('Massive option-chain missing API key');
+            return null;
+        }
+
+        $client = Http::acceptJson()
+            ->timeout(20)
+            ->retry(2, 300, throw: false);
+
+        if ($mode === 'bearer') {
+            $client = $client->withToken($key);
+        } elseif ($mode === 'header') {
+            $client = $client->withHeaders([$header => $key]);
+        }
+
+        $url       = "{$base}/v3/snapshot/options/{$symbol}";
+        $cursor    = null;
+        $contracts = [];
+        $spot      = null;
+
+        // Pull all pages
+        for ($page = 0; $page < 50; $page++) {
+            $reqUrl = $cursor ?: $url;
+            $params = [];
+
+            if (!$cursor && $mode === 'query') {
+                $params[$qparam] = $key;
+            }
+
+            $resp = $client->get($reqUrl, $params);
+
+            if ($resp->status() === 401) {
+                Log::warning('Massive option-chain unauthorized', ['symbol' => $symbol]);
+                return null;
+            }
+
+            if ($resp->failed()) {
+                Log::warning('Massive option-chain httpError', [
+                    'symbol' => $symbol,
+                    'code'   => $resp->status(),
+                ]);
+                break;
+            }
+
+            $json  = $resp->json() ?: [];
+            $batch = $json['results'] ?? [];
+            if (!is_array($batch) || !$batch) {
+                break;
+            }
+
+            foreach ($batch as $c) {
+                $contracts[] = $c;
+
+                // Grab an underlying spot if we don't have one yet
+                if ($spot === null) {
+                    $spot = $c['underlying_asset']['price'] ?? null;
+                }
+            }
+
+            $cursor = $json['next_url'] ?? null;
+            if ($cursor && !str_starts_with($cursor, 'http')) {
+                $cursor = $base . $cursor;
+            }
+
+            if (!$cursor) {
+                break;
+            }
+        }
+
+        if (empty($contracts)) {
+            Log::info('Massive option-chain: no contracts', ['symbol' => $symbol]);
+            return null;
+        }
+
+        $spot = (float)($spot ?? 0);
+
+        // Normalize to Finnhub-style sets
+        $byExp = [];
+
+        foreach ($contracts as $c) {
+            $details = $c['details'] ?? [];
+            $session = $c['session'] ?? ($c['day'] ?? []);
+
+            $expRaw = $details['expiration_date'] ?? null;
+            if (!$expRaw) {
+                continue;
+            }
+
+            $expDate = substr($expRaw, 0, 10);
+            $strike  = (float)($details['strike_price'] ?? 0);
+            if ($strike <= 0) {
+                continue;
+            }
+
+            $sideRaw = strtolower((string)($details['contract_type'] ?? ''));
+            $side    = $sideRaw === 'call'
+                ? 'CALL'
+                : ($sideRaw === 'put' ? 'PUT' : null);
+
+            if (!$side) {
+                continue;
+            }
+
+            $oi  = (int)($c['open_interest'] ?? 0);
+            $vol = (int)($session['volume'] ?? 0);
+
+            $iv = $c['implied_volatility'] ?? null;
+            if ($iv !== null) {
+                $iv = (float) $iv;
+                if ($iv > 1.0) {
+                    $iv = $iv / 100.0;
+                }
+                if ($iv <= 0) {
+                    $iv = null;
+                }
+            }
+
+            if (!isset($byExp[$expDate])) {
+                $byExp[$expDate] = [
+                    'expirationDate' => $expDate,
+                    'options'        => [
+                        'CALL' => [],
+                        'PUT'  => [],
+                    ],
+                ];
+            }
+
+            $byExp[$expDate]['options'][$side][] = [
+                'strike'           => $strike,
+                'openInterest'     => $oi,
+                'volume'           => $vol,
+                'impliedVolatility'=> $iv,
+            ];
+        }
+
+        $sets = array_values($byExp);
+
+        if (!$sets) {
+            return null;
+        }
+
+        return [$spot, $sets];
+    }
+
     // ---------- Helpers ----------
 
     protected function tradingDate(Carbon $now): string
     {
         $ny = $now->copy()->setTimezone('America/New_York');
-        if ($ny->isWeekend()) $ny->previousWeekday();
+        if ($ny->isWeekend()) {
+            $ny->previousWeekday();
+        }
         return $ny->toDateString();
     }
 
     protected function timeToExpirationYears(int $expirationTimestamp): float
     {
-        $now = time();
-        $secondsToExp = max($expirationTimestamp - $now, 0);
-        $yearInSeconds = 365 * 24 * 3600;
+        $now            = time();
+        $secondsToExp   = max($expirationTimestamp - $now, 0);
+        $yearInSeconds  = 365 * 24 * 3600;
         return $secondsToExp / $yearInSeconds;
     }
 
@@ -239,42 +478,60 @@ class FetchOptionChainDataJob implements ShouldQueue
     protected function normCdf(float $x): float
     {
         // Abramowitz & Stegun approximation
-        $p = 0.2316419;
+        $p  = 0.2316419;
         $b1 = 0.319381530;
         $b2 = -0.356563782;
         $b3 = 1.781477937;
         $b4 = -1.821255978;
         $b5 = 1.330274429;
 
-        $t = 1.0 / (1.0 + $p * abs($x));
-        $nd = $this->normPdf($x);
-        $poly = ($b1*$t) + ($b2*$t*$t) + ($b3*$t*$t*$t) + ($b4*$t*$t*$t*$t) + ($b5*$t*$t*$t*$t*$t);
-        $cdf = 1.0 - $nd * $poly;
+        $t    = 1.0 / (1.0 + $p * abs($x));
+        $nd   = $this->normPdf($x);
+        $poly = ($b1 * $t)
+            + ($b2 * $t * $t)
+            + ($b3 * $t * $t * $t)
+            + ($b4 * $t * $t * $t * $t)
+            + ($b5 * $t * $t * $t * $t * $t);
+        $cdf  = 1.0 - $nd * $poly;
 
         return ($x >= 0.0) ? $cdf : 1.0 - $cdf;
     }
 
     protected function computeGamma(float $S, float $K, float $T, float $sigma, float $r = 0.0): ?float
     {
-        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) return null;
-        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
+        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) {
+            return null;
+        }
+
+        $d1  = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
         $nd1 = $this->normPdf($d1);
+
         return $nd1 / ($S * $sigma * sqrt($T));
     }
 
     protected function computeDelta(string $type, float $S, float $K, float $T, float $sigma, float $r = 0.0): ?float
     {
-        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) return null;
-        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
+        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) {
+            return null;
+        }
+
+        $d1  = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
         $Nd1 = $this->normCdf($d1);
-        return $type === 'call' ? $Nd1 : ($type === 'put' ? $Nd1 - 1.0 : null);
+
+        return $type === 'call'
+            ? $Nd1
+            : ($type === 'put' ? $Nd1 - 1.0 : null);
     }
 
     protected function computeVega(float $S, float $K, float $T, float $sigma, float $r = 0.0): ?float
     {
-        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) return null;
+        if ($T <= 0 || $sigma <= 0 || $S <= 0 || $K <= 0) {
+            return null;
+        }
+
         $d1  = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
         $nd1 = $this->normPdf($d1);
+
         // per 100% vol; multiply by 0.01 if you want per vol point
         return $S * $nd1 * sqrt($T);
     }

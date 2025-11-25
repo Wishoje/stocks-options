@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Bus;
 use App\Jobs\{
     PricesBackfillJob, PricesDailyJob, FetchOptionChainDataJob,
-    ComputeVolMetricsJob, Seasonality5DJob, ComputeExpiryPressureJob, ComputeUAJob
+    ComputeVolMetricsJob, Seasonality5DJob, ComputeExpiryPressureJob, ComputeUAJob,
+    ComputePositioningJob,
 };
 
 class PreloadHotOptionSymbols extends Command
@@ -54,6 +55,7 @@ class PreloadHotOptionSymbols extends Command
             new ComputeVolMetricsJob($symbols),
             new Seasonality5DJob($symbols, 15, 2),
             new ComputeExpiryPressureJob($symbols, 3),
+            new ComputePositioningJob($symbols),
             new ComputeUAJob($symbols),
         ])
         ->name("Hot EOD Preload {$tradeDate}")

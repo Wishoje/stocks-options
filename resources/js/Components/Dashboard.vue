@@ -320,21 +320,27 @@
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">Vol / OI (Live) by Strike</h4>
                 <div class="h-1/3">
-                  <VolOverOiChart :strikeData="toVolOiSeries(normalizeStrikes(levels?.strike_data))" />
+                  <VolOverOiChart
+                    :strikeData="toVolOiSeries(levels?.strike_data || [])"
+                  />
                 </div>
               </div>
 
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">PCR (Live) by Strike</h4>
                 <div class="h-1/3">
-                  <PcrByStrikeChart :strikeData="toPcrSeries(normalizeStrikes(levels?.strike_data))" />
+                  <PcrByStrikeChart
+                    :strikeData="toPcrSeries(levels?.strike_data || [])"
+                  />
                 </div>
               </div>
 
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">Premium (Live) by Strike</h4>
                 <div class="h-1/3">
-                  <PremiumByStrikeChart :strikeData="toPremiumSeries(normalizeStrikes(levels?.strike_data))" />
+                  <PremiumByStrikeChart
+                    :strikeData="toPremiumSeries(levels?.strike_data || [])"
+                  />
                 </div>
               </div>
             </div>
@@ -1058,28 +1064,43 @@ function toNetGexSeries(arr) {
   }))
 }
 
-function toVolOiSeries(arr) {
-  // Accept {strike, vol_oi} OR {strike, volOI}
+function toVolOiSeries(arr = []) {
   return (arr || []).map(r => ({
     strike: n(r.strike),
-    volOi: n(r.vol_oi ?? r.volOI ?? 0),
+
+    // keep volume fields under the names the chart expects
+    call_vol_delta: n(r.call_vol_delta ?? r.call_volume_delta ?? 0),
+    put_vol_delta:  n(r.put_vol_delta  ?? r.put_volume_delta  ?? 0),
+
+    // keep OI
+    oi_call_eod:    n(r.oi_call_eod ?? 0),
+    oi_put_eod:     n(r.oi_put_eod  ?? 0),
+
+    // keep precomputed Vol/OI as-is (null allowed)
+    vol_oi: (r.vol_oi === null || r.vol_oi === undefined)
+      ? null
+      : Number(r.vol_oi),
   }))
 }
 
-function toPcrSeries(arr) {
-  // Accept {strike, pcr} (null allowed -> will be filtered in the chart)
+function toPcrSeries(arr = []) {
   return (arr || []).map(r => ({
     strike: n(r.strike),
+
     pcr: (r.pcr === null || r.pcr === undefined) ? null : Number(r.pcr),
+
+    // keep vols so the chart fallback can compute p/c when pcr is null
+    call_vol_delta: n(r.call_vol_delta ?? r.call_volume_delta ?? 0),
+    put_vol_delta:  n(r.put_vol_delta  ?? r.put_volume_delta  ?? 0),
   }))
 }
 
-function toPremiumSeries(arr) {
-  // Accept {call_prem, put_prem} or camelCase
+function toPremiumSeries(arr = []) {
   return (arr || []).map(r => ({
     strike: n(r.strike),
-    premiumCall: n(r.call_prem ?? r.premium_call ?? 0),
-    premiumPut:  n(r.put_prem  ?? r.premium_put  ?? 0),
+    // use snake_case so PremiumByStrikeChart can see them
+    premium_call: n(r.premium_call ?? r.call_prem ?? 0),
+    premium_put:  n(r.premium_put  ?? r.put_prem  ?? 0),
   }))
 }
 

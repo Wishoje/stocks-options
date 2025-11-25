@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Bus;
 use App\Jobs\{
     PricesBackfillJob, PricesDailyJob, FetchOptionChainDataJob,
-    ComputeVolMetricsJob, Seasonality5DJob, ComputeExpiryPressureJob, ComputeUAJob
+    ComputeVolMetricsJob, Seasonality5DJob, ComputeExpiryPressureJob, ComputeUAJob,
+    ComputePositioningJob,
 };
 
 class PreloadWatchlistSymbols extends Command
@@ -28,6 +29,7 @@ class PreloadWatchlistSymbols extends Command
         $batch->add(new ComputeVolMetricsJob($symbols));
         $batch->add(new Seasonality5DJob($symbols, 15, 2));
         $batch->add(new ComputeExpiryPressureJob($symbols, 3));
+        $batch->add(new ComputePositioningJob($symbols));
         $batch->add(new ComputeUAJob($symbols));
 
         $this->info("Queued preload batch: {$batch->id}");

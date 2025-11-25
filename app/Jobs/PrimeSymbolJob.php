@@ -46,6 +46,7 @@ class PrimeSymbolJob implements ShouldQueue
         $batch->add(new \App\Jobs\ComputeVolMetricsJob([$s]));
         $batch->add(new \App\Jobs\Seasonality5DJob([$s], 15, 2));
         $batch->add(new \App\Jobs\ComputeExpiryPressureJob([$s], 3));
+        $batch->add(new \App\Jobs\ComputePositioningJob([$s]));
         $batch->add(new \App\Jobs\ComputeUAJob([$s]));
     }
 }
