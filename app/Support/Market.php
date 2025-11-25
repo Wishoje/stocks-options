@@ -6,14 +6,16 @@ use Carbon\Carbon;
 
 class Market
 {
-    public static function isRthOpen(?Carbon $now = null): bool
+    public static function isRthOpen(?Carbon $ts = null): bool
     {
-        $ny = ($now ?? now())->copy()->setTimezone('America/New_York');
-        // Weekends
-        if ($ny->isWeekend()) return false;
+        $ny = ($ts ?? now())->copy()->setTimezone('America/New_York');
 
-        // Simple RTH window 09:30–16:00 ET (you can expand later with a holiday table)
-        $hm = (int)$ny->format('Hi');
-        return $hm >= 930 && $hm < 1600;
+        if ($ny->isWeekend()) {
+            return false;
+        }
+
+        // simple 09:30–16:00 ET window
+        $t = (int) $ny->format('Hi'); // "0935", "1559", etc.
+        return $t >= 930 && $t <= 1600;
     }
 }

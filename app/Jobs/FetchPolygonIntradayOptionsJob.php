@@ -16,7 +16,14 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
-    public function __construct(public array $symbols) {}
+    // ❌ REMOVE this line:
+    // public string $queue = 'intraday';
+
+    public function __construct(public array $symbols)
+    {
+        // Set default queue for this job
+        $this->onQueue('intraday');
+    }
 
     public function handle(): void
     {
@@ -53,11 +60,10 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
             }
 
             DB::transaction(function () use ($symbol, $tradeDate, $snap) {
-                // $inRth = Market::isRthOpen(now());
                 $now = now();
                 $capturedAt = \Carbon\Carbon::parse($snap['asof'] ?? now('America/New_York'))->setTimezone('UTC');
 
-                $ingestor = app(\App\Services\IntradayOptionVolumeIngestor::class);
+                $ingestor  = app(\App\Services\IntradayOptionVolumeIngestor::class);
                 $requestId = (string)($snap['request_id'] ?? '');
 
                 foreach ($snap['contracts'] as $contract) {
@@ -73,7 +79,6 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
 
                 $totCall = (int)($snap['totals']['call_vol'] ?? 0);
                 $totPut  = (int)($snap['totals']['put_vol'] ?? 0);
-                // $totPrem = $inRth ? ($snap['totals']['premium'] ?? null) : null;
                 $totPrem = $snap['totals']['premium'] ?? null;
 
                 Log::debug('FetchPolygonIntradayOptionsJob.totalsRow', [
@@ -82,7 +87,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                     'totCall'     => $totCall,
                     'totPut'      => $totPut,
                     'totPrem'     => $totPrem,
-                    'asof' => $capturedAt,  
+                    'asof'        => $capturedAt,
                 ]);
 
                 DB::table('option_live_counters')->upsert(
@@ -94,7 +99,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                         'option_type' => null,
                         'volume'      => $totCall + $totPut,
                         'premium_usd' => $totPrem,
-                        'asof' => $capturedAt,  
+                        'asof'        => $capturedAt,
                         'created_at'  => $now,
                         'updated_at'  => $now,
                     ]],
@@ -108,23 +113,21 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                     $K       = isset($row['strike']) ? (float)$row['strike'] : null;
                     $expDate = $row['exp_date'] ?? null;
 
-                    $callVol   = (int)($row['call_vol']   ?? 0);
-                    $putVol    = (int)($row['put_vol']    ?? 0);
-                    // $callPrem  = $inRth ? ($row['call_prem'] ?? null) : null;
-                    // $putPrem   = $inRth ? ($row['put_prem']  ?? null) : null;
-                    $callPrem  = $row['call_prem'] ?? null;
-                    $putPrem   = $row['put_prem']  ?? null;
+                    $callVol  = (int)($row['call_vol']   ?? 0);
+                    $putVol   = (int)($row['put_vol']    ?? 0);
+                    $callPrem = $row['call_prem'] ?? null;
+                    $putPrem  = $row['put_prem']  ?? null;
 
                     Log::debug('FetchPolygonIntradayOptionsJob.bucketRow', [
-                        'symbol'     => $symbol,
-                        'idx'        => $idx,
-                        'strike'     => $K,
-                        'exp_date'   => $expDate,
-                        'callVol'    => $callVol,
-                        'putVol'     => $putVol,
-                        'callPrem'   => $callPrem,
-                        'putPrem'    => $putPrem,
-                        'asof' => $capturedAt,  
+                        'symbol'   => $symbol,
+                        'idx'      => $idx,
+                        'strike'   => $K,
+                        'exp_date' => $expDate,
+                        'callVol'  => $callVol,
+                        'putVol'   => $putVol,
+                        'callPrem' => $callPrem,
+                        'putPrem'  => $putPrem,
+                        'asof'     => $capturedAt,
                     ]);
 
                     if ($K && $expDate) {
@@ -152,7 +155,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                                 'option_type' => 'put',
                                 'volume'      => $putVol,
                                 'premium_usd' => $putPrem,
-                                'asof' => $capturedAt,  
+                                'asof'        => $capturedAt,
                                 'created_at'  => $now,
                                 'updated_at'  => $now,
                             ];
@@ -161,10 +164,10 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                 }
 
                 Log::debug('FetchPolygonIntradayOptionsJob.beforeUpsertRows', [
-                    'symbol'        => $symbol,
-                    'rows_count'    => count($rows),
-                    'first_row'     => $rows[0] ?? null,
-                    'last_row'      => $rows[count($rows)-1] ?? null,
+                    'symbol'     => $symbol,
+                    'rows_count' => count($rows),
+                    'first_row'  => $rows[0] ?? null,
+                    'last_row'   => $rows[count($rows) - 1] ?? null,
                 ]);
 
                 if (!empty($rows)) {

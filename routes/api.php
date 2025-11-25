@@ -95,8 +95,9 @@ Route::get('/ua/debug', function (Request $req) {
 });
 
 Route::post('/intraday/pull', [IntradayController::class, 'pull']);
-
+Route::get('/hot-options', [\App\Http\Controllers\HotOptionsController::class, 'index']);
 // routes/api.php
+
 Route::get('/option-chain', function () {
     $symbol = strtoupper(request('symbol', 'SPY'));
     $expiry = request('expiry');
@@ -138,6 +139,14 @@ Route::get('/option-chain', function () {
         'chain' => $chain,
         'expirations' => $expirations,
     ];
+});
+
+Route::get('/debug/market', function () {
+    $nowNy = \Carbon\Carbon::now('America/New_York');
+    return response()->json([
+        'now_et' => $nowNy->toDateTimeString(),
+        'is_rth_open' => \App\Support\Market::isRthOpen($nowNy),
+    ]);
 });
 
 // Route::post('/prime-calculator', function (Request $req) {

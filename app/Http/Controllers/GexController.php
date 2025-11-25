@@ -79,7 +79,11 @@ class GexController extends Controller
         [$p1,$p2,$p3] = $this->getTop3($strikeList, 'put');
 
         // 5) Prepare prior snapshots
-        $latestDate = $todayData->first()->data_date;
+        $latestDate = $todayData->max('data_date'); // e.g. 2025-11-21
+        $latest = \Carbon\Carbon::parse($latestDate, 'America/New_York');
+        $ageDays = $latest->diffInDays(
+            \Carbon\Carbon::now('America/New_York')->startOfDay()
+        );
         $yesterday  = Carbon::parse($latestDate)->subDay()->toDateString();
         $lastWeek   = Carbon::parse($latestDate)->subWeek()->toDateString();
 
@@ -97,6 +101,11 @@ class GexController extends Controller
 
         // 6) Assemble full strike data with call/put deltas
         $fullStrike = [];
+
+        $totCallOiDelta   = 0;
+        $totPutOiDelta    = 0;
+        $totCallVolDelta  = 0;
+        $totPutVolDelta   = 0;
         foreach ($strikeList as $row) {
             $s = $row['strike'];
 
@@ -126,6 +135,11 @@ class GexController extends Controller
             $dCallVol = $curCallVol - $pCallVol;
             $dPutVol  = $curPutVol  - $pPutVol;
 
+            $totCallOiDelta  += $dCallOi;
+            $totPutOiDelta   += $dPutOi;
+            $totCallVolDelta += $dCallVol;
+            $totPutVolDelta  += $dPutVol;
+
             $pctOr0 = fn($n,$d) => $d>0 ? round($n/$d*100,2) : 0;
 
             $fullStrike[] = [
@@ -145,19 +159,21 @@ class GexController extends Controller
                 'put_vol_wow'         => $curPutVol  - $wPutVol,
             ];
         }
+        $totalOiDelta  = $totCallOiDelta + $totPutOiDelta;
+        $totalVolDelta = $totCallVolDelta + $totPutVolDelta;
 
         $date = Carbon::now('America/New_York')->isWeekend()
             ? Carbon::now('America/New_York')->previousWeekday()->toDateString()
             : Carbon::now('America/New_York')->toDateString();
 
         $gs = Cache::get("gamma_strength:{$symbol}:{$date}");
-        $payload['regime_strength'] = $gs['strength'] ?? null;
-        $payload['gamma_sign']      = $gs['sign']     ?? null; // +1 pos gamma, -1 neg gamma
 
         // 7) Send it all back
         return response()->json([
             'symbol'                   => $symbol,
             'timeframe'                => $timeframe,
+            'data_date'                => $latestDate,
+            'data_age_days'            => $ageDays,
             'expiration_dates'         => $dates,
             'hvl'                      => $HVL,
             'call_resistance'          => $c1,
@@ -173,9 +189,13 @@ class GexController extends Controller
             'call_volume_total'        => $callVol,
             'put_volume_total'         => $putVol,
             'pcr_volume'               => $callVol>0 ? round($putVol/$callVol,2) : null,
+            'total_oi_delta'           => $totalOiDelta,
+            'total_volume_delta'       => $totalVolDelta,
             'date_prev'                => $yesterday,
             'date_prev_week'           => $lastWeek,
             'strike_data'              => $fullStrike,
+            'regime_strength'          => $gs['strength'] ?? null,
+            'gamma_sign'               => $gs['sign']     ?? null,
         ], 200);
     }
 

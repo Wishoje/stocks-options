@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
+import axios from 'axios';
 import ApplicationMark from '@/Components/ApplicationMark.vue';
 import Banner from '@/Components/Banner.vue';
 import Dropdown from '@/Components/Dropdown.vue';
@@ -65,7 +66,13 @@ const logout = () => {
                                     @click="dispatchLastSymbol"
                                     >
                                     Options Calculator
-                                    </NavLink>
+                                </NavLink>
+                                <NavLink
+                                    :href="route('options.scanner')"
+                                    :active="route().current('options.scanner')"
+                                >
+                                    Scanner
+                                </NavLink>
                             </div>
                         </div>
 
@@ -208,6 +215,21 @@ const logout = () => {
                     <div class="pt-2 pb-3 space-y-1">
                         <ResponsiveNavLink :href="route('dashboard')" :active="route().current('dashboard')">
                             Dashboard
+                        </ResponsiveNavLink>
+
+                        <ResponsiveNavLink
+                            :href="route('options.calculator')"
+                            :active="route().current('options.calculator')"
+                        >
+                            Options Calculator
+                        </ResponsiveNavLink>
+
+                        <!-- NEW: Scanner (mobile) -->
+                        <ResponsiveNavLink
+                            :href="route('options.scanner')"
+                            :active="route().current('options.scanner')"
+                        >
+                            Scanner
                         </ResponsiveNavLink>
                     </div>
 

@@ -53,7 +53,53 @@ class Kernel extends ConsoleKernel
             ->timezone('America/New_York')
             ->at('16:15');
 
+        $schedule->command('preload:hot-options --limit=200 --days=10')
+            ->weekdays()
+            ->timezone('America/New_York')
+            ->at('17:00'); // tweak as needed
+
+        $schedule->command('intraday:warmup --limit=200 --days=5')
+            ->weekdays()
+            ->timezone('America/New_York')
+            ->everyFifteenMinutes()
+            ->between('09:35', '15:55');
+
         $schedule->command('intraday:prune-counters --days=7')->dailyAt('03:00');
+
+        $schedule->call(function () {
+            $nowEt = \Carbon\Carbon::now('America/New_York');
+
+            if ($nowEt->isWeekend()) return;
+
+            // time window commented out
+            // if ($hhmm < '09:30' || $hhmm > '16:10') return;
+
+            $symbols = DB::table('watchlists')
+                ->pluck('symbol')
+                ->map(fn($s) => \App\Support\Symbols::canon($s))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            if (!$symbols) {
+                $symbols = ['SPY','QQQ','IWM','AAPL','MSFT','NVDA','TSLA','AMZN'];
+            }
+
+            dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob($symbols))->onQueue('intraday');
+        })
+        ->everyFiveMinutes()
+        ->name('intraday:polygon:pull')
+        ->withoutOverlapping(4)
+        ->timezone('America/New_York');
+
+        $schedule->command('hot-options:fetch --limit=200 --type=STOCKS')
+            ->weekdays()
+            ->timezone('America/New_York')
+            ->dailyAt('17:30');
+
+
+        
 
         // $schedule->call(function () {
         //     $symbols = DB::table('watchlists')->distinct()->pluck('symbol')->take(10);
@@ -75,39 +121,6 @@ class Kernel extends ConsoleKernel
         // - We only dispatch if it's a weekday AND between 09:30 and ~16:10 ET
         // - We pull symbols from watchlist first; if empty fall back to a core basket
         //
-
-        $schedule->call(function () {
-            $nowEt = \Carbon\Carbon::now('America/New_York');
-
-            if ($nowEt->isWeekend()) return;
-            // $hhmm = $nowEt->format('H:i');
-            // if ($hhmm < '09:30' || $hhmm > '16:10') return;
-
-            // pull distinct symbols from watchlists
-            $symbols = \Illuminate\Support\Facades\DB::table('watchlists')
-                ->pluck('symbol')
-                ->map(fn($s) => \App\Support\Symbols::canon($s))
-                ->filter()
-                ->unique()
-                ->values()
-                ->all();
-
-            // fallback if empty
-            if (!$symbols) {
-                $symbols = ['SPY','QQQ','IWM','AAPL','MSFT','NVDA','TSLA','AMZN'];
-            }
-
-            if (!$symbols) {
-                return;
-            }
-
-            dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob($symbols))
-                ->onQueue('default');
-        })
-        ->everyFiveMinutes()
-        ->name('intraday:polygon:pull')
-        ->withoutOverlapping(4)
-        ->timezone('America/New_York');
     }
 
     /**

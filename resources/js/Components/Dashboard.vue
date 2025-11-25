@@ -71,12 +71,14 @@
 
           <!-- Freshness -->
           <div class="text-xs text-gray-400">
-            <span v-if="dataMode === 'eod' && levels?.date_prev">
-              EOD: {{ levels.date_prev }}
+            <span v-if="dataMode === 'eod' && levels?.data_date">
+              EOD: {{ levels.data_date }}
+              <span v-if="levels.data_age_days > 0" class="ml-1 text-[11px] text-amber-400">
+                ({{ levels.data_age_days }}d old)
+              </span>
             </span>
             <span v-else-if="dataMode === 'intraday'" class="flex items-center gap-1">
               <span class="text-green-400 font-medium">{{ marketOpen ? 'Live' : 'Market Closed' }}</span>
-              <span v-if="lastUpdated">• {{ fromNow(lastUpdated) }}</span>
               <button @click="manualRefresh" class="ml-1 text-cyan-400 hover:text-cyan-300">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -318,21 +320,21 @@
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">Vol / OI (Live) by Strike</h4>
                 <div class="h-1/3">
-                  <VolOverOiChart :strikeData="normalizeStrikes(levels?.strike_data)" />
+                  <VolOverOiChart :strikeData="toVolOiSeries(normalizeStrikes(levels?.strike_data))" />
                 </div>
               </div>
 
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">PCR (Live) by Strike</h4>
                 <div class="h-1/3">
-                  <PcrByStrikeChart :strikeData="normalizeStrikes(levels?.strike_data)" />
+                  <PcrByStrikeChart :strikeData="toPcrSeries(normalizeStrikes(levels?.strike_data))" />
                 </div>
               </div>
 
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-3">Premium (Live) by Strike</h4>
                 <div class="h-1/3">
-                  <PremiumByStrikeChart :strikeData="normalizeStrikes(levels?.strike_data)" />
+                  <PremiumByStrikeChart :strikeData="toPremiumSeries(normalizeStrikes(levels?.strike_data))" />
                 </div>
               </div>
             </div>
@@ -428,7 +430,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, h, defineComponent } from 'vue'
+import {
+  ref, computed, watch, onMounted, onUnmounted,
+  h, defineComponent, defineAsyncComponent
+} from 'vue'
 import axios from 'axios'
 
 // Components
@@ -453,8 +458,6 @@ import uiSpinner from './Spinner.vue'
 import PreparingBlock from './PreparingBlock.vue'
 import uiSkeletonCard from './SkeletonCard.vue'
 import uiErrorBlock from './ErrorBlock.vue'
-import { defineAsyncComponent } from 'vue'
-
 axios.defaults.withCredentials = true
 axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest'
 
@@ -528,9 +531,6 @@ const uaSide = ref('')
 const uaSort = ref('z_score')
 const uaMinPrem = ref(0)
 const showAdvanced = ref(false)
-const watchlistItems = ref([])
-const pinMap = ref({})
-const uaMap = ref({})
 const symbol = ref('SPY')
 const gexTf = ref('14d')
 const userSymbol = symbol
@@ -578,10 +578,10 @@ function withInflight(key, fn) {
 }
 
 // Watchers
-watch(dataMode, (mode) => {
-  if (mode === 'intraday' && activeTab.value === 'overview') activeTab.value = 'flow'
-  if (mode === 'eod' && activeTab.value === 'flow') activeTab.value = 'overview'
-})
+// watch(dataMode, (mode) => {
+//   if (mode === 'intraday' && activeTab.value === 'overview') activeTab.value = 'flow'
+//   if (mode === 'eod' && activeTab.value === 'flow') activeTab.value = 'overview'
+// })
 
 function activate(key) {
   activeTab.value = key
@@ -811,29 +811,36 @@ function presetConservative() { uaMinZ.value = 3.0; uaMinVolOI.value = 0.75; uaM
 function presetAggressive() { uaMinZ.value = 2.0; uaMinVolOI.value = 0.25; uaMinVol.value = 0; uaNearPct.value = 0; uaSide.value = '' }
 function showMore() { uaTop.value = Math.min(uaTop.value + 3, 20); uaLimit.value = Math.min(uaLimit.value + 30, 200); ensureUA() }
 
-// Lifecycle
-function onSymbolPicked(e) {
-  const sym = String(e.detail?.symbol || '').trim().toUpperCase()
-  if (!sym) return
-  userSymbol.value = sym
-  loaded.value = { volatility: false, ua: false }
-  if (dataMode.value === 'intraday') {
-    refreshIntraday()
-  } else {
-    fetchGexLevelsEOD(sym, gexTf.value)
+
+function handleSelectSymbolEvent(evt) {
+  const next = String(evt?.detail?.symbol || '').trim().toUpperCase()
+  if (!next) return
+
+  // If we click the same symbol again, optionally just force a refresh
+  if (next === userSymbol.value) {
+    if (dataMode.value === 'eod') {
+      fetchGexLevelsEOD(next, gexTf.value)
+    } else {
+      refreshIntraday({ force: true })
+    }
+    return
   }
+
+  // Normal case: update the symbol – your watcher on userSymbol will do the rest
+  userSymbol.value = next
 }
 
 onMounted(() => {
-  loadWatchlist()
-  window.addEventListener('select-symbol', onSymbolPicked)
+  // make sure we load something on first render
   fetchGexLevelsEOD(userSymbol.value, gexTf.value)
+
+  // listen for watchlist / scanner clicks
+  window.addEventListener('select-symbol', handleSelectSymbolEvent)
 })
 
+
 onUnmounted(() => {
-  window.removeEventListener('select-symbol', onSymbolPicked)
-  Object.keys(controllers).forEach(cancel)
-  stopRefresh()
+  window.removeEventListener('select-symbol', handleSelectSymbolEvent)
 })
 
 function stopRefresh() {
@@ -1032,53 +1039,11 @@ watch(gexTf, tf => {
   }
 })
 
-watch(dataMode, async () => {
-  if (dataMode.value === 'intraday') {
-    try {
-      await axios.post('/api/intraday/pull', { symbols: [userSymbol.value] })
-    } catch {}
-    refreshIntraday()
-    startAutoRefresh()
-  } else {
-    stopRefresh()
-    fetchGexLevelsEOD(userSymbol.value, gexTf.value)
-  }
-})
-
 // Cache helpers
 function setCache(map, key, data) { map.set(key, { t: Date.now(), data }) }
 function getCache(map, key, ttl) {
   const h = map.get(key)
   return (h && Date.now() - h.t < ttl) ? h.data : null
-}
-
-async function loadWatchlist() {
-  try {
-    const { data } = await axios.get('/api/watchlist')
-    watchlistItems.value = Array.isArray(data) ? data : []
-    await Promise.all([loadPinBatch(), loadUABadge(watchlistItems.value.map(i => i.symbol))])
-  } catch {}
-}
-
-async function loadPinBatch() {
-  const syms = [...new Set(watchlistItems.value.map(i => i.symbol))]
-  if (!syms.length) { pinMap.value = {}; return }
-  try {
-    const { data } = await axios.get('/api/expiry-pressure/batch', { params: { symbols: syms, days: pinDays } })
-    pinMap.value = data?.items || {}
-  } catch { pinMap.value = {} }
-}
-
-async function loadUABadge(symbols) {
-  const uniq = [...new Set(symbols)]
-  const out = {}
-  await Promise.all(uniq.map(async (s) => {
-    try {
-      const { data } = await axios.get('/api/ua', { params: { symbol: s } })
-      out[s] = { data_date: data?.data_date || null, count: (data?.items || []).length }
-    } catch { out[s] = { data_date: null, count: 0 } }
-  }))
-  uaMap.value = out
 }
 
 function n(v, d = 0) { return Number.isFinite(Number(v)) ? Number(v) : d }

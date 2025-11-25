@@ -37,7 +37,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import LeftPanel from './LeftPanel.vue'
 
@@ -49,6 +49,10 @@ function pinBadgeClass(score) {
   if (score >= 70) return 'bg-yellow-400/20 text-yellow-300 ring-1 ring-yellow-400/30'
   if (score >= 40) return 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/20'
   return 'bg-gray-600/40 text-gray-200 ring-1 ring-gray-500/30'
+}
+
+function handleWatchlistUpdated(event) {
+  reloadWatchlist()
 }
 
 async function reloadWatchlist() {
@@ -91,5 +95,11 @@ async function handleRemoveFromWatchlist(id) {
   await reloadWatchlist()
 }
 
-onMounted(reloadWatchlist)
+onMounted(() => {
+  reloadWatchlist()
+  window.addEventListener('watchlist-updated', handleWatchlistUpdated)
+})
+onUnmounted(() => {
+  window.removeEventListener('watchlist-updated', handleWatchlistUpdated)
+})
 </script>

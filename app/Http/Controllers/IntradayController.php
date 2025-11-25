@@ -22,10 +22,11 @@ class IntradayController extends Controller
             return response()->json(['error' => 'symbols[] required'], 422);
         }
 
-        // hard gate: do nothing if market is closed
-        // if (!\App\Support\Market::isRthOpen(now())) {
-        //     return response()->json(['ok' => true, 'skipped' => 'market_closed'], 200);
-        // }
+        $force = (bool) $request->boolean('force', false);
+
+        if (!$force && !\App\Support\Market::isRthOpen(now('America/New_York'))) {
+            return response()->json(['ok' => true, 'skipped' => 'market_closed'], 200);
+        }
 
         // RTH: run inline for snappy UX
         Bus::dispatch(new FetchPolygonIntradayOptionsJob($symbols));
@@ -37,12 +38,9 @@ class IntradayController extends Controller
     // GET /api/intraday/summary?symbol=SPY
     public function summary(Request $request)
     {
-        $symbol = strtoupper($request->query('symbol', 'SPY'));
-
-        // pick NY trading date same logic as job
+        $symbol    = strtoupper($request->query('symbol', 'SPY'));
         $tradeDate = $this->tradingDate(now());
 
-        // grab that one "totals row": exp_date NULL, strike NULL, option_type NULL
         $row = \App\Models\OptionLiveCounter::query()
             ->where('symbol', $symbol)
             ->where('trade_date', $tradeDate)
@@ -52,12 +50,13 @@ class IntradayController extends Controller
             ->orderByDesc('updated_at')
             ->first();
 
+        $open = $this->isMarketOpen();
         if (!$row) {
-            // nothing yet today
             return response()->json([
-                // 'open'   => $this->isMarketOpen(),
-                'open'   => true,
+                'open'   => $open,
+                'trade_date' => $tradeDate,
                 'asof'   => null,
+                'stale_seconds' => null,
                 'totals' => [
                     'call_vol' => 0,
                     'put_vol'  => 0,
@@ -68,34 +67,28 @@ class IntradayController extends Controller
             ]);
         }
 
-        // We only stored combined volume (calls+puts) and combined premium_usd on that row.
-        // If you want split call_vol / put_vol in summary, we have 2 options:
-        //   (1) re-sum below from per-strike rows by option_type
-        //   (2) extend FetchPolygonIntradayOptionsJob to store separate counters.
-        //
-        // We'll do (1) here so you don't have to change the job yet.
-
         [$callVol, $putVol] = $this->sumTypeVolumes($symbol, $tradeDate);
 
-        $pcr = null;
-        if ($callVol > 0) {
-            // pcr = puts / calls
-            $pcr = round($putVol / $callVol, 3);
-        }
+        $pcr = $callVol > 0 ? round($putVol / $callVol, 3) : null;
+
+        $asof = $row->asof ? \Carbon\Carbon::parse($row->asof) : null;
+        $staleSeconds = $asof ? now('America/New_York')->diffInSeconds($asof) : null;
 
         return response()->json([
-            // 'open'   => $this->isMarketOpen(),
-            'open'   => true,
-            'asof' => $row->asof,
-            'totals' => [
+            'open'          => $open,
+            'trade_date'    => $tradeDate,
+            'asof'          => $row->asof,
+            'stale_seconds' => $staleSeconds,
+            'totals'        => [
                 'call_vol' => $callVol,
                 'put_vol'  => $putVol,
-                'total'    => (int) $row->volume,         // job sets volume = call+put
+                'total'    => (int) $row->volume,
                 'pcr_vol'  => $pcr,
-                'premium'  => (float) $row->premium_usd,  // est notional
+                'premium'  => (float) $row->premium_usd,
             ],
         ]);
     }
+
 
     // GET /api/intraday/volume-by-strike?symbol=SPY
     public function volumeByStrike(Request $request)
@@ -195,7 +188,7 @@ class IntradayController extends Controller
 
         $cacheKey = "intraday:strikesComposite:{$symbol}:{$tradeDate}";
 
-        $data = Cache::remember($cacheKey, 15, function () use ($symbol, $tradeDate) {
+        $data = Cache::remember($cacheKey, now()->addSeconds(60),function () use ($symbol, $tradeDate) {
             // 1) Intraday volume & premium by strike (today)
             $rows = DB::table('option_live_counters')
                 ->where('symbol', $symbol)
@@ -279,14 +272,19 @@ class IntradayController extends Controller
             $totCall = array_sum(array_column($items, 'call_vol'));
             $totPut  = array_sum(array_column($items, 'put_vol'));
             $pcr     = $totCall > 0 ? round($totPut / $totCall, 3) : null;
-            $asof    = DB::table('option_live_counters')
+            $asof = DB::table('option_live_counters')
                 ->where('symbol', $symbol)
                 ->where('trade_date', $tradeDate)
                 ->max('asof');
 
+            $asofCarbon = $asof ? \Carbon\Carbon::parse($asof) : null;
+
             return [
-                'open'   => true,
+                'open'   => $this->isMarketOpen(),
                 'asof'   => $asof,
+                'stale_seconds' => $asofCarbon
+                    ? now('America/New_York')->diffInSeconds($asofCarbon)
+                    : null,
                 'totals' => [
                     'call_vol' => $totCall,
                     'put_vol'  => $totPut,
@@ -313,7 +311,7 @@ class IntradayController extends Controller
         $tradeDate = $this->tradingDate(now());
 
         $cacheKey = "intraday:repricedGex:{$symbol}:{$tradeDate}";
-        $data = Cache::remember($cacheKey, 15, function () use ($symbol) {
+        $data = Cache::remember($cacheKey, now()->addSeconds(60), function () use ($symbol) {
             // build 'byK' minimal with OI
             $eodOi = $this->eodOiByStrike($symbol);
             $byK = [];
@@ -482,6 +480,6 @@ class IntradayController extends Controller
 
     private function isMarketOpen(): bool
     {
-        return \App\Support\Market::isRthOpen(now());
+        return \App\Support\Market::isRthOpen(now('America/New_York'));
     }
 }

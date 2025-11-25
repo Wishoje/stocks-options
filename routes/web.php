@@ -20,3 +20,10 @@ Route::middleware([
 Route::get('/options-calculator', function () {
     return Inertia::render('Options/Calculator');
 })->middleware(['auth:sanctum'])->name('options.calculator');
+
+Route::get('/scanner', function () {
+    return Inertia::render('Scanner', [
+        // You can preload 200 most-used symbols here if you want server-side,
+        // or let the Scanner page call /api/hot-options.
+    ]);
+})->name('options.scanner');
