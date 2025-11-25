@@ -5,6 +5,13 @@ import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
 
 const hotSymbols = ref([])
+const hotItems = ref([])
+const universeMeta = ref({
+  tradeDate: null,
+  source: null,
+  backendSource: null,
+  count: 0,
+})
 const loading = ref(false)
 const error = ref('')
 
@@ -20,6 +27,15 @@ const watchlistSymbols = computed(
   () => new Set(watchlist.value.map(w => w.symbol))
 )
 
+const watchlistHitCount = computed(() => {
+  const set = new Set(hotSymbols.value)
+  let hits = 0
+  for (const sym of watchlistSymbols.value) {
+    if (set.has(sym)) hits++
+  }
+  return hits
+})
+
 function isInWatchlist(sym) {
   return watchlistSymbols.value.has(sym)
 }
@@ -34,13 +50,30 @@ async function loadHotOptions() {
         days:  days.value,
       },
     })
+
     hotSymbols.value = Array.isArray(data?.symbols) ? data.symbols : []
+
+    universeMeta.value = {
+      tradeDate: data.trade_date ?? null,
+      source: data.source ?? null,
+      backendSource: data.meta?.source ?? null,
+      count: data.meta?.count ?? hotSymbols.value.length,
+    }
+
+    hotItems.value = Array.isArray(data?.items) ? data.items : []
+    hotSymbols.value = hotItems.value.length
+        ? hotItems.value.map(i => i.symbol)
+        : (Array.isArray(data?.symbols) ? data.symbols : [])
   } catch (e) {
     error.value = e?.response?.data?.error || e.message
   } finally {
     loading.value = false
   }
 }
+
+const usingFallback = computed(
+  () => universeMeta.value.source === 'fallback_db'
+)
 
 // NEW: reload when controls change
 watch([limit, days], () => {
@@ -134,7 +167,7 @@ onMounted(async () => {
           </div>
 
           <!-- NEW: controls row -->
-          <div class="bg-gray-900/70 border border-gray-800 rounded-xl px-4 py-3 flex flex-wrap items-center gap-3">
+        <div class="bg-gray-900/70 border border-gray-800 rounded-xl px-4 py-3 flex flex-wrap items-center gap-3">
             <div class="flex items-center gap-2">
               <span class="text-xs uppercase tracking-wide text-gray-400">Universe</span>
               <div class="inline-flex rounded-lg overflow-hidden border border-gray-700">
@@ -172,22 +205,43 @@ onMounted(async () => {
             </div>
 
             <div class="ml-auto flex items-center gap-3 text-xs text-gray-400">
-              <span>
-                Loaded
-                <span class="font-mono text-cyan-300">{{ hotSymbols.length }}</span>
-                / {{ limit }}
-              </span>
+                <span>
+                    Loaded
+                    <span class="font-mono text-cyan-300">{{ hotSymbols.length }}</span>
+                    / {{ limit }}
+                </span>
 
-              <button
-                type="button"
-                @click="loadMore"
-                class="px-3 py-1.5 rounded-lg text-[11px] font-medium
-                       bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200"
-              >
-                Load more
-              </button>
+                <span class="hidden sm:inline">
+                    · Watchlist hits:
+                    <span class="font-mono text-emerald-300">{{ watchlistHitCount }}</span>
+                </span>
+
+                <button
+                    type="button"
+                    @click="loadMore"
+                    class="px-3 py-1.5 rounded-lg text-[11px] font-medium
+                        bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200"
+                >
+                    Load more
+                </button>
             </div>
-          </div>
+        </div>
+
+        <div class="flex items-center justify-between text-[11px] text-gray-400 px-1">
+            <div class="flex items-center gap-2">
+                <span v-if="universeMeta.tradeDate">
+                Universe date:
+                <span class="font-mono text-cyan-300">{{ universeMeta.tradeDate }}</span>
+                </span>
+                <span v-if="usingFallback" class="ml-1 text-amber-400">
+                (fallback ranking)
+                </span>
+            </div>
+            <div>
+                Window: last {{ days }}d
+            </div>
+        </div>
+
 
           <div v-if="error" class="text-red-400 text-sm">
             {{ error }}
@@ -197,43 +251,41 @@ onMounted(async () => {
           </div>
           <div v-else class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
             <button
-              v-for="sym in hotSymbols"
-              :key="sym"
-              @click="selectSymbol(sym)"
-              class="px-3 py-2 bg-gray-800/70 border border-gray-700 rounded-lg
-                     hover:bg-gray-700/80 transition text-sm font-mono text-cyan-400
-                     flex items-center justify-between gap-2"
+            v-for="item in hotItems.length ? hotItems : hotSymbols.map(s => ({ symbol: s }))"
+            :key="item.symbol"
+            @click="selectSymbol(item.symbol)"
+            class="px-3 py-2 bg-gray-800/70 border border-gray-700 rounded-lg
+                    hover:bg-gray-700/80 transition text-sm font-mono text-cyan-400
+                    flex flex-col gap-1"
             >
-              <span class="truncate">{{ sym }}</span>
+            <div class="flex items-center justify-between gap-2">
+                <span class="truncate">{{ item.symbol }}</span>
+                <span
+                v-if="item.rank"
+                class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-900 border border-gray-700 text-gray-300"
+                >
+                #{{ item.rank }}
+                </span>
+            </div>
 
-              <!-- Watchlist indicator / toggle -->
-              <span
-                @click.stop="toggleWatchlist(sym)"
+            <div class="flex items-center justify-between text-[11px] text-gray-400">
+                <span v-if="item.total_volume">Vol: {{ item.total_volume.toLocaleString() }}</span>
+                <span v-if="item.put_call">PCR: {{ item.put_call }}</span>
+                <span v-if="item.last_price">Last: {{ item.last_price }}</span>
+            </div>
+
+            <!-- existing watchlist toggle -->
+            <div class="flex justify-end">
+                <span
+                @click.stop="toggleWatchlist(item.symbol)"
                 class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px]"
-                :class="isInWatchlist(sym)
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
-              >
-                <!-- checkmark if already on watchlist, + otherwise -->
-                <svg v-if="isInWatchlist(sym)" class="w-3 h-3" viewBox="0 0 20 20" fill="none">
-                  <path
-                    d="M5 10.5L8.5 14L15 6"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-                <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="none">
-                  <path
-                    d="M10 4v12M4 10h12"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </span>
+                :class="isInWatchlist(item.symbol)
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                >
+                +
+                </span>
+            </div>
             </button>
           </div>
         </div>

@@ -55,11 +55,18 @@ class HotOptionsController extends Controller
             ]);
         }
 
-        return response()->json([
+       return response()->json([
             'trade_date' => $tradeDate,
             'limit'      => $limit,
             'source'     => 'hot_option_symbols',
-            'symbols'    => $rows->pluck('symbol')->values()->all(),
+            'symbols'    => $rows->pluck('symbol')->values()->all(), // keep for BC
+            'items'      => $rows->map(fn($r) => [
+                'symbol'       => $r->symbol,
+                'rank'         => $r->rank,
+                'total_volume' => $r->total_volume,
+                'put_call'     => $r->put_call_ratio,
+                'last_price'   => $r->last_price,
+            ])->values()->all(),
             'meta'       => [
                 'count'  => $rows->count(),
                 'source' => $rows->first()->source ?? null,

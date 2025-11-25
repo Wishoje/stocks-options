@@ -48,21 +48,21 @@ class PreloadHotOptionSymbols extends Command
 
         $this->info('Preloading EOD for '.$tradeDate.' – symbols: '.implode(', ', $symbols));
 
-        $batch = Bus::batch([
-            new PricesBackfillJob($symbols, 400),
-            new PricesDailyJob($symbols),
-            new FetchOptionChainDataJob($symbols, 90),
-            new ComputeVolMetricsJob($symbols),
-            new Seasonality5DJob($symbols, 15, 2),
-            new ComputeExpiryPressureJob($symbols, 3),
-            new ComputePositioningJob($symbols),
-            new ComputeUAJob($symbols),
-        ])
-        ->name("Hot EOD Preload {$tradeDate}")
-        ->allowFailures()
-        ->dispatch();
+        // $batch = Bus::batch([
+        //     new PricesBackfillJob($symbols, 400),
+        //     new PricesDailyJob($symbols),
+        //     new FetchOptionChainDataJob($symbols, 90),
+        //     new ComputeVolMetricsJob($symbols),
+        //     new Seasonality5DJob($symbols, 15, 2),
+        //     new ComputeExpiryPressureJob($symbols, 3),
+        //     new ComputePositioningJob($symbols),
+        //     new ComputeUAJob($symbols),
+        // ])
+        // ->name("Hot EOD Preload {$tradeDate}")
+        // ->allowFailures()
+        // ->dispatch();
 
-        $this->info("Queued preload batch: {$batch->id}");
+        // $this->info("Queued preload batch: {$batch->id}");
 
         return self::SUCCESS;
     }
