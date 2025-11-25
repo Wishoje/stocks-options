@@ -29,6 +29,9 @@ class HotOptionsController extends Controller
             ? $query->orderBy('rank')->limit($limit)->get()
             : collect();
 
+        $totalVol = (int) $rows->sum('total_volume');
+        $avgPcr   = $rows->whereNotNull('put_call_ratio')->avg('put_call_ratio');
+
         // Fallback: if table is empty, optionally fall back to your old DB-based ranking:
         if ($rows->isEmpty()) {
             // === old behavior (optional) ===
@@ -55,11 +58,11 @@ class HotOptionsController extends Controller
             ]);
         }
 
-       return response()->json([
+        return response()->json([
             'trade_date' => $tradeDate,
             'limit'      => $limit,
             'source'     => 'hot_option_symbols',
-            'symbols'    => $rows->pluck('symbol')->values()->all(), // keep for BC
+            'symbols'    => $rows->pluck('symbol')->values()->all(),
             'items'      => $rows->map(fn($r) => [
                 'symbol'       => $r->symbol,
                 'rank'         => $r->rank,
@@ -68,9 +71,12 @@ class HotOptionsController extends Controller
                 'last_price'   => $r->last_price,
             ])->values()->all(),
             'meta'       => [
-                'count'  => $rows->count(),
-                'source' => $rows->first()->source ?? null,
+                'count'     => $rows->count(),
+                'source'    => $rows->first()->source ?? null,
+                'total_vol' => $totalVol,
+                'avg_pcr'   => $avgPcr,
             ],
         ]);
+
     }
 }

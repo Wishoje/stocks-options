@@ -40,6 +40,31 @@ function isInWatchlist(sym) {
   return watchlistSymbols.value.has(sym)
 }
 
+function formatNumber(v) {
+  if (v == null) return '—'
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return n.toLocaleString()
+}
+
+function pcrClass(pcr) {
+  const v = Number(pcr)
+  if (!Number.isFinite(v)) return 'text-gray-400'
+  if (v > 1.2) return 'text-red-400'      // put-heavy
+  if (v < 0.7) return 'text-emerald-400'  // call-heavy
+  return 'text-yellow-300'                // mixed
+}
+
+function pcrTag(pcr) {
+  const v = Number(pcr)
+  if (!Number.isFinite(v)) return ''
+  if (v > 1.2) return 'Put-heavy'
+  if (v < 0.7) return 'Call-heavy'
+  return 'Balanced'
+}
+
 async function loadHotOptions() {
   loading.value = true
   error.value = ''
@@ -54,10 +79,12 @@ async function loadHotOptions() {
     hotSymbols.value = Array.isArray(data?.symbols) ? data.symbols : []
 
     universeMeta.value = {
-      tradeDate: data.trade_date ?? null,
-      source: data.source ?? null,
-      backendSource: data.meta?.source ?? null,
-      count: data.meta?.count ?? hotSymbols.value.length,
+        tradeDate: data.trade_date ?? null,
+        source: data.source ?? null,
+        backendSource: data.meta?.source ?? null,
+        count: data.meta?.count ?? hotSymbols.value.length,
+        totalVol: data.meta?.total_vol ?? null,
+        avgPcr: data.meta?.avg_pcr ?? null,
     }
 
     hotItems.value = Array.isArray(data?.items) ? data.items : []
@@ -228,20 +255,35 @@ onMounted(async () => {
         </div>
 
         <div class="flex items-center justify-between text-[11px] text-gray-400 px-1">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-3">
                 <span v-if="universeMeta.tradeDate">
                 Universe date:
                 <span class="font-mono text-cyan-300">{{ universeMeta.tradeDate }}</span>
                 </span>
+
+                <span v-if="universeMeta.totalVol">
+                Total vol:
+                <span class="font-mono text-gray-200">
+                    {{ formatNumber(universeMeta.totalVol) }}
+                </span>
+                </span>
+
+                <span v-if="universeMeta.avgPcr">
+                Avg PCR:
+                <span class="font-mono" :class="pcrClass(universeMeta.avgPcr)">
+                    {{ Number(universeMeta.avgPcr).toFixed(2) }}
+                </span>
+                </span>
+
                 <span v-if="usingFallback" class="ml-1 text-amber-400">
                 (fallback ranking)
                 </span>
             </div>
+
             <div>
                 Window: last {{ days }}d
             </div>
         </div>
-
 
           <div v-if="error" class="text-red-400 text-sm">
             {{ error }}
@@ -269,10 +311,38 @@ onMounted(async () => {
             </div>
 
             <div class="flex items-center justify-between text-[11px] text-gray-400">
-                <span v-if="item.total_volume">Vol: {{ item.total_volume.toLocaleString() }}</span>
-                <span v-if="item.put_call">PCR: {{ item.put_call }}</span>
-                <span v-if="item.last_price">Last: {{ item.last_price }}</span>
+                <span v-if="item.total_volume">
+                    Vol:
+                    <span class="font-mono text-gray-200">
+                    {{ formatNumber(item.total_volume) }}
+                    </span>
+                </span>
+
+                <span v-if="item.put_call">
+                    PCR:
+                    <span class="font-mono" :class="pcrClass(item.put_call)">
+                    {{ Number(item.put_call).toFixed(2) }}
+                    </span>
+                </span>
+
+                <span v-if="item.last_price">
+                    Last:
+                    <span class="font-mono text-gray-200">
+                    {{ Number(item.last_price).toFixed(2) }}
+                    </span>
+                </span>
+                </div>
+
+                <!-- tiny bias pill under stats -->
+                <div v-if="item.put_call" class="mt-0.5">
+                <span
+                    class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] bg-gray-900/80 border border-gray-700"
+                    :class="pcrClass(item.put_call)"
+                >
+                    {{ pcrTag(item.put_call) }}
+                </span>
             </div>
+
 
             <!-- existing watchlist toggle -->
             <div class="flex justify-end">
