@@ -98,29 +98,59 @@ Route::post('/intraday/pull', [IntradayController::class, 'pull']);
 Route::get('/hot-options', [\App\Http\Controllers\HotOptionsController::class, 'index']);
 // routes/api.php
 
+// routes/api.php
+
 Route::get('/option-chain', function () {
     $symbol = strtoupper(request('symbol', 'SPY'));
     $expiry = request('expiry');
 
+    // Find the latest snapshot for this symbol
+    $latest = DB::table('option_snapshots')
+        ->where('symbol', $symbol)
+        ->max('fetched_at');
+
+    if (!$latest) {
+        return response()->json([
+            'underlying'  => ['symbol' => $symbol, 'price' => null],
+            'chain'       => [],
+            'expirations' => [],
+        ]);
+    }
+
     $base = DB::table('option_snapshots')
         ->where('symbol', $symbol)
-        ->where('fetched_at', '>=', now()->subMinutes(20));
+        ->where('fetched_at', $latest);
 
-    $chain = $base->clone()
+    $chainQuery = $base->clone()
         ->select(
             'strike',
             'type',
             'bid',
             'ask',
             'mid',
+            DB::raw("DATE_FORMAT(expiry, '%Y-%m-%d') as expiry_full"),
             DB::raw("DATE_FORMAT(expiry, '%m-%d') as expiry")
         );
 
     if ($expiry) {
-        $chain->whereRaw("DATE_FORMAT(expiry, '%m-%d') = ?", [$expiry]);
+        $chainQuery->whereDate('expiry', '=', $expiry);
     }
 
-    $chain = $chain->orderBy('strike')->get();
+    $chain = $chainQuery
+        ->orderBy('strike')
+        ->get()
+        ->map(function ($row) {
+            // normalize field names for the front-end
+            return [
+                'strike' => (float) $row->strike,
+                'type'   => $row->type,
+                'bid'    => (float) $row->bid,
+                'ask'    => (float) $row->ask,
+                'mid'    => (float) $row->mid,
+                'expiry' => $row->expiry_full, // full YYYY-MM-DD for JS Date
+                'label'  => $row->expiry,      // MM-DD for display if needed
+            ];
+        });
 
     $price = $base->value('underlying_price') ?? 100;
 
@@ -131,13 +161,17 @@ Route::get('/option-chain', function () {
         ->distinct()
         ->orderBy('expiry')
         ->get()
-        ->map(fn($r) => \Carbon\Carbon::parse($r->expiry)->format('m-d'))
+        ->map(fn ($r) => [
+            'value' => $r->expiry, // full YYYY-MM-DD
+            'label' => \Carbon\Carbon::parse($r->expiry)->format('m-d'),
+        ])
         ->toArray();
 
     return [
-        'underlying' => ['symbol' => $symbol, 'price' => round($price, 2)],
-        'chain' => $chain,
+        'underlying'  => ['symbol' => $symbol, 'price' => round($price, 2)],
+        'chain'       => $chain,
         'expirations' => $expirations,
+        'snapshot_at' => $latest,
     ];
 });
 
@@ -149,12 +183,12 @@ Route::get('/debug/market', function () {
     ]);
 });
 
-// Route::post('/prime-calculator', function (Request $req) {
-//     $sym = \App\Support\Symbols::canon($req->input('symbol', 'SPY'));
-//     if (!$sym) return response()->json(['error' => 'Invalid symbol'], 400);
+Route::post('/prime-calculator', function (Request $req) {
+    $sym = \App\Support\Symbols::canon($req->input('symbol', 'SPY'));
+    if (!$sym) return response()->json(['error' => 'Invalid symbol'], 400);
 
-//     // Only dispatch calculator job
-//     dispatch(new \App\Jobs\FetchCalculatorChainJob($sym));
+    // Only dispatch calculator job
+    dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($sym));
 
-//     return response()->json(['ok' => true, 'symbol' => $sym]);
-// });
+    return response()->json(['ok' => true, 'symbol' => $sym]);
+});

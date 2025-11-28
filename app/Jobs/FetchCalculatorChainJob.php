@@ -15,35 +15,46 @@ class FetchCalculatorChainJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $timeout = 90;
-    public $tries = 3;
+    public int $timeout = 90;
+    public int $tries   = 3;
 
     public function __construct(public string $symbol) {}
 
     private static function clip(?string $s, int $max = 600): string
     {
-        if ($s === null) return '<null>';
+        if ($s === null) {
+            return '<null>';
+        }
         $s = trim($s);
         return strlen($s) > $max ? substr($s, 0, $max) . '…<clipped>' : $s;
     }
 
-    public function handle()
+    public function handle(): void
     {
         $symbol = strtoupper($this->symbol);
         $apiKey = env('MASSIVE_API_KEY');
         $base   = rtrim(env('MASSIVE_BASE', 'https://api.massive.com'), '/');
 
-        Log::debug('CalculatorChain.start', ['symbol' => $symbol, 'base' => $base, 'hasKey' => (bool)$apiKey]);
+        Log::debug('CalculatorChain.start', [
+            'symbol' => $symbol,
+            'base'   => $base,
+            'hasKey' => (bool) $apiKey,
+        ]);
 
         if (!$apiKey) {
             Log::error('MassiveClient.missingKey', ['job' => 'CalculatorChain']);
             return;
         }
 
-        // Step 1: Underlying price via Unified Snapshot
+        // -----------------------------
+        // Step 1: Underlying price
+        // -----------------------------
         $uResp = Http::timeout(10)
             ->withHeaders(['Authorization' => "Bearer {$apiKey}"])
-            ->get("{$base}/v3/snapshot", ['ticker.any_of' => $symbol, 'limit' => 1]);
+            ->get("{$base}/v3/snapshot", [
+                'ticker.any_of' => $symbol,
+                'limit'         => 1,
+            ]);
 
         Log::debug('CalculatorChain.underlying.response', [
             'status' => $uResp->status(),
@@ -51,26 +62,59 @@ class FetchCalculatorChainJob implements ShouldQueue
             'body'   => self::clip($uResp->body()),
         ]);
 
-        $underlying = $uResp->json('results.0.last_quote.midpoint')
-            ?? $uResp->json('results.0.last_trade.price')
-            ?? 100;
+        $uJson = $uResp->json();
+        $u0    = $uJson['results'][0] ?? [];
 
-        Log::info('CalculatorChain.underlying', ['symbol' => $symbol, 'price' => $underlying]);
+        // snake + camel for Massive unified snapshot
+        $uQuoteSnake = $u0['last_quote'] ?? [];
+        $uQuoteCamel = $u0['lastQuote'] ?? [];
+        $uQuote      = $uQuoteSnake ?: $uQuoteCamel;
 
-        // Step 2: Option chain with pagination
-        $perPage = 250; // try high once; fallback to 100 if rejected
-        $url = "{$base}/v3/snapshot/options/{$symbol}";
+        $uTradeSnake = $u0['last_trade'] ?? [];
+        $uTradeCamel = $u0['lastTrade'] ?? [];
+        $uTrade      = $uTradeSnake ?: $uTradeCamel;
+
+        $uSession = $u0['session'] ?? [];
+        $uDay     = $u0['day'] ?? [];
+
+        $rawU = $uQuote['midpoint']
+            ?? $uQuote['mid']
+            ?? $uQuote['mark']
+            ?? $uTrade['price']
+            ?? $uTrade['p']
+            ?? ($uSession['close'] ?? null)
+            ?? ($uDay['close'] ?? null);
+
+        $underlying = is_numeric($rawU) ? (float) $rawU : 100.0;
+
+        Log::info('CalculatorChain.underlying', [
+            'symbol' => $symbol,
+            'price'  => $underlying,
+        ]);
+
+        // -----------------------------
+        // Step 2: Option chain (paginated)
+        // -----------------------------
+        $perPage   = 250; // first attempt, fallback to 100 if Massive rejects
+        $url       = "{$base}/v3/snapshot/options/{$symbol}";
         $contracts = [];
-        $page = 0;
+        $page      = 0;
 
         while ($url && $page < 50) {
             $page++;
 
             $request = Http::timeout(30)
-                ->withHeaders(['Authorization' => "Bearer {$apiKey}", 'Accept' => 'application/json']);
+                ->withHeaders([
+                    'Authorization' => "Bearer {$apiKey}",
+                    'Accept'        => 'application/json',
+                ]);
 
             $params = ($page === 1)
-                ? ['limit' => $perPage, 'sort' => 'strike_price', 'order' => 'asc']
+                ? [
+                    'limit' => $perPage,
+                    'sort'  => 'strike_price',
+                    'order' => 'asc',
+                ]
                 : [];
 
             Log::debug('CalculatorChain.page.request', [
@@ -80,73 +124,180 @@ class FetchCalculatorChainJob implements ShouldQueue
                 'params' => $params,
             ]);
 
-            $resp = ($page === 1) ? $request->get($url, $params) : $request->get($url);
+            $resp = $page === 1
+                ? $request->get($url, $params)
+                : $request->get($url);
 
-            // limit fallback on first page
-            if ($page === 1 && $resp->status() === 400 && str_contains($resp->body(), "'Limit' failed")) {
+            // limit fallback for page 1
+            if (
+                $page === 1 &&
+                $resp->status() === 400 &&
+                str_contains($resp->body(), "'Limit' failed")
+            ) {
                 Log::warning('CalculatorChain.limitRejected', [
                     'attempted_limit' => $perPage,
-                    'body' => self::clip($resp->body()),
+                    'body'            => self::clip($resp->body()),
                 ]);
+
                 $perPage = 100;
-                $params  = ['limit' => $perPage, 'sort' => 'strike_price', 'order' => 'asc'];
-                $resp    = $request->get($url, $params);
-                Log::debug('CalculatorChain.limitRetry', ['new_limit' => $perPage, 'status' => $resp->status()]);
+                $params  = [
+                    'limit' => $perPage,
+                    'sort'  => 'strike_price',
+                    'order' => 'asc',
+                ];
+                $resp = $request->get($url, $params);
+
+                Log::debug('CalculatorChain.limitRetry', [
+                    'new_limit' => $perPage,
+                    'status'    => $resp->status(),
+                ]);
             }
 
             Log::debug('CalculatorChain.page.response', [
-                'page' => $page,
-                'status' => $resp->status(),
-                'ok' => $resp->ok(),
+                'page'        => $page,
+                'status'      => $resp->status(),
+                'ok'          => $resp->ok(),
                 'bodySnippet' => self::clip($resp->body()),
             ]);
 
             if (!$resp->ok()) {
                 Log::warning('CalculatorChain.pageFailed', [
-                    'symbol' => $symbol, 'page' => $page,
-                    'status' => $resp->status(), 'body' => self::clip($resp->body()),
+                    'symbol' => $symbol,
+                    'page'   => $page,
+                    'status' => $resp->status(),
+                    'body'   => self::clip($resp->body()),
                 ]);
                 break;
             }
 
-            $json = $resp->json();
+            $json  = $resp->json();
             $batch = $json['results'] ?? [];
             $count = is_array($batch) ? count($batch) : 0;
-            Log::debug('CalculatorChain.page.results', ['page' => $page, 'count' => $count]);
 
-            if (!$batch) break;
+            Log::debug('CalculatorChain.page.results', [
+                'page'  => $page,
+                'count' => $count,
+            ]);
+
+            if (!$batch || !is_array($batch)) {
+                break;
+            }
 
             $contracts = array_merge($contracts, $batch);
+
+            if ($page === 1) {
+                Log::debug('CalculatorChain.firstContractRaw', [
+                    'symbol' => $symbol,
+                    'sample' => $contracts[0] ?? null,
+                ]);
+            }
 
             $next = $json['next_url'] ?? null;
             if ($next && !str_starts_with($next, 'http')) {
                 $next = $base . $next;
-                Log::debug('CalculatorChain.nextUrl.normalized', ['page' => $page, 'url' => $next]);
+                Log::debug('CalculatorChain.nextUrl.normalized', [
+                    'page' => $page,
+                    'url'  => $next,
+                ]);
             }
+
             $url = $next;
         }
 
-        Log::info('CalculatorChain.fetchComplete', ['symbol' => $symbol, 'contracts' => count($contracts)]);
+        Log::info('CalculatorChain.fetchComplete', [
+            'symbol'    => $symbol,
+            'contracts' => count($contracts),
+        ]);
 
         if (empty($contracts)) {
             Log::info('CalculatorChain.noContracts', ['symbol' => $symbol]);
             return;
         }
 
+        // -----------------------------
+        // Step 3: Normalize + upsert
+        // -----------------------------
         $inserts = [];
-        $now = now();
-        $seen = 0; $kept = 0; $skipped = 0;
+        $now     = now();
+        $seen    = 0;
+        $kept    = 0;
+        $skipped = 0;
 
         foreach ($contracts as $c) {
             $seen++;
+
             $details = $c['details'] ?? [];
-            $quote   = $c['last_quote'] ?? [];
+            if (empty($details['strike_price'])) {
+                $skipped++;
+                continue;
+            }
 
-            $bid = (float)($quote['bid'] ?? 0);
-            $ask = (float)($quote['ask'] ?? 0);
-            $mid = $quote['midpoint'] ?? (($bid > 0 && $ask > 0) ? ($bid + $ask) / 2 : ($bid ?: $ask ?: 0));
+            // snake + camel for Massive chain
+            $quoteSnake = $c['last_quote'] ?? [];
+            $quoteCamel = $c['lastQuote'] ?? [];
+            $quote      = $quoteSnake ?: $quoteCamel;
 
-            if (empty($details['strike_price'])) { $skipped++; continue; }
+            $tradeSnake = $c['last_trade'] ?? [];
+            $tradeCamel = $c['lastTrade'] ?? [];
+            $lastTrade  = $tradeSnake ?: $tradeCamel;
+
+            $day = $c['day'] ?? [];
+            $fmv = $c['fmv'] ?? null;
+
+            // --- bids/asks from quote (multiple possible keys) ---
+            $rawBid = $quote['bid']
+                ?? $quote['bid_price']
+                ?? $quote['b']
+                ?? null;
+
+            $rawAsk = $quote['ask']
+                ?? $quote['ask_price']
+                ?? $quote['a']
+                ?? null;
+
+            $rawMid = $quote['midpoint']
+                ?? $quote['mid']
+                ?? $quote['mark']
+                ?? null;
+
+            $bid = is_numeric($rawBid) ? (float) $rawBid : 0.0;
+            $ask = is_numeric($rawAsk) ? (float) $rawAsk : 0.0;
+
+            // primary mid
+            if (is_numeric($rawMid)) {
+                $mid = (float) $rawMid;
+            } elseif ($bid > 0 && $ask > 0) {
+                $mid = ($bid + $ask) / 2;
+            } else {
+                $mid = $bid ?: $ask ?: 0.0;
+            }
+
+            // Fallback 1: last trade
+            if ($mid == 0.0 && $lastTrade) {
+                $lastPrice = $lastTrade['price']
+                    ?? $lastTrade['p']
+                    ?? null;
+
+                if (is_numeric($lastPrice)) {
+                    $mid = (float) $lastPrice;
+                }
+            }
+
+            // Fallback 2: Fair Market Value
+            if ($mid == 0.0 && is_numeric($fmv)) {
+                $mid = (float) $fmv;
+            }
+
+            // Fallback 3: daily close
+            if ($mid == 0.0 && isset($day['close']) && is_numeric($day['close'])) {
+                $mid = (float) $day['close'];
+            }
+
+            // still useless → skip
+            if ($mid == 0.0) {
+                $skipped++;
+                continue;
+            }
 
             $inserts[] = [
                 'symbol'           => $symbol,
@@ -156,19 +307,26 @@ class FetchCalculatorChainJob implements ShouldQueue
                 'expiry'           => $details['expiration_date'] ?? null,
                 'bid'              => round($bid, 2),
                 'ask'              => round($ask, 2),
-                'mid'              => round((float)$mid, 2),
-                'underlying_price' => round((float)$underlying, 2),
+                'mid'              => round($mid, 2),
+                'underlying_price' => round((float) $underlying, 2),
                 'fetched_at'       => $now,
             ];
             $kept++;
         }
 
-        Log::debug('CalculatorChain.reduceStats', ['seen' => $seen, 'kept' => $kept, 'skipped' => $skipped, 'toUpsert' => count($inserts)]);
+        Log::debug('CalculatorChain.reduceStats', [
+            'seen'    => $seen,
+            'kept'    => $kept,
+            'skipped' => $skipped,
+            'toUpsert'=> count($inserts),
+        ]);
 
         if ($inserts) {
             DB::table('option_snapshots')->upsert(
                 $inserts,
-                ['ticker', 'fetched_at'],
+                // conflict columns (define "same row")
+                ['symbol', 'type', 'strike', 'expiry', 'fetched_at'],
+                // columns to update on conflict
                 ['bid', 'ask', 'mid', 'underlying_price', 'fetched_at']
             );
         }
