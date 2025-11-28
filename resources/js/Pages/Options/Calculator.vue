@@ -337,11 +337,24 @@ const loadChain = async () => {
 
 const selectOption = (opt) => {
   if (!opt) return
+
+  const premium = safePremium(opt)
+
   selectedOption.value = {
     ...opt,
-    premium: safePremium(opt),
+    premium,
   }
   optionType.value = opt.type
+
+  // 🔹 If user didn't pick an entry price yet, default it to this contract's mid
+  if (
+    entryPrice.value === null ||
+    entryPrice.value === '' ||
+    safeNumber(entryPrice.value) === 0
+  ) {
+    entryPrice.value = premium
+  }
+
   renderChart()
   renderDecayChart()
 }
