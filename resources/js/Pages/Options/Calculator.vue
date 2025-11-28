@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import Chart from 'chart.js/auto'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import AppShell from '@/Components/AppShell.vue'
@@ -17,8 +17,13 @@ const selectedExpiry = ref(null)
 const chainData      = ref([])
 const entryPrice     = ref(null) // per-share price YOU paid (or want)
 
-const decayMode   = ref('flat') // 'flat' | 'breakeven' | 'target'
-const targetPrice = ref(null)
+// scenario + view modes
+const decayMode      = ref('flat')    // 'flat' | 'breakeven' | 'target'
+const targetPrice    = ref(null)
+const decayViewMode  = ref('compact') // 'compact' | 'full'
+
+// strike band for chain list
+const strikeBandMode = ref('near') // 'near' | 'wide' | 'all'
 
 let chart = null
 let decayChart = null
@@ -208,7 +213,7 @@ const timeDecayRows = computed(() => {
   const timeValueNow = currentMid - intrinsicSpot
 
   const rows = []
-  for (let d = dte; d >= 0; d--) {
+  for (let d = 0; d <= dte; d++) {
     const frac = dte === 0 ? 0 : d / dte
 
     // Linear decay of time value from now → 0
@@ -225,14 +230,60 @@ const timeDecayRows = computed(() => {
     })
   }
 
-  // soonest first
-  return rows.sort((a, b) => a.dte - b.dte)
+  return rows
+})
+
+// compact vs full view for table
+const visibleTimeDecayRows = computed(() => {
+  const rows = timeDecayRows.value
+  if (decayViewMode.value === 'full' || rows.length <= 16) {
+    return rows
+  }
+
+  // keep: today (0), a small middle window, and expiry
+  const first = rows[0]
+  const last = rows[rows.length - 1]
+
+  const windowSize = 6
+  const midIndex = Math.floor(rows.length / 2)
+  const start = Math.max(1, midIndex - Math.floor(windowSize / 2))
+  const end = Math.min(rows.length - 2, start + windowSize - 1)
+
+  const middle = rows.slice(start, end + 1)
+
+  return [first, ...middle, last]
+})
+
+const hiddenTimeDecayCount = computed(() => {
+  const total = timeDecayRows.value.length
+  const visible = visibleTimeDecayRows.value.length
+  return Math.max(total - visible, 0)
+})
+
+// ---------- "is everything ready?" ----------
+const hasData = computed(() => {
+  return (
+    !!selectedOption.value &&
+    chainData.value.length > 0 &&
+    expirations.value.length > 0 &&
+    safeNumber(stockPrice.value) > 0
+  )
 })
 
 // ---------- chain display ----------
 const strikesAroundPrice = computed(() => {
-  // For now: full chain, you can narrow later if you want ±X%
-  return chainData.value
+  const center = stockPrice.value || 0
+  if (!center || chainData.value.length === 0) return chainData.value
+
+  if (strikeBandMode.value === 'all') {
+    return chainData.value
+  }
+
+  const pct = strikeBandMode.value === 'near' ? 0.15 : 0.4
+  const lo = center * (1 - pct)
+  const hi = center * (1 + pct)
+
+  return chainData.value.filter((o) => o.strike >= lo && o.strike <= hi)
 })
 
 const groupedStrikes = computed(() => {
@@ -244,6 +295,12 @@ const groupedStrikes = computed(() => {
   return Object.values(map).sort((a, b) => a.strike - b.strike)
 })
 
+const handleExpiryClick = async (value) => {
+  if (selectedExpiry.value === value) return // no-op if same
+  selectedExpiry.value = value
+  await loadChain()
+}
+
 // ---------- API ----------
 const loadChain = async () => {
   loading.value = true
@@ -252,9 +309,10 @@ const loadChain = async () => {
       params: { symbol: symbol.value, expiry: selectedExpiry.value },
     })
 
-    stockPrice.value = safeNumber(data.underlying.price)
-    chainData.value = data.chain || []
-    expirations.value = data.expirations || []
+    stockPrice.value   = safeNumber(data.underlying.price)
+    chainData.value    = data.chain || []
+    expirations.value  = data.expirations || []
+    error.value        = ''
 
     // If nothing selected yet, pick first expiry
     if (!selectedExpiry.value && expirations.value.length) {
@@ -383,29 +441,35 @@ watch(
   }
 )
 
-watch(selectedExpiry, async () => {
+// NO watcher on selectedExpiry – we control it via handleExpiryClick + loadChain
+
+// ---------- symbol selection handler ----------
+const handleSelectSymbol = async (e) => {
+  const sym = e.detail.symbol || 'SPY'
+
+  // optional optimization: if same symbol and we already have data, no-op
+  if (sym === symbol.value && chainData.value.length) return
+
+  symbol.value         = sym
+  selectedExpiry.value = null
+  selectedOption.value = null
+  entryPrice.value     = null
+  targetPrice.value    = null
+  error.value          = ''
+  loading.value        = true
+
   await loadChain()
-  renderDecayChart()
-})
+}
 
-watch(
-  () => symbol.value,
-  () => {
-    selectedExpiry.value = null
-    loadChain()
-  }
-)
-
-// ---------- mounted ----------
+// ---------- mounted / unmounted ----------
 onMounted(async () => {
-  window.addEventListener('select-symbol', (e) => {
-    symbol.value = e.detail.symbol || 'SPY'
-  })
+  window.addEventListener('select-symbol', handleSelectSymbol)
 
   try {
     const { data } = await axios.get('/api/watchlist')
     const last = data?.[0]?.symbol || 'SPY'
     symbol.value = last
+
     const primeCalculator = await axios.post('/api/prime-calculator', {
       symbol: last,
     })
@@ -416,8 +480,11 @@ onMounted(async () => {
 
   await loadChain()
 })
-</script>
 
+onBeforeUnmount(() => {
+  window.removeEventListener('select-symbol', handleSelectSymbol)
+})
+</script>
 
 <template>
   <AppLayout title="Live Options Calculator">
@@ -428,24 +495,33 @@ onMounted(async () => {
     <div class="py-6">
       <AppShell>
         <div class="max-w-7xl mx-auto px-6 space-y-6">
-          <div v-if="loading" class="text-center py-20">
-            <div
-              class="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-500"
-            ></div>
-            <p class="mt-4 text-gray-400">Fetching {{ symbol }} live chain...</p>
-          </div>
-
-          <div v-else-if="error" class="text-center py-20 text-red-400">
+          <!-- Error first -->
+          <div v-if="error" class="text-center py-20 text-red-400">
             {{ error }}
           </div>
 
+          <!-- Global "booting" / loading / waiting for full data -->
+          <div
+            v-else-if="loading || !hasData"
+            class="text-center py-20"
+          >
+            <div
+              class="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-500"
+            ></div>
+            <p class="mt-4 text-gray-400">
+              Preparing {{ symbol }} calculator…
+            </p>
+          </div>
+
+          <!-- Main UI only when fully ready -->
           <div v-else class="space-y-6">
             <!-- Expiry chips -->
-            <div class="flex flex-wrap gap-2">
+            <div class="flex flex-wrap gap-2 items-center">
+              <span class="text-xs text-gray-400 mr-1">Expiry:</span>
               <button
                 v-for="exp in expirations"
                 :key="exp.value"
-                @click="selectedExpiry = exp.value"
+                @click="handleExpiryClick(exp.value)"
                 :class="selectedExpiry === exp.value ? 'bg-cyan-600' : 'bg-gray-700'"
                 class="px-3 py-1.5 rounded-lg text-xs font-medium"
               >
@@ -466,7 +542,34 @@ onMounted(async () => {
             <div
               class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6 overflow-x-auto"
             >
-              <h3 class="text-xl font-bold mb-4">Live Chain</h3>
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-bold">Live Chain</h3>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-400">Strikes:</span>
+                  <button
+                    class="px-2.5 py-1 rounded-full text-[11px] font-medium"
+                    :class="strikeBandMode === 'near' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
+                    @click="strikeBandMode = 'near'"
+                  >
+                    Near (±15%)
+                  </button>
+                  <button
+                    class="px-2.5 py-1 rounded-full text-[11px] font-medium"
+                    :class="strikeBandMode === 'wide' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
+                    @click="strikeBandMode = 'wide'"
+                  >
+                    Wide (±40%)
+                  </button>
+                  <button
+                    class="px-2.5 py-1 rounded-full text-[11px] font-medium"
+                    :class="strikeBandMode === 'all' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
+                    @click="strikeBandMode = 'all'"
+                  >
+                    All
+                  </button>
+                </div>
+              </div>
+
               <table class="w-full text-sm">
                 <thead>
                   <tr class="text-gray-400 border-b border-gray-700">
@@ -618,6 +721,7 @@ onMounted(async () => {
               </div>
 
               <div class="lg:col-span-2 space-y-6">
+                <!-- charts -->
                 <div class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6">
                   <div class="grid lg:grid-cols-2 gap-6">
                     <div>
@@ -635,57 +739,37 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                <!-- Payoff table -->
-                <div
-                  class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6"
-                >
-                  <h3 class="text-lg font-bold mb-4">Payoff Table (at Expiration)</h3>
-                  <div class="max-h-80 overflow-y-auto">
-                    <table class="w-full text-sm">
-                      <thead>
-                        <tr class="text-gray-400 border-b border-gray-700">
-                          <th class="text-left py-2">Stock Price</th>
-                          <th class="text-left py-2">P&amp;L ($)</th>
-                          <th class="text-left py-2">ROI (%)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr
-                          v-for="row in payoffTableRows"
-                          :key="row.price"
-                          :class="[
-                            'border-b border-gray-800',
-                            row.pnl > 0 ? 'bg-emerald-900/20' : '',
-                            row.pnl < 0 ? 'bg-red-900/10' : '',
-                          ]"
-                        >
-                          <td class="py-2 font-mono">${{ row.price.toFixed(2) }}</td>
-                          <td
-                            class="py-2 font-mono"
-                            :class="row.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'"
-                          >
-                            ${{ row.pnl.toFixed(0) }}
-                          </td>
-                          <td class="py-2 font-mono text-gray-300">
-                            {{ row.roi.toFixed(1) }}%
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <!-- Time Decay Table -->
+                <!-- Time Decay Table (before payoff) -->
                 <div
                   class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6"
                 >
                   <div class="flex items-center justify-between mb-3">
-                    <h3 class="text-lg font-bold">
-                      {{ timeDecayTitle }}
-                    </h3>
-                    <span class="text-xs text-gray-400">
-                      DTE: {{ daysToExpiration }} day<span v-if="daysToExpiration !== 1">s</span>
-                    </span>
+                    <div>
+                      <h3 class="text-lg font-bold">
+                        {{ timeDecayTitle }}
+                      </h3>
+                      <span class="text-xs text-gray-400">
+                        DTE: {{ daysToExpiration }} day<span v-if="daysToExpiration !== 1">s</span>
+                      </span>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs text-gray-400 mr-1">View:</span>
+                      <button
+                        class="px-3 py-1 rounded-full text-xs font-medium"
+                        :class="decayViewMode === 'compact' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
+                        @click="decayViewMode = 'compact'"
+                      >
+                        Compact
+                      </button>
+                      <button
+                        class="px-3 py-1 rounded-full text-xs font-medium"
+                        :class="decayViewMode === 'full' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
+                        @click="decayViewMode = 'full'"
+                      >
+                        Full
+                      </button>
+                    </div>
                   </div>
 
                   <!-- Scenario controls -->
@@ -744,7 +828,7 @@ onMounted(async () => {
                       </thead>
                       <tbody>
                         <tr
-                          v-for="row in timeDecayRows"
+                          v-for="row in visibleTimeDecayRows"
                           :key="row.dte"
                           :class="[
                             'border-b border-gray-800',
@@ -756,6 +840,55 @@ onMounted(async () => {
                           <td class="py-2 font-mono">
                             ${{ row.price.toFixed(2) }}
                           </td>
+                          <td
+                            class="py-2 font-mono"
+                            :class="row.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'"
+                          >
+                            ${{ row.pnl.toFixed(0) }}
+                          </td>
+                          <td class="py-2 font-mono text-gray-300">
+                            {{ row.roi.toFixed(1) }}%
+                          </td>
+                        </tr>
+
+                        <tr
+                          v-if="decayViewMode === 'compact' && hiddenTimeDecayCount > 0"
+                        >
+                          <td colspan="4" class="py-2 text-center text-xs text-gray-500">
+                            … {{ hiddenTimeDecayCount }} more day<span v-if="hiddenTimeDecayCount !== 1">s</span> hidden.
+                            Switch to <span class="font-semibold">Full</span> view to see all.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- Payoff table (after time decay) -->
+                <div
+                  class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6"
+                >
+                  <h3 class="text-lg font-bold mb-4">Payoff Table (at Expiration)</h3>
+                  <div class="max-h-80 overflow-y-auto">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="text-gray-400 border-b border-gray-700">
+                          <th class="text-left py-2">Stock Price</th>
+                          <th class="text-left py-2">P&amp;L ($)</th>
+                          <th class="text-left py-2">ROI (%)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="row in payoffTableRows"
+                          :key="row.price"
+                          :class="[
+                            'border-b border-gray-800',
+                            row.pnl > 0 ? 'bg-emerald-900/20' : '',
+                            row.pnl < 0 ? 'bg-red-900/10' : '',
+                          ]"
+                        >
+                          <td class="py-2 font-mono">${{ row.price.toFixed(2) }}</td>
                           <td
                             class="py-2 font-mono"
                             :class="row.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'"
