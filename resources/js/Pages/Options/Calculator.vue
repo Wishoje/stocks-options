@@ -41,6 +41,73 @@ const safePremium = (opt) => {
   if (!opt) return 0
   return safeNumber(opt.mid)
 }
+// ----- Black–Scholes helpers -----
+
+const riskFreeRate = 0.04 // rough guess; tweak if you want
+
+const normCdf = (x) => {
+  // Abramowitz–Stegun approximation for N(x)
+  const k = 1 / (1 + 0.2316419 * Math.abs(x))
+  const kSum =
+    k *
+    (0.31938153 +
+      k * (-0.356563782 +
+      k * (1.781477937 +
+      k * (-1.821255978 +
+      k * 1.330274429))))
+  const oneOverRootTwoPi = 1 / Math.sqrt(2 * Math.PI)
+  const approx = 1 - oneOverRootTwoPi * Math.exp(-0.5 * x * x) * kSum
+  return x >= 0 ? approx : 1 - approx
+}
+
+const bsPrice = (S, K, T, r, sigma, type) => {
+  if (T <= 0 || sigma <= 0 || S <= 0 || K <= 0) {
+    // at expiration: pure intrinsic
+    const intrinsic =
+      type === 'call'
+        ? Math.max(S - K, 0)
+        : Math.max(K - S, 0)
+    return intrinsic
+  }
+
+  const sqrtT = Math.sqrt(T)
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT)
+  const d2 = d1 - sigma * sqrtT
+
+  if (type === 'call') {
+    return S * normCdf(d1) - K * Math.exp(-r * T) * normCdf(d2)
+  } else {
+    return K * Math.exp(-r * T) * normCdf(-d2) - S * normCdf(-d1)
+  }
+}
+
+const impliedVolBS = (price, S, K, T, r, type) => {
+  // super simple bisection; good enough for UI
+  if (price <= 0 || S <= 0 || K <= 0 || T <= 0) return 0.0
+
+  let low = 0.01
+  let high = 5.0
+  let mid = 0.3
+
+  for (let i = 0; i < 50; i++) {
+    mid = 0.5 * (low + high)
+    const est = bsPrice(S, K, T, r, mid, type)
+    if (!Number.isFinite(est)) break
+
+    if (est > price) {
+      high = mid
+    } else {
+      low = mid
+    }
+
+    if (Math.abs(est - price) < 0.01) {
+      break
+    }
+  }
+
+  return mid
+}
+
 
 // Effective premium PER SHARE used as *entry price*
 const effectivePremium = computed(() => {
@@ -175,10 +242,11 @@ const timeDecayTitle = computed(() => {
  * Time-decay table:
  * Approximate theoretical value if:
  *  - price = decayUnderlying (spot / breakeven / target)
- *  - time value decays from today's level down to 0 at expiration
+ *  - implied vol is held constant
+ *  - time to expiry shrinks from today's DTE down to 0
  *
  * Uses:
- *   - current mid for today's option value
+ *   - current mid for today's option value + IV fit
  *   - entryPrice / effectivePremium for P&L
  */
 const timeDecayRows = computed(() => {
@@ -189,41 +257,38 @@ const timeDecayRows = computed(() => {
 
   const Sspot = safeNumber(stockPrice.value || 0)
   const S = decayUnderlying.value
-  if (!S || S <= 0 || !Sspot) return []
+  if (!S || S <= 0 || !Sspot || Sspot <= 0) return []
 
   const K = safeNumber(selectedOption.value.strike)
   const entry = effectivePremium.value
   const c = Math.max(1, safeNumber(contracts.value || 1))
 
-  // Intrinsic at scenario price (where you imagine price sits)
-  const intrinsicScenario =
-    optionType.value === 'call'
-      ? Math.max(S - K, 0)
-      : Math.max(K - S, 0)
-
-  // Intrinsic at current spot (where current mid lives)
-  const intrinsicSpot =
-    optionType.value === 'call'
-      ? Math.max(Sspot - K, 0)
-      : Math.max(K - Sspot, 0)
-
   const currentMid = safePremium(selectedOption.value)
+  if (currentMid <= 0 || K <= 0) return []
 
-  // Time value "today" (can be negative if market mid < intrinsic)
-  const timeValueNow = currentMid - intrinsicSpot
+  const Tyears = dte / 365
+  const type = optionType.value === 'put' ? 'put' : 'call'
+
+  // Fit IV from current mid at *spot* (what your snapshot actually is)
+  let iv = impliedVolBS(currentMid, Sspot, K, Tyears, riskFreeRate, type)
+
+  // Fallback: if IV fails, bail out (no rows) instead of spewing nonsense
+  if (!Number.isFinite(iv) || iv <= 0) {
+    return []
+  }
 
   const rows = []
-  for (let d = 0; d <= dte; d++) {
-    const frac = dte === 0 ? 0 : d / dte
 
-    // Linear decay of time value from now → 0
-    const theoPerShare = intrinsicScenario + timeValueNow * frac
+  // daysRemaining: from "today" (dte) down to expiration (0)
+  for (let daysRemaining = dte; daysRemaining >= 0; daysRemaining--) {
+    const tau = daysRemaining / 365
 
+    const theoPerShare = bsPrice(S, K, tau, riskFreeRate, iv, type)
     const pnl = (theoPerShare - entry) * 100 * c
     const roi = totalCost.value > 0 ? (pnl / totalCost.value) * 100 : 0
 
     rows.push({
-      dte: d,
+      dte: daysRemaining,
       price: theoPerShare,
       pnl,
       roi,
