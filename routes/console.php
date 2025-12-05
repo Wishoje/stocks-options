@@ -1,135 +1,106 @@
 <?php
 
-namespace App\Console\Kernel;
-
-use Illuminate\Console\Scheduling\Schedule;
-use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+use Illuminate\Foundation\Inspiring;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\DB;
+use App\Jobs\FetchOptionChainDataJob;
+use App\Jobs\ComputeVolMetricsJob;
+use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Support\Market;
+use App\Support\Symbols;
 
-class Kernel extends ConsoleKernel
-{
-    /**
-     * Define the application's command schedule.
-     */
-    protected function schedule(Schedule $schedule): void
-    {
-        // 1) Kick off the ingest after market close (weekdays, ET)
-        $schedule->job(new \App\Jobs\FetchOptionChainDataJob(['SPY','QQQ','IWM','DIA']))
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->at('16:10'); // 4:10pm ET
+// Example default command
+Artisan::command('inspire', function () {
+    $this->comment(Inspiring::quote());
+});
 
-        // 2) Build the daily snapshot a bit later
-        $schedule->command('chain:snapshot')
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->at('16:30'); // 4:30pm ET
+// 1) Kick off the ingest after market close (weekdays, ET)
+Schedule::job(new FetchOptionChainDataJob(['SPY','QQQ','IWM','DIA']))
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('16:10');
 
-        // 3) Compute vol metrics nightly
-        $schedule->job(new \App\Jobs\ComputeVolMetricsJob(['SPY','QQQ','IWM']))
-            ->timezone('America/New_York')
-            ->dailyAt('20:40');
+// 2) Build the daily snapshot a bit later
+Schedule::command('chain:snapshot')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('16:30');
 
-        // 4) Seed prices then compute VRP/term after close (order matters)
-        $schedule->command('prices:seed SPY QQQ IWM')
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->at('16:15');
+// 3) Compute vol metrics nightly
+Schedule::job(new ComputeVolMetricsJob(['SPY','QQQ','IWM']))
+    ->timezone('America/New_York')
+    ->dailyAt('20:40');
 
-        $schedule->command('vol:compute SPY QQQ IWM')
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->at('16:20');
+// 4) Seed prices then compute VRP/term after close (order matters)
+Schedule::command('prices:seed SPY QQQ IWM')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('16:15');
 
-        // 5) Seasonality data
-        $schedule->command('seasonality:5d SPY QQQ IWM MSFT AAPL')
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->at('06:10');
+Schedule::command('walls:compute --timeframe=all --limit=400 --source=hot')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('16:35'); // after your chain snapshot finishes
 
-        // Run on weekdays at 06:30 ET (adjust to your pipeline timing)
-        $schedule->command('watchlist:preload')
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->at('16:15');
+Schedule::command('vol:compute SPY QQQ IWM')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('16:20');
 
-        $schedule->command('preload:hot-options --limit=200 --days=10')
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->at('17:00'); // tweak as needed
+// 5) Seasonality data
+Schedule::command('seasonality:5d SPY QQQ IWM MSFT AAPL')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('16:15');
 
-        $schedule->command('intraday:warmup --limit=200 --days=5')
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->everyFifteenMinutes()
-            ->between('09:35', '15:55');
+Schedule::command('watchlist:preload')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('16:15');
 
-        $schedule->command('intraday:prune-counters --days=7')->dailyAt('03:00');
+Schedule::command('preload:hot-options --limit=200 --days=10')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->at('17:00');
 
-        $schedule->call(function () {
-            $nowEt = \Carbon\Carbon::now('America/New_York');
+Schedule::command('intraday:warmup --limit=200 --days=5')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->everyFifteenMinutes()
+    ->between('09:35', '15:55');
 
-            if ($nowEt->isWeekend()) return;
+Schedule::command('intraday:prune-counters --days=7')
+    ->dailyAt('03:00');
 
-            // time window commented out
-            // if ($hhmm < '09:30' || $hhmm > '16:10') return;
+// Intraday polygon pull
+Schedule::call(function () {
+    $nowEt = now('America/New_York');
 
-            $symbols = DB::table('watchlists')
-                ->pluck('symbol')
-                ->map(fn($s) => \App\Support\Symbols::canon($s))
-                ->filter()
-                ->unique()
-                ->values()
-                ->all();
-
-            if (!$symbols) {
-                $symbols = ['SPY','QQQ','IWM','AAPL','MSFT','NVDA','TSLA','AMZN'];
-            }
-
-            dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob($symbols))->onQueue('intraday');
-        })
-        ->everyFiveMinutes()
-        ->name('intraday:polygon:pull')
-        ->withoutOverlapping(4)
-        ->timezone('America/New_York');
-
-        $schedule->command('hot-options:fetch --limit=200 --type=STOCKS')
-            ->weekdays()
-            ->timezone('America/New_York')
-            ->dailyAt('17:30');
-
-
-        
-
-        // $schedule->call(function () {
-        //     $symbols = DB::table('watchlists')->distinct()->pluck('symbol')->take(10);
-        //     foreach ($symbols as $sym) {
-        //         dispatch(new \App\Jobs\FetchCalculatorChainJob($sym));
-        //     }
-        // })->everyFifteenMinutes()->name('Refresh Calculator Chains');
-
-        
-        // ---------------------------------------------------------
-        // INTRADAY LIVE OPTION FLOW INGEST (NEW)
-        // ---------------------------------------------------------
-        //
-        // Goal:
-        // - Populate option_live_counters every 5 minutes during RTH (changed for freshness)
-        // - Feeds /api/intraday/summary, /api/intraday/volume-by-strike, /api/intraday/ua
-        //
-        // Notes:
-        // - We only dispatch if it's a weekday AND between 09:30 and ~16:10 ET
-        // - We pull symbols from watchlist first; if empty fall back to a core basket
-        //
+    if ($nowEt->isWeekend()) {
+        return;
     }
 
-    /**
-     * Register the commands for the application.
-     */
-    protected function commands(): void
-    {
-        $this->load(__DIR__.'/Commands');
+    $symbols = DB::table('watchlists')
+        ->pluck('symbol')
+        ->map(fn ($s) => Symbols::canon($s))
+        ->filter()
+        ->unique()
+        ->values()
+        ->all();
 
-        require base_path('routes/console.php');
+    if (!$symbols) {
+        $symbols = ['SPY','QQQ','IWM','AAPL','MSFT','NVDA','TSLA','AMZN'];
     }
-}
+
+    dispatch(new FetchPolygonIntradayOptionsJob($symbols))->onQueue('intraday');
+})
+->everyFiveMinutes()
+->name('intraday:polygon:pull')
+->withoutOverlapping(4)
+->timezone('America/New_York');
+
+Schedule::command('hot-options:fetch --limit=200 --type=STOCKS')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->dailyAt('17:30');

@@ -11,9 +11,8 @@ use App\Http\Controllers\QScoreController;
 use App\Http\Controllers\ExpiryController;
 use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\SymbolSearchController;
-use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Http\Controllers\IntradayController;
-
+use App\Http\Controllers\WallScannerController;
 use App\Jobs\PrimeSymbolJob;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
@@ -96,9 +95,7 @@ Route::get('/ua/debug', function (Request $req) {
 
 Route::post('/intraday/pull', [IntradayController::class, 'pull']);
 Route::get('/hot-options', [\App\Http\Controllers\HotOptionsController::class, 'index']);
-// routes/api.php
-
-// routes/api.php
+Route::post('/scanner/walls', [WallScannerController::class, 'scan']);
 
 Route::get('/option-chain', function () {
     $symbol = strtoupper(request('symbol', 'SPY'));

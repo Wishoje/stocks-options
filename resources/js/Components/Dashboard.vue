@@ -300,12 +300,12 @@
           <template v-if="dataMode==='eod'">
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
               <h4 class="font-semibold mb-3">ΔOI by Strike (EOD)</h4>
-              <StrikeDeltaChart :strikeData="levels?.strike_data || []" />
+              <StrikeDeltaChart :strikeData="strikeSeriesForDelta" />
             </div>
 
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
               <h4 class="font-semibold mb-3">ΔVol by Strike (EOD)</h4>
-              <VolumeDeltaChart :strikeData="levels?.strike_data || []" />
+              <VolumeDeltaChart :strikeData="strikeSeriesForDelta" />
             </div>
 
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
@@ -1104,23 +1104,28 @@ function toPremiumSeries(arr = []) {
   }))
 }
 
-const normalizeStrikes = (arr = []) => arr.map(r => ({
-  strike: r.strike,
+const strikeSeriesForDelta = computed(() => {
+  const rows = levels.value?.strike_data || []
 
-  // volume deltas (your feed sometimes uses *_vol_delta)
-  call_volume_delta: r.call_volume_delta ?? r.call_vol_delta ?? 0,
-  put_volume_delta:  r.put_volume_delta  ?? r.put_vol_delta  ?? 0,
+  const hasAnyDod =
+    rows.some(r =>
+      (r.call_oi_delta ?? 0) !== 0 ||
+      (r.put_oi_delta ?? 0) !== 0 ||
+      (r.call_vol_delta ?? 0) !== 0 ||
+      (r.put_vol_delta ?? 0) !== 0
+    )
 
-  // OI deltas (not in your payload — will be 0 unless you compute them)
-  call_oi_delta: r.call_oi_delta ?? r.call_open_interest_delta ?? 0,
-  put_oi_delta:  r.put_oi_delta  ?? r.put_open_interest_delta  ?? 0,
+  if (hasAnyDod) return rows
 
-  // other fields used by tiles
-  vol_oi: r.vol_oi ?? 0,
-  pcr: r.pcr ?? null,
-  premium_call: r.premium_call ?? 0,
-  premium_put: r.premium_put ?? 0,
-}));
+  // fallback: use WoW deltas instead
+  return rows.map(r => ({
+    ...r,
+    call_oi_delta: r.call_oi_wow ?? 0,
+    put_oi_delta:  r.put_oi_wow ?? 0,
+    call_vol_delta: r.call_vol_wow ?? 0,
+    put_vol_delta:  r.put_vol_wow ?? 0,
+  }))
+})
 </script>
 
 <style scoped>

@@ -6,6 +6,11 @@ use Illuminate\Console\Command;
 use App\Jobs\FetchOptionChainDataJob;
 use App\Jobs\ComputePositioningJob;
 use App\Jobs\ComputeUAJob;
+use App\Jobs\PricesBackfillJob;
+use App\Jobs\PricesDailyJob;
+use App\Jobs\ComputeVolMetricsJob;
+use App\Jobs\Seasonality5DJob;
+use App\Jobs\ComputeExpiryPressureJob;
 
 class FetchOptionDataCommand extends Command
 {
@@ -27,6 +32,11 @@ class FetchOptionDataCommand extends Command
 
         (new ComputeUAJob($symbols))->handle();
 
+        (new PricesBackfillJob($symbols, 400))->handle();
+        (new PricesDailyJob($symbols))->handle();
+        (new ComputeVolMetricsJob($symbols))->handle();
+        (new Seasonality5DJob($symbols, 15, 2))->handle();
+        (new ComputeExpiryPressureJob($symbols, 3))->handle();
         $this->info('Fetched and computed positioning for: '.implode(', ', $symbols));
         return 0;
     }
