@@ -3,26 +3,18 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
+use App\Models\SymbolWallSnapshot;
+use Carbon\Carbon;
 
 class WallScannerController extends Controller
 {
     public function scan(Request $request)
     {
-        $symbols = (array) $request->input('symbols', []);
-        $symbols = array_values(array_unique(array_filter(array_map('strtoupper', $symbols))));
-
-        // single timeframe param kept for backwards compatibility
-        $defaultTf = $request->input('timeframe', '30d');
-
-        $timeframes = $request->input('timeframes');
-        if ($timeframes === null) {
-            $timeframes = [$defaultTf]; // old behavior
-        } else {
-            $timeframes = (array) $timeframes;
-        }
-
-        $timeframes = array_values(array_unique(array_map('strval', $timeframes)));
+        $symbols    = (array) $request->input('symbols', []);
+        $symbols    = array_values(array_unique(array_filter(array_map('strtoupper', $symbols))));
+        $defaultTf  = $request->input('timeframe', '30d');
+        $timeframes = $request->input('timeframes', [$defaultTf]);
+        $timeframes = array_values(array_unique(array_map('strval', (array) $timeframes)));
 
         $maxPct = $request->has('near_pct') ? $request->float('near_pct') : 1.0;
         $maxPts = $request->has('near_pts') ? $request->float('near_pts') : null;
@@ -31,17 +23,40 @@ class WallScannerController extends Controller
             return response()->json(['items' => []]);
         }
 
-        $tradeDate = now('America/New_York')->toDateString();
+        $now = now('America/New_York');
 
-        $rows = \App\Models\SymbolWallSnapshot::query()
+        // 🔥 Get all snapshots for these symbols/timeframes, newest first
+        $rows = SymbolWallSnapshot::query()
             ->whereIn('symbol', $symbols)
             ->whereIn('timeframe', $timeframes)
-            ->where('trade_date', $tradeDate)
-            ->get();
+            ->orderBy('symbol')
+            ->orderBy('timeframe')
+            ->orderByDesc('trade_date')
+            ->get()
+            // keep only the latest row per symbol+timeframe
+            ->unique(fn ($row) => $row->symbol . '|' . $row->timeframe)
+            ->values();
+
+        if ($rows->isEmpty()) {
+            return response()->json(['items' => []]);
+        }
 
         $items = [];
 
         foreach ($rows as $row) {
+            // ⚠️ Freshness guard: not older than 24h on weekdays
+            if ($row->trade_date) {
+                // assume snapshot is “effective” at 16:00 ET on trade_date
+                $tradeAt  = Carbon::parse($row->trade_date . ' 16:00:00', 'America/New_York');
+                $ageHours = $tradeAt->diffInHours($now);
+
+                // On weekends (Sat/Sun) we allow stale data; on weekdays we require <= 24h
+                if (!$now->isWeekend() && $ageHours > 24) {
+                    // too old → skip this symbol/timeframe
+                    continue;
+                }
+            }
+
             $spot = (float) $row->spot;
             if ($spot <= 0) {
                 continue;
@@ -82,7 +97,7 @@ class WallScannerController extends Controller
                 ];
             }
 
-            // --- Intraday put wall (once you add it to snapshots) ---
+            // --- Intraday put wall ---
             if ($row->intraday_put_wall !== null) {
                 $distPct = (float) $row->intraday_put_dist_pct;
                 $distPts = abs($spot - (float) $row->intraday_put_wall);
@@ -99,7 +114,7 @@ class WallScannerController extends Controller
             }
 
             // --- Intraday call wall ---
-            if ($row->intraday_call_wall !== null) {          // ✅ correct guard
+            if ($row->intraday_call_wall !== null) {
                 $distPct = (float) $row->intraday_call_dist_pct;
                 $distPts = abs($spot - (float) $row->intraday_call_wall);
 
@@ -119,14 +134,14 @@ class WallScannerController extends Controller
             }
 
             $items[] = [
-                'symbol'    => $row->symbol,
-                'spot'      => $spot,
-                'timeframe' => $row->timeframe,
-                'hits'      => $hitTypes,
-                'walls'     => $walls,
+                'symbol'      => $row->symbol,
+                'spot'        => $spot,
+                'timeframe'   => $row->timeframe,
+                'trade_date'  => $row->trade_date,
+                'hits'        => $hitTypes,
+                'walls'       => $walls,
             ];
         }
-
 
         usort($items, function ($a, $b) {
             $aMin = $this->minDistance($a);
@@ -134,7 +149,6 @@ class WallScannerController extends Controller
             return $aMin <=> $bMin;
         });
 
-        // Also provide a grouped-by-timeframe view if you want it
         $byTimeframe = [];
         foreach ($items as $hit) {
             $tf = $hit['timeframe'];

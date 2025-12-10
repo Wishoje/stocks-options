@@ -83,7 +83,7 @@ class ComputeSymbolWallSnapshots extends Command
         ));
 
 
-        foreach ($symbols as $sym) {
+        foreach ($symbols as $sym) { 
             try {
                 // Require price not older than 30 minutes, but **from snapshots** only
                 $spot = $walls->latestSpot($sym, 30);
