@@ -50,13 +50,12 @@ class WallScannerController extends Controller
             $hitTypes = [];
             $walls    = [];
 
-            if ($row->eod_put_wall) {
+            // --- EOD put wall ---
+            if ($row->eod_put_wall !== null) {
                 $distPct = (float) $row->eod_put_dist_pct;
                 $distPts = abs($spot - (float) $row->eod_put_wall);
 
-                $isNear = $this->isHit($distPct, $distPts, $maxPct, $maxPts);
-
-                if ($isNear) {
+                if ($this->isHit($distPct, $distPts, $maxPct, $maxPts)) {
                     $hitTypes[] = 'eod_put';
                 }
 
@@ -67,13 +66,44 @@ class WallScannerController extends Controller
                 ];
             }
 
-            if ($row->intraday_call_wall) {
+            // --- EOD call wall ---
+            if ($row->eod_call_wall !== null) {
+                $distPct = (float) $row->eod_call_dist_pct;
+                $distPts = abs($spot - (float) $row->eod_call_wall);
+
+                if ($this->isHit($distPct, $distPts, $maxPct, $maxPts)) {
+                    $hitTypes[] = 'eod_call';
+                }
+
+                $walls['eod_call'] = [
+                    'strike'      => (float) $row->eod_call_wall,
+                    'distance_pt' => $distPts,
+                    'distance_pc' => $distPct,
+                ];
+            }
+
+            // --- Intraday put wall (once you add it to snapshots) ---
+            if ($row->intraday_put_wall !== null) {
+                $distPct = (float) $row->intraday_put_dist_pct;
+                $distPts = abs($spot - (float) $row->intraday_put_wall);
+
+                if ($this->isHit($distPct, $distPts, $maxPct, $maxPts)) {
+                    $hitTypes[] = 'intraday_put';
+                }
+
+                $walls['intraday_put'] = [
+                    'strike'      => (float) $row->intraday_put_wall,
+                    'distance_pt' => $distPts,
+                    'distance_pc' => $distPct,
+                ];
+            }
+
+            // --- Intraday call wall ---
+            if ($row->intraday_call_wall !== null) {          // ✅ correct guard
                 $distPct = (float) $row->intraday_call_dist_pct;
                 $distPts = abs($spot - (float) $row->intraday_call_wall);
 
-                $isNear = $this->isHit($distPct, $distPts, $maxPct, $maxPts);
-
-                if ($isNear) {
+                if ($this->isHit($distPct, $distPts, $maxPct, $maxPts)) {
                     $hitTypes[] = 'intraday_call';
                 }
 
@@ -96,6 +126,7 @@ class WallScannerController extends Controller
                 'walls'     => $walls,
             ];
         }
+
 
         usort($items, function ($a, $b) {
             $aMin = $this->minDistance($a);

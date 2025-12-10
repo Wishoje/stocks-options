@@ -73,6 +73,33 @@ const orderedTimeframes = computed(() => {
   return [...primary, ...extra]
 })
 
+const wallLabelMeta = {
+  eod_put: {
+    kind: 'Put wall',
+    timeframe: 'End-of-day',
+    timeframeShort: 'EOD',
+    classes: 'bg-red-900/70 text-red-100 border border-red-500/60',
+  },
+  eod_call: {
+    kind: 'Call wall',
+    timeframe: 'End-of-day',
+    timeframeShort: 'EOD',
+    classes: 'bg-emerald-900/70 text-emerald-100 border border-emerald-500/60',
+  },
+  intraday_put: {
+    kind: 'Put wall',
+    timeframe: 'Intraday',
+    timeframeShort: 'Live',
+    classes: 'bg-red-700/80 text-red-50 border border-red-400/70',
+  },
+  intraday_call: {
+    kind: 'Call wall',
+    timeframe: 'Intraday',
+    timeframeShort: 'Live',
+    classes: 'bg-emerald-700/80 text-emerald-50 border border-emerald-400/70',
+  },
+}
+
 // --- Helpers ---
 function isInWatchlist(sym) {
   return watchlistSymbols.value.has(sym)
@@ -102,6 +129,35 @@ function pcrTag(pcr) {
   if (v < 0.7) return 'Call-heavy'
   return 'Balanced'
 }
+
+function wallTags(hit) {
+  const tags = []
+  if (!hit?.hits || !hit?.walls) return tags
+
+  for (const key of hit.hits) {
+    const meta = wallLabelMeta[key]
+    const wall = hit.walls[key]
+    if (!meta || !wall) continue
+
+    const dist =
+      typeof wall.distance_pc === 'number'
+        ? `Δ${wall.distance_pc.toFixed(2)}%`
+        : null
+
+    tags.push({
+      key,
+      kind: meta.kind,                 // "Call wall" | "Put wall"
+      timeframe: meta.timeframe,       // "End-of-day" | "Intraday"
+      timeframeShort: meta.timeframeShort, // "EOD" | "Live"
+      strike: wall.strike,
+      dist,
+      classes: meta.classes,
+    })
+  }
+
+  return tags
+}
+
 
 // --- API loaders ---
 
@@ -463,6 +519,18 @@ onMounted(async () => {
                   <span class="text-[10px] text-gray-500">
                     scanning: all watchlist names
                   </span>
+                  <div class="flex flex-wrap gap-2 text-[10px] text-gray-300 mt-1">
+                    <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded
+                                bg-emerald-900/70 text-emerald-100 border border-emerald-500/60">
+                      <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      Call wall
+                    </span>
+                    <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded
+                                bg-red-900/70 text-red-100 border border-red-500/60">
+                      <span class="w-2 h-2 rounded-full bg-red-400"></span>
+                      Put wall
+                    </span>
+                  </div>
                 </div>
 
                 <div class="flex items-center gap-1 text-[11px] text-gray-300">
@@ -526,26 +594,23 @@ onMounted(async () => {
                     >
                       <span class="text-cyan-300">{{ hit.symbol }}</span>
 
-                      <span
-                        v-if="hit.hits.includes('eod_put')"
-                        class="px-1 rounded bg-emerald-800/70 text-emerald-100"
-                      >
-                        EOD put {{ hit.walls.eod_put?.strike }}
+                    <span
+                      v-for="tag in wallTags(hit)"
+                      :key="tag.key"
+                      :title="`${tag.kind} – ${tag.timeframe}`"
+                      class="px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1"
+                      :class="tag.classes"
+                    >
+                      <span class="font-semibold">
+                        {{ tag.kind }} · {{ tag.timeframeShort }}
                       </span>
-
-                      <span
-                        v-if="hit.hits.includes('intraday_call')"
-                        class="px-1 rounded bg-red-800/70 text-red-100"
-                      >
-                        Live call {{ hit.walls.intraday_call?.strike }}
+                      <span v-if="tag.strike">
+                        @ {{ tag.strike }}
                       </span>
-
-                      <span
-                        v-if="hit.walls.eod_put"
-                        class="text-[10px] text-gray-400"
-                      >
-                        Δ{{ hit.walls.eod_put.distance_pc.toFixed(2) }}%
+                      <span v-if="tag.dist" class="opacity-80">
+                        ({{ tag.dist }})
                       </span>
+                    </span>
                     </button>
                   </div>
                 </div>
