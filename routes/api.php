@@ -149,8 +149,6 @@ Route::get('/option-chain', function () {
             ];
         });
 
-    $price = $base->value('underlying_price') ?? 100;
-
     $expirations = DB::table('option_snapshots')
         ->where('symbol', $symbol)
         ->where('expiry', '>=', today())

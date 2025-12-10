@@ -35,9 +35,9 @@ class PolygonClient
                 'Accept'     => 'application/json',
                 'User-Agent' => 'Acceptd-Options/1.0 (+massive-snapshot)',
             ])
-            ->timeout(15)
+            ->timeout(10)
             // Don’t aggressively retry auth failures; keep general retry for others
-            ->retry(3, fn () => random_int(250, 600), throw: false);
+            ->retry(2, fn () => random_int(250, 600), throw: false);
 
         if ($mode === 'bearer') {
             $client = $client->withToken($key); // sets Authorization: Bearer <key>
@@ -233,7 +233,7 @@ class PolygonClient
 
         $all = ['results' => [], 'status' => null, 'request_id' => null];
 
-        for ($hops = 0; $hops < 50; $hops++) {
+        for ($hops = 0; $hops < 25; $hops++) {
             $url = $cursor ?: ($base . $path);
 
             // attach ?apiKey=... if using query auth
@@ -288,4 +288,111 @@ class PolygonClient
 
         return $all['results'] ? $all : null;
     }
+
+    public function underlyingQuote(string $symbol): ?array
+    {
+        $uSym = strtoupper($symbol);
+        Log::debug('PolygonClient.underlying.start', ['symbol' => $uSym]);
+
+        $base    = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
+        $mode    = config('services.massive.mode', 'header');
+        $qparam  = config('services.massive.qparam', 'apiKey');
+        $apiKey  = config('services.massive.key');
+
+        // Massive v2 single-stock snapshot
+        // GET /v2/snapshot/locale/us/markets/stocks/tickers/{stocksTicker}
+        $path = "/v2/snapshot/locale/us/markets/stocks/tickers/{$uSym}";
+        $url  = $base . $path;
+
+        if ($mode === 'query') {
+            $join = str_contains($url, '?') ? '&' : '?';
+            $url .= $join . urlencode($qparam) . '=' . urlencode($apiKey);
+        }
+
+        $resp = $this->http()->get($url);
+
+        if ($resp->status() === 401) {
+            Log::warning('PolygonClient.underlying.unauthorized', ['url' => $url]);
+            return null;
+        }
+
+        if ($resp->status() === 429) {
+            $retryAfter = (int)($resp->header('Retry-After') ?? 1);
+            usleep(max(1, $retryAfter) * 1_000_000);
+            $resp = $this->http()->get($url);
+        }
+
+        if (!$resp->ok()) {
+            Log::warning('PolygonClient.underlying.httpError', [
+                'url'  => $url,
+                'code' => $resp->status(),
+                'body' => self::clip($resp->body()),
+            ]);
+            return null;
+        }
+
+        $json = $resp->json() ?: [];
+
+        // Massive v2 snapshot schema:
+        // {
+        //   "request_id": "...",
+        //   "status": "OK",
+        //   "ticker": { "day": {...}, "lastQuote": {...}, "lastTrade": {...}, "prevDay": {...}, ... }
+        // }
+        $results = (array)($json['ticker'] ?? []);
+
+        $day     = (array)($results['day']     ?? []);
+        $prevDay = (array)($results['prevDay'] ?? []);
+        $last    = (array)($results['lastTrade'] ?? []);
+        $quote   = (array)($results['lastQuote'] ?? []);
+
+        $lastPrice = null;
+
+        // Prefer most recent trade
+        if (isset($last['p']) && is_numeric($last['p'])) {
+            $lastPrice = (float)$last['p'];
+        } elseif (isset($day['c']) && is_numeric($day['c'])) {
+            // fall back to day close
+            $lastPrice = (float)$day['c'];
+        } elseif (isset($quote['P']) && is_numeric($quote['P'])) {
+            // fall back to ask (or you could average bid/ask)
+            $lastPrice = (float)$quote['P'];
+        }
+
+        if ($lastPrice === null || $lastPrice <= 0) {
+            Log::warning('PolygonClient.underlying.noPrice', [
+                'symbol' => $uSym,
+                'body'   => self::clip($resp->body(), 200),
+            ]);
+            return null;
+        }
+
+        $prevClose = null;
+        if (isset($prevDay['c']) && is_numeric($prevDay['c'])) {
+            $prevClose = (float)$prevDay['c'];
+        } elseif (isset($day['previous_close']) && is_numeric($day['previous_close'])) {
+            $prevClose = (float)$day['previous_close'];
+        }
+
+        // Use ticker.updated as asof if present
+        $asof = $results['updated'] ?? $results['min']['t'] ?? null;
+
+        Log::debug('PolygonClient.underlying.done', [
+            'symbol'     => $uSym,
+            'last_price' => $lastPrice,
+            'prev_close' => $prevClose,
+            'asof'       => $asof,
+        ]);
+
+        return [
+            'symbol'     => $uSym,
+            'last_price' => $lastPrice,
+            'prev_close' => $prevClose,
+            'asof'       => $asof,
+            'source'     => 'massive-v2-snapshot',
+        ];
+    }
+
+
+
 }

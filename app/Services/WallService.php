@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\UnderlyingQuote;
 use Illuminate\Support\Facades\DB;
+use App\Support\Symbols;
 use App\Http\Controllers\GexController;
 use App\Http\Controllers\IntradayController;
 use Carbon\Carbon;
@@ -24,54 +26,76 @@ class WallService
      */
     public function latestSpot(string $symbol, ?int $maxAgeMinutes = null): ?float
     {
-        $sym = strtoupper($symbol);
+        $symbol = Symbols::canon($symbol);
 
-        $row = DB::table('option_snapshots')
-            ->where('symbol', $sym)
+        $q = UnderlyingQuote::where('symbol', $symbol);
+
+        if ($maxAgeMinutes !== null) {
+            $cutoff = now('UTC')->subMinutes($maxAgeMinutes);
+            $q->where('asof', '>=', $cutoff);
+        }
+
+        $row = $q->orderByDesc('asof')->first();
+
+        if ($row && $row->last_price > 0) {
+            return (float) $row->last_price;
+        }
+
+        // Fallback: old behavior using option_snapshots,
+        // in case you still have legacy data there.
+        $fallback = DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->when($maxAgeMinutes !== null, function ($q) use ($maxAgeMinutes) {
+                $q->where('fetched_at', '>=', now()->subMinutes($maxAgeMinutes));
+            })
             ->orderByDesc('fetched_at')
-            ->first(['underlying_price', 'fetched_at']);
+            ->value('underlying_price');
 
-        if (!$row || $row->underlying_price === null) {
-            return null;
-        }
-
-        if ($maxAgeMinutes !== null && $row->fetched_at) {
-            $fetchedAt = Carbon::parse($row->fetched_at);
-            $age = $fetchedAt->diffInMinutes(now('America/New_York'));
-            if ($age > $maxAgeMinutes) {
-                // too old → treat as unusable
-                return null;
-            }
-        }
-
-        return (float) $row->underlying_price;
+        return $fallback ? (float)$fallback : null;
     }
 
+    /**
+     * Preferred current price accessor:
+     *  1) intraday composite (age-limited if $maxAgeMinutes given)
+     *  2) fallback to option_snapshots (also age-limited)
+     */
     public function currentPrice(string $symbol, ?int $maxAgeMinutes = null): ?float
     {
         $sym = strtoupper($symbol);
 
-        // 1) intraday first
+        // Try intraday first
         [$spot, $asof] = $this->intradaySpotWithAsOf($sym);
 
         if ($spot !== null) {
-            if ($maxAgeMinutes === null) {
-                return $spot;
-            }
-
-            if ($asof instanceof Carbon) {
+            // If we care about age, enforce it
+            if ($maxAgeMinutes !== null && $asof instanceof Carbon) {
                 $age = $asof->diffInMinutes(now('America/New_York'));
-                if ($age <= $maxAgeMinutes) {
-                    return $spot; // fresh intraday
+                if ($age > $maxAgeMinutes) {
+                    $spot = null; // too stale
+                }
+            }
+        }
+
+        // If intraday looks okay, sanity-check it against last known snapshot
+        if ($spot !== null) {
+            $snap = $this->latestSpot($sym, null); // no age limit, just for comparison
+            if ($snap !== null) {
+                $diffPct = $this->distancePct($snap, $spot);
+                $diffPts = abs($snap - $spot);
+
+                // if intraday is wildly off vs last snapshot, trust snapshot instead
+                if ($diffPct > 25 && $diffPts > 10) {
+                    return $snap;
                 }
             }
 
-            // intraday present but stale / no asof → fall through to snapshot
+            return $spot;
         }
 
-        // 2) fallback to snapshot, also age-limited
+        // Otherwise fall back to snapshot with age limit
         return $this->latestSpot($sym, $maxAgeMinutes);
     }
+
 
     protected function intradaySpotWithAsOf(string $symbol): array
     {
@@ -111,6 +135,30 @@ class WallService
         }
 
         return null;
+    }
+
+    /**
+     * EOD (put/call) walls using your existing GexController endpoint.
+     */
+    public function eodWalls(string $symbol, string $timeframe = '30d'): array
+    {
+        /** @var GexController $ctrl */
+        $ctrl = app(GexController::class);
+
+        // console command has a global request() instance; we can safely duplicate
+        $req  = request()->duplicate(['symbol' => $symbol, 'timeframe' => $timeframe]);
+        $resp = $ctrl->getGexLevels($req);
+
+        if ($resp->getStatusCode() !== 200) {
+            return [];
+        }
+
+        $data = json_decode($resp->getContent(), true) ?: [];
+
+        return [
+            'put_wall'  => $data['put_support']     ?? null,
+            'call_wall' => $data['call_resistance'] ?? null,
+        ];
     }
 
     public function intradayCallWall(string $symbol, ?int $maxAgeMinutes = null): array

@@ -82,17 +82,18 @@ class ComputeSymbolWallSnapshots extends Command
             implode(', ', $timeframes),
         ));
 
+
         foreach ($symbols as $sym) {
             try {
-                // Require price not older than 30 minutes
-                $spot = $walls->currentPrice($sym, 30);
+                // Require price not older than 30 minutes, but **from snapshots** only
+                $spot = $walls->latestSpot($sym, 30);
 
                 if ($spot === null) {
                     // No fresh price → skip this symbol entirely
                     continue;
                 }
 
-                // Intraday call wall should also be fresh
+                // Intraday call wall can still be live, we just measure distance vs DB spot
                 $intr      = $walls->intradayCallWall($sym, 30);
                 $intrCall  = $intr['call_wall'] ?? null;
                 $intrDist  = $intrCall ? $walls->distancePct($spot, $intrCall) : null;
@@ -124,10 +125,9 @@ class ComputeSymbolWallSnapshots extends Command
                     );
                 }
             } catch (\Throwable $e) {
-                $this->error("Error for {$sym}: ".$e->getMessage());
+                $this->error("Error for {$sym}: " . $e->getMessage());
             }
         }
-
 
 
         $this->info('Done.');

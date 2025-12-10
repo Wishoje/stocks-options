@@ -17,10 +17,10 @@ class IntradayWarmupCommand extends Command
 
     public function handle(): int
     {
-        if (!Market::isRthOpen(Carbon::now('America/New_York'))) {
-            $this->info('Market is closed; skipping intraday warmup.');
-            return self::SUCCESS;
-        }
+        // if (!Market::isRthOpen(Carbon::now('America/New_York'))) {
+        //     $this->info('Market is closed; skipping intraday warmup.');
+        //     return self::SUCCESS;
+        // }
 
         $limit = (int) $this->option('limit');
         $limit = max(1, min($limit, 500));

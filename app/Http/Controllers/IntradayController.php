@@ -29,8 +29,7 @@ class IntradayController extends Controller
         }
 
         // RTH: run inline for snappy UX
-        Bus::dispatch(new FetchPolygonIntradayOptionsJob($symbols));
-
+        dispatch_sync(new FetchPolygonIntradayOptionsJob($symbols));
 
         return response()->json(['ok' => true]);
     }
@@ -470,12 +469,7 @@ class IntradayController extends Controller
 
     private function currentSpot(string $symbol): ?float
     {
-        // pull from recent option_snapshots as you already do
-        return DB::table('option_snapshots')
-            ->where('symbol', $symbol)
-            ->where('fetched_at', '>=', now()->subMinutes(20))
-            ->orderByDesc('fetched_at')
-            ->value('underlying_price');
+        return app(\App\Services\WallService::class)->latestSpot($symbol, 20);
     }
 
     private function isMarketOpen(): bool

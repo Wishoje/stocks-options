@@ -64,20 +64,23 @@ Schedule::command('preload:hot-options --limit=200 --days=10')
     ->timezone('America/New_York')
     ->at('17:00');
 
-Schedule::command('intraday:warmup --limit=200 --days=5')
+Schedule::command('intraday:warmup --limit=200')
+    ->timezone('America/New_York')
+    ->at('16:15');
+
+Schedule::command('intraday:prune-counters --days=7')
+    ->dailyAt('03:00');
+
+Schedule::command('walls:compute --timeframe=all --limit=400 --source=hot')
     ->weekdays()
     ->timezone('America/New_York')
     ->everyFifteenMinutes()
     ->between('09:35', '15:55');
 
-Schedule::command('intraday:prune-counters --days=7')
-    ->dailyAt('03:00');
-
 // Intraday polygon pull
 Schedule::call(function () {
     $nowEt = now('America/New_York');
-
-    if ($nowEt->isWeekend()) {
+    if ($nowEt->isWeekend() || !Market::isRthOpen($nowEt)) {
         return;
     }
 
@@ -93,12 +96,21 @@ Schedule::call(function () {
         $symbols = ['SPY','QQQ','IWM','AAPL','MSFT','NVDA','TSLA','AMZN'];
     }
 
-    dispatch(new FetchPolygonIntradayOptionsJob($symbols))->onQueue('intraday');
+    foreach (array_chunk($symbols, 15) as $chunk) {
+        FetchPolygonIntradayOptionsJob::dispatch($chunk)->onQueue('intraday');
+    }
 })
 ->everyFiveMinutes()
 ->name('intraday:polygon:pull')
-->withoutOverlapping(4)
+->withoutOverlapping(2)
 ->timezone('America/New_York');
+
+Schedule::command('prices:refresh --source=both --limit=400')
+    ->everyFiveMinutes()
+    ->timezone('America/New_York')
+    ->between('09:35', '15:55')
+    ->withoutOverlapping(2)
+    ->name('prices:refresh:intraday');
 
 Schedule::command('hot-options:fetch --limit=200 --type=STOCKS')
     ->weekdays()
