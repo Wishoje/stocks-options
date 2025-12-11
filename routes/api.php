@@ -118,6 +118,9 @@ Route::get('/option-chain', function () {
         ->where('symbol', $symbol)
         ->where('fetched_at', $latest);
 
+    $spot = app(\App\Services\WallService::class)->currentPrice($symbol, null);
+    $price = $spot ?? $base->value('underlying_price') ?? 100;
+
     $chainQuery = $base->clone()
         ->select(
             'strike',

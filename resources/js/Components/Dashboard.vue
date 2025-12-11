@@ -299,18 +299,22 @@
           <!-- EOD: OI + Net GEX + ΔVol (EOD) -->
           <template v-if="dataMode==='eod'">
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-3">ΔOI by Strike (EOD)</h4>
-              <StrikeDeltaChart :strikeData="strikeSeriesForDelta" />
-            </div>
-
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-3">ΔVol by Strike (EOD)</h4>
-              <VolumeDeltaChart :strikeData="strikeSeriesForDelta" />
-            </div>
-
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
               <h4 class="font-semibold mb-3">Net GEX by Strike (EOD)</h4>
               <NetGexChart :strikeData="levels?.strike_data || []" />
+            </div>
+            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+              <h4 class="font-semibold mb-3">ΔOI by Strike (EOD)</h4>
+              <StrikeDeltaChart
+                :strikeData="strikeSeriesForDelta"
+                height-class="h-80 md:h-96 xl:h-[26rem]"
+              />
+            </div>
+            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
+              <h4 class="font-semibold mb-3">ΔVol by Strike (EOD)</h4>
+              <VolumeDeltaChart
+                :strikeData="strikeSeriesForDelta"
+                height-class="h-80 md:h-96 xl:h-[26rem]"
+              />
             </div>
           </template>
 
