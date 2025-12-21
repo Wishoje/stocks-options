@@ -45,10 +45,10 @@ class QScoreController extends Controller
             'symbol' => $symbol,
             'date'   => $date,
             'scores' => [
-                'option' => ['score'=>$optScore, 'expl'=>$optExpl],
-                'vol'    => ['score'=>$volScore, 'expl'=>$volExpl],
-                'momo'   => ['score'=>$mScore, 'expl'=>$mExpl],
-                'season' => ['score'=>$sScore, 'expl'=>$sExpl],
+                'option' => ['score' => $this->r2($optScore), 'expl' => $optExpl],
+                'vol'    => ['score' => $this->r2($volScore), 'expl' => $volExpl],
+                'momo'   => ['score' => $this->r2($mScore),   'expl' => $mExpl],
+                'season' => ['score' => $this->r2($sScore),   'expl' => $sExpl],
             ],
         ], 200);
     }
@@ -179,5 +179,10 @@ class QScoreController extends Controller
         $ny = $now->copy()->setTimezone('America/New_York');
         if ($ny->isWeekend()) $ny->previousWeekday();
         return $ny->toDateString();
+    }
+
+    private function r2($v): float
+    {
+        return round((float) $v, 2);
     }
 }

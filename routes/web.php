@@ -1,29 +1,28 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 
 Route::get('/', function () {
-    return redirect()->route('dashboard'); // guests -> /login, authed -> /dashboard
-});
+    // Guests see marketing home, authed users go to app dashboard.
+    if (Auth::check()) return redirect()->route('dashboard');
+    return Inertia::render('Marketing/Home');
+})->name('home');
+
+Route::get('/pricing', fn () => Inertia::render('Marketing/Pricing'))->name('pricing');
+Route::get('/features', fn () => Inertia::render('Marketing/Features'))->name('features');
 
 Route::middleware([
     'auth:sanctum',
     config('jetstream.auth_session'),
-    // 'verified', // optional; keep/comment as you prefer
 ])->group(function () {
-    Route::get('/dashboard', function () {
-        return Inertia::render('Dashboard');
-    })->name('dashboard');
+    Route::get('/dashboard', fn () => Inertia::render('Dashboard'))->name('dashboard');
 });
 
-Route::get('/options-calculator', function () {
-    return Inertia::render('Options/Calculator');
-})->middleware(['auth:sanctum'])->name('options.calculator');
+Route::get('/options-calculator', fn () => Inertia::render('Options/Calculator'))
+    ->middleware(['auth:sanctum'])
+    ->name('options.calculator');
 
-Route::get('/scanner', function () {
-    return Inertia::render('Scanner', [
-        // You can preload 200 most-used symbols here if you want server-side,
-        // or let the Scanner page call /api/hot-options.
-    ]);
-})->name('options.scanner');
+Route::get('/scanner', fn () => Inertia::render('Scanner'))
+    ->name('options.scanner');
