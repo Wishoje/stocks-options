@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Models\Watchlist;
 use App\Support\Market;
 
 class IntradayController extends Controller
@@ -24,15 +25,23 @@ class IntradayController extends Controller
 
         $force = (bool) $request->boolean('force', false);
 
-        if (!$force && !\App\Support\Market::isRthOpen(now('America/New_York'))) {
-            return response()->json(['ok' => true, 'skipped' => 'market_closed'], 200);
+        // if (!$force && !Market::isRthOpen(now('America/New_York'))) {
+        //     return response()->json(['ok' => true, 'skipped' => 'market_closed'], 200);
+        // }
+
+        // GLOBAL watchlist: if there are no symbols in the watchlists table at all -> run sync
+        $watchlistEmpty = !Watchlist::query()->exists();
+        // (equivalent) $watchlistEmpty = !DB::table('watchlists')->exists();
+
+        if ($watchlistEmpty) {
+            Bus::dispatchSync(new FetchPolygonIntradayOptionsJob($symbols));
+            return response()->json(['ok' => true, 'dispatch' => 'sync']);
         }
 
-        // RTH: run inline for snappy UX
-        dispatch_sync(new FetchPolygonIntradayOptionsJob($symbols));
-
-        return response()->json(['ok' => true]);
+        Bus::dispatch(new FetchPolygonIntradayOptionsJob($symbols));
+        return response()->json(['ok' => true, 'dispatch' => 'async']);
     }
+
 
     // GET /api/intraday/summary?symbol=SPY
     public function summary(Request $request)
