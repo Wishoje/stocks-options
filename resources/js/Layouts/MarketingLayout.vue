@@ -8,45 +8,52 @@
 
     <!-- Nav -->
     <header class="sticky top-0 z-50 border-b border-white/10 bg-[#070A12]/70 backdrop-blur">
-      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div class="flex h-16 items-center justify-between">
-          <Link :href="route('home')" class="flex items-center gap-2">
-            <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/20" />
-            <div class="leading-tight">
-              <div class="font-semibold tracking-tight">GEXOptions</div>
-              <div class="text-xs text-white/60 -mt-0.5">Analytics Terminal</div>
+      <div class="w-full px-2 sm:px-4">
+        <div class="flex h-24 items-center justify-between">
+          <!-- LEFT -->
+          <Link :href="route('home')" class="flex items-center gap-4 overflow-visible">
+            <img
+              src="/marketing/gexoptions_logo.svg"
+              alt="GEX Options"
+              class="h-24 sm:h-28 md:h-32 w-auto -my-3"
+            />
+            <div class="hidden md:block text-xs text-white/50 leading-tight">
+              Analytics Terminal
             </div>
           </Link>
 
-          <nav class="hidden items-center gap-8 md:flex">
-            <Link :href="route('features')" class="text-sm text-white/70 hover:text-white">Features</Link>
-            <Link :href="route('pricing')" class="text-sm text-white/70 hover:text-white">Pricing</Link>
-          </nav>
+          <!-- RIGHT -->
+          <div class="flex items-center gap-8">
+            <nav class="hidden items-center gap-8 md:flex">
+              <Link :href="route('features')" class="text-sm text-white/70 hover:text-white">Features</Link>
+              <Link :href="route('pricing')" class="text-sm text-white/70 hover:text-white">Pricing</Link>
+            </nav>
 
-          <div class="flex items-center gap-3">
-            <Link
-              v-if="!$page.props.auth?.user"
-              :href="route('login')"
-              class="hidden rounded-lg px-3 py-2 text-sm text-white/70 hover:text-white md:inline-flex"
-            >
-              Log in
-            </Link>
+            <div class="flex items-center gap-3">
+              <Link
+                v-if="!$page.props.auth?.user"
+                :href="route('login')"
+                class="hidden rounded-lg px-3 py-2 text-sm text-white/70 hover:text-white md:inline-flex"
+              >
+                Log in
+              </Link>
 
-            <Link
-              v-if="$page.props.auth?.user"
-              :href="route('dashboard')"
-              class="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
-            >
-              Open App
-            </Link>
+              <Link
+                v-if="$page.props.auth?.user"
+                :href="route('dashboard')"
+                class="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
+              >
+                Open App
+              </Link>
 
-            <Link
-              v-else
-              :href="route('register')"
-              class="rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
-            >
-              Start Free
-            </Link>
+              <Link
+                v-else
+                :href="route('register')"
+                class="rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
+              >
+                Start Free
+              </Link>
+            </div>
           </div>
         </div>
       </div>
@@ -56,8 +63,7 @@
       <slot />
     </main>
 
-    <!-- Footer -->
-    <footer class="border-t border-white/10 mt-20">
+    <footer class="mt-20 border-t border-white/10">
       <div class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
         <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div class="text-sm text-white/60">

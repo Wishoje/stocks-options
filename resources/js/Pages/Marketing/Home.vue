@@ -14,17 +14,10 @@
         <div class="absolute inset-0 bg-gradient-to-b from-black/10 via-black/40 to-black/80" />
       </div>
 
-      <div class="mx-auto max-w-7xl px-4 pt-14 sm:px-6 lg:px-8">
-        <!-- brand -->
-        <div class="text-sm font-semibold tracking-wide text-white/80">
-          <span class="text-cyan-200">Gex</span><span class="text-white/90">Options</span>
-        </div>
-
-        <div
-          class="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70"
-        >
+      <div class="mx-auto max-w-7xl px-4 pt-2 sm:px-6 lg:px-8">
+        <div class="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
           <span class="h-2 w-2 rounded-full bg-green-400 shadow-[0_0_25px_rgba(34,197,94,.45)]" />
-          Intraday (1-min snapshots) + EOD positioning in one terminal
+          Intraday snapshots and end of day positioning in one terminal. Supports all symbols.
         </div>
 
         <!-- headline + pitch -->
@@ -33,14 +26,12 @@
             Trade with clarity:
             <span class="text-cyan-200">levels</span>,
             <span class="text-blue-200">positioning</span>,
-            and flow<span class="text-white/70">—in one place</span>.
+            and flow<span class="text-white/70"> in one place</span>.
           </h1>
 
           <p class="mt-4 text-base text-white/70">
-            GexOptions is built for a simple workflow:
-            <span class="text-white/85">scan → validate → execute</span>.
-            Use intraday flow to see what’s pressing right now, then validate with EOD GEX and dealer positioning (DEX) to
-            avoid chasing noise.
+            Stop guessing. Spot the levels that matter, confirm with positioning, and follow real flow while it’s happening.
+            Built for fast daily prep and cleaner intraday decisions.
           </p>
 
           <!-- persuasion bullets -->
@@ -110,15 +101,7 @@
               <h2 class="text-xl font-semibold">Core workflow tools</h2>
               <p class="mt-2 text-sm text-white/60">
                 These are the “daily drivers” most traders start with. There are many more tools inside the platform.
-                <Link :href="route('features')" class="text-cyan-300 hover:text-cyan-200 underline underline-offset-4">
-                  View all features
-                </Link>.
               </p>
-            </div>
-
-            <div class="hidden sm:flex items-center gap-3 text-sm">
-              <Link :href="route('features')" class="text-cyan-300 hover:text-cyan-200">Features →</Link>
-              <Link :href="route('pricing')" class="text-white/70 hover:text-white/90">Pricing →</Link>
             </div>
           </div>
 
@@ -181,15 +164,6 @@
                 Unusual Activity, Premium by Strike, Volatility suite (VRP/term/seasonality), expiry pressure, scanners,
                 and more.
               </div>
-
-              <div class="flex gap-3 text-sm">
-                <Link :href="route('features')" class="text-cyan-300 hover:text-cyan-200">
-                  Explore all features →
-                </Link>
-                <Link :href="route('pricing')" class="text-white/70 hover:text-white/90">
-                  See pricing →
-                </Link>
-              </div>
             </div>
           </div>
 
@@ -236,11 +210,6 @@
               The scanner highlights symbols sitting near key GEX walls across timeframes—so you know what deserves
               attention. Click a hit and jump straight into that symbol’s levels + flow.
             </p>
-          </div>
-
-          <div class="hidden md:flex gap-3 text-sm">
-            <Link :href="route('features')" class="text-cyan-300 hover:text-cyan-200">All scanners →</Link>
-            <Link :href="route('pricing')" class="text-white/70 hover:text-white/90">Pricing →</Link>
           </div>
         </div>
 
@@ -348,10 +317,6 @@
       <div class="mt-8">
         <PricingTable :plans="plans" @select="selectPlan" />
       </div>
-
-      <div class="mt-6 text-xs text-white/50">
-        * Buttons route to <code class="text-white/70">/register?plan=earlybird&amp;billing=monthly</code> or yearly.
-      </div>
     </section>
 
     <!-- FAQ -->
@@ -359,16 +324,14 @@
       <div class="rounded-3xl border border-white/10 bg-white/5 p-6">
         <h3 class="text-xl font-semibold">FAQ</h3>
         <div class="mt-6 grid gap-4 md:grid-cols-2">
-          <Faq
-            q="What does “1-minute intraday snapshots” mean?"
-            a="Data refreshes once per minute during market hours—fast enough for workflows without noisy tick updates."
-          />
-          <Faq q="Is this financial advice?" a="No—this is analytics tooling. Always trade at your own risk." />
-          <Faq
-            q="What symbols are supported?"
-            a="Early Bird is intended to be all symbols you enable, plus watchlist switching."
-          />
-          <Faq q="Can I cancel?" a="Yes—once payments are wired. For now, checkout can be a placeholder." />
+          <div
+            v-for="(item, idx) in faqs"
+            :key="idx"
+            class="rounded-2xl border border-white/10 bg-white/5 p-5"
+          >
+            <div class="text-sm font-semibold">{{ item.q }}</div>
+            <div class="mt-2 text-sm text-white/60">{{ item.a }}</div>
+          </div>
         </div>
       </div>
     </section>
@@ -453,13 +416,39 @@ const ValueCard = {
   `,
 }
 
-const Faq = {
-  props: ['q', 'a'],
-  template: `
-    <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
-      <div class="text-sm font-semibold">{{ q }}</div>
-      <div class="mt-2 text-sm text-white/60">{{ a }}</div>
-    </div>
-  `,
-}
+const faqs = [
+  {
+    q: 'What does 1 minute intraday snapshots mean?',
+    a: 'We refresh the intraday view once per minute during market hours so you can track meaningful shifts without noisy tick updates.',
+  },
+  {
+    q: 'Does it support all symbols?',
+    a: 'Yes. You can run the platform on any symbol you enable and switch fast via watchlists.',
+  },
+  {
+    q: 'Is this financial advice?',
+    a: 'No. This is analytics tooling only. You are responsible for your own trading decisions and risk.',
+  },
+  {
+    q: 'What is the difference between intraday and end of day views?',
+    a: 'Intraday shows flow and pressure updating during the session. End of day shows positioning and levels used for planning and context.',
+  },
+  {
+    q: 'How often is end of day data updated?',
+    a: 'End of day data updates after the close once the data is finalized, so your next day plan is based on stable numbers.',
+  },
+  {
+    q: 'What markets does this cover?',
+    a: 'It is designed for US listed equities and ETFs with options chains. (SPY, QQQ, IWM, and single names.)',
+  },
+  {
+    q: 'Do I need to install anything?',
+    a: 'No. It runs in your browser. Create an account and you can start immediately.',
+  },
+  {
+    q: 'Can I cancel anytime?',
+    a: 'Yes. You can cancel whenever you want. If you are on early access manual checkout, we will handle it the same way.',
+  },
+]
+
 </script>
