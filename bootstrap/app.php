@@ -25,6 +25,15 @@ return Application::configure(basePath: dirname(__DIR__))
             EnsureFrontendRequestsAreStateful::class,
         ]);
 
+        $middleware->alias([
+            'subscribed' => \App\Http\Middleware\EnsureSubscribed::class,
+            'feature'    => \App\Http\Middleware\EnsureFeature::class,
+        ]);
+
+        $middleware->validateCsrfTokens(except: [
+            'stripe/*',
+        ]);
+
         // If you use Jetstream's session auth, you can ensure its middleware is in the web group:
         // use Laravel\Jetstream\Http\Middleware\AuthenticateSession;
         // $middleware->appendToGroup('web', AuthenticateSession::class);

@@ -1,5 +1,6 @@
 <script setup>
-import { Head, Link, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm, router, usePage } from '@inertiajs/vue3';
+import { computed, reactive } from 'vue';
 import AuthenticationCard from '@/Components/AuthenticationCard.vue';
 import AuthenticationCardLogo from '@/Components/AuthenticationCardLogo.vue';
 import Checkbox from '@/Components/Checkbox.vue';
@@ -8,19 +9,99 @@ import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 
+const page = usePage()
+const serverErrors = computed(() => page.props.errorBags?.default || {})
+
 const form = useForm({
-    name: '',
-    email: '',
-    password: '',
-    password_confirmation: '',
-    terms: false,
-});
+  name: '',
+  email: '',
+  password: '',
+  password_confirmation: '',
+  terms: false,
+})
+
+const localErrors = reactive({
+  name: '',
+  email: '',
+  password: '',
+  password_confirmation: '',
+  terms: '',
+})
+
+function fieldError(name) {
+  const fromBag = serverErrors.value[name]
+  const bagMessage = Array.isArray(fromBag) ? fromBag[0] : fromBag
+  return localErrors[name] || form.errors[name] || bagMessage || ''
+}
+
+function getQueryParam(key) {
+  // Inertia page.url includes query string
+  const url = new URL(page.url, window.location.origin)
+  return url.searchParams.get(key)
+}
+
+function validate() {
+  localErrors.name = ''
+  localErrors.email = ''
+  localErrors.password = ''
+  localErrors.password_confirmation = ''
+  localErrors.terms = ''
+
+  let ok = true
+  if (!form.name || !form.name.trim()) {
+    localErrors.name = 'Name is required.'
+    ok = false
+  }
+
+  if (!form.email || !form.email.trim()) {
+    localErrors.email = 'Email is required.'
+    ok = false
+  } else if (!/^\S+@\S+\.\S+$/.test(form.email)) {
+    localErrors.email = 'Enter a valid email.'
+    ok = false
+  }
+
+  if (!form.password) {
+    localErrors.password = 'Password is required.'
+    ok = false
+  } else if (form.password.length < 8) {
+    localErrors.password = 'Password must be at least 8 characters.'
+    ok = false
+  }
+
+  if (!form.password_confirmation) {
+    localErrors.password_confirmation = 'Confirm your password.'
+    ok = false
+  } else if (form.password !== form.password_confirmation) {
+    localErrors.password_confirmation = 'Passwords do not match.'
+    ok = false
+  }
+
+  if (page.props.jetstream?.hasTermsAndPrivacyPolicyFeature && !form.terms) {
+    localErrors.terms = 'You must accept the terms.'
+    ok = false
+  }
+
+  return ok
+}
 
 const submit = () => {
-    form.post(route('register'), {
-        onFinish: () => form.reset('password', 'password_confirmation'),
-    });
-};
+  if (!validate()) return
+
+  form.post(route('register'), {
+    onSuccess: () => {
+      const plan = getQueryParam('plan')
+      const billing = getQueryParam('billing')
+
+      if (plan && billing) {
+        window.location.assign(`/checkout?plan=${encodeURIComponent(plan)}&billing=${encodeURIComponent(billing)}`)
+      } else {
+        router.visit(route('pricing')) // <-- IMPORTANT: don’t send new users to dashboard
+      }
+    },
+    onFinish: () => form.reset('password', 'password_confirmation'),
+  })
+}
 </script>
 
 <template>
@@ -43,7 +124,7 @@ const submit = () => {
                     autofocus
                     autocomplete="name"
                 />
-                <InputError class="mt-2" :message="form.errors.name" />
+                <InputError class="mt-2" :message="fieldError('name')" />
             </div>
 
             <div class="mt-4">
@@ -56,7 +137,7 @@ const submit = () => {
                     required
                     autocomplete="username"
                 />
-                <InputError class="mt-2" :message="form.errors.email" />
+                <InputError class="mt-2" :message="fieldError('email')" />
             </div>
 
             <div class="mt-4">
@@ -69,7 +150,7 @@ const submit = () => {
                     required
                     autocomplete="new-password"
                 />
-                <InputError class="mt-2" :message="form.errors.password" />
+                <InputError class="mt-2" :message="fieldError('password')" />
             </div>
 
             <div class="mt-4">
@@ -82,7 +163,7 @@ const submit = () => {
                     required
                     autocomplete="new-password"
                 />
-                <InputError class="mt-2" :message="form.errors.password_confirmation" />
+                <InputError class="mt-2" :message="fieldError('password_confirmation')" />
             </div>
 
             <div v-if="$page.props.jetstream.hasTermsAndPrivacyPolicyFeature" class="mt-4">
@@ -94,7 +175,7 @@ const submit = () => {
                             I agree to the <a target="_blank" :href="route('terms.show')" class="underline text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800">Terms of Service</a> and <a target="_blank" :href="route('policy.show')" class="underline text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800">Privacy Policy</a>
                         </div>
                     </div>
-                    <InputError class="mt-2" :message="form.errors.terms" />
+                    <InputError class="mt-2" :message="fieldError('terms')" />
                 </InputLabel>
             </div>
 

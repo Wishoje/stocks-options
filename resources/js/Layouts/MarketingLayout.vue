@@ -26,34 +26,32 @@
           <div class="flex items-center gap-8">
             <nav class="hidden items-center gap-8 md:flex">
               <Link :href="route('features')" class="text-sm text-white/70 hover:text-white">Features</Link>
-              <Link :href="route('pricing')" class="text-sm text-white/70 hover:text-white">Pricing</Link>
+
+              <template v-if="page.props.auth?.user">
+                <Link :href="route('pricing')" class="text-sm text-white/70 hover:text-white">
+                  Pricing
+                </Link>
+
+                <button
+                  type="button"
+                  @click="goCheckout"
+                  class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15"
+                >
+                  Finish Checkout
+                </button>
+
+                <button type="button" @click="logout" class="text-sm text-white/70 hover:text-white">
+                  Logout
+                </button>
+              </template>
+
+              <template v-else>
+                <Link :href="route('login')" class="text-sm text-white/70 hover:text-white">Login</Link>
+                <Link :href="route('register')" class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15">
+                  Start Free
+                </Link>
+              </template>
             </nav>
-
-            <div class="flex items-center gap-3">
-              <Link
-                v-if="!$page.props.auth?.user"
-                :href="route('login')"
-                class="hidden rounded-lg px-3 py-2 text-sm text-white/70 hover:text-white md:inline-flex"
-              >
-                Log in
-              </Link>
-
-              <Link
-                v-if="$page.props.auth?.user"
-                :href="route('dashboard')"
-                class="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
-              >
-                Open App
-              </Link>
-
-              <Link
-                v-else
-                :href="route('register')"
-                class="rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
-              >
-                Start Free
-              </Link>
-            </div>
           </div>
         </div>
       </div>
@@ -67,7 +65,7 @@
       <div class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
         <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div class="text-sm text-white/60">
-            © {{ new Date().getFullYear() }} GEX Levels & Analytics. All rights reserved.
+            © {{ year }} GEX Levels & Analytics. All rights reserved.
           </div>
           <div class="flex items-center gap-6 text-sm">
             <Link :href="route('features')" class="text-white/60 hover:text-white">Features</Link>
@@ -81,5 +79,17 @@
 </template>
 
 <script setup>
-import { Link } from '@inertiajs/vue3'
+import { Link, router, usePage } from '@inertiajs/vue3'
+
+const page = usePage()
+const year = new Date().getFullYear()
+
+function logout() {
+  // Jetstream logout route is POST
+  router.post(route('logout'))
+}
+
+function goCheckout() {
+  window.location.assign('/checkout?plan=earlybird&billing=monthly')
+}
 </script>

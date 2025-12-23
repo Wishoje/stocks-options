@@ -27,6 +27,8 @@
 <script setup>
 import MarketingLayout from '@/Layouts/MarketingLayout.vue'
 import PricingTable from '@/Components/Marketing/PricingTable.vue'
+import { usePage } from '@inertiajs/vue3'
+const page = usePage()
 
 const sharedFeatures = [
   'All symbols',
@@ -70,6 +72,11 @@ const plans = [
 
 function selectPlan(p) {
   const billing = p.billing || 'monthly'
-  window.location.href = `/register?plan=earlybird&billing=${encodeURIComponent(billing)}`
+  const url = page.props.auth?.user
+    ? `/checkout?plan=earlybird&billing=${encodeURIComponent(billing)}`
+    : `/register?plan=earlybird&billing=${encodeURIComponent(billing)}`
+
+  window.location.assign(url)
 }
+
 </script>

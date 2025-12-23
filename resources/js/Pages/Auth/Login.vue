@@ -1,5 +1,6 @@
 <script setup>
-import { Head, Link, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
+import { computed, reactive } from 'vue';
 import AuthenticationCard from '@/Components/AuthenticationCard.vue';
 import AuthenticationCardLogo from '@/Components/AuthenticationCardLogo.vue';
 import Checkbox from '@/Components/Checkbox.vue';
@@ -13,13 +14,54 @@ defineProps({
     status: String,
 });
 
+const page = usePage();
+
 const form = useForm({
     email: '',
     password: '',
     remember: false,
 });
 
+const serverErrors = computed(() => page.props.errorBags?.default || {});
+
+const localErrors = reactive({
+    email: '',
+    password: '',
+});
+
+function fieldError(name) {
+    const fromBag = serverErrors.value[name];
+    const bagMessage = Array.isArray(fromBag) ? fromBag[0] : fromBag;
+    return localErrors[name] || form.errors[name] || bagMessage || '';
+}
+
+function validate() {
+    localErrors.email = '';
+    localErrors.password = '';
+
+    let ok = true;
+    if (!form.email || !form.email.trim()) {
+        localErrors.email = 'Email is required.';
+        ok = false;
+    } else if (!/^\S+@\S+\.\S+$/.test(form.email)) {
+        localErrors.email = 'Enter a valid email.';
+        ok = false;
+    }
+
+    if (!form.password) {
+        localErrors.password = 'Password is required.';
+        ok = false;
+    } else if (form.password.length < 8) {
+        localErrors.password = 'Password must be at least 8 characters.';
+        ok = false;
+    }
+
+    return ok;
+}
+
 const submit = () => {
+    if (!validate()) return;
+
     form.transform(data => ({
         ...data,
         remember: form.remember ? 'on' : '',
@@ -53,7 +95,7 @@ const submit = () => {
                     autofocus
                     autocomplete="username"
                 />
-                <InputError class="mt-2" :message="form.errors.email" />
+                <InputError class="mt-2" :message="fieldError('email')" />
             </div>
 
             <div class="mt-4">
@@ -66,7 +108,7 @@ const submit = () => {
                     required
                     autocomplete="current-password"
                 />
-                <InputError class="mt-2" :message="form.errors.password" />
+                <InputError class="mt-2" :message="fieldError('password')" />
             </div>
 
             <div class="block mt-4">
