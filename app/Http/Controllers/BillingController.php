@@ -41,4 +41,32 @@ class BillingController extends Controller
     {
         return $request->user()->redirectToBillingPortal(route('dashboard'));
     }
+
+    public function cancel(Request $request)
+    {
+        $user = $request->user();
+        $subName = config('plans.default_subscription_name');
+
+        $sub = $user->subscription($subName);
+        abort_unless($sub && $sub->valid(), 400, 'No active subscription');
+
+        $sub->cancel(); // cancels at period end
+        // If you want immediate cancel: $sub->cancelNow();
+
+        return back()->with('status', 'subscription-canceled');
+    }
+
+    public function resume(Request $request)
+    {
+        $user = $request->user();
+        $subName = config('plans.default_subscription_name');
+
+        $sub = $user->subscription($subName);
+        abort_unless($sub && $sub->onGracePeriod(), 400, 'Subscription is not on grace period');
+
+        $sub->resume();
+
+        return back()->with('status', 'subscription-resumed');
+    }
+
 }
