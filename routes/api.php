@@ -121,6 +121,15 @@ Route::get('/option-chain', function () {
     $spot = app(\App\Services\WallService::class)->currentPrice($symbol, null);
     $price = $spot ?? $base->value('underlying_price') ?? 100;
 
+    if (!$expiry) {
+        $expiry = DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->where('fetched_at', $latest)
+            ->where('expiry', '>=', today())
+            ->orderBy('expiry')
+            ->value('expiry');
+    }
+
     $chainQuery = $base->clone()
         ->select(
             'strike',

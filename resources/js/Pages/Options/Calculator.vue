@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick  } from 'vue'
 import Chart from 'chart.js/auto'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import AppShell from '@/Components/AppShell.vue'
@@ -16,9 +16,10 @@ const expirations    = ref([])
 const selectedExpiry = ref(null)
 const chainData      = ref([])
 const entryPrice     = ref(null) // per-share price YOU paid (or want)
+const entryAuto      = ref(true)
 
 // scenario + view modes
-const decayMode      = ref('flat')    // 'flat' | 'breakeven' | 'target'
+const decayMode      = ref('breakeven')    // 'flat' | 'breakeven' | 'target'
 const targetPrice    = ref(null)
 const decayViewMode  = ref('compact') // 'compact' | 'full'
 
@@ -39,7 +40,26 @@ const safeNumber = (val) => {
 
 const safePremium = (opt) => {
   if (!opt) return 0
-  return safeNumber(opt.mid)
+
+  // prefer mid-like fields first
+  const mid =
+    opt.mid ??
+    opt.mark ??
+    opt.mid_price ??
+    opt.midPrice ??
+    opt.price ??
+    opt.last ??
+    opt.fmv
+
+  const nMid = safeNumber(mid)
+  if (nMid > 0) return nMid
+
+  // fallback: bid/ask avg
+  const bid = safeNumber(opt.bid ?? opt.bid_price ?? opt.b)
+  const ask = safeNumber(opt.ask ?? opt.ask_price ?? opt.a)
+
+  if (bid > 0 && ask > 0) return (bid + ask) / 2
+  return bid > 0 ? bid : ask > 0 ? ask : 0
 }
 // ----- Black–Scholes helpers -----
 
@@ -397,6 +417,13 @@ const loadChain = async () => {
     error.value = 'Failed to load chain'
   } finally {
     loading.value = false
+
+    await nextTick()
+
+    if (selectedOption.value) {
+      renderChart()
+      renderDecayChart()
+    }
   }
 }
 
@@ -405,18 +432,11 @@ const selectOption = (opt) => {
 
   const premium = safePremium(opt)
 
-  selectedOption.value = {
-    ...opt,
-    premium,
-  }
+  selectedOption.value = { ...opt, premium }
   optionType.value = opt.type
 
-  // 🔹 If user didn't pick an entry price yet, default it to this contract's mid
-  if (
-    entryPrice.value === null ||
-    entryPrice.value === '' ||
-    safeNumber(entryPrice.value) === 0
-  ) {
+  // ✅ always follow selected contract price while auto mode is on
+  if (entryAuto.value) {
     entryPrice.value = premium
   }
 
@@ -519,13 +539,14 @@ watch(
   }
 )
 
+const onEntryPriceInput = () => {
+  entryAuto.value = false
+}
 // NO watcher on selectedExpiry – we control it via handleExpiryClick + loadChain
 
 // ---------- symbol selection handler ----------
 const handleSelectSymbol = async (e) => {
   const sym = e.detail.symbol || 'SPY'
-
-  // optional optimization: if same symbol and we already have data, no-op
   if (sym === symbol.value && chainData.value.length) return
 
   symbol.value         = sym
@@ -533,6 +554,7 @@ const handleSelectSymbol = async (e) => {
   selectedOption.value = null
   entryPrice.value     = null
   targetPrice.value    = null
+  entryAuto.value      = true   // ✅ reset auto on symbol change
   error.value          = ''
   loading.value        = true
 
@@ -647,56 +669,57 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
               </div>
-
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-gray-400 border-b border-gray-700">
-                    <th class="text-left py-2">Strike</th>
-                    <th class="text-left py-2">Call</th>
-                    <th class="text-left py-2">Put</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="row in groupedStrikes"
-                    :key="row.strike"
-                    class="hover:bg-gray-800/50 cursor-pointer border-b border-gray-800"
-                    :class="{ 'bg-gray-800/30': selectedOption?.strike === row.strike }"
-                  >
-                    <td class="py-3 font-mono">{{ row.strike }}</td>
-
-                    <td
-                      @click="selectOption(row.call)"
-                      class="py-3"
-                      :class="
-                        optionType === 'call' && selectedOption?.strike === row.strike
-                          ? 'text-emerald-400 font-bold'
-                          : 'text-gray-300'
-                      "
+              <div class="max-h-[55vh] overflow-y-auto pr-2">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="text-gray-400 border-b border-gray-700">
+                      <th class="text-left py-2">Strike</th>
+                      <th class="text-left py-2">Call</th>
+                      <th class="text-left py-2">Put</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="row in groupedStrikes"
+                      :key="row.strike"
+                      class="hover:bg-gray-800/50 cursor-pointer border-b border-gray-800"
+                      :class="{ 'bg-gray-800/30': selectedOption?.strike === row.strike }"
                     >
-                      <span v-if="row.call">
-                        ${{ formatPrice(row.call.mid) }}
-                      </span>
-                      <span v-else>—</span>
-                    </td>
+                      <td class="py-3 font-mono">{{ row.strike }}</td>
 
-                    <td
-                      @click="selectOption(row.put)"
-                      class="py-3"
-                      :class="
-                        optionType === 'put' && selectedOption?.strike === row.strike
-                          ? 'text-red-400 font-bold'
-                          : 'text-gray-300'
-                      "
-                    >
-                      <span v-if="row.put">
-                        ${{ formatPrice(row.put.mid) }}
-                      </span>
-                      <span v-else>—</span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+                      <td
+                        @click="selectOption(row.call)"
+                        class="py-3"
+                        :class="
+                          optionType === 'call' && selectedOption?.strike === row.strike
+                            ? 'text-emerald-400 font-bold'
+                            : 'text-gray-300'
+                        "
+                      >
+                        <span v-if="row.call">
+                          ${{ formatPrice(safePremium(row.call)) }}
+                        </span>
+                        <span v-else>—</span>
+                      </td>
+
+                      <td
+                        @click="selectOption(row.put)"
+                        class="py-3"
+                        :class="
+                          optionType === 'put' && selectedOption?.strike === row.strike
+                            ? 'text-red-400 font-bold'
+                            : 'text-gray-300'
+                        "
+                      >
+                        <span v-if="row.put">
+                          ${{ formatPrice(safePremium(row.put)) }}
+                        </span>
+                        <span v-else>—</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <!-- Controls + Summary -->
@@ -757,8 +780,9 @@ onBeforeUnmount(() => {
                       <label class="text-sm text-gray-300">
                         Entry price per share (optional)
                       </label>
-                      <input
+                     <input
                         v-model.number="entryPrice"
+                        @input="onEntryPriceInput"
                         type="number"
                         min="0"
                         step="0.01"
@@ -766,6 +790,13 @@ onBeforeUnmount(() => {
                         placeholder="Leave blank to use live mid"
                       />
                     </div>
+                    <button
+                      type="button"
+                      class="text-xs text-cyan-400 hover:text-cyan-300"
+                      @click="entryAuto = true; entryPrice = selectedOption?.premium ?? null"
+                    >
+                      Use live Price For Entry Price
+                    </button>
                   </div>
                 </div>
 

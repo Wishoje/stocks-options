@@ -322,13 +322,14 @@ class FetchCalculatorChainJob implements ShouldQueue
         ]);
 
         if ($inserts) {
-            DB::table('option_snapshots')->upsert(
-                $inserts,
-                // conflict columns (define "same row")
-                ['symbol', 'type', 'strike', 'expiry', 'fetched_at'],
-                // columns to update on conflict
-                ['bid', 'ask', 'mid', 'underlying_price', 'fetched_at']
-            );
+            $chunkSize = 750;
+            foreach (array_chunk($inserts, $chunkSize) as $chunk) {
+                DB::table('option_snapshots')->upsert(
+                    $chunk,
+                    ['symbol', 'type', 'strike', 'expiry', 'fetched_at'],
+                    ['bid', 'ask', 'mid', 'underlying_price', 'ticker']
+                );
+            }
         }
 
         Log::info('CalculatorChain.SUCCESS', [

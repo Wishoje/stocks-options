@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\DB;
 use App\Jobs\ComputeVolMetricsJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Jobs\FetchCalculatorChainJob;
 use App\Support\Market;
 use App\Support\Symbols;
 
@@ -127,3 +128,24 @@ Schedule::command('hot-options:fetch --limit=200 --type=STOCKS')
     ->timezone('America/New_York')
     ->onOneServer()
     ->dailyAt('17:00');
+
+    Schedule::call(function () {
+    $nowEt = now('America/New_York');
+
+    // extra guard (in case between() ever changes)
+    if ($nowEt->isWeekend() || !Market::isRthOpen($nowEt)) {
+        return;
+    }
+
+    foreach (['SPY', 'QQQ'] as $sym) {
+        FetchCalculatorChainJob::dispatch($sym)->onQueue('calculator');
+    }
+})
+->name('calculator:prime:spy-qqq')
+->timezone('America/New_York')
+->weekdays()
+->everyFiveMinutes()
+->between('09:35', '15:55')
+->withoutOverlapping(10)
+->onOneServer();
+
