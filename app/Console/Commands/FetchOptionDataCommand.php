@@ -22,22 +22,23 @@ class FetchOptionDataCommand extends Command
         $symbols = $this->argument('symbols') ?: ['SPY','IWM','QQQ'];
         $symbols = array_values(array_unique(array_map('strtoupper', $symbols)));
 
-        // 1) Ingest (your existing fetch)
-        FetchOptionChainDataJob::dispatchSync($symbols);
-
-        // 2) Compute DEX/Gamma regime for those symbols (immediate for testing)
-        //    Use dispatch() if you prefer async with a queue worker.
-        (new ComputePositioningJob($symbols))->handle();
-        // or: foreach (array_chunk($symbols, 25) as $chunk) ComputePositioningJob::dispatch($chunk);
-
-        (new ComputeUAJob($symbols))->handle();
-
+        // Prices first (VolMetrics + Seasonality depend on these)
         (new PricesBackfillJob($symbols, 400))->handle();
         (new PricesDailyJob($symbols))->handle();
+
+        // Options next (Positioning/UA/ExpiryPressure depend on these)
+        FetchOptionChainDataJob::dispatchSync($symbols);
+
+        // Computes (VolMetrics needs both prices + options)
         (new ComputeVolMetricsJob($symbols))->handle();
         (new Seasonality5DJob($symbols, 15, 2))->handle();
+
         (new ComputeExpiryPressureJob($symbols, 3))->handle();
+        (new ComputePositioningJob($symbols))->handle();
+        (new ComputeUAJob($symbols))->handle();
+
         $this->info('Fetched and computed positioning for: '.implode(', ', $symbols));
         return 0;
     }
+
 }

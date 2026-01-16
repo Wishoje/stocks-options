@@ -70,7 +70,7 @@
           <div class="flex items-center gap-6 text-sm">
             <Link :href="route('features')" class="text-white/60 hover:text-white">Features</Link>
             <Link :href="route('pricing')" class="text-white/60 hover:text-white">Pricing</Link>
-            <a href="#" class="text-white/40 hover:text-white/70">Support (coming soon)</a>
+            <a href="mailto:support@gexlevels.com" class="text-white/40 hover:text-white/70">support@gexoptions.com</a>
           </div>
         </div>
       </div>

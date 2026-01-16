@@ -21,17 +21,23 @@ class PreloadWatchlistSymbols extends Command
         $symbols = DB::table('watchlists')->select('symbol')->distinct()->pluck('symbol')->all();
         if (!$symbols) { $this->info('No symbols to preload.'); return self::SUCCESS; }
 
-        $batch = Bus::batch([])->name('Watchlist EOD Preload')->allowFailures()->dispatch();
+        $batch = Bus::batch([])->name('Watchlist EOD Preload')->dispatch();
 
-        $batch->add(new PricesBackfillJob($symbols, 400));
-        $batch->add(new PricesDailyJob($symbols));
-        $batch->add(new FetchOptionChainDataJob($symbols, 90)); // always 90 days
-        $batch->add(new ComputeVolMetricsJob($symbols));
-        $batch->add(new Seasonality5DJob($symbols, 15, 2));
-        $batch->add(new ComputeExpiryPressureJob($symbols, 3));
-        $batch->add(new ComputePositioningJob($symbols));
-        $batch->add(new ComputeUAJob($symbols));
+        foreach (array_chunk($symbols, 10) as $chunk) {
+            $batch->add(Bus::chain([
+                new PricesBackfillJob($chunk, 400),
+                new PricesDailyJob($chunk),
+                new FetchOptionChainDataJob($chunk, 90),
 
+                new ComputeVolMetricsJob($chunk),      // needs both option + prices
+                new Seasonality5DJob($chunk, 15, 2),   // prices only
+
+                new ComputeExpiryPressureJob($chunk, 3),
+                new ComputePositioningJob($chunk),
+                new ComputeUAJob($chunk),
+            ]));
+        }
+        
         $this->info("Queued preload batch: {$batch->id}");
         return self::SUCCESS;
     }
