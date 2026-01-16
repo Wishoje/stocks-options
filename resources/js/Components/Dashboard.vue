@@ -31,7 +31,7 @@
           <span class="text-xs text-gray-400 uppercase tracking-wider">Timeframe</span>
           <div class="flex rounded-lg overflow-hidden border border-gray-700">
             <button
-              v-for="tf in timeframeOptions"
+              v-for="tf in visibleTimeframeOptions"
               :key="tf.value"
               @click="gexTf = tf.value"
               class="px-3 py-1.5 text-xs font-medium transition"
@@ -508,6 +508,25 @@ const intradayLoading = ref(false)
 const intradayRefreshing = ref(false)
 const firstIntradayLoadDone = ref(false)
 const loading = computed(() => dataMode.value === 'eod' ? eodLoading.value : intradayLoading.value)
+const timeframeAvailability = computed(() => {
+  const map = levels.value?.timeframe_expirations
+  if (map && typeof map === 'object') {
+    const keys = Object.entries(map)
+      .filter(([, dates]) => Array.isArray(dates) && dates.length)
+      .map(([tf]) => tf)
+    return new Set(keys)
+  }
+  if (Array.isArray(levels.value?.available_timeframes)) {
+    return new Set(levels.value.available_timeframes)
+  }
+  return null
+})
+const visibleTimeframeOptions = computed(() => {
+  const avail = timeframeAvailability.value
+  if (!avail || avail.size === 0) return timeframeOptions
+  const filtered = timeframeOptions.filter(tf => avail.has(tf.value))
+  return filtered.length ? filtered : timeframeOptions
+})
 
 // Separate error states
 const eodError = ref('')
@@ -696,18 +715,32 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
     })
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
-      const msg = e?.response?.data?.error || e.message || ''
-      // If it looks like a first-time symbol, go into preparing mode
-    if ((e?.response?.status === 404) && /No data|No expirations/i.test(msg)) {
-      eodError.value = ''
-      // only start the poller if it’s not already running
-      if (!preparing.value.timer) {
-        await startPreparingPoll(sym, async () => {
-          // tiny backoff so the data that flipped "ready" actually becomes visible
-          setTimeout(() => fetchGexLevelsEOD(sym, tf), 750)
-        })
+      const payload = e?.response?.data || {}
+      const msg = payload?.error || e.message || ''
+      const available = Array.isArray(payload?.available_timeframes)
+        ? payload.available_timeframes
+        : Object.keys(payload?.timeframe_expirations || {})
+
+      // If another timeframe has expirations, auto-switch to it
+      if ((e?.response?.status === 404) && available.length) {
+        const nextTf = available.includes('14d') ? '14d' : available[0]
+        if (nextTf && nextTf !== gexTf.value) {
+          gexTf.value = nextTf
+          return
+        }
       }
-    } else {
+
+      // If it looks like a first-time symbol, go into preparing mode
+      if ((e?.response?.status === 404) && /No data|No expirations/i.test(msg)) {
+        eodError.value = ''
+        // only start the poller if it's not already running
+        if (!preparing.value.timer) {
+          await startPreparingPoll(sym, async () => {
+            // tiny backoff so the data that flipped "ready" actually becomes visible
+            setTimeout(() => fetchGexLevelsEOD(sym, tf), 750)
+          })
+        }
+      } else {
         eodError.value = msg
       }
     }
@@ -1046,6 +1079,13 @@ watch(gexTf, tf => {
   else {
     refreshIntraday()
   }
+})
+
+watch(timeframeAvailability, (set) => {
+  if (!set || set.size === 0) return
+  if (set.has(gexTf.value)) return
+  const preferred = set.has('14d') ? '14d' : Array.from(set)[0]
+  if (preferred) gexTf.value = preferred
 })
 
 // Cache helpers

@@ -11,17 +11,23 @@ use Illuminate\Support\Facades\Cache;
 
 class GexController extends Controller
 {
+    // Keep in sync with the frontend timeframe options
+    protected array $uiTimeframes = ['0d','1d','7d','14d','30d','90d'];
+
     public function getGexLevels(Request $request)
     {
         $symbol    = strtoupper($request->query('symbol', 'SPY'));
         $timeframe = $request->query('timeframe', '90d');
 
-        // ← now resolves dates + IDs for you
-        $dates = $this->resolveExpirationDates($symbol, $timeframe);
+        // Resolve dates + IDs for you
+        $timeframeExpirations = $this->getTimeframeExpirations($symbol, $timeframe);
+        $dates = $timeframeExpirations[$timeframe] ?? [];
 
         if (empty($dates)) {
             return response()->json([
-                'error' => "No expirations found for {$symbol}/{$timeframe}"
+                'error' => "No expirations found for {$symbol}/{$timeframe}",
+                'available_timeframes'  => array_keys($timeframeExpirations),
+                'timeframe_expirations' => $timeframeExpirations,
             ], 404);
         }
 
@@ -203,6 +209,8 @@ class GexController extends Controller
             'data_date'                => $latestDate,
             'data_age_days'            => $ageDays,
             'expiration_dates'         => $dates,
+            'available_timeframes'     => array_keys($timeframeExpirations),
+            'timeframe_expirations'    => $timeframeExpirations,
             'hvl'                      => $HVL,
             'call_resistance'          => $c1,
             'call_wall_2'              => $c2,
@@ -225,6 +233,24 @@ class GexController extends Controller
             'regime_strength'          => $gs['strength'] ?? null,
             'gamma_sign'               => $gs['sign']     ?? null,
         ], 200);
+    }
+
+    /**
+     * Build a map of timeframe => expiration dates (only those with data).
+     */
+    protected function getTimeframeExpirations(string $symbol, string $requestedTimeframe): array
+    {
+        $candidates = array_unique(array_merge($this->uiTimeframes, [$requestedTimeframe]));
+        $availability = [];
+
+        foreach ($candidates as $tf) {
+            $dates = $this->resolveExpirationDates($symbol, $tf);
+            if (!empty($dates)) {
+                $availability[$tf] = $dates;
+            }
+        }
+
+        return $availability;
     }
 
     /**
