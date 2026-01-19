@@ -35,11 +35,11 @@ class FetchCalculatorChainJob implements ShouldQueue
         $apiKey = env('MASSIVE_API_KEY');
         $base   = rtrim(env('MASSIVE_BASE', 'https://api.massive.com'), '/');
 
-        Log::debug('CalculatorChain.start', [
-            'symbol' => $symbol,
-            'base'   => $base,
-            'hasKey' => (bool) $apiKey,
-        ]);
+        // Log::debug('CalculatorChain.start', [
+        //     'symbol' => $symbol,
+        //     'base'   => $base,
+        //     'hasKey' => (bool) $apiKey,
+        // ]);
 
         if (!$apiKey) {
             Log::error('MassiveClient.missingKey', ['job' => 'CalculatorChain']);
@@ -56,11 +56,11 @@ class FetchCalculatorChainJob implements ShouldQueue
                 'limit'         => 1,
             ]);
 
-        Log::debug('CalculatorChain.underlying.response', [
-            'status' => $uResp->status(),
-            'ok'     => $uResp->ok(),
-            'body'   => self::clip($uResp->body()),
-        ]);
+        // Log::debug('CalculatorChain.underlying.response', [
+        //     'status' => $uResp->status(),
+        //     'ok'     => $uResp->ok(),
+        //     'body'   => self::clip($uResp->body()),
+        // ]);
 
         $uJson = $uResp->json();
         $u0    = $uJson['results'][0] ?? [];
@@ -117,12 +117,12 @@ class FetchCalculatorChainJob implements ShouldQueue
                 ]
                 : [];
 
-            Log::debug('CalculatorChain.page.request', [
-                'symbol' => $symbol,
-                'page'   => $page,
-                'url'    => $url,
-                'params' => $params,
-            ]);
+            // Log::debug('CalculatorChain.page.request', [
+            //     'symbol' => $symbol,
+            //     'page'   => $page,
+            //     'url'    => $url,
+            //     'params' => $params,
+            // ]);
 
             $resp = $page === 1
                 ? $request->get($url, $params)
@@ -147,18 +147,18 @@ class FetchCalculatorChainJob implements ShouldQueue
                 ];
                 $resp = $request->get($url, $params);
 
-                Log::debug('CalculatorChain.limitRetry', [
-                    'new_limit' => $perPage,
-                    'status'    => $resp->status(),
-                ]);
+                // Log::debug('CalculatorChain.limitRetry', [
+                //     'new_limit' => $perPage,
+                //     'status'    => $resp->status(),
+                // ]);
             }
 
-            Log::debug('CalculatorChain.page.response', [
-                'page'        => $page,
-                'status'      => $resp->status(),
-                'ok'          => $resp->ok(),
-                'bodySnippet' => self::clip($resp->body()),
-            ]);
+            // Log::debug('CalculatorChain.page.response', [
+            //     'page'        => $page,
+            //     'status'      => $resp->status(),
+            //     'ok'          => $resp->ok(),
+            //     'bodySnippet' => self::clip($resp->body()),
+            // ]);
 
             if (!$resp->ok()) {
                 Log::warning('CalculatorChain.pageFailed', [
@@ -174,10 +174,10 @@ class FetchCalculatorChainJob implements ShouldQueue
             $batch = $json['results'] ?? [];
             $count = is_array($batch) ? count($batch) : 0;
 
-            Log::debug('CalculatorChain.page.results', [
-                'page'  => $page,
-                'count' => $count,
-            ]);
+            // Log::debug('CalculatorChain.page.results', [
+            //     'page'  => $page,
+            //     'count' => $count,
+            // ]);
 
             if (!$batch || !is_array($batch)) {
                 break;
@@ -185,20 +185,20 @@ class FetchCalculatorChainJob implements ShouldQueue
 
             $contracts = array_merge($contracts, $batch);
 
-            if ($page === 1) {
-                Log::debug('CalculatorChain.firstContractRaw', [
-                    'symbol' => $symbol,
-                    'sample' => $contracts[0] ?? null,
-                ]);
-            }
+            // if ($page === 1) {
+            //     Log::debug('CalculatorChain.firstContractRaw', [
+            //         'symbol' => $symbol,
+            //         'sample' => $contracts[0] ?? null,
+            //     ]);
+            // }
 
             $next = $json['next_url'] ?? null;
             if ($next && !str_starts_with($next, 'http')) {
                 $next = $base . $next;
-                Log::debug('CalculatorChain.nextUrl.normalized', [
-                    'page' => $page,
-                    'url'  => $next,
-                ]);
+                // Log::debug('CalculatorChain.nextUrl.normalized', [
+                //     'page' => $page,
+                //     'url'  => $next,
+                // ]);
             }
 
             $url = $next;
@@ -314,12 +314,12 @@ class FetchCalculatorChainJob implements ShouldQueue
             $kept++;
         }
 
-        Log::debug('CalculatorChain.reduceStats', [
-            'seen'    => $seen,
-            'kept'    => $kept,
-            'skipped' => $skipped,
-            'toUpsert'=> count($inserts),
-        ]);
+        // Log::debug('CalculatorChain.reduceStats', [
+        //     'seen'    => $seen,
+        //     'kept'    => $kept,
+        //     'skipped' => $skipped,
+        //     'toUpsert'=> count($inserts),
+        // ]);
 
         if ($inserts) {
             $chunkSize = 750;

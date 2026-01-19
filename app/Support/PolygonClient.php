@@ -50,7 +50,7 @@ class PolygonClient
     public function intradayOptionVolumes(string $symbol): ?array
     {
         $uSym = strtoupper($symbol);
-        Log::debug('PolygonClient.intraday.start', ['symbol' => $uSym]);
+        // Log::debug('PolygonClient.intraday.start', ['symbol' => $uSym]);
 
         $snap = $this->snapshotChainFromMassive($uSym);
 
@@ -72,13 +72,13 @@ class PolygonClient
         $agg['contracts']  = $snap['results'];
         $agg['request_id'] = $snap['request_id'] ?? null;
 
-        Log::debug('PolygonClient.intraday.done', [
-            'symbol'     => $uSym,
-            'asof'       => $agg['asof'] ?? null,
-            'totals'     => $agg['totals'] ?? null,
-            'buckets'    => isset($agg['by_strike']) ? count($agg['by_strike']) : 0,
-            'contracts'  => count($agg['contracts'] ?? []),
-        ]);
+        // Log::debug('PolygonClient.intraday.done', [
+        //     'symbol'     => $uSym,
+        //     'asof'       => $agg['asof'] ?? null,
+        //     'totals'     => $agg['totals'] ?? null,
+        //     'buckets'    => isset($agg['by_strike']) ? count($agg['by_strike']) : 0,
+        //     'contracts'  => count($agg['contracts'] ?? []),
+        // ]);
 
         return $agg;
     }
@@ -189,16 +189,16 @@ class PolygonClient
             $b['put_prem']  = round($b['put_prem'], 2);
         });
 
-        Log::debug('PolygonClient.contracts.reduction', [
-            'request_id'   => $requestId,
-            'seen'         => $seen,
-            'used'         => $used,
-            'skipped'      => $skipped,
-            'buckets'      => count($clean),
-            'tot_call_vol' => $totCall,
-            'tot_put_vol'  => $totPut,
-            'tot_prem'     => round($totPrem, 2),
-        ]);
+        // Log::debug('PolygonClient.contracts.reduction', [
+        //     'request_id'   => $requestId,
+        //     'seen'         => $seen,
+        //     'used'         => $used,
+        //     'skipped'      => $skipped,
+        //     'buckets'      => count($clean),
+        //     'tot_call_vol' => $totCall,
+        //     'tot_put_vol'  => $totPut,
+        //     'tot_prem'     => round($totPrem, 2),
+        // ]);
 
         return [
             'asof' => now('America/New_York')->subMinutes(1)->toIso8601String(),
@@ -292,7 +292,7 @@ class PolygonClient
     public function underlyingQuote(string $symbol): ?array
     {
         $uSym = strtoupper($symbol);
-        Log::debug('PolygonClient.underlying.start', ['symbol' => $uSym]);
+        // Log::debug('PolygonClient.underlying.start', ['symbol' => $uSym]);
 
         $base    = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
         $mode    = config('services.massive.mode', 'header');
@@ -377,12 +377,12 @@ class PolygonClient
         // Use ticker.updated as asof if present
         $asof = $results['updated'] ?? $results['min']['t'] ?? null;
 
-        Log::debug('PolygonClient.underlying.done', [
-            'symbol'     => $uSym,
-            'last_price' => $lastPrice,
-            'prev_close' => $prevClose,
-            'asof'       => $asof,
-        ]);
+        // Log::debug('PolygonClient.underlying.done', [
+        //     'symbol'     => $uSym,
+        //     'last_price' => $lastPrice,
+        //     'prev_close' => $prevClose,
+        //     'asof'       => $asof,
+        // ]);
 
         return [
             'symbol'     => $uSym,

@@ -29,28 +29,28 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
     {
         $tradeDate = $this->tradingDate(now());
 
-        Log::debug('FetchPolygonIntradayOptionsJob.start', [
-            'symbols'    => $this->symbols,
-            'trade_date' => $tradeDate,
-        ]);
+        // Log::debug('FetchPolygonIntradayOptionsJob.start', [
+        //     'symbols'    => $this->symbols,
+        //     'trade_date' => $tradeDate,
+        // ]);
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);
 
-            Log::debug('FetchPolygonIntradayOptionsJob.symbolLoop', [
-                'raw'    => $raw,
-                'symbol' => $symbol,
-            ]);
+            // Log::debug('FetchPolygonIntradayOptionsJob.symbolLoop', [
+            //     'raw'    => $raw,
+            //     'symbol' => $symbol,
+            // ]);
 
             $snap = app(\App\Support\PolygonClient::class)->intradayOptionVolumes($symbol);
 
-            Log::debug('FetchPolygonIntradayOptionsJob.afterIntraday', [
-                'symbol'         => $symbol,
-                'snap_is_null'   => $snap === null,
-                'totals'         => $snap['totals']    ?? null,
-                'bucket_count'   => isset($snap['by_strike']) ? count($snap['by_strike']) : null,
-                'first_bucket'   => $snap['by_strike'][0] ?? null,
-            ]);
+            // Log::debug('FetchPolygonIntradayOptionsJob.afterIntraday', [
+            //     'symbol'         => $symbol,
+            //     'snap_is_null'   => $snap === null,
+            //     'totals'         => $snap['totals']    ?? null,
+            //     'bucket_count'   => isset($snap['by_strike']) ? count($snap['by_strike']) : null,
+            //     'first_bucket'   => $snap['by_strike'][0] ?? null,
+            // ]);
 
             if (!$snap) {
                 Log::warning('FetchPolygonIntradayOptionsJob.noSnap', [
@@ -81,14 +81,14 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                 $totPut  = (int)($snap['totals']['put_vol'] ?? 0);
                 $totPrem = $snap['totals']['premium'] ?? null;
 
-                Log::debug('FetchPolygonIntradayOptionsJob.totalsRow', [
-                    'symbol'      => $symbol,
-                    'trade_date'  => $tradeDate,
-                    'totCall'     => $totCall,
-                    'totPut'      => $totPut,
-                    'totPrem'     => $totPrem,
-                    'asof'        => $capturedAt,
-                ]);
+                // Log::debug('FetchPolygonIntradayOptionsJob.totalsRow', [
+                //     'symbol'      => $symbol,
+                //     'trade_date'  => $tradeDate,
+                //     'totCall'     => $totCall,
+                //     'totPut'      => $totPut,
+                //     'totPrem'     => $totPrem,
+                //     'asof'        => $capturedAt,
+                // ]);
 
                 DB::table('option_live_counters')->upsert(
                     [[
@@ -118,17 +118,17 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                     $callPrem = $row['call_prem'] ?? null;
                     $putPrem  = $row['put_prem']  ?? null;
 
-                    Log::debug('FetchPolygonIntradayOptionsJob.bucketRow', [
-                        'symbol'   => $symbol,
-                        'idx'      => $idx,
-                        'strike'   => $K,
-                        'exp_date' => $expDate,
-                        'callVol'  => $callVol,
-                        'putVol'   => $putVol,
-                        'callPrem' => $callPrem,
-                        'putPrem'  => $putPrem,
-                        'asof'     => $capturedAt,
-                    ]);
+                    // Log::debug('FetchPolygonIntradayOptionsJob.bucketRow', [
+                    //     'symbol'   => $symbol,
+                    //     'idx'      => $idx,
+                    //     'strike'   => $K,
+                    //     'exp_date' => $expDate,
+                    //     'callVol'  => $callVol,
+                    //     'putVol'   => $putVol,
+                    //     'callPrem' => $callPrem,
+                    //     'putPrem'  => $putPrem,
+                    //     'asof'     => $capturedAt,
+                    // ]);
 
                     if ($K && $expDate) {
                         if ($callVol > 0) {
@@ -163,12 +163,12 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                     }
                 }
 
-                Log::debug('FetchPolygonIntradayOptionsJob.beforeUpsertRows', [
-                    'symbol'     => $symbol,
-                    'rows_count' => count($rows),
-                    'first_row'  => $rows[0] ?? null,
-                    'last_row'   => $rows[count($rows) - 1] ?? null,
-                ]);
+                // Log::debug('FetchPolygonIntradayOptionsJob.beforeUpsertRows', [
+                //     'symbol'     => $symbol,
+                //     'rows_count' => count($rows),
+                //     'first_row'  => $rows[0] ?? null,
+                //     'last_row'   => $rows[count($rows) - 1] ?? null,
+                // ]);
 
                 if (!empty($rows)) {
                     DB::table('option_live_counters')->upsert(
@@ -180,7 +180,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
             });
         }
 
-        Log::debug('FetchPolygonIntradayOptionsJob.done');
+        // Log::debug('FetchPolygonIntradayOptionsJob.done');
     }
 
     protected function tradingDate(\Carbon\Carbon $now): string

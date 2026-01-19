@@ -43,7 +43,7 @@ class FetchUnderlyingQuotesJob implements ShouldQueue
             }
 
             try {
-                Log::debug('FetchUnderlyingQuotesJob.symbol', ['symbol' => $symbol]);
+                // Log::debug('FetchUnderlyingQuotesJob.symbol', ['symbol' => $symbol]);
 
                 $quote = $client->underlyingQuote($symbol);
 
