@@ -1082,6 +1082,15 @@ watch(userSymbol, () => {
   }
 })
 
+watch(userSymbol, () => {
+  // reset UA when switching symbols so tab pulls fresh data
+  errors.value.ua = ''
+  loaded.value.ua = false
+  uaRows.value = []
+  uaDate.value = null
+  if (activeTab.value === 'ua') ensureUA()
+})
+
 watch(gexTf, tf => {
   if (dataMode.value === 'eod')
     fetchGexLevelsEOD(userSymbol.value, tf)
