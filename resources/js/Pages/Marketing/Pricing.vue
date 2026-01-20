@@ -1,4 +1,19 @@
 <template>
+  <Head>
+    <title>{{ title }}</title>
+    <meta name="description" :content="description" />
+    <link rel="canonical" :href="url" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" :content="title" />
+    <meta property="og:description" :content="description" />
+    <meta property="og:url" :content="url" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" :content="title" />
+    <meta name="twitter:description" :content="description" />
+    <script type="application/ld+json" v-html="JSON.stringify(faqJsonLd)"></script>
+  </Head>
   <MarketingLayout>
     <section class="mx-auto max-w-7xl px-4 pt-14 sm:px-6 lg:px-8">
       <div class="text-center">
@@ -27,8 +42,14 @@
 <script setup>
 import MarketingLayout from '@/Layouts/MarketingLayout.vue'
 import PricingTable from '@/Components/Marketing/PricingTable.vue'
-import { usePage } from '@inertiajs/vue3'
+import { Head, Link, usePage } from '@inertiajs/vue3'
+
 const page = usePage()
+
+const title = 'GexOptions — Levels, Dealer Positioning (DEX), and Options Flow'
+const description =
+  'Options analytics terminal with 1-minute intraday snapshots, GEX levels, dealer positioning (DEX), scanners, and risk tools for daily prep and cleaner intraday decisions.'
+const url = 'https://gexoptions.com/pricing'
 
 const sharedFeatures = [
   'All symbols',
@@ -79,4 +100,74 @@ function selectPlan(p) {
   window.location.assign(url)
 }
 
+const faqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What does intraday snapshots mean?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The app refreshes key strike-based metrics once per minute during market hours. It is fast enough for decision making without noisy tick updates."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does it support all symbols?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The platform is built to work across the symbols you enable and scan through, including watchlist workflows."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is this financial advice?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. This is analytics tooling only. Always trade at your own risk."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How is this different from a single chart tool?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Most tools show one angle. This stacks flow, levels, and positioning so you can validate a setup instead of guessing."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it good for zero days to expiry?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Intraday snapshots and strike-based flow are useful for same-day trading, while end-of-day levels help frame the map."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do you have scanners?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Watchlist scanning helps you find wall hits and key level proximity quickly so you can focus only where it matters."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I cancel anytime?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. You can cancel from your account. You keep access through the end of your billing period."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do you offer yearly billing?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Yearly billing is available and is discounted compared to monthly."
+      }
+    }
+  ]
+}
 </script>

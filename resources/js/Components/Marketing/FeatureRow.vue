@@ -6,7 +6,13 @@
         <div class="mt-2 text-xl font-semibold text-white/90">{{ title }}</div>
         <div class="mt-2 text-sm text-white/60">{{ desc }}</div>
 
-        <ul class="mt-4 space-y-2 text-sm text-white/70">
+        <div v-if="learn?.href" class="mt-2">
+          <a :href="learn.href" class="text-sm text-cyan-300 hover:text-cyan-200">
+            {{ learn.label }} →
+          </a>
+        </div>
+
+        <ul v-if="bullets?.length" class="mt-4 space-y-2 text-sm text-white/70">
           <li v-for="b in bullets" :key="b" class="flex gap-2">
             <span class="text-cyan-200">✓</span>
             <span>{{ b }}</span>
@@ -35,5 +41,12 @@ defineProps({
   bullets: { type: Array, default: () => [] },
   src: { type: String, required: true },
   alt: { type: String, default: '' },
+  learn: {
+    type: Object,
+    default: () => ({
+      label: '',
+      href: '',
+    }),
+  },
 })
 </script>

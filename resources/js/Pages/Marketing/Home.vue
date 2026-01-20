@@ -1,4 +1,19 @@
 <template>
+  <Head>
+    <title>{{ title }}</title>
+    <meta name="description" :content="description" />
+    <link rel="canonical" :href="url" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" :content="title" />
+    <meta property="og:description" :content="description" />
+    <meta property="og:url" :content="url" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" :content="title" />
+    <meta name="twitter:description" :content="description" />
+    <script type="application/ld+json" v-html="JSON.stringify(faqJsonLd)"></script>
+  </Head>
   <MarketingLayout>
     <!-- HERO (copy-first) -->
     <section class="relative overflow-hidden">
@@ -53,6 +68,21 @@
               Size risk with payoff + P&L tools in seconds
             </li>
           </ul>
+
+          <div v-if="showGlossary" class="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div class="text-sm font-semibold text-white/90">New to these terms?</div>
+            <div class="mt-1 text-sm text-white/60">
+              Start with the quick glossary: GEX, DEX, 0DTE, Pin Risk, VRP, Term Structure.
+            </div>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/gex">GEX</a>
+              <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/dex">DEX</a>
+              <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/0dte">0DTE</a>
+              <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/pin-risk">Pin Risk</a>
+              <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/vrp">VRP</a>
+              <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/term-structure">Term Structure</a>
+            </div>
+          </div>
 
           <!-- CTAs -->
           <div class="mt-7 flex flex-col gap-3 sm:flex-row">
@@ -301,6 +331,47 @@
       </div>
     </section>
 
+    <section class="mx-auto max-w-7xl px-4 pt-14 sm:px-6 lg:px-8">
+      <div class="rounded-3xl border border-white/10 bg-white/5 p-6">
+        <h2 class="text-2xl font-semibold tracking-tight">Common use cases</h2>
+        <p class="mt-2 text-sm text-white/60 max-w-3xl">
+          People don’t buy features — they buy outcomes. Here are a few repeatable workflows inside the terminal.
+        </p>
+
+        <div class="mt-6 grid gap-4 lg:grid-cols-3">
+          <div class="rounded-2xl border border-white/10 bg-black/20 p-5">
+            <div class="text-sm font-semibold text-white/90">0DTE Fade Reversal</div>
+            <ul class="mt-3 space-y-2 text-sm text-white/65">
+              <li>Scan for GEX walls near spot</li>
+              <li>Confirm premium exhaustion in flow</li>
+              <li>Validate with DEX / expiry pressure</li>
+            </ul>
+            <div class="mt-3 text-xs text-white/50">Outcome: higher-confidence fades at key zones.</div>
+          </div>
+
+          <div class="rounded-2xl border border-white/10 bg-black/20 p-5">
+            <div class="text-sm font-semibold text-white/90">Momentum Breakout</div>
+            <ul class="mt-3 space-y-2 text-sm text-white/65">
+              <li>Watch delta OI expansion</li>
+              <li>Confirm wall breaks with flow imbalance</li>
+              <li>Align with term/VRP regime</li>
+            </ul>
+            <div class="mt-3 text-xs text-white/50">Outcome: trade continuation with structure.</div>
+          </div>
+
+          <div class="rounded-2xl border border-white/10 bg-black/20 p-5">
+            <div class="text-sm font-semibold text-white/90">Expiry Pin Risk Week</div>
+            <ul class="mt-3 space-y-2 text-sm text-white/65">
+              <li>Check pin score + strike clusters</li>
+              <li>Map levels with Net GEX</li>
+              <li>Use flow to avoid noise</li>
+            </ul>
+            <div class="mt-3 text-xs text-white/50">Outcome: fewer “random” chop days.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- PRICING -->
     <section class="mx-auto max-w-7xl px-4 pt-16 sm:px-6 lg:px-8">
       <div class="flex items-end justify-between gap-6">
@@ -339,12 +410,18 @@
 </template>
 
 <script setup>
-import { Link, usePage } from '@inertiajs/vue3'
+import { Head, Link, usePage } from '@inertiajs/vue3'
 import MarketingLayout from '@/Layouts/MarketingLayout.vue'
 import PricingTable from '@/Components/Marketing/PricingTable.vue'
 import ShotCard from '@/Components/Marketing/ShotCard.vue'
 
 const page = usePage()
+
+const title = 'GexOptions — Levels, Dealer Positioning (DEX), and Options Flow'
+const description =
+  'Options analytics terminal with 1-minute intraday snapshots, GEX levels, dealer positioning (DEX), scanners, and risk tools for daily prep and cleaner intraday decisions.'
+const url = 'https://gexoptions.com/'
+const showGlossary = !!page.props?.marketing?.show_glossary
 
 const sharedFeatures = [
   'All symbols',
@@ -457,4 +534,74 @@ const faqs = [
   },
 ]
 
+const faqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What does intraday snapshots mean?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The app refreshes key strike-based metrics once per minute during market hours. It is fast enough for decision making without noisy tick updates."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does it support all symbols?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The platform is built to work across the symbols you enable and scan through, including watchlist workflows."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is this financial advice?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. This is analytics tooling only. Always trade at your own risk."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How is this different from a single chart tool?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Most tools show one angle. This stacks flow, levels, and positioning so you can validate a setup instead of guessing."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it good for zero days to expiry?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Intraday snapshots and strike-based flow are useful for same-day trading, while end-of-day levels help frame the map."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do you have scanners?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Watchlist scanning helps you find wall hits and key level proximity quickly so you can focus only where it matters."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I cancel anytime?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. You can cancel from your account. You keep access through the end of your billing period."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do you offer yearly billing?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Yearly billing is available and is discounted compared to monthly."
+      }
+    }
+  ]
+}
 </script>

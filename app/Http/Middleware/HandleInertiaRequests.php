@@ -36,7 +36,10 @@ class HandleInertiaRequests extends Middleware
     public function share(Request $request): array
     {
         return array_merge(parent::share($request), [
-            //
+           'marketing' => [
+                'ga4_id' => env('GA4_ID'),
+                'show_glossary' => (bool) env('SHOW_GLOSSARY', false),
+            ],
         ]);
     }
 }

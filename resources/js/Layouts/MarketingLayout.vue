@@ -80,6 +80,7 @@
 
 <script setup>
 import { Link, router, usePage } from '@inertiajs/vue3'
+import { onMounted } from 'vue'
 
 const page = usePage()
 const year = new Date().getFullYear()
@@ -88,6 +89,57 @@ function logout() {
   // Jetstream logout route is POST
   router.post(route('logout'))
 }
+
+function injectGA(gaId) {
+  if (!gaId) return
+  if (document.getElementById('ga4-script')) return
+
+  const s1 = document.createElement('script')
+  s1.id = 'ga4-script'
+  s1.async = true
+  s1.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gaId)}`
+  document.head.appendChild(s1)
+
+  const s2 = document.createElement('script')
+  s2.id = 'ga4-inline'
+  s2.innerHTML = `
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    window.gtag = gtag;
+    gtag('js', new Date());
+    gtag('config', '${gaId}', { send_page_view: false });
+  `
+  document.head.appendChild(s2)
+}
+
+function trackPageView(gaId, url) {
+  if (!gaId || typeof window.gtag !== 'function') return
+  window.gtag('event', 'page_view', {
+    page_location: window.location.href,
+    page_path: url,
+    page_title: document.title,
+  })
+}
+
+let gaBound = false
+
+onMounted(() => {
+  const gaId = page.props?.marketing?.ga4_id
+  injectGA(gaId)
+
+  // initial page view
+  trackPageView(gaId, window.location.pathname + window.location.search)
+
+  if (!gaBound) {
+    gaBound = true
+    router.on('navigate', (event) => {
+      const url = event?.detail?.page?.url
+      if (url) trackPageView(gaId, url)
+    })
+  }
+  console.log('[GA] props id:', page.props?.marketing?.ga4_id)
+
+})
 
 function goCheckout() {
   window.location.assign('/checkout?plan=earlybird&billing=monthly')

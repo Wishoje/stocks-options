@@ -20,6 +20,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // ... (whatever else you use globally)
         ]);
 
+        $middleware->web(append: [
+            \App\Http\Middleware\HandleInertiaRequests::class,
+        ]);
+
         // Add Sanctum's "stateful" middleware to the API group
         $middleware->api(prepend: [
             EnsureFrontendRequestsAreStateful::class,
