@@ -1073,6 +1073,15 @@ watch([userSymbol], () => {
   requestAnimationFrame(() => setTimeout(() => { busy.value.positioning = false }, 250))
 })
 
+watch(userSymbol, () => {
+  // force volatility to refresh per symbol
+  errors.value.volatility = ''
+  loaded.value.volatility = false
+  if (activeTab.value === 'volatility' && dataMode.value === 'eod') {
+    ensureVolatility()
+  }
+})
+
 watch(gexTf, tf => {
   if (dataMode.value === 'eod')
     fetchGexLevelsEOD(userSymbol.value, tf)
