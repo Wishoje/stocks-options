@@ -498,7 +498,8 @@ const tabsIntraday = [
 const currentTabs = computed(() => dataMode.value === 'eod' ? tabsEOD : tabsIntraday)
 
 // State
-const activeTab = ref('overview')
+const getDefaultTab = (mode) => mode === 'intraday' ? 'flow' : 'strikes'
+const activeTab = ref(getDefaultTab('eod'))
 const eodLevels = ref(null)
 const intradayLevels = ref(null)
 const levels = computed(() => dataMode.value === 'eod' ? eodLevels.value : intradayLevels.value)
@@ -620,6 +621,7 @@ function activate(key) {
 function setMode(mode) {
   if (dataMode.value === mode) return
   dataMode.value = mode
+  activeTab.value = getDefaultTab(mode)
 }
 
 // Data refresh on mode/tab change
