@@ -137,8 +137,6 @@ onMounted(() => {
       if (url) trackPageView(gaId, url)
     })
   }
-  console.log('[GA] props id:', page.props?.marketing?.ga4_id)
-
 })
 
 function goCheckout() {
