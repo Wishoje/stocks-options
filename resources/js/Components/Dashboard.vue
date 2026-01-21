@@ -107,19 +107,24 @@
     <div class="sticky top-[65px] z-40 bg-gray-900/95 backdrop-blur-sm border-b border-gray-800">
       <nav class="flex gap-1 px-4 py-2 overflow-x-auto no-scrollbar">
         <button
-          v-for="t in currentTabs"
+          v-for="t in tabMeta"
           :key="t.key"
-          @click="activate(t.key)"
+          :disabled="t.state !== 'ready'"
+          @click="t.state === 'ready' && activate(t.key)"
           class="px-5 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap flex items-center gap-2"
-          :class="activeTab === t.key
+          :class="activeTab === t.key && t.state === 'ready'
             ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-500/20'
-            : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+            : t.state === 'ready'
+              ? 'text-gray-400 hover:text-white hover:bg-gray-800'
+              : 'text-gray-500 bg-gray-800/60 cursor-not-allowed'"
         >
           <component :is="t.icon" class="w-4 h-4" />
           {{ t.label }}
           <span v-if="t.badge" class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-white/20">
             {{ t.badge }}
           </span>
+          <span v-else-if="t.state === 'pending'" class="text-[10px] text-amber-300">Preparing…</span>
+          <span v-else-if="t.state === 'error'" class="text-[10px] text-red-400">Unavailable</span>
         </button>
       </nav>
     </div>
@@ -129,9 +134,25 @@
       <!-- Loading / Error -->
       <ui-error-block v-if="topError" :message="'Failed to load data'" :detail="topError"
                      :onRetry="() => dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : refreshIntraday()" />
-      <ui-spinner v-else-if="dataMode==='intraday' ? (!firstIntradayLoadDone && intradayLoading) : loading" />
+      <ui-spinner
+        v-else-if="dataMode==='intraday'
+          ? (!firstIntradayLoadDone && intradayLoading)
+          : (loading && !preparing.active)"
+      />
 
       <template v-else>
+        <div
+          v-if="dataMode==='eod' && preparing.active"
+          class="bg-amber-500/10 border border-amber-500/30 text-amber-100 text-sm px-4 py-3 rounded-lg flex items-start gap-2"
+        >
+          <svg class="w-4 h-4 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M12 5a7 7 0 00-7 7v2a7 7 0 0014 0v-2a7 7 0 00-7-7z" />
+          </svg>
+          <div>
+            <div class="font-semibold">Preparing {{ userSymbol }} data</div>
+            <div class="text-amber-200/80">Some tabs will appear as soon as they’re ready; others are still loading the first snapshot.</div>
+          </div>
+        </div>
         <!-- OVERVIEW (EOD) -->
         <section v-show="activeTab==='overview' && dataMode==='eod'" class="space-y-4">
           <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
@@ -176,8 +197,8 @@
         </section>
 
         <!-- POSITIONING (EOD) -->
-        <Suspense>
-          <section v-show="activeTab==='positioning' && dataMode==='eod'" class="space-y-4">
+        <Suspense v-if="activeTab==='positioning' && dataMode==='eod' && tabState('positioning')==='ready'">
+          <section class="space-y-4">
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
                 <h4 class="font-semibold mb-2">Dealer Positioning</h4>
@@ -194,9 +215,23 @@
             </div>
           </section>
         </Suspense>
+        <section
+          v-else-if="activeTab==='positioning' && dataMode==='eod'"
+          class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700 text-sm text-gray-300"
+        >
+          <div v-if="tabState('positioning')==='pending'">
+            Positioning is being prepared for {{ userSymbol }}… we’ll show it as soon as it’s ready.
+          </div>
+          <div v-else class="text-red-300">
+            Positioning unavailable: {{ tabStatus.positioning.err || 'Data not ready yet.' }}
+          </div>
+        </section>
 
         <!-- VOLATILITY -->
-        <section v-show="activeTab==='volatility' && dataMode==='eod'" class="space-y-4">
+        <section
+          v-if="activeTab==='volatility' && dataMode==='eod' && tabState('volatility')==='ready'"
+          class="space-y-4"
+        >
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
               <div class="flex items-center justify-between mb-2">
@@ -237,9 +272,23 @@
             <div v-if="volErr" class="text-red-400 text-sm mt-2">Vol metrics error: {{ volErr }}</div>
           </div>
         </section>
+        <section
+          v-else-if="activeTab==='volatility' && dataMode==='eod'"
+          class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700 text-sm text-gray-300"
+        >
+          <div v-if="tabState('volatility')==='pending'">
+            Volatility metrics are being prepared for {{ userSymbol }}… we’ll show them as soon as they’re ready.
+          </div>
+          <div v-else class="text-red-300">
+            Volatility unavailable: {{ tabStatus.volatility.err || 'Data not ready yet.' }}
+          </div>
+        </section>
 
         <!-- UA -->
-        <section v-show="activeTab==='ua'" class="space-y-4">
+        <section
+          v-if="activeTab==='ua' && tabState('ua')==='ready'"
+          class="space-y-4"
+        >
           <div class="flex items-center gap-2 text-xs">
             <label>Expiry</label>
             <select v-model="uaExp" class="px-2 py-1 bg-gray-700 rounded text-sm">
@@ -292,6 +341,17 @@
               <button @click="showMore" class="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded">Show more</button>
             </div>
           </template>
+        </section>
+        <section
+          v-else-if="activeTab==='ua'"
+          class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700 text-sm text-gray-300"
+        >
+          <div v-if="tabState('ua')==='pending'">
+            Unusual Activity is being prepared for {{ userSymbol }}… we’ll surface it as soon as it’s ready.
+          </div>
+          <div v-else class="text-red-300">
+            Unusual Activity unavailable: {{ tabStatus.ua.err || 'Data not ready yet.' }}
+          </div>
         </section>
 
         <!-- STRIKES -->
@@ -399,23 +459,6 @@
       </template>
     </div>
 
-    <!-- Preparing overlay -->
-    <teleport to="body">
-      <div
-        v-if="preparing.active"
-        class="fixed inset-0 z-[100] flex items-center justify-center bg-gray-950/95 backdrop-blur-sm"
-      >
-        <div class="max-w-xl w-full px-4">
-          <PreparingBlock
-            :symbol="userSymbol"
-            :phase="preparing.phase"
-            @forceRefresh="manualRefresh"
-          />
-        </div>
-      </div>
-    </teleport>
-
-
     <!-- Symbol Picker Modal -->
     <teleport to="body">
       <div v-if="showSymbolPicker" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -441,7 +484,7 @@
 
 <script setup>
 import {
-  ref, computed, watch, onMounted, onUnmounted,
+  ref, reactive, computed, watch, onMounted, onUnmounted,
   h, defineComponent, defineAsyncComponent
 } from 'vue'
 import axios from 'axios'
@@ -465,7 +508,6 @@ import QScorePanel from './QScorePanel.vue'
 const ExpiryPressureTile = defineAsyncComponent(() => import('./ExpiryPressureTile.vue'))
 import UnusualActivityTable from './UnusualActivityTable.vue'
 import uiSpinner from './Spinner.vue'
-import PreparingBlock from './PreparingBlock.vue'
 import uiSkeletonCard from './SkeletonCard.vue'
 import uiErrorBlock from './ErrorBlock.vue'
 axios.defaults.withCredentials = true
@@ -496,6 +538,23 @@ const tabsIntraday = [
 ]
 
 const currentTabs = computed(() => dataMode.value === 'eod' ? tabsEOD : tabsIntraday)
+const tabStatus = reactive({
+  positioning: { state: 'pending', err: '' },
+  volatility:  { state: 'pending', err: '' },
+  ua:          { state: 'pending', err: '' },
+})
+const tabPollers = { positioning: null, volatility: null, ua: null }
+const tabState = (key) => {
+  if (!tabStatus[key]) return 'ready'
+  return tabStatus[key].state
+}
+const tabMeta = computed(() =>
+  currentTabs.value.map(t => ({
+    ...t,
+    state: tabState(t.key),
+    err: tabStatus[t.key]?.err || '',
+  }))
+)
 
 // State
 const getDefaultTab = (mode) => mode === 'intraday' ? 'flow' : 'strikes'
@@ -612,6 +671,14 @@ function withInflight(key, fn) {
 //   if (mode === 'eod' && activeTab.value === 'flow') activeTab.value = 'overview'
 // })
 
+watch(tabMeta, (tabs) => {
+  const active = tabs.find(t => t.key === activeTab.value)
+  if (!active || active.state !== 'ready') {
+    const firstReady = tabs.find(t => t.state === 'ready')
+    if (firstReady) activeTab.value = firstReady.key
+  }
+})
+
 function activate(key) {
   activeTab.value = key
   if (key === 'volatility' && dataMode.value === 'eod' && !loaded.value.volatility) ensureVolatility()
@@ -622,6 +689,8 @@ function setMode(mode) {
   if (dataMode.value === mode) return
   dataMode.value = mode
   activeTab.value = getDefaultTab(mode)
+  resetTabReadiness()
+  ensureAllTabReadiness()
 }
 
 // Data refresh on mode/tab change
@@ -684,6 +753,73 @@ function ensureController(type) {
     controllers[type] = new AbortController()
   }
   return controllers[type]
+}
+
+function stopTabPoll(key) {
+  if (tabPollers[key]) {
+    clearTimeout(tabPollers[key])
+    tabPollers[key] = null
+  }
+}
+
+function resetTabReadiness() {
+  Object.keys(tabStatus).forEach(k => { tabStatus[k].state = 'pending'; tabStatus[k].err = '' })
+  Object.keys(tabPollers).forEach(stopTabPoll)
+}
+
+function isPreparing(err) {
+  const status = err?.response?.status
+  const msg = err?.response?.data?.error || err?.message || ''
+  return status === 404 || /preparing|queued|no data/i.test(msg)
+}
+
+function readinessProbeFor(key) {
+  switch (key) {
+    case 'positioning':
+      if (dataMode.value !== 'eod') return null
+      return () => axios.get('/api/dex', { params: { symbol: userSymbol.value } })
+    case 'volatility':
+      if (dataMode.value !== 'eod') return null
+      return () => axios.get('/api/iv/term', { params: { symbol: userSymbol.value }, paramsSerializer: { indexes: false } })
+    case 'ua': {
+      const url = dataMode.value === 'intraday' ? '/api/intraday/ua' : '/api/ua'
+      return () => axios.get(url, { params: { symbol: userSymbol.value, per_expiry: 1, limit: 1, sort: 'z_score', with_premium: false } })
+    }
+    default:
+      return null
+  }
+}
+
+function ensureTabReady(key) {
+  const probe = readinessProbeFor(key)
+  if (!probe) {
+    tabStatus[key].state = 'ready'
+    tabStatus[key].err = ''
+    stopTabPoll(key)
+    return
+  }
+
+  tabStatus[key].err = ''
+  probe()
+    .then(() => {
+      tabStatus[key].state = 'ready'
+      stopTabPoll(key)
+    })
+    .catch((e) => {
+      if (isPreparing(e)) {
+        tabStatus[key].state = 'pending'
+        stopTabPoll(key)
+        tabPollers[key] = setTimeout(() => ensureTabReady(key), 5000)
+      } else {
+        tabStatus[key].state = 'error'
+        tabStatus[key].err = e?.response?.data?.error || e.message || 'Unavailable'
+        stopTabPoll(key)
+      }
+    })
+}
+
+function ensureAllTabReadiness() {
+  ['positioning', 'volatility', 'ua'].forEach(ensureTabReady)
 }
 
 // Data loaders
@@ -877,6 +1013,7 @@ function handleSelectSymbolEvent(evt) {
 onMounted(() => {
   // make sure we load something on first render
   fetchGexLevelsEOD(userSymbol.value, gexTf.value)
+  ensureAllTabReadiness()
 
   // listen for watchlist / scanner clicks
   window.addEventListener('select-symbol', handleSelectSymbolEvent)
@@ -885,6 +1022,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('select-symbol', handleSelectSymbolEvent)
+  Object.keys(tabPollers).forEach(stopTabPoll)
 })
 
 function stopRefresh() {
@@ -1067,6 +1205,11 @@ watch(userSymbol, (s) => {
     }
     if (loaded.value.ua && activeTab.value === 'ua') ensureUA()
   }, 250)
+})
+
+watch(userSymbol, () => {
+  resetTabReadiness()
+  ensureAllTabReadiness()
 })
 
 watch(uaExp, () => { if (activeTab.value === 'ua') ensureUA() })

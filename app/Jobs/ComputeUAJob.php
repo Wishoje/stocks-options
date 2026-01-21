@@ -87,6 +87,7 @@ class ComputeUAJob implements ShouldQueue
                     elseif ($hasClose && isset($r->close) && $r->close !== null) $px = (float)$r->close;
 
                     if ($px !== null) {
+                        $px = max($px, 0.01); // floor per-contract price to a penny to avoid near-zero premiums
                         $aggToday[$k]['call_prem'] = ($aggToday[$k]['call_prem'] ?? 0) + ($isCall ? $vol * $px * 100 : 0);
                         $aggToday[$k]['put_prem']  = ($aggToday[$k]['put_prem']  ?? 0) + (!$isCall ? $vol * $px * 100 : 0);
                     }

@@ -16,14 +16,15 @@ class ComputeUACommand extends Command
         $syms = $this->argument('symbols');
 
         if (empty($syms)) {
-            $today = now()->toDateString();
+            // Default: run for every symbol that has any chain data (use latest date per symbol)
             $syms = DB::table('option_chain_data as o')
                 ->join('option_expirations as e','e.id','=','o.expiration_id')
-                ->whereDate('o.data_date', $today)
-                ->distinct()
+                ->select('e.symbol')
+                ->groupBy('e.symbol')
                 ->pluck('e.symbol')
                 ->map(fn($s)=>strtoupper($s))
-                ->values()->all();
+                ->values()
+                ->all();
         }
 
         $syms = array_values(array_unique(array_map('strtoupper', $syms)));

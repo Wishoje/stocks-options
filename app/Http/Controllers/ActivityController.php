@@ -247,6 +247,7 @@ class ActivityController extends Controller
                 elseif ($q->last !== null)                     $m = (float)$q->last;
                 elseif ($q->bid !== null)                      $m = (float)$q->bid;
                 elseif ($q->ask !== null)                      $m = (float)$q->ask;
+                if ($m !== null) $m = max($m, 0.01); // enforce a penny floor to avoid tiny premiums
                 $mid[$q->option_type] = $m;
             }
             $callPrem = max(0.0, (float)($mid['call'] ?? 0)) * max(0,$callVol) * 100.0;
@@ -264,15 +265,16 @@ class ActivityController extends Controller
         ]));
 
         $calcMid = function($row) {
+            $m = null;
             foreach (['mid_price','mark','last_price','last','close'] as $k) {
-                if (property_exists($row,$k) && $row->$k !== null) return (float)$row->$k;
+                if (property_exists($row,$k) && $row->$k !== null) { $m = (float)$row->$k; break; }
             }
-            if (property_exists($row,'bid') && property_exists($row,'ask') && $row->bid !== null && $row->ask !== null) {
-                return ((float)$row->bid + (float)$row->ask)/2.0;
+            if ($m === null && property_exists($row,'bid') && property_exists($row,'ask') && $row->bid !== null && $row->ask !== null) {
+                $m = ((float)$row->bid + (float)$row->ask)/2.0;
             }
-            if (property_exists($row,'bid') && $row->bid !== null) return (float)$row->bid;
-            if (property_exists($row,'ask') && $row->ask !== null) return (float)$row->ask;
-            return null;
+            if ($m === null && property_exists($row,'bid') && $row->bid !== null) $m = (float)$row->bid;
+            if ($m === null && property_exists($row,'ask') && $row->ask !== null) $m = (float)$row->ask;
+            return $m !== null ? max(0.01, $m) : null;
         };
 
         if (!empty($ocdCols)) {
@@ -317,7 +319,7 @@ class ActivityController extends Controller
         foreach ($rows as $r) {
             $iv = $r->iv !== null ? (float)$r->iv : null; // already decimal in your job
             if ($S && $iv && $iv > 0 && $T > 0) {
-                $mid[$r->option_type] = $this->bsPrice($r->option_type, $S, $strike, $T, $iv, 0.0);
+                $mid[$r->option_type] = max(0.01, $this->bsPrice($r->option_type, $S, $strike, $T, $iv, 0.0));
             }
         }
 

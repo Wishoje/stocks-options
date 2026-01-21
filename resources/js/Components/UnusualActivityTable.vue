@@ -30,7 +30,6 @@
             </th>
             <th class="text-right pb-2">Total Vol</th>
             <th class="text-right pb-2">Premium ($)</th>
-            <th class="text-right pb-2">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -69,18 +68,10 @@
               <span v-else class="text-gray-400">—</span>
             </td>
 
-            <td class="text-right">
-              <RouterLink
-                class="text-blue-300 underline"
-                :to="`/strategy?symbol=${symbol}&exp=${row.exp_date}&strike=${row.strike}`"
-              >
-                Build
-              </RouterLink>
-            </td>
           </tr>
 
           <tr v-if="!sorted.length">
-            <td colspan="7" class="py-6 text-center text-gray-400">No flags for the selected filters.</td>
+            <td colspan="6" class="py-6 text-center text-gray-400">No flags for the selected filters.</td>
           </tr>
         </tbody>
 

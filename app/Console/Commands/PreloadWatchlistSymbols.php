@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use App\Jobs\{
     PricesBackfillJob, PricesDailyJob, FetchOptionChainDataJob,
     ComputeVolMetricsJob, Seasonality5DJob, ComputeExpiryPressureJob,
@@ -18,6 +19,10 @@ class PreloadWatchlistSymbols extends Command
 
     public function handle(): int
     {
+        // Clear app caches so fresh data is returned right after this run
+        Cache::flush();
+        $this->info('Cache flushed.');
+
         $symbols = DB::table('watchlists')->select('symbol')->distinct()->pluck('symbol')->all();
         if (!$symbols) {
             $this->info('No symbols to preload.');
