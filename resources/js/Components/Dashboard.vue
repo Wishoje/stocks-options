@@ -367,6 +367,7 @@
               <StrikeDeltaChart
                 :strikeData="strikeSeriesForDelta"
                 height-class="h-80 md:h-96 xl:h-[26rem]"
+                snapshot-name="delta-oi-eod"
               />
             </div>
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
@@ -374,6 +375,7 @@
               <VolumeDeltaChart
                 :strikeData="strikeSeriesForDelta"
                 height-class="h-80 md:h-96 xl:h-[26rem]"
+                snapshot-name="delta-vol-eod"
               />
             </div>
           </template>
@@ -453,6 +455,7 @@
                 call_vol_delta: r.call_vol_delta ?? r.call_volume_delta ?? 0,
                 put_vol_delta:  r.put_vol_delta  ?? r.put_volume_delta  ?? 0,
               }))"
+              snapshot-name="flow-delta-live"
             />
           </div>
         </section>

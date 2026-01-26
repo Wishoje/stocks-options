@@ -32,13 +32,23 @@
           <span>Auto bucket</span>
         </label>
 
-        <button
-          type="button"
-          class="px-2 py-0.5 rounded border border-gray-600 hover:bg-gray-800"
-          @click="resetZoom"
-        >
-          Reset zoom
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="px-2 py-0.5 rounded border border-gray-600 hover:bg-gray-800"
+            @click="resetZoom"
+          >
+            Reset zoom
+          </button>
+          <button
+            type="button"
+            class="px-2 py-0.5 rounded border border-gray-600 hover:bg-gray-800"
+            @click="snapshot"
+            title="Download chart with GexOptions.com watermark"
+          >
+            Snapshot
+          </button>
+        </div>
       </div>
     </div>
 
@@ -69,6 +79,10 @@ export default {
     strikeData: {
       type: Array,
       default: () => [],
+    },
+    snapshotName: {
+      type: String,
+      default: 'net-gex',
     },
      heightClass: {
       type: String,
@@ -286,6 +300,36 @@ export default {
     resetZoom() {
       const chart = this.$refs.chart && this.$refs.chart.chart
       if (chart && chart.resetZoom) chart.resetZoom()
+    },
+    snapshot() {
+      const chart = this.$refs.chart && this.$refs.chart.chart
+      if (!chart || !chart.canvas) return
+      const src = chart.canvas
+      const w = src.width
+      const h = src.height
+      const off = document.createElement('canvas')
+      off.width = w; off.height = h
+      const ctx = off.getContext('2d')
+
+      ctx.fillStyle = 'rgb(12,17,27)'
+      ctx.fillRect(0, 0, w, h)
+      ctx.drawImage(src, 0, 0)
+
+      // big, low-opacity watermark pinned at the top (no rotation)
+      const text = 'GexOptions.com'
+      ctx.save()
+      ctx.font = `${Math.max(32, Math.round(w * 0.08))}px "Inter","Segoe UI",system-ui,sans-serif`
+      ctx.fillStyle = 'rgba(255,255,255,0.14)'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'top'
+      ctx.fillText(text, w / 2, Math.max(12, h * 0.04))
+      ctx.restore()
+
+      const link = document.createElement('a')
+      const ts = new Date().toISOString().slice(0, 10)
+      link.download = `${this.snapshotName || 'net-gex'}-${ts}.png`
+      link.href = off.toDataURL('image/png')
+      link.click()
     },
     // pick a "nice" bucket width given a raw step
     niceStep(step) {
