@@ -12,36 +12,53 @@ class VolController extends Controller
     {
         $symbol = strtoupper($req->query('symbol','SPY'));
         $cacheKey = "iv_term:{$symbol}";
-        return Cache::remember($cacheKey, 86400, function() use ($symbol){
-            $date = DB::table('iv_term')
-                ->where('symbol',$symbol)
-                ->max('data_date');
 
-            if (!$date) return response()->json(['items'=>[],'date'=>null], 200);
+        // Cache positive hits for a day; never cache a miss so first-time symbols can update
+        if (Cache::has($cacheKey)) {
+            return response()->json(Cache::get($cacheKey), 200);
+        }
 
-            $items = DB::table('iv_term')
-                ->where('symbol',$symbol)->where('data_date',$date)
-                ->orderBy('exp_date')
-                ->get(['exp_date as exp','iv']);
+        $date = DB::table('iv_term')
+            ->where('symbol',$symbol)
+            ->max('data_date');
 
-            return response()->json(['symbol'=>$symbol,'date'=>$date,'items'=>$items], 200);
-        });
+        if (!$date) {
+            return response()->json(['symbol'=>$symbol,'items'=>[],'date'=>null], 202);
+        }
+
+        $items = DB::table('iv_term')
+            ->where('symbol',$symbol)->where('data_date',$date)
+            ->orderBy('exp_date')
+            ->get(['exp_date as exp','iv']);
+
+        $payload = ['symbol'=>$symbol,'date'=>$date,'items'=>$items];
+        Cache::put($cacheKey, $payload, 86400);
+
+        return response()->json($payload, 200);
     }
 
     public function vrp(Request $req)
     {
         $symbol = strtoupper($req->query('symbol','SPY'));
         $cacheKey = "vrp:{$symbol}";
-        return Cache::remember($cacheKey, 86400, function() use ($symbol){
-            $row = DB::table('vrp_daily')
-                ->where('symbol',$symbol)
-                ->orderByDesc('data_date')
-                ->first(['data_date as date','iv1m','rv20','vrp','z']);
 
-            return response()->json($row ?? (object)[
+        if (Cache::has($cacheKey)) {
+            return response()->json(Cache::get($cacheKey), 200);
+        }
+
+        $row = DB::table('vrp_daily')
+            ->where('symbol',$symbol)
+            ->orderByDesc('data_date')
+            ->first(['data_date as date','iv1m','rv20','vrp','z']);
+
+        if (!$row) {
+            return response()->json([
                 'date'=>null,'iv1m'=>null,'rv20'=>null,'vrp'=>null,'z'=>null
-            ], 200);
-        });
+            ], 202);
+        }
+
+        Cache::put($cacheKey, $row, 86400);
+        return response()->json($row, 200);
     }
 
     public function skew(Request $req)

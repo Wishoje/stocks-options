@@ -544,6 +544,7 @@ const tabStatus = reactive({
   ua:          { state: 'pending', err: '' },
 })
 const tabPollers = { positioning: null, volatility: null, ua: null }
+let volRetryTimer = null
 const tabState = (key) => {
   if (!tabStatus[key]) return 'ready'
   return tabStatus[key].state
@@ -770,7 +771,7 @@ function resetTabReadiness() {
 function isPreparing(err) {
   const status = err?.response?.status
   const msg = err?.response?.data?.error || err?.message || ''
-  return status === 404 || /preparing|queued|no data/i.test(msg)
+  return status === 404 || status === 202 || /preparing|queued|no data/i.test(msg)
 }
 
 function readinessProbeFor(key) {
@@ -896,16 +897,25 @@ async function loadTermAndVRP(sym) {
   const vHit = getCache(cacheVRP, vKey, 60_000)
   if (tHit && vHit) { term.value = tHit; vrp.value = vHit; return }
   try {
-    const t = await withInflight(`term:${sym}`, () =>
-      axios.get('/api/iv/term', { params: { symbol: sym }, signal: termCtl.signal })
+    const tResp = await withInflight(`term:${sym}`, () =>
+      axios.get('/api/iv/term', { params: { symbol: sym }, signal: termCtl.signal, validateStatus: () => true })
     )
-    term.value = { date: t.data?.date ?? null, items: Array.isArray(t.data?.items) ? t.data.items : [] }
-    setCache(cacheTerm, tKey, term.value)
-    const v = await withInflight(`vrp:${sym}`, () =>
-      axios.get('/api/vrp', { params: { symbol: sym }, signal: vrpCtl.signal })
+    if (tResp.status === 200) {
+      term.value = { date: tResp.data?.date ?? null, items: Array.isArray(tResp.data?.items) ? tResp.data.items : [] }
+      setCache(cacheTerm, tKey, term.value)
+    } else {
+      term.value = { date: null, items: [] }
+    }
+
+    const vResp = await withInflight(`vrp:${sym}`, () =>
+      axios.get('/api/vrp', { params: { symbol: sym }, signal: vrpCtl.signal, validateStatus: () => true })
     )
-    vrp.value = { date: v.data?.date ?? null, iv1m: v.data?.iv1m ?? null, rv20: v.data?.rv20 ?? null, vrp: v.data?.vrp ?? null, z: v.data?.z ?? null }
-    setCache(cacheVRP, vKey, vrp.value)
+    if (vResp.status === 200) {
+      vrp.value = { date: vResp.data?.date ?? null, iv1m: vResp.data?.iv1m ?? null, rv20: vResp.data?.rv20 ?? null, vrp: vResp.data?.vrp ?? null, z: vResp.data?.z ?? null }
+      setCache(cacheVRP, vKey, vrp.value)
+    } else {
+      vrp.value = { date: null, iv1m: null, rv20: null, vrp: null, z: null }
+    }
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
       errors.value.volatility = e?.response?.data || e.message
@@ -976,8 +986,16 @@ async function loadUA(sym, exp = null) {
 async function ensureVolatility() {
   errors.value.volatility = ''
   loaded.value.volatility = false
+  if (volRetryTimer) { clearTimeout(volRetryTimer); volRetryTimer = null }
   await Promise.all([loadTermAndVRP(userSymbol.value), loadSeasonality(userSymbol.value)])
-  if (!errors.value.volatility) loaded.value.volatility = true
+  const hasData = !!(term.value?.date || vrp.value?.date || season.value)
+  if (!errors.value.volatility && hasData) {
+    loaded.value.volatility = true
+  } else if (!errors.value.volatility) {
+    volRetryTimer = setTimeout(() => {
+      if (activeTab.value === 'volatility' && dataMode.value === 'eod') ensureVolatility()
+    }, 5000)
+  }
 }
 async function ensureUA() {
   errors.value.ua = ''

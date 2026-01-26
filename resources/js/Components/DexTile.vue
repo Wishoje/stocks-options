@@ -123,7 +123,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import DexByExpiryDiverging from './DexByExpiryDiverging.vue'
 import axios from 'axios'
 
@@ -137,6 +137,7 @@ const dataDate = ref(null)
 const strength = ref(null)
 const gammaSign = ref(null)
 const open = ref(false)
+let retryTimer = null
 
 function fmt(x){
   const n = Number(x)
@@ -191,7 +192,25 @@ async function load() {
     strength.value = g?.data?.regime_strength ?? null
     gammaSign.value = g?.data?.gamma_sign ?? null
   } catch {}
+
+  // If data_date is still null, schedule a retry so the card auto-populates when ready
+  if (!dataDate.value && !retryTimer) {
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      load().catch(() => { retryTimer = null })
+    }, 4000)
+  }
 }
 
 onMounted(load)
+
+watch(() => props.symbol, () => {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
+  dex.value = null
+  byExpiry.value = []
+  dataDate.value = null
+  strength.value = null
+  gammaSign.value = null
+  load()
+})
 </script>

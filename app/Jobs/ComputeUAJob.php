@@ -22,6 +22,7 @@ class ComputeUAJob implements ShouldQueue
         public float $Z_SCORE_MIN  = 3.0,
         public float $VOL_OI_MIN   = 0.50,
         public int   $VOL_MIN      = 50,
+        public int   $MIN_SAMPLES  = 1,   // minimum history points per strike (was 5)
     ) {}
 
     public function handle(): void
@@ -121,7 +122,7 @@ class ComputeUAJob implements ShouldQueue
                 $payload = [];
                 foreach ($aggToday as $k => $v) {
                     $histArr = $series[$k] ?? [];
-                    if (count($histArr) < 5) continue;
+                    if (count($histArr) < $this->MIN_SAMPLES) continue;
 
                     [$mu, $sigma] = $this->winsorizedStats($histArr);
                     $sigma = max($sigma, 1.0);

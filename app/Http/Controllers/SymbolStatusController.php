@@ -55,9 +55,9 @@ class SymbolStatusController extends Controller
                 ->all();
         }
 
-        // nothing seeded yet? enqueue and report queued
+        // nothing seeded yet? enqueue full prime + intraday and report queued
         if (empty($expDates)) {
-            dispatch(new \App\Jobs\FetchOptionChainDataJob([$symbol]))->onQueue('default');
+            dispatch(new \App\Jobs\PrimeSymbolJob($symbol))->onQueue('default');
             dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$symbol]))->onQueue('default');
 
             return response()->json([
@@ -105,6 +105,7 @@ class SymbolStatusController extends Controller
         }
         // we have expirations but not enough rows yet → fetching
         // (also useful to expose progress to the UI)
+        dispatch(new \App\Jobs\PrimeSymbolJob($symbol))->onQueue('default');
         return response()->json([
             'status' => 'fetching',
             'symbol' => $symbol,

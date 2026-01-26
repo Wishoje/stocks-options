@@ -200,6 +200,15 @@ class ActivityController extends Controller
                 ];
             }, $picked);
 
+            // Drop rows with zero/negative premium (and re-apply minPremium after estimation)
+            $items = array_values(array_filter($items, function ($row) use ($minPremium) {
+                $p = $row['meta']['premium_usd'] ?? null;
+                if ($p === null) return true;          // keep if we could not price it
+                if ($p <= 0) return false;             // hide meaningless $0 rows
+                if ($minPremium > 0 && $p < $minPremium) return false;
+                return true;
+            }));
+
             return response()->json(['symbol'=>$symbol,'data_date'=>$latest,'items'=>$items], 200);
         });
     }
