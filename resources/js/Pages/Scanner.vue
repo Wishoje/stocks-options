@@ -35,6 +35,9 @@ const watchlistSymbols = computed(
 
 // Wall scanner state
 const wallHits    = ref([])      // [{ symbol, spot, timeframe, hits, walls: {...} }]
+const wallLoading = ref(false)
+const wallError   = ref('')
+const wallUpdatedAt = ref(null)
 const wallNearPct = ref(1.0)     // ±% from wall
 const wallNearPts = ref(null)    // optional ±$ from wall
 
@@ -206,6 +209,8 @@ async function loadWatchlist() {
 // Master wall scanner – behaves differently per mode
 async function loadWallHits() {
   wallHits.value = []
+  wallError.value = ''
+  wallLoading.value = true
 
   // Choose symbol universe for GEX scan
   let symbols = []
@@ -241,8 +246,12 @@ async function loadWallHits() {
     })
 
     wallHits.value = Array.isArray(data?.items) ? data.items : []
+    wallUpdatedAt.value = new Date().toISOString()
   } catch (e) {
     console.error('wall scanner error', e)
+    wallError.value = e?.response?.data?.error || e.message || 'Scan failed'
+  } finally {
+    wallLoading.value = false
   }
 }
 
