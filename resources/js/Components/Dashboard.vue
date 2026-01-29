@@ -800,7 +800,7 @@ function startGuidedView() {
   localStorage.setItem('gex_onboarding_v1', 'seen')
 
   dataMode.value = 'eod'
-  gexTf.value = preferredTf('0d')
+  gexTf.value = preferredTf('14d')
   userSymbol.value = 'SPY'
   activeTab.value = 'strikes'
 

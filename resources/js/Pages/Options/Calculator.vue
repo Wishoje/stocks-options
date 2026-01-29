@@ -5,7 +5,11 @@ import AppLayout from '@/Layouts/AppLayout.vue'
 import AppShell from '@/Components/AppShell.vue'
 import axios from 'axios'
 
-const symbol         = ref('SPY')
+const initialSymbol =
+  typeof window !== 'undefined'
+    ? (localStorage.getItem('calculator_last_symbol') || 'SPY')
+    : 'SPY'
+const symbol         = ref(initialSymbol)
 const stockPrice     = ref(0)
 const optionType     = ref('call') // 'call' | 'put'
 const selectedOption = ref(null)
@@ -387,7 +391,7 @@ const handleExpiryClick = async (value) => {
 }
 
 // ---------- API ----------
-const loadChain = async () => {
+const loadChain = async (opts = { retried: false }) => {
   loading.value = true
   try {
     const { data } = await axios.get('/api/option-chain', {
@@ -398,6 +402,12 @@ const loadChain = async () => {
     chainData.value    = data.chain || []
     expirations.value  = data.expirations || []
     error.value        = ''
+
+    // Retry once if no data came back (likely needs priming)
+    if (!opts.retried && (!expirations.value.length || chainData.value.length === 0)) {
+      await primeCalculator(symbol.value)
+      return await loadChain({ retried: true })
+    }
 
     // If nothing selected yet, pick first expiry
     if (!selectedExpiry.value && expirations.value.length) {
@@ -429,6 +439,8 @@ const loadChain = async () => {
 
 const selectOption = (opt) => {
   if (!opt) return
+
+  localStorage.setItem('calculator_last_symbol', symbol.value)
 
   const premium = safePremium(opt)
 
@@ -576,13 +588,11 @@ onMounted(async () => {
   window.addEventListener('select-symbol', handleSelectSymbol)
 
   try {
-    const { data } = await axios.get('/api/watchlist')
-    const last = data?.[0]?.symbol || 'SPY'
-    symbol.value = last
-
-    await primeCalculator(last)
+    await primeCalculator(symbol.value)
   } catch (e) {
-    console.warn('Watchlist load failed, using SPY', e)
+    console.warn('Prime calculator failed, using SPY', e)
+    symbol.value = 'SPY'
+    await primeCalculator('SPY')
   }
 
   await loadChain()
