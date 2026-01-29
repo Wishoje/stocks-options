@@ -65,7 +65,7 @@
       <div class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
         <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div class="text-sm text-white/60">
-            © {{ year }} GEX Levels & Analytics. All rights reserved.
+            &copy; {{ year }} GEX Options, Inc. All rights reserved.
           </div>
           <div class="flex items-center gap-6 text-sm">
             <Link :href="route('features')" class="text-white/60 hover:text-white">Features</Link>
@@ -80,7 +80,6 @@
 
 <script setup>
 import { Link, router, usePage } from '@inertiajs/vue3'
-import { onMounted } from 'vue'
 
 const page = usePage()
 const year = new Date().getFullYear()
@@ -89,55 +88,6 @@ function logout() {
   // Jetstream logout route is POST
   router.post(route('logout'))
 }
-
-function injectGA(gaId) {
-  if (!gaId) return
-  if (document.getElementById('ga4-script')) return
-
-  const s1 = document.createElement('script')
-  s1.id = 'ga4-script'
-  s1.async = true
-  s1.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gaId)}`
-  document.head.appendChild(s1)
-
-  const s2 = document.createElement('script')
-  s2.id = 'ga4-inline'
-  s2.innerHTML = `
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    window.gtag = gtag;
-    gtag('js', new Date());
-    gtag('config', '${gaId}', { send_page_view: false });
-  `
-  document.head.appendChild(s2)
-}
-
-function trackPageView(gaId, url) {
-  if (!gaId || typeof window.gtag !== 'function') return
-  window.gtag('event', 'page_view', {
-    page_location: window.location.href,
-    page_path: url,
-    page_title: document.title,
-  })
-}
-
-let gaBound = false
-
-onMounted(() => {
-  const gaId = page.props?.marketing?.ga4_id
-  injectGA(gaId)
-
-  // initial page view
-  trackPageView(gaId, window.location.pathname + window.location.search)
-
-  if (!gaBound) {
-    gaBound = true
-    router.on('navigate', (event) => {
-      const url = event?.detail?.page?.url
-      if (url) trackPageView(gaId, url)
-    })
-  }
-})
 
 function goCheckout() {
   window.location.assign('/checkout?plan=earlybird&billing=monthly')

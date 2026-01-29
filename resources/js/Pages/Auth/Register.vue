@@ -90,6 +90,10 @@ const submit = () => {
 
   form.post(route('register'), {
     onSuccess: () => {
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', 'sign_up', { method: 'email' })
+      }
+
       const plan = getQueryParam('plan')
       const billing = getQueryParam('billing')
 

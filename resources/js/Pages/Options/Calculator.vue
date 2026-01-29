@@ -589,7 +589,7 @@ onBeforeUnmount(() => {
 <template>
   <AppLayout title="Live Options Calculator">
     <template #header>
-      <h2 class="text-2xl font-bold">Live Options Calculator (15-min delay)</h2>
+      <h2 class="text-2xl font-bold text-white">Live Options Calculator (15-min delay)</h2>
     </template>
 
     <div class="py-6">
