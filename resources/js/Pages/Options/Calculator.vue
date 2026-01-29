@@ -545,6 +545,15 @@ const onEntryPriceInput = () => {
 // NO watcher on selectedExpiry – we control it via handleExpiryClick + loadChain
 
 // ---------- symbol selection handler ----------
+const primeCalculator = async (sym) => {
+  try {
+    const resp = await axios.post('/api/prime-calculator', { symbol: sym })
+    console.log('Primed calculator for', sym, resp.data)
+  } catch (err) {
+    console.warn('Prime calculator failed', sym, err)
+  }
+}
+
 const handleSelectSymbol = async (e) => {
   const sym = e.detail.symbol || 'SPY'
   if (sym === symbol.value && chainData.value.length) return
@@ -558,6 +567,7 @@ const handleSelectSymbol = async (e) => {
   error.value          = ''
   loading.value        = true
 
+  await primeCalculator(sym)
   await loadChain()
 }
 
@@ -570,10 +580,7 @@ onMounted(async () => {
     const last = data?.[0]?.symbol || 'SPY'
     symbol.value = last
 
-    const primeCalculator = await axios.post('/api/prime-calculator', {
-      symbol: last,
-    })
-    console.log('Primed calculator for', last, primeCalculator.data)
+    await primeCalculator(last)
   } catch (e) {
     console.warn('Watchlist load failed, using SPY', e)
   }

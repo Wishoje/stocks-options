@@ -3,6 +3,10 @@
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <!-- Favicon: icon-only mark (no text) -->
+        <link rel="icon" type="image/png" sizes="32x32" href="/marketing/gex.png">
+        <link rel="icon" type="image/png" sizes="64x64" href="/marketing/gex.png">
+        <link rel="apple-touch-icon" href="/marketing/gex.png">
 
         <!-- Fonts -->
         <link rel="preconnect" href="https://fonts.bunny.net">

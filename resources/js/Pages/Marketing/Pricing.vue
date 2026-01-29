@@ -29,10 +29,10 @@
 
       <div class="mt-10 rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-white/70">
         <div class="font-semibold text-white">Safe and simple</div>
-        <ul class="mt-3 grid gap-2 md:grid-cols-3">
-          <li class="flex gap-2"><span class="text-cyan-300">✓</span> Cancel anytime (once payments exist)</li>
-          <li class="flex gap-2"><span class="text-cyan-300">✓</span> Upgrade/downgrade instantly</li>
-          <li class="flex gap-2"><span class="text-cyan-300">✓</span> Secure checkout (Stripe placeholder)</li>
+        <ul class="mt-3 grid gap-3 md:grid-cols-3">
+          <li class="flex gap-2"><span class="text-cyan-300">&#10003;</span> Cancel anytime in Billing — you’ll keep access through the end of your current period.</li>
+          <li class="flex gap-2"><span class="text-cyan-300">&#10003;</span> Change plans anytime. Stripe handles billing updates automatically (including prorations when applicable).</li>
+          <li class="flex gap-2"><span class="text-cyan-300">&#10003;</span> Secure checkout powered by Stripe — card details never touch our servers.</li>
         </ul>
       </div>
     </section>
