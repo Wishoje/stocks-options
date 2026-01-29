@@ -1,5 +1,54 @@
 ﻿<template>
   <div class="min-h-screen bg-gray-950 text-white">
+    <!-- First-run onboarding -->
+    <div
+      v-if="showOnboarding"
+      class="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur"
+    >
+      <div class="w-full max-w-3xl rounded-2xl border border-cyan-500/40 bg-gray-900/95 p-8 shadow-2xl">
+        <p class="text-xs uppercase tracking-[0.2em] text-cyan-300 mb-3">Quick start</p>
+        <h2 class="text-3xl font-bold text-white">Welcome to GexOptions</h2>
+        <p class="mt-2 text-sm text-gray-300">
+          In under 5 minutes, you’ll know where dealer positioning matters today.
+        </p>
+
+        <div class="mt-6 space-y-3 text-sm text-gray-200">
+          <div class="flex items-start gap-2">
+            <span class="text-cyan-300">1️⃣</span>
+            <div>
+              <div class="font-semibold">See today’s key levels first</div>
+              <div class="text-gray-400">We’ll take you straight to SPY and zoom you into Net GEX by strike.</div>
+            </div>
+          </div>
+          <div class="flex items-start gap-2">
+            <span class="text-cyan-300">2️⃣</span>
+            <div>
+              <div class="font-semibold">Value before settings</div>
+              <div class="text-gray-400">No menus or choices—just the map dealers are hedging against today.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-8 flex flex-wrap items-center gap-3">
+          <button
+            class="w-full sm:w-auto rounded-xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-cyan-400 transition shadow-lg shadow-cyan-500/30"
+            @click="startGuidedView"
+          >
+            View Today’s Key Levels (SPY)
+          </button>
+          <button
+            class="text-sm text-gray-400 hover:text-white"
+            @click="dismissOnboarding"
+          >
+            Skip for now
+          </button>
+        </div>
+
+        <p class="mt-4 text-xs text-gray-400">
+          Most traders check this before the open to frame risk — not to predict direction.
+        </p>
+      </div>
+    </div>
     <!-- Trading Terminal Header -->
     <header class="border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm sticky top-0 z-50">
       <div class="px-4 py-3 flex items-center justify-between">
@@ -358,9 +407,46 @@
         <section v-show="activeTab==='strikes'" class="space-y-4">
           <!-- EOD: OI + Net GEX + ΔVol (EOD) -->
           <template v-if="dataMode==='eod'">
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-3">Net GEX by Strike (EOD)</h4>
+            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700" ref="netGexSection">
+              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h4 class="font-semibold">Net GEX by Strike (EOD)</h4>
+                  <p class="text-xs text-gray-400">Zoomed to the most active band so you see where hedging bites first.</p>
+                </div>
+                <div class="text-xs bg-gray-900/80 border border-gray-700 rounded-lg p-3 text-gray-200">
+                  <div class="font-semibold mb-1 text-white">How to read Net GEX</div>
+                  <ul class="space-y-1">
+                    <li>• Positive GEX → dealers hedge with price → ranges compress</li>
+                    <li>• Negative GEX → dealers hedge against price → moves expand</li>
+                    <li>• Large clusters → reaction zones, not targets</li>
+                  </ul>
+                </div>
+              </div>
+
               <NetGexChart :strikeData="levels?.strike_data || []" />
+
+              <div
+                v-if="checklistVisible"
+                class="mt-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs text-cyan-100"
+              >
+                <div class="font-semibold mb-2 text-white">First-day checklist</div>
+                <ul class="space-y-1">
+                  <li>☑️ Check today’s Net GEX near spot</li>
+                  <li>☑️ Note the closest large positive / negative level</li>
+                  <li>☑️ Watch how price reacts at that level</li>
+                </ul>
+                <div class="mt-2 text-[11px] text-cyan-200">
+                  You’re not looking for predictions — just context.
+                </div>
+                <div class="mt-2">
+                  <button
+                    class="text-[11px] text-cyan-300 hover:text-cyan-100 underline"
+                    @click="dismissChecklist"
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
             </div>
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
               <h4 class="font-semibold mb-3">ΔOI by Strike (EOD)</h4>
@@ -487,7 +573,7 @@
 
 <script setup>
 import {
-  ref, reactive, computed, watch, onMounted, onUnmounted,
+  ref, reactive, computed, watch, onMounted, onUnmounted, nextTick,
   h, defineComponent, defineAsyncComponent
 } from 'vue'
 import axios from 'axios'
@@ -626,6 +712,9 @@ const showAdvanced = ref(false)
 const symbol = ref('SPY')
 const gexTf = ref('14d')
 const userSymbol = symbol
+const showOnboarding = ref(false)
+const checklistVisible = ref(false)
+const netGexSection = ref(null)
 const cache = new Map()
 const cacheTerm = new Map()
 const cacheVRP = new Map()
@@ -659,7 +748,7 @@ function pickSymbol(sym) {
 }
 
 // Controllers
-const controllers = { gex: null, term: null, vrp: null, season: null, ua: null }
+const controllers = { gex_eod: null, gex_intraday: null, term: null, vrp: null, season: null, ua: null }
 
 function withInflight(key, fn) {
   const hit = inflight.get(key)
@@ -687,6 +776,48 @@ function activate(key) {
   activeTab.value = key
   if (key === 'volatility' && dataMode.value === 'eod' && !loaded.value.volatility) ensureVolatility()
   if (key === 'ua' && !loaded.value.ua) ensureUA()
+}
+
+const preferredTf = (target) => {
+  const avail = timeframeAvailability.value
+  if (avail && !avail.has(target)) {
+    const first = [...avail][0]
+    return first || gexTf.value
+  }
+  return target
+}
+
+function scrollToNetGex() {
+  nextTick(() => {
+    if (netGexSection.value) {
+      netGexSection.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  })
+}
+
+function startGuidedView() {
+  showOnboarding.value = false
+  localStorage.setItem('gex_onboarding_v1', 'seen')
+
+  dataMode.value = 'eod'
+  gexTf.value = preferredTf('0d')
+  userSymbol.value = 'SPY'
+  activeTab.value = 'strikes'
+
+  // force a fresh load for SPY / 0d, then scroll to Net GEX
+  fetchGexLevelsEOD(userSymbol.value, gexTf.value).then(() => scrollToNetGex())
+}
+
+function dismissOnboarding() {
+  showOnboarding.value = false
+  const today = new Date().toISOString().slice(0, 10)
+  // Mark as skipped for today only; will reappear tomorrow unless user completes CTA
+  localStorage.setItem('gex_onboarding_v1', `skipped:${today}`)
+}
+
+function dismissChecklist() {
+  checklistVisible.value = false
+  localStorage.setItem('gex_checklist_v1_dismissed', '1')
 }
 
 function setMode(mode) {
@@ -842,7 +973,7 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
   eodError.value = ''
   eodLevels.value = null
 
-  const ctl = ensureController('gex')
+  const ctl = ensureController('gex_eod')
 
   try {
     await withInflight(`gex:${key}`, async () => {
@@ -868,7 +999,7 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
         const nextTf = available.includes('14d') ? '14d' : available[0]
         if (nextTf && nextTf !== gexTf.value) {
           gexTf.value = nextTf
-          return
+          return await fetchGexLevelsEOD(sym, nextTf)
         }
       }
 
@@ -887,7 +1018,7 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
       }
     }
   } finally {
-    if (ctl === controllers.gex) eodLoading.value = false
+    if (ctl === controllers.gex_eod) eodLoading.value = false
   }
 }
 
@@ -1031,7 +1162,25 @@ function handleSelectSymbolEvent(evt) {
   userSymbol.value = next
 }
 
+function onboardingState() {
+  const val = localStorage.getItem('gex_onboarding_v1')
+  if (!val) return 'new'
+  if (val === 'seen') return 'seen'
+  if (val.startsWith('skipped:')) {
+    const skippedDate = val.split(':')[1]
+    const today = new Date().toISOString().slice(0, 10)
+    return skippedDate === today ? 'skipped-today' : 'new'
+  }
+  return 'new'
+}
+
 onMounted(() => {
+  const onboarding = onboardingState()
+  const checklistDismissed = !!localStorage.getItem('gex_checklist_v1_dismissed')
+  showOnboarding.value = onboarding === 'new'
+  // Only show checklist on first run AND if not dismissed
+  checklistVisible.value = !checklistDismissed && onboarding === 'new'
+
   // make sure we load something on first render
   fetchGexLevelsEOD(userSymbol.value, gexTf.value)
   ensureAllTabReadiness()
@@ -1116,7 +1265,7 @@ async function refreshIntraday({ force = false } = {}) {
   const existing = inflightIntraday.get(sym)
   if (existing) return existing
 
-  const ctl = ensureController('gex') // reuse controller bucket
+  const ctl = ensureController('gex_intraday') // separate controller bucket
   const soft = firstIntradayLoadDone.value
   if (!soft) intradayLoading.value = true
   else intradayRefreshing.value = true

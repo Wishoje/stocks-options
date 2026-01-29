@@ -194,8 +194,13 @@ Route::post('/prime-calculator', function (Request $req) {
     $sym = \App\Support\Symbols::canon($req->input('symbol', 'SPY'));
     if (!$sym) return response()->json(['error' => 'Invalid symbol'], 400);
 
-    // Only dispatch calculator job
-    dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($sym));
+    // Dispatch to queue so the request returns fast
+    \App\Jobs\FetchCalculatorChainJob::dispatch($sym)->onQueue('calculator');
 
-    return response()->json(['ok' => true, 'symbol' => $sym]);
+    return response()->json([
+        'ok' => true,
+        'symbol' => $sym,
+        'queued' => true,
+        'queue' => 'calculator',
+    ]);
 });
