@@ -1377,6 +1377,12 @@ watch(userSymbol, (s) => {
   }, 250)
 })
 
+watch(userSymbol, (s) => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('calculator_last_symbol', s)
+  }
+})
+
 watch(userSymbol, () => {
   resetTabReadiness()
   ensureAllTabReadiness()
