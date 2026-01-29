@@ -1184,7 +1184,9 @@ onMounted(() => {
   checklistVisible.value = !checklistDismissed && onboarding === 'new'
 
   // make sure we load something on first render
-  fetchGexLevelsEOD(userSymbol.value, gexTf.value)
+  const initialTf = showOnboarding.value ? '0d' : gexTf.value
+  if (showOnboarding.value) gexTf.value = '0d'
+  fetchGexLevelsEOD(userSymbol.value, initialTf, { applyTf: true })
   ensureAllTabReadiness()
 
   // listen for watchlist / scanner clicks
