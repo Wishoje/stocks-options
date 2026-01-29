@@ -192,10 +192,17 @@ Route::get('/debug/market', function () {
 
 Route::post('/prime-calculator', function (Request $req) {
     $sym = \App\Support\Symbols::canon($req->input('symbol', 'SPY'));
-    if (!$sym) return response()->json(['error' => 'Invalid symbol'], 400);
+    if (!$sym) {
+        return response()->json(['error' => 'Invalid symbol'], 400);
+    }
 
-    // Only dispatch calculator job
-    dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($sym));
+    // Queue the calculator job so the request doesn't block
+    \App\Jobs\FetchCalculatorChainJob::dispatch($sym)->onQueue('calculator');
 
-    return response()->json(['ok' => true, 'symbol' => $sym]);
+    return response()->json([
+        'ok'     => true,
+        'symbol' => $sym,
+        'queued' => true,
+        'queue'  => 'calculator',
+    ]);
 });
