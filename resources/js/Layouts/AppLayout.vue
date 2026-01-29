@@ -25,8 +25,17 @@ const switchToTeam = (team) => {
 
 async function dispatchLastSymbol() {
   try {
-    const { data } = await axios.get('/api/watchlist')
-    const sym = data?.[0]?.symbol || 'SPY'
+    const saved = typeof window !== 'undefined'
+      ? (localStorage.getItem('calculator_last_symbol') || '').trim().toUpperCase()
+      : ''
+
+    const fallback = async () => {
+      const { data } = await axios.get('/api/watchlist')
+      return data?.[0]?.symbol || 'SPY'
+    }
+
+    const sym = saved || await fallback()
+
     window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: sym } }))
   } catch {}
 }

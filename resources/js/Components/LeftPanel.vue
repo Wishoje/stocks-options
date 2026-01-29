@@ -154,6 +154,9 @@ async function choose(i) {
     await axios.post('/api/watchlist', { symbol: String(pick.symbol || '').toUpperCase() })
     emit('refresh')
     emit('select', pick.symbol)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('calculator_last_symbol', String(pick.symbol || '').toUpperCase())
+    }
     window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: pick.symbol } }))
   } catch (e) {
     if (e?.response?.status === 401) window.location.href = '/login'
@@ -165,6 +168,9 @@ async function choose(i) {
 
 function selectFromList(sym) {
   emit('select', sym)
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('calculator_last_symbol', String(sym || '').toUpperCase())
+  }
   window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: sym } }))
 }
 
