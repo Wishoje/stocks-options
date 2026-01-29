@@ -800,12 +800,11 @@ function startGuidedView() {
   localStorage.setItem('gex_onboarding_v1', 'seen')
 
   dataMode.value = 'eod'
-  gexTf.value = preferredTf('14d')
   userSymbol.value = 'SPY'
   activeTab.value = 'strikes'
 
   // force a fresh load for SPY / 0d, then scroll to Net GEX
-  fetchGexLevelsEOD(userSymbol.value, gexTf.value).then(() => scrollToNetGex())
+  fetchGexLevelsEOD(userSymbol.value, '0d', { applyTf: true }).then(() => scrollToNetGex())
 }
 
 function dismissOnboarding() {
@@ -958,7 +957,7 @@ function ensureAllTabReadiness() {
 }
 
 // Data loaders
-async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
+async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }) {
   const key = `gex|${sym}|${tf}`
   const hit = cache.get(key)
   if (hit && Date.now() - hit.t < TTL_MS) {
@@ -985,6 +984,10 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
       cache.set(key, { t: Date.now(), data: eodLevels.value })
       uaExp.value = 'ALL'
       lastUpdated.value = new Date().toISOString()
+
+      if (opts?.applyTf && gexTf.value !== tf) {
+        gexTf.value = tf
+      }
     })
   } catch (e) {
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
@@ -998,8 +1001,7 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value) {
       if ((e?.response?.status === 404) && available.length) {
         const nextTf = available.includes('14d') ? '14d' : available[0]
         if (nextTf && nextTf !== gexTf.value) {
-          gexTf.value = nextTf
-          return await fetchGexLevelsEOD(sym, nextTf)
+          return await fetchGexLevelsEOD(sym, nextTf, opts)
         }
       }
 
