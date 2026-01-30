@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Auth;
 use App\Http\Controllers\BillingController;
 use Laravel\Cashier\Http\Controllers\WebhookController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ContactController;
 use Inertia\Inertia;
 
 Route::post('/stripe/webhook', [WebhookController::class, 'handleWebhook'])
@@ -23,6 +24,10 @@ Route::get('/', function () {
 
 Route::get('/pricing', fn () => Inertia::render('Marketing/Pricing'))->name('pricing');
 Route::get('/features', fn () => Inertia::render('Marketing/Features'))->name('features');
+Route::get('/contact', fn () => Inertia::render('Marketing/Contact'))->name('contact');
+Route::post('/contact', [ContactController::class, 'store'])
+    ->middleware('throttle:10,1')
+    ->name('contact.submit');
 
 Route::middleware(['auth:sanctum', config('jetstream.auth_session')])->group(function () {
     Route::get('/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');

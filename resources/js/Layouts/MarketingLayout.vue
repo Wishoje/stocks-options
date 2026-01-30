@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-[#070A12] text-white">
+  <div class="min-h-screen bg-[#070A12] text-white flex flex-col">
     <!-- Background glow -->
     <div class="pointer-events-none fixed inset-0 -z-10">
       <div class="absolute -top-40 left-1/2 h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-cyan-500/15 blur-[120px]" />
@@ -26,6 +26,7 @@
           <div class="flex items-center gap-8">
             <nav class="hidden items-center gap-8 md:flex">
               <Link :href="route('features')" class="text-sm text-white/70 hover:text-white">Features</Link>
+              <Link :href="route('contact')" class="text-sm text-white/70 hover:text-white">Contact</Link>
 
               <template v-if="page.props.auth?.user">
                 <Link :href="route('pricing')" class="text-sm text-white/70 hover:text-white">
@@ -57,7 +58,7 @@
       </div>
     </header>
 
-    <main>
+    <main class="flex-1">
       <slot />
     </main>
 
@@ -70,6 +71,7 @@
           <div class="flex items-center gap-6 text-sm">
             <Link :href="route('features')" class="text-white/60 hover:text-white">Features</Link>
             <Link :href="route('pricing')" class="text-white/60 hover:text-white">Pricing</Link>
+            <Link :href="route('contact')" class="text-white/60 hover:text-white">Contact</Link>
             <a href="mailto:support@gexlevels.com" class="text-white/40 hover:text-white/70">support@gexoptions.com</a>
           </div>
         </div>
