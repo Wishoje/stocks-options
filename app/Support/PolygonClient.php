@@ -47,12 +47,12 @@ class PolygonClient
         return $client;
     }
 
-    public function intradayOptionVolumes(string $symbol): ?array
+    public function intradayOptionVolumes(string $symbol, ?string $expiration = null): ?array
     {
         $uSym = strtoupper($symbol);
         // Log::debug('PolygonClient.intraday.start', ['symbol' => $uSym]);
 
-        $snap = $this->snapshotChainFromMassive($uSym);
+        $snap = $this->snapshotChainFromMassive($uSym, $expiration);
 
         if (!$snap || empty($snap['results'])) {
             Log::warning('PolygonClient.noData', [
@@ -221,7 +221,7 @@ class PolygonClient
     }
 
     /** Paginate through Massive options snapshot for a symbol. */
-   protected function snapshotChainFromMassive(string $symbol): ?array
+    protected function snapshotChainFromMassive(string $symbol, ?string $expiration = null): ?array
     {
         $base    = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
         $mode    = config('services.massive.mode', 'header');
@@ -229,11 +229,28 @@ class PolygonClient
         $apiKey  = config('services.massive.key');
 
         $path    = "/v3/snapshot/options/{$symbol}";
+        if ($expiration) {
+            $path .= '?expiration_date=' . urlencode($expiration);
+        }
         $cursor  = null;
 
         $all = ['results' => [], 'status' => null, 'request_id' => null];
 
-        for ($hops = 0; $hops < 25; $hops++) {
+        // Keep following next_url until exhausted; cap varies by symbol to avoid infinite loops.
+        $hops = 0;
+        $sym = strtoupper($symbol);
+        // Treat only the biggest names as “heavy”; others stay lighter to finish quickly.
+        $heavySymbols = ['SPY','QQQ'];
+        $isHeavy = in_array($sym, $heavySymbols, true);
+        $maxHops = $isHeavy ? 500 : 50;
+        while (true) {
+            if ($hops++ > $maxHops) {
+                Log::warning('PolygonClient.pagination.capReached', [
+                    'symbol' => $symbol,
+                    'pages'  => $hops,
+                ]);
+            }
+
             $url = $cursor ?: ($base . $path);
 
             // attach ?apiKey=... if using query auth

@@ -109,7 +109,16 @@ Schedule::call(function () {
     }
 
     foreach (array_chunk($symbols, 15) as $chunk) {
-        FetchPolygonIntradayOptionsJob::dispatch($chunk)->onQueue('intraday');
+        // Split heavy symbols (SPY, QQQ) to their own queue so they don't block others
+        $heavy = array_filter($chunk, fn($s) => in_array($s, ['SPY','QQQ'], true));
+        $rest  = array_diff($chunk, $heavy);
+
+        if (!empty($heavy)) {
+            FetchPolygonIntradayOptionsJob::dispatch(array_values($heavy))->onQueue('intraday-heavy');
+        }
+        if (!empty($rest)) {
+            FetchPolygonIntradayOptionsJob::dispatch(array_values($rest))->onQueue('intraday');
+        }
     }
 })
 ->everyFiveMinutes()
@@ -173,4 +182,3 @@ Schedule::call(function () {
 ->between('09:35', '15:55')
 ->withoutOverlapping(10)
 ->onOneServer();
-
