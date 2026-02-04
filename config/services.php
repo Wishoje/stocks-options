@@ -47,4 +47,7 @@ return [
         'qparam' => env('MASSIVE_API_QUERY', 'apiKey'),
     ],
 
+    // Google Analytics 4
+    'ga4_id' => env('GA4_ID'),
+
 ];
