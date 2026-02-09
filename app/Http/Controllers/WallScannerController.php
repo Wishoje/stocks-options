@@ -77,7 +77,10 @@ class WallScannerController extends Controller
             $items = [];
 
             foreach ($rows as $row) {
-                // Freshness guard: not older than 24h on weekdays.
+                // Freshness guard:
+                // - weekdays: 24h
+                // - Monday/weekends: allow weekend bridge from Friday close
+                $maxFreshHours = ($now->isWeekend() || $now->isMonday()) ? 72 : 24;
                 if ($row->trade_date) {
                     try {
                         $tradeAt = Carbon::parse($row->trade_date . ' 16:00:00', 'America/New_York');
@@ -86,7 +89,7 @@ class WallScannerController extends Controller
                     }
                     $ageHours = $tradeAt->diffInHours($now);
 
-                    if (!$now->isWeekend() && $ageHours > 24) {
+                    if ($ageHours > $maxFreshHours) {
                         continue;
                     }
                 }
