@@ -32,8 +32,34 @@ class FetchCalculatorChainJob implements ShouldQueue
     public function handle(): void
     {
         $symbol = strtoupper($this->symbol);
-        $apiKey = env('MASSIVE_API_KEY');
-        $base   = rtrim(env('MASSIVE_BASE', 'https://api.massive.com'), '/');
+        $apiKey = config('services.massive.key') ?: env('MASSIVE_API_KEY');
+        $base   = rtrim((string) config('services.massive.base', 'https://api.massive.com'), '/');
+        $mode   = (string) config('services.massive.mode', 'header'); // header|bearer|query
+        $header = (string) config('services.massive.header', 'X-API-Key');
+        $qparam = (string) config('services.massive.qparam', 'apiKey');
+
+        $makeRequest = function (int $timeout = 30) use ($mode, $header, $apiKey) {
+            $req = Http::timeout($timeout)
+                ->acceptJson()
+                ->withHeaders(['Accept' => 'application/json']);
+
+            if ($mode === 'bearer') {
+                return $req->withToken($apiKey);
+            }
+
+            if ($mode === 'header') {
+                return $req->withHeaders([$header => $apiKey]);
+            }
+
+            return $req; // query mode
+        };
+
+        $authParams = function (array $params = []) use ($mode, $qparam, $apiKey) {
+            if ($mode === 'query') {
+                $params[$qparam] = $apiKey;
+            }
+            return $params;
+        };
 
         // Log::debug('CalculatorChain.start', [
         //     'symbol' => $symbol,
@@ -49,12 +75,13 @@ class FetchCalculatorChainJob implements ShouldQueue
         // -----------------------------
         // Step 1: Underlying price
         // -----------------------------
-        $uResp = Http::timeout(10)
-            ->withHeaders(['Authorization' => "Bearer {$apiKey}"])
-            ->get("{$base}/v3/snapshot", [
+        $uResp = $makeRequest(10)->get(
+            "{$base}/v3/snapshot",
+            $authParams([
                 'ticker.any_of' => $symbol,
                 'limit'         => 1,
-            ]);
+            ])
+        );
 
         // Log::debug('CalculatorChain.underlying.response', [
         //     'status' => $uResp->status(),
@@ -103,11 +130,7 @@ class FetchCalculatorChainJob implements ShouldQueue
         while ($url && $page < 50) {
             $page++;
 
-            $request = Http::timeout(30)
-                ->withHeaders([
-                    'Authorization' => "Bearer {$apiKey}",
-                    'Accept'        => 'application/json',
-                ]);
+            $request = $makeRequest(30);
 
             $params = ($page === 1)
                 ? [
@@ -124,9 +147,7 @@ class FetchCalculatorChainJob implements ShouldQueue
             //     'params' => $params,
             // ]);
 
-            $resp = $page === 1
-                ? $request->get($url, $params)
-                : $request->get($url);
+            $resp = $request->get($url, $authParams($params));
 
             // limit fallback for page 1
             if (
@@ -145,7 +166,7 @@ class FetchCalculatorChainJob implements ShouldQueue
                     'sort'  => 'strike_price',
                     'order' => 'asc',
                 ];
-                $resp = $request->get($url, $params);
+                $resp = $request->get($url, $authParams($params));
 
                 // Log::debug('CalculatorChain.limitRetry', [
                 //     'new_limit' => $perPage,

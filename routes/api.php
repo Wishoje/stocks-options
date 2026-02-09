@@ -107,11 +107,28 @@ Route::get('/option-chain', function () {
         ->max('fetched_at');
 
     if (!$latest) {
-        return response()->json([
-            'underlying'  => ['symbol' => $symbol, 'price' => null],
-            'chain'       => [],
-            'expirations' => [],
-        ]);
+        // One-shot self-heal for first-load symbols.
+        try {
+            dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($symbol));
+        } catch (\Throwable $e) {
+            \Log::warning('option-chain.primeFailed', [
+                'symbol' => $symbol,
+                'err' => $e->getMessage(),
+            ]);
+        }
+
+        $latest = DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->max('fetched_at');
+
+        if (!$latest) {
+            return response()->json([
+                'underlying'  => ['symbol' => $symbol, 'price' => null],
+                'chain'       => [],
+                'expirations' => [],
+                'status'      => 'no_snapshot',
+            ], 202);
+        }
     }
 
     $base = DB::table('option_snapshots')
