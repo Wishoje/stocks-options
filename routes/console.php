@@ -93,6 +93,18 @@ Schedule::command('calculator:prune-snapshots --hours=168')
     ->withoutOverlapping(30)
     ->onOneServer();
 
+Schedule::command('walls:prune-snapshots --days=120')
+    ->timezone('America/New_York')
+    ->dailyAt('03:20')
+    ->withoutOverlapping(20)
+    ->onOneServer();
+
+Schedule::command('hot-options:prune --days=120')
+    ->timezone('America/New_York')
+    ->dailyAt('03:25')
+    ->withoutOverlapping(20)
+    ->onOneServer();
+
 Schedule::command('walls:compute --timeframe=all --limit=400 --source=hot')
     ->weekdays()
     ->timezone('America/New_York')
