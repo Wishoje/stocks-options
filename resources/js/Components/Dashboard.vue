@@ -742,7 +742,10 @@ const intradayTransition = computed(() =>
 
 function pickSymbol(sym) {
   const s = sym.trim().toUpperCase()
-  if (s) userSymbol.value = s
+  if (s) {
+    kickoffSymbolWarm(s, gexTf.value)
+    userSymbol.value = s
+  }
   showSymbolPicker.value = false
   symbolSearch.value = ''
 }
@@ -904,7 +907,7 @@ function resetTabReadiness() {
 function isPreparing(err) {
   const status = err?.response?.status
   const msg = err?.response?.data?.error || err?.message || ''
-  return status === 404 || status === 202 || /preparing|queued|no data/i.test(msg)
+  return status === 404 || status === 202 || /preparing|queued|no data|no expirations/i.test(msg)
 }
 
 function readinessProbeFor(key) {
@@ -993,12 +996,14 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
       const payload = e?.response?.data || {}
       const msg = payload?.error || e.message || ''
+      const status = e?.response?.status
+      const preparingLike = /No data|No expirations|queued|fetching|preparing/i.test(String(msg))
       const available = Array.isArray(payload?.available_timeframes)
         ? payload.available_timeframes
         : Object.keys(payload?.timeframe_expirations || {})
 
       // If another timeframe has expirations, auto-switch to it
-      if ((e?.response?.status === 404) && available.length) {
+      if ((status === 404 || status === 202) && available.length) {
         const nextTf = available.includes('14d') ? '14d' : available[0]
         if (nextTf && nextTf !== gexTf.value) {
           return await fetchGexLevelsEOD(sym, nextTf, opts)
@@ -1006,11 +1011,12 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
       }
 
       // If it looks like a first-time symbol, go into preparing mode
-      if ((e?.response?.status === 404) && /No data|No expirations/i.test(msg)) {
+      if ((status === 404 || status === 202) && preparingLike) {
         eodError.value = ''
+        kickoffSymbolWarm(sym, tf)
         // only start the poller if it's not already running
         if (!preparing.value.timer) {
-          await startPreparingPoll(sym, async () => {
+          await startPreparingPoll(sym, tf, async () => {
             // tiny backoff so the data that flipped "ready" actually becomes visible
             setTimeout(() => fetchGexLevelsEOD(sym, tf), 750)
           })
@@ -1150,6 +1156,8 @@ function handleSelectSymbolEvent(evt) {
   const next = String(evt?.detail?.symbol || '').trim().toUpperCase()
   if (!next) return
 
+  kickoffSymbolWarm(next, gexTf.value)
+
   // If we click the same symbol again, optionally just force a refresh
   if (next === userSymbol.value) {
     if (dataMode.value === 'eod') {
@@ -1208,12 +1216,12 @@ function stopRefresh() {
 
 function stopPreparingPoll() {
   if (preparing.value.timer) {
-    clearInterval(preparing.value.timer)
+    clearTimeout(preparing.value.timer)
     preparing.value.timer = null
   }
 }
 
-async function startPreparingPoll(sym, onReady) {
+async function startPreparingPoll(sym, timeframe, onReady) {
   if (preparing.value.timer) return
   preparing.value.active = true
   preparing.value.phase = 'queued'
@@ -1221,7 +1229,7 @@ async function startPreparingPoll(sym, onReady) {
   const check = async () => {
     try {
       const { data, status } = await axios.get('/api/symbol/status', {
-        params: { symbol: sym, timeframe: gexTf.value }
+        params: { symbol: sym, timeframe: timeframe || gexTf.value }
       })
       const st = data?.status || (status === 200 ? 'ready' : 'queued')
       preparing.value.phase = st
@@ -1243,7 +1251,20 @@ async function startPreparingPoll(sym, onReady) {
   }
   preparing.value.timer = setTimeout(tick, 0)
   // optional safety stop after 5 minutes:
-  setTimeout(() => stopPreparingPoll(), 5 * 60 * 1000)
+  setTimeout(() => {
+    if (preparing.value.timer) {
+      stopPreparingPoll()
+      preparing.value.active = false
+      if (!levels.value) {
+        eodError.value = `Still preparing ${sym}. Try refresh in a minute.`
+      }
+    }
+  }, 5 * 60 * 1000)
+}
+
+function kickoffSymbolWarm(sym, timeframe = '14d') {
+  if (!sym) return
+  axios.get('/api/symbol/status', { params: { symbol: sym, timeframe } }).catch(() => {})
 }
 
 function startAutoRefresh() {

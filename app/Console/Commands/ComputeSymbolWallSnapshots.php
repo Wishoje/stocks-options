@@ -18,7 +18,6 @@ class ComputeSymbolWallSnapshots extends Command
 
     /**
      * All EOD timeframes you want snapshots for.
-     * Add/remove as needed.
      *
      * @var string[]
      */
@@ -30,9 +29,12 @@ class ComputeSymbolWallSnapshots extends Command
         $limit        = (int) $this->option('limit');
         $source       = (string) $this->option('source');
 
-        $tradeDate = now('America/New_York')->toDateString();
+        $nowEt = now('America/New_York');
+        $tradeDate = $nowEt->toDateString();
+        // Weekend coverage: allow Friday-close spot to remain eligible.
+        $spotMaxAgeMinutes = $nowEt->isWeekend() ? (72 * 60) : 30;
 
-        // Resolve which timeframes to compute
+        // Resolve which timeframes to compute.
         if ($timeframeOpt === 'all') {
             $timeframes = $this->eodTimeframes;
         } else {
@@ -43,7 +45,7 @@ class ComputeSymbolWallSnapshots extends Command
             }
         }
 
-        // 1) Choose universe
+        // 1) Choose universe.
         if ($source === 'hot') {
             $latestTradeDate = DB::table('hot_option_symbols')->max('trade_date');
 
@@ -77,33 +79,37 @@ class ComputeSymbolWallSnapshots extends Command
         }
 
         $this->info(sprintf(
-            'Computing wall snapshots for %d symbols across [%s]…',
+            'Computing wall snapshots for %d symbols across [%s]...',
             count($symbols),
             implode(', ', $timeframes),
         ));
 
-
-        foreach ($symbols as $sym) { 
+        foreach ($symbols as $sym) {
             try {
-                // Require price not older than 30 minutes, but **from snapshots** only
-                $spot = $walls->latestSpot($sym, 30);
+                // Weekdays: strict freshness. Weekends: tolerate older spot from Friday.
+                $spot = $walls->latestSpot($sym, $spotMaxAgeMinutes);
+
+                // Weekend-only fallback to last known spot (Friday close context).
+                if ($spot === null && $nowEt->isWeekend()) {
+                    $spot = $walls->latestSpot($sym, null);
+                }
 
                 if ($spot === null) {
-                    // No fresh price → skip this symbol entirely
+                    // Still no price available for this symbol.
                     continue;
                 }
 
-                // Intraday call wall can still be live, we just measure distance vs DB spot
-                $intr      = $walls->intradayCallWall($sym, 30);
+                // Intraday call wall can still be live, we just measure distance vs DB spot.
+                $intr      = $walls->intradayCallWall($sym, $spotMaxAgeMinutes);
                 $intrCall  = $intr['call_wall'] ?? null;
                 $intrDist  = $intrCall ? $walls->distancePct($spot, $intrCall) : null;
 
                 foreach ($timeframes as $tf) {
-                    $eod      = $walls->eodWalls($sym, $tf);
-                    $eodPut   = $eod['put_wall']  ?? null;
-                    $eodCall  = $eod['call_wall'] ?? null;
-                    $eodPutDp = $eodPut  ? $walls->distancePct($spot, $eodPut)  : null;
-                    $eodCallDp= $eodCall ? $walls->distancePct($spot, $eodCall) : null;
+                    $eod       = $walls->eodWalls($sym, $tf);
+                    $eodPut    = $eod['put_wall']  ?? null;
+                    $eodCall   = $eod['call_wall'] ?? null;
+                    $eodPutDp  = $eodPut  ? $walls->distancePct($spot, $eodPut)  : null;
+                    $eodCallDp = $eodCall ? $walls->distancePct($spot, $eodCall) : null;
 
                     $row = [
                         'spot'                   => $spot,
@@ -128,7 +134,6 @@ class ComputeSymbolWallSnapshots extends Command
                 $this->error("Error for {$sym}: " . $e->getMessage());
             }
         }
-
 
         $this->info('Done.');
 

@@ -163,6 +163,7 @@ Route::get('/option-chain', function () {
 
     $expirations = DB::table('option_snapshots')
         ->where('symbol', $symbol)
+        ->where('fetched_at', $latest)
         ->where('expiry', '>=', today())
         ->select('expiry')
         ->distinct()

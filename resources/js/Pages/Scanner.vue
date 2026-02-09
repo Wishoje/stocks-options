@@ -212,36 +212,41 @@ async function loadWallHits() {
   wallError.value = ''
   wallLoading.value = true
 
-  // Choose symbol universe for GEX scan
-  let symbols = []
-
-  if (!watchlist.value.length) {
-    // no watchlist → nothing to scan
-    return
-  }
-
-  if (scannerMode.value === 'volume') {
-    // Volume mode: only scan names that are both in watchlist AND hot universe
-    const hotSet = new Set(hotSymbols.value)
-    symbols = watchlist.value
-      .map(w => w.symbol)
-      .filter(sym => hotSet.has(sym))
-  } else {
-    // GEX mode: scan ALL watchlist names
-    symbols = watchlist.value.map(w => w.symbol)
-  }
-
-  symbols = symbols
-    .map(s => s && s.toUpperCase())
-    .filter(Boolean)
-
-  if (!symbols.length) return
-
   try {
+    // Choose symbol universe for GEX scan
+    let symbols = []
+
+    if (!watchlist.value.length) {
+      // no watchlist → nothing to scan
+      return
+    }
+
+    if (scannerMode.value === 'volume') {
+      // Volume mode: only scan names that are both in watchlist AND hot universe
+      const hotSet = new Set(hotSymbols.value)
+      symbols = watchlist.value
+        .map(w => w.symbol)
+        .filter(sym => hotSet.has(sym))
+    } else {
+      // GEX mode: scan ALL watchlist names
+      symbols = watchlist.value.map(w => w.symbol)
+    }
+
+    symbols = symbols
+      .map(s => (typeof s === 'string' ? s.toUpperCase().trim() : ''))
+      .filter(Boolean)
+
+    if (!symbols.length) return
+
+    const rawNearPts = wallNearPts.value
+    const nearPts = (rawNearPts === null || rawNearPts === undefined || rawNearPts === '')
+      ? null
+      : (Number.isFinite(Number(rawNearPts)) ? Number(rawNearPts) : null)
+
     const { data } = await axios.post('/api/scanner/walls', {
       symbols,
       near_pct: wallNearPct.value,
-      near_pts: wallNearPts.value,
+      near_pts: nearPts,
       timeframes: ['1d', '7d', '14d', '30d'],
     })
 
@@ -249,7 +254,7 @@ async function loadWallHits() {
     wallUpdatedAt.value = new Date().toISOString()
   } catch (e) {
     console.error('wall scanner error', e)
-    wallError.value = e?.response?.data?.error || e.message || 'Scan failed'
+    wallError.value = e?.response?.data?.error || `Scan failed (${e?.response?.status || 'network'})`
   } finally {
     wallLoading.value = false
   }
@@ -563,16 +568,24 @@ onMounted(async () => {
                   <button
                     type="button"
                     @click="loadWallHits"
+                    :disabled="wallLoading"
                     class="ml-2 px-3 py-1.5 rounded-lg text-[11px] font-medium
-                          bg-cyan-600 hover:bg-cyan-500 text-white"
+                          bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 disabled:cursor-not-allowed text-white"
                   >
-                    Scan
+                    {{ wallLoading ? 'Scanning...' : 'Scan' }}
                   </button>
                 </div>
               </div>
 
+              <div v-if="wallError" class="text-[11px] text-red-300">
+                {{ wallError }}
+              </div>
+              <div v-else-if="wallLoading" class="text-[11px] text-gray-400">
+                Scanning walls...
+              </div>
+
               <!-- Empty state -->
-              <div v-if="!wallHits.length" class="text-[11px] text-gray-500">
+              <div v-if="!wallLoading && !wallError && !wallHits.length" class="text-[11px] text-gray-500">
                 No watchlist names currently sitting on the biggest walls at these thresholds.
               </div>
 

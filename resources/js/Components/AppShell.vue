@@ -84,6 +84,7 @@ async function handleSelectSymbol(sym) {
   await Promise.allSettled([
     axios.post('/api/intraday/pull', { symbols: [sym] }),
     axios.post('/api/prime-calculator', { symbol: sym }),
+    axios.get('/api/symbol/status', { params: { symbol: sym, timeframe: '14d' } }),
   ])
 
   window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: sym } }))

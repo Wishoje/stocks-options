@@ -53,13 +53,32 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                 ->all();
 
             if (empty($expiries)) {
-                $expiries = [null]; // fallback: all expiries
+                // fallback to expiries seen in option_snapshots (avoid unbounded all-expiry pulls)
+                $expiries = DB::table('option_snapshots')
+                    ->where('symbol', $symbol)
+                    ->whereDate('expiry', '>=', $tradeDate)
+                    ->select('expiry')
+                    ->distinct()
+                    ->orderBy('expiry')
+                    ->limit(8)
+                    ->pluck('expiry')
+                    ->map(fn ($d) => substr((string) $d, 0, 10))
+                    ->all();
+            }
+
+            if (empty($expiries)) {
+                Log::warning('FetchPolygonIntradayOptionsJob.noExpiries', [
+                    'symbol' => $symbol,
+                    'trade_date' => $tradeDate,
+                ]);
+                continue;
             }
 
             $totCallAll = 0; $totPutAll = 0; $totPremAll = 0.0;
             $rowsAll = [];
             $lastCapturedAt = null;
             $requestId = null;
+            $intradayTableFull = false;
 
             foreach ($expiries as $expiry) {
                 $snap = app(\App\Support\PolygonClient::class)->intradayOptionVolumes($symbol, $expiry);
@@ -73,7 +92,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                     continue;
                 }
 
-                DB::transaction(function () use ($symbol, $tradeDate, $snap, $expiry, &$totCallAll, &$totPutAll, &$totPremAll, &$rowsAll, &$lastCapturedAt, &$requestId) {
+                DB::transaction(function () use ($symbol, $tradeDate, $snap, $expiry, &$totCallAll, &$totPutAll, &$totPremAll, &$rowsAll, &$lastCapturedAt, &$requestId, &$intradayTableFull) {
                     $now = now();
                     $capturedAt = \Carbon\Carbon::parse($snap['asof'] ?? now('America/New_York'))->setTimezone('UTC');
                     $lastCapturedAt = $capturedAt;
@@ -81,15 +100,34 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
 
                     $ingestor  = app(\App\Services\IntradayOptionVolumeIngestor::class);
 
-                    foreach ($snap['contracts'] as $contract) {
-                        try {
-                            $ingestor->ingest($contract, $requestId ?? '', $capturedAt);
-                        } catch (\Throwable $e) {
-                            Log::warning('FetchPolygonIntradayOptionsJob.ingestError', [
-                                'symbol' => $symbol,
-                                'expiry' => $expiry,
-                                'err'    => $e->getMessage(),
-                            ]);
+                    if (!$intradayTableFull) {
+                        foreach ($snap['contracts'] as $contract) {
+                            try {
+                                $ingestor->ingest($contract, $requestId ?? '', $capturedAt);
+                            } catch (\Throwable $e) {
+                                $err = (string) $e->getMessage();
+                                $lowerErr = strtolower($err);
+                                $isTableFull = str_contains($lowerErr, '1114')
+                                    && str_contains($lowerErr, 'intraday_option_volumes')
+                                    && str_contains($lowerErr, 'full');
+
+                                if ($isTableFull) {
+                                    // Stop noisy per-contract failures once storage is full.
+                                    $intradayTableFull = true;
+                                    Log::error('FetchPolygonIntradayOptionsJob.intradayTableFull', [
+                                        'symbol' => $symbol,
+                                        'expiry' => $expiry,
+                                        'err'    => $err,
+                                    ]);
+                                    break;
+                                }
+
+                                Log::warning('FetchPolygonIntradayOptionsJob.ingestError', [
+                                    'symbol' => $symbol,
+                                    'expiry' => $expiry,
+                                    'err'    => $err,
+                                ]);
+                            }
                         }
                     }
 

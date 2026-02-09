@@ -157,7 +157,6 @@ async function choose(i) {
     if (typeof window !== 'undefined') {
       localStorage.setItem('calculator_last_symbol', String(pick.symbol || '').toUpperCase())
     }
-    window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: pick.symbol } }))
   } catch (e) {
     if (e?.response?.status === 401) window.location.href = '/login'
   } finally {
@@ -171,7 +170,6 @@ function selectFromList(sym) {
   if (typeof window !== 'undefined') {
     localStorage.setItem('calculator_last_symbol', String(sym || '').toUpperCase())
   }
-  window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: sym } }))
 }
 
 // ────── Pin badge helper (copied from AppShell) ──────

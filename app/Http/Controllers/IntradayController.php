@@ -465,8 +465,17 @@ class IntradayController extends Controller
     private function approxTimeToNearestExpiryYears(string $symbol): ?float
     {
         $nowNy = now('America/New_York');
+        $latest = DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->max('fetched_at');
+
+        if (!$latest) {
+            return null;
+        }
+
         $exp = DB::table('option_snapshots')
             ->where('symbol',$symbol)
+            ->where('fetched_at', $latest)
             ->where('expiry','>=',$nowNy->toDateString())
             ->orderBy('expiry')
             ->value('expiry');

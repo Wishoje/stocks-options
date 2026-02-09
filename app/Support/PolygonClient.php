@@ -229,9 +229,16 @@ class PolygonClient
         $apiKey  = config('services.massive.key');
 
         $path    = "/v3/snapshot/options/{$symbol}";
+        $query = [
+            // Keep page density high to avoid deep pagination and queue lag.
+            'limit' => 250,
+            'sort'  => 'strike_price',
+            'order' => 'asc',
+        ];
         if ($expiration) {
-            $path .= '?expiration_date=' . urlencode($expiration);
+            $query['expiration_date'] = $expiration;
         }
+        $path .= '?' . http_build_query($query);
         $cursor  = null;
 
         $all = ['results' => [], 'status' => null, 'request_id' => null];
@@ -244,12 +251,16 @@ class PolygonClient
         $isHeavy = in_array($sym, $heavySymbols, true);
         $maxHops = $isHeavy ? 500 : 50;
         while (true) {
-            if ($hops++ > $maxHops) {
+            if ($hops >= $maxHops) {
                 Log::warning('PolygonClient.pagination.capReached', [
-                    'symbol' => $symbol,
-                    'pages'  => $hops,
+                    'symbol'     => $symbol,
+                    'expiration' => $expiration,
+                    'pages'      => $hops,
+                    'max_pages'  => $maxHops,
                 ]);
+                break;
             }
+            $hops++;
 
             $url = $cursor ?: ($base . $path);
 

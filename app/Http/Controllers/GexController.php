@@ -24,8 +24,10 @@ class GexController extends Controller
         $dates = $timeframeExpirations[$timeframe] ?? [];
 
         if (empty($dates)) {
+            $this->kickoffSymbolPrime($symbol);
             return response()->json([
                 'error' => "No expirations found for {$symbol}/{$timeframe}",
+                'status' => 'queued',
                 'available_timeframes'  => array_keys($timeframeExpirations),
                 'timeframe_expirations' => $timeframeExpirations,
             ], 404);
@@ -48,7 +50,11 @@ class GexController extends Controller
             ->get();
 
         if ($todayData->isEmpty()) {
-            return response()->json(['error'=>"No data for {$symbol}/{$timeframe}"], 404);
+            $this->kickoffSymbolPrime($symbol);
+            return response()->json([
+                'error'=>"No data for {$symbol}/{$timeframe}",
+                'status' => 'fetching',
+            ], 404);
         }
 
         // 2) Core metrics
@@ -355,5 +361,24 @@ class GexController extends Controller
         $level3 = $filtered[2]['strike'] ?? null;
 
         return [$level1, $level2, $level3];
+    }
+
+    /**
+     * Queue symbol priming once per short window to avoid dispatch storms.
+     */
+    protected function kickoffSymbolPrime(string $symbol): void
+    {
+        $sym = strtoupper(trim($symbol));
+        if ($sym === '') {
+            return;
+        }
+
+        $lockKey = "prime:symbol:{$sym}";
+        if (!Cache::add($lockKey, 1, now()->addSeconds(90))) {
+            return;
+        }
+
+        dispatch(new \App\Jobs\PrimeSymbolJob($sym))->onQueue('default');
+        dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))->onQueue('default');
     }
 }

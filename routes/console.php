@@ -81,6 +81,18 @@ Schedule::command('intraday:prune-counters --days=7')
     ->timezone('America/New_York')
     ->dailyAt('03:00');
 
+Schedule::command('intraday:prune-option-volumes --hours=96')
+    ->timezone('America/New_York')
+    ->hourly()
+    ->withoutOverlapping(20)
+    ->onOneServer();
+
+Schedule::command('calculator:prune-snapshots --hours=168')
+    ->timezone('America/New_York')
+    ->dailyAt('03:10')
+    ->withoutOverlapping(30)
+    ->onOneServer();
+
 Schedule::command('walls:compute --timeframe=all --limit=400 --source=hot')
     ->weekdays()
     ->timezone('America/New_York')
