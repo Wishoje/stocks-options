@@ -18,7 +18,7 @@ class FetchCalculatorChainJob implements ShouldQueue
     public int $timeout = 90;
     public int $tries   = 3;
 
-    public function __construct(public string $symbol) {}
+    public function __construct(public string $symbol, public ?string $expiry = null) {}
 
     private static function clip(?string $s, int $max = 600): string
     {
@@ -32,6 +32,7 @@ class FetchCalculatorChainJob implements ShouldQueue
     public function handle(): void
     {
         $symbol = strtoupper($this->symbol);
+        $targetExpiry = $this->expiry ? substr((string) $this->expiry, 0, 10) : null;
         $apiKey = config('services.massive.key') ?: env('MASSIVE_API_KEY');
         $base   = rtrim((string) config('services.massive.base', 'https://api.massive.com'), '/');
         $mode   = (string) config('services.massive.mode', 'header'); // header|bearer|query
@@ -140,6 +141,9 @@ class FetchCalculatorChainJob implements ShouldQueue
                     'order' => 'asc',
                 ]
                 : [];
+            if ($targetExpiry) {
+                $params['expiration_date'] = $targetExpiry;
+            }
 
             // Log::debug('CalculatorChain.page.request', [
             //     'symbol' => $symbol,
@@ -167,6 +171,9 @@ class FetchCalculatorChainJob implements ShouldQueue
                     'sort'  => 'strike_price',
                     'order' => 'asc',
                 ];
+                if ($targetExpiry) {
+                    $params['expiration_date'] = $targetExpiry;
+                }
                 $resp = $request->get($url, $authParams($params));
 
                 // Log::debug('CalculatorChain.limitRetry', [

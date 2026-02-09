@@ -16,6 +16,7 @@ use App\Http\Controllers\WallScannerController;
 use App\Jobs\PrimeSymbolJob;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 Route::get('/health/ingest', function () {
@@ -100,76 +101,129 @@ Route::post('/scanner/walls', [WallScannerController::class, 'scan']);
 Route::get('/option-chain', function () {
     $symbol = strtoupper(request('symbol', 'SPY'));
     $expiry = request('expiry');
+    $expiry = $expiry ? substr((string) $expiry, 0, 10) : null;
+    $refreshQueued = false;
 
-    // Prefer the freshest "near-complete" snapshot so partial ingest runs
-    // don't replace a good chain with an incomplete one.
-    $latest = null;
-    $candidates = DB::table('option_snapshots')
-        ->where('symbol', $symbol)
-        ->select(
-            'fetched_at',
-            DB::raw('COUNT(*) as row_count'),
-            DB::raw('COUNT(DISTINCT expiry) as exp_count')
-        )
-        ->groupBy('fetched_at')
-        ->orderByDesc('fetched_at')
-        ->limit(8)
-        ->get();
-
-    if ($candidates->isNotEmpty()) {
-        $maxRows = (int) $candidates->max('row_count');
-        $minRowsForComplete = max(50, (int) floor($maxRows * 0.9));
-
-        $freshComplete = $candidates
-            ->filter(fn ($r) => (int) $r->row_count >= $minRowsForComplete)
-            ->sortByDesc('fetched_at')
-            ->first();
-
-        $latest = $freshComplete->fetched_at ?? $candidates->first()->fetched_at ?? null;
-    }
-
-    if (!$latest) {
-        // One-shot self-heal for first-load symbols.
-        try {
-            dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($symbol));
-        } catch (\Throwable $e) {
-            \Log::warning('option-chain.primeFailed', [
-                'symbol' => $symbol,
-                'err' => $e->getMessage(),
-            ]);
+    $queuePrime = function (string $sym, ?string $exp = null) use (&$refreshQueued): bool {
+        $lockKey = 'calculator:prime:' . md5($sym.'|'.($exp ?? '*'));
+        if (!Cache::add($lockKey, 1, now()->addSeconds(90))) {
+            return false;
         }
 
-        $latest = DB::table('option_snapshots')
-            ->where('symbol', $symbol)
-            ->max('fetched_at');
+        \App\Jobs\FetchCalculatorChainJob::dispatch($sym, $exp)->onQueue('calculator');
+        $refreshQueued = true;
+        return true;
+    };
 
-        if (!$latest) {
+    $recentCutoff = now('UTC')->subHours(24);
+    $today = today()->toDateString();
+
+    // Expiration menu: use recent snapshots (not a single fetched_at), then fallback.
+    $expRows = DB::table('option_snapshots')
+        ->where('symbol', $symbol)
+        ->where('expiry', '>=', $today)
+        ->where('fetched_at', '>=', $recentCutoff)
+        ->select('expiry')
+        ->distinct()
+        ->orderBy('expiry')
+        ->get();
+
+    if ($expRows->isEmpty()) {
+        $expRows = DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->where('expiry', '>=', $today)
+            ->select('expiry')
+            ->distinct()
+            ->orderBy('expiry')
+            ->get();
+    }
+
+    if (!$expiry) {
+        $expiry = data_get($expRows->first(), 'expiry');
+    }
+
+    // If symbol/expiry absent in DB, one-shot targeted prime.
+    if (!$expiry) {
+        $queuePrime($symbol, null);
+
+        $expRows = DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->where('expiry', '>=', $today)
+            ->select('expiry')
+            ->distinct()
+            ->orderBy('expiry')
+            ->get();
+
+        $expiry = data_get($expRows->first(), 'expiry');
+        if (!$expiry) {
             return response()->json([
                 'underlying'  => ['symbol' => $symbol, 'price' => null],
                 'chain'       => [],
                 'expirations' => [],
                 'status'      => 'no_snapshot',
+                'refresh_queued' => $refreshQueued,
             ], 202);
         }
     }
 
-    $base = DB::table('option_snapshots')
+    $latest = DB::table('option_snapshots')
         ->where('symbol', $symbol)
-        ->where('fetched_at', $latest);
+        ->whereDate('expiry', $expiry)
+        ->max('fetched_at');
 
-    $spot = app(\App\Services\WallService::class)->currentPrice($symbol, null);
-    $price = $spot ?? $base->value('underlying_price') ?? 100;
-
-    if (!$expiry) {
-        $expiry = DB::table('option_snapshots')
+    $stats = null;
+    if ($latest) {
+        $stats = DB::table('option_snapshots')
             ->where('symbol', $symbol)
+            ->whereDate('expiry', $expiry)
             ->where('fetched_at', $latest)
-            ->where('expiry', '>=', today())
-            ->orderBy('expiry')
-            ->value('expiry');
+            ->selectRaw('COUNT(*) as row_count, MIN(strike) as min_strike, MAX(strike) as max_strike')
+            ->first();
     }
 
-    $chainQuery = $base->clone()
+    $spotForHealth = app(\App\Services\WallService::class)->currentPrice($symbol, null);
+    $looksTruncated = $spotForHealth
+        && $stats
+        && isset($stats->max_strike)
+        && (float) $stats->max_strike > 0
+        && (float) $stats->max_strike < ((float) $spotForHealth * 0.85);
+
+    // Self-heal thin/partial chains for this specific expiry.
+    if (
+        !$latest ||
+        !$stats ||
+        (int) ($stats->row_count ?? 0) < 40 ||
+        $looksTruncated
+    ) {
+        $queuePrime($symbol, $expiry);
+    }
+
+    if (!$latest) {
+        return response()->json([
+            'underlying'  => ['symbol' => $symbol, 'price' => null],
+            'chain'       => [],
+            'expirations' => $expRows->map(fn ($r) => [
+                'value' => $r->expiry,
+                'label' => \Carbon\Carbon::parse($r->expiry)->format('m-d'),
+            ])->toArray(),
+            'status'      => 'no_expiry_snapshot',
+            'requested_expiry' => $expiry,
+            'refresh_queued' => $refreshQueued,
+        ], 202);
+    }
+
+    $spot = $spotForHealth;
+    $basePrice = DB::table('option_snapshots')
+        ->where('symbol', $symbol)
+        ->whereDate('expiry', $expiry)
+        ->where('fetched_at', $latest)
+        ->value('underlying_price');
+    $price = $spot ?? $basePrice ?? 100;
+
+    $chain = DB::table('option_snapshots')
+        ->where('symbol', $symbol)
+        ->whereDate('expiry', $expiry)
+        ->where('fetched_at', $latest)
         ->select(
             'strike',
             'type',
@@ -178,38 +232,24 @@ Route::get('/option-chain', function () {
             'mid',
             DB::raw("DATE_FORMAT(expiry, '%Y-%m-%d') as expiry_full"),
             DB::raw("DATE_FORMAT(expiry, '%m-%d') as expiry")
-        );
-
-    if ($expiry) {
-        $chainQuery->whereDate('expiry', '=', $expiry);
-    }
-
-    $chain = $chainQuery
+        )
         ->orderBy('strike')
         ->get()
         ->map(function ($row) {
-            // normalize field names for the front-end
             return [
                 'strike' => (float) $row->strike,
                 'type'   => $row->type,
                 'bid'    => (float) $row->bid,
                 'ask'    => (float) $row->ask,
                 'mid'    => (float) $row->mid,
-                'expiry' => $row->expiry_full, // full YYYY-MM-DD for JS Date
-                'label'  => $row->expiry,      // MM-DD for display if needed
+                'expiry' => $row->expiry_full,
+                'label'  => $row->expiry,
             ];
         });
 
-    $expirations = DB::table('option_snapshots')
-        ->where('symbol', $symbol)
-        ->where('fetched_at', $latest)
-        ->where('expiry', '>=', today())
-        ->select('expiry')
-        ->distinct()
-        ->orderBy('expiry')
-        ->get()
+    $expirations = $expRows
         ->map(fn ($r) => [
-            'value' => $r->expiry, // full YYYY-MM-DD
+            'value' => $r->expiry,
             'label' => \Carbon\Carbon::parse($r->expiry)->format('m-d'),
         ])
         ->toArray();
@@ -219,6 +259,8 @@ Route::get('/option-chain', function () {
         'chain'       => $chain,
         'expirations' => $expirations,
         'snapshot_at' => $latest,
+        'requested_expiry' => $expiry,
+        'refresh_queued' => $refreshQueued,
     ];
 });
 
@@ -233,9 +275,31 @@ Route::get('/debug/market', function () {
 Route::post('/prime-calculator', function (Request $req) {
     $sym = \App\Support\Symbols::canon($req->input('symbol', 'SPY'));
     if (!$sym) return response()->json(['error' => 'Invalid symbol'], 400);
+    $expiry = $req->input('expiry');
+    $expiry = $expiry ? substr((string) $expiry, 0, 10) : null;
+    $sync = $req->boolean('sync', false);
 
-    // Only dispatch calculator job
-    dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($sym));
+    if ($sync) {
+        dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($sym, $expiry));
+        return response()->json([
+            'ok' => true,
+            'symbol' => $sym,
+            'expiry' => $expiry,
+            'mode' => 'sync',
+        ]);
+    }
 
-    return response()->json(['ok' => true, 'symbol' => $sym]);
+    $lockKey = 'calculator:prime:' . md5($sym.'|'.($expiry ?? '*'));
+    $queued = Cache::add($lockKey, 1, now()->addSeconds(90));
+    if ($queued) {
+        \App\Jobs\FetchCalculatorChainJob::dispatch($sym, $expiry)->onQueue('calculator');
+    }
+
+    return response()->json([
+        'ok' => true,
+        'symbol' => $sym,
+        'expiry' => $expiry,
+        'mode' => 'queue',
+        'queued' => $queued,
+    ], $queued ? 202 : 200);
 });
