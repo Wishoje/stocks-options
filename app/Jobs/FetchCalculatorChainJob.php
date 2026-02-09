@@ -123,11 +123,12 @@ class FetchCalculatorChainJob implements ShouldQueue
         // Step 2: Option chain (paginated)
         // -----------------------------
         $perPage   = 250; // first attempt, fallback to 100 if Massive rejects
+        $maxPages  = max(50, (int) env('CALC_CHAIN_MAX_PAGES', 150));
         $url       = "{$base}/v3/snapshot/options/{$symbol}";
         $contracts = [];
         $page      = 0;
 
-        while ($url && $page < 50) {
+        while ($url && $page < $maxPages) {
             $page++;
 
             $request = $makeRequest(30);
@@ -225,6 +226,14 @@ class FetchCalculatorChainJob implements ShouldQueue
             $url = $next;
         }
 
+        if ($url) {
+            Log::warning('CalculatorChain.paginationCapReached', [
+                'symbol' => $symbol,
+                'pages' => $page,
+                'max_pages' => $maxPages,
+            ]);
+        }
+
         Log::info('CalculatorChain.fetchComplete', [
             'symbol'    => $symbol,
             'contracts' => count($contracts),
@@ -249,6 +258,19 @@ class FetchCalculatorChainJob implements ShouldQueue
 
             $details = $c['details'] ?? [];
             if (empty($details['strike_price'])) {
+                $skipped++;
+                continue;
+            }
+
+            $contractType = strtolower((string) ($details['contract_type'] ?? ''));
+            if (!in_array($contractType, ['call', 'put'], true)) {
+                $skipped++;
+                continue;
+            }
+
+            $expiryRaw = (string) ($details['expiration_date'] ?? '');
+            $expiry = strlen($expiryRaw) >= 10 ? substr($expiryRaw, 0, 10) : null;
+            if (!$expiry) {
                 $skipped++;
                 continue;
             }
@@ -315,17 +337,12 @@ class FetchCalculatorChainJob implements ShouldQueue
             }
 
             // still useless → skip
-            if ($mid == 0.0) {
-                $skipped++;
-                continue;
-            }
-
             $inserts[] = [
                 'symbol'           => $symbol,
                 'ticker'           => $c['ticker'] ?? '',
-                'type'             => strtolower($details['contract_type'] ?? 'call'),
+                'type'             => $contractType,
                 'strike'           => $details['strike_price'],
-                'expiry'           => $details['expiration_date'] ?? null,
+                'expiry'           => $expiry,
                 'bid'              => round($bid, 2),
                 'ask'              => round($ask, 2),
                 'mid'              => round($mid, 2),

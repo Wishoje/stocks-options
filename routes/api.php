@@ -101,10 +101,32 @@ Route::get('/option-chain', function () {
     $symbol = strtoupper(request('symbol', 'SPY'));
     $expiry = request('expiry');
 
-    // Find the latest snapshot for this symbol
-    $latest = DB::table('option_snapshots')
+    // Prefer the freshest "near-complete" snapshot so partial ingest runs
+    // don't replace a good chain with an incomplete one.
+    $latest = null;
+    $candidates = DB::table('option_snapshots')
         ->where('symbol', $symbol)
-        ->max('fetched_at');
+        ->select(
+            'fetched_at',
+            DB::raw('COUNT(*) as row_count'),
+            DB::raw('COUNT(DISTINCT expiry) as exp_count')
+        )
+        ->groupBy('fetched_at')
+        ->orderByDesc('fetched_at')
+        ->limit(8)
+        ->get();
+
+    if ($candidates->isNotEmpty()) {
+        $maxRows = (int) $candidates->max('row_count');
+        $minRowsForComplete = max(50, (int) floor($maxRows * 0.9));
+
+        $freshComplete = $candidates
+            ->filter(fn ($r) => (int) $r->row_count >= $minRowsForComplete)
+            ->sortByDesc('fetched_at')
+            ->first();
+
+        $latest = $freshComplete->fetched_at ?? $candidates->first()->fetched_at ?? null;
+    }
 
     if (!$latest) {
         // One-shot self-heal for first-load symbols.
