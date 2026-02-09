@@ -166,22 +166,39 @@ Route::get('/option-chain', function () {
         }
     }
 
-    $latest = DB::table('option_snapshots')
-        ->where('symbol', $symbol)
-        ->whereDate('expiry', $expiry)
-        ->max('fetched_at');
-
+    $spotForHealth = app(\App\Services\WallService::class)->currentPrice($symbol, null);
+    $latest = null;
     $stats = null;
-    if ($latest) {
+
+    // For this expiry, prefer a healthy/fuller snapshot over blindly taking newest.
+    if ($spotForHealth && $spotForHealth > 0) {
         $stats = DB::table('option_snapshots')
             ->where('symbol', $symbol)
             ->whereDate('expiry', $expiry)
-            ->where('fetched_at', $latest)
-            ->selectRaw('COUNT(*) as row_count, MIN(strike) as min_strike, MAX(strike) as max_strike')
+            ->selectRaw('fetched_at, COUNT(*) as row_count, MIN(strike) as min_strike, MAX(strike) as max_strike')
+            ->groupBy('fetched_at')
+            ->havingRaw('COUNT(*) >= 40')
+            ->havingRaw('MAX(strike) >= ?', [(float) $spotForHealth * 1.05])
+            ->havingRaw('MIN(strike) <= ?', [(float) $spotForHealth * 0.95])
+            ->orderByDesc('fetched_at')
             ->first();
     }
 
-    $spotForHealth = app(\App\Services\WallService::class)->currentPrice($symbol, null);
+    if (!$stats) {
+        $stats = DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->whereDate('expiry', $expiry)
+            ->selectRaw('fetched_at, COUNT(*) as row_count, MIN(strike) as min_strike, MAX(strike) as max_strike')
+            ->groupBy('fetched_at')
+            ->orderByDesc('row_count')
+            ->orderByDesc('fetched_at')
+            ->first();
+    }
+
+    if ($stats && isset($stats->fetched_at)) {
+        $latest = $stats->fetched_at;
+    }
+
     $looksTruncated = $spotForHealth
         && $stats
         && isset($stats->max_strike)
@@ -259,6 +276,11 @@ Route::get('/option-chain', function () {
         'chain'       => $chain,
         'expirations' => $expirations,
         'snapshot_at' => $latest,
+        'snapshot_stats' => [
+            'row_count' => (int) ($stats->row_count ?? 0),
+            'min_strike' => isset($stats->min_strike) ? (float) $stats->min_strike : null,
+            'max_strike' => isset($stats->max_strike) ? (float) $stats->max_strike : null,
+        ],
         'requested_expiry' => $expiry,
         'refresh_queued' => $refreshQueued,
     ];

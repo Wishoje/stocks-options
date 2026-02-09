@@ -28,7 +28,7 @@ const targetPrice    = ref(null)
 const decayViewMode  = ref('compact') // 'compact' | 'full'
 
 // strike band for chain list
-const strikeBandMode = ref('near') // 'near' | 'wide' | 'all'
+const strikeBandMode = ref('wide') // 'near' | 'wide' | 'all'
 
 let chart = null
 let decayChart = null
@@ -371,8 +371,8 @@ const strikesAroundPrice = computed(() => {
   const pct = strikeBandMode.value === 'near' ? 0.15 : 0.4
   const lo = center * (1 - pct)
   const hi = center * (1 + pct)
-
-  return chainData.value.filter((o) => o.strike >= lo && o.strike <= hi)
+  const filtered = chainData.value.filter((o) => o.strike >= lo && o.strike <= hi)
+  return filtered.length ? filtered : chainData.value
 })
 
 const groupedStrikes = computed(() => {
