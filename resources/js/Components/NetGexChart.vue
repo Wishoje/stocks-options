@@ -328,8 +328,16 @@ export default {
       const link = document.createElement('a')
       const ts = new Date().toISOString().slice(0, 10)
       link.download = `${this.snapshotName || 'net-gex'}-${ts}.png`
-      link.href = off.toDataURL('image/png')
-      link.click()
+
+      off.toBlob((blob) => {
+        if (!blob) return
+        const url = URL.createObjectURL(blob)
+        link.href = url
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+      }, 'image/png')
     },
     // pick a "nice" bucket width given a raw step
     niceStep(step) {

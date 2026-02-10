@@ -1185,6 +1185,12 @@ function onboardingState() {
 }
 
 onMounted(() => {
+  const startSym = new URLSearchParams(window.location.search).get('symbol')
+  if (startSym) {
+    const cleaned = startSym.trim().toUpperCase()
+    if (cleaned) userSymbol.value = cleaned
+  }
+
   const onboarding = onboardingState()
   const checklistDismissed = !!localStorage.getItem('gex_checklist_v1_dismissed')
   showOnboarding.value = onboarding === 'new'

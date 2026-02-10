@@ -1,6 +1,8 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue'
 import AppShell from '@/Components/AppShell.vue'
+import DialogModal from '@/Components/DialogModal.vue'
+import NetGexChart from '@/Components/NetGexChart.vue'
 import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
 
@@ -38,8 +40,13 @@ const wallHits    = ref([])      // [{ symbol, spot, timeframe, hits, walls: {..
 const wallLoading = ref(false)
 const wallError   = ref('')
 const wallUpdatedAt = ref(null)
-const wallNearPct = ref(1.0)     // ±% from wall
-const wallNearPts = ref(null)    // optional ±$ from wall
+const wallNearPct = ref(1.0)     // +/-% from wall
+const wallNearPts = ref(null)    // optional +/-$ from wall
+const wallSortMode = ref('nearest') // nearest | call | put
+const wallDetailOpen = ref(false)
+const wallDetailLoading = ref(false)
+const wallDetailError = ref('')
+const wallDetail = ref(null)
 
 // For volume: how many watchlist names are in the volume universe
 const watchlistHitCount = computed(() => {
@@ -76,6 +83,17 @@ const orderedTimeframes = computed(() => {
   return [...primary, ...extra]
 })
 
+const sortedWallHitsByTimeframe = computed(() => {
+  const grouped = wallHitsByTimeframe.value
+  const out = {}
+
+  for (const [tf, rows] of Object.entries(grouped)) {
+    out[tf] = [...rows].sort((a, b) => compareWallHits(a, b))
+  }
+
+  return out
+})
+
 const wallLabelMeta = {
   eod_put: {
     kind: 'Put wall',
@@ -109,9 +127,9 @@ function isInWatchlist(sym) {
 }
 
 function formatNumber(v) {
-  if (v == null) return '—'
+  if (v == null) return '--'
   const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
+  if (!Number.isFinite(n)) return '--'
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
   return n.toLocaleString()
@@ -144,21 +162,161 @@ function wallTags(hit) {
 
     const dist =
       typeof wall.distance_pc === 'number'
-        ? `Δ${wall.distance_pc.toFixed(2)}%`
+        ? `${wall.distance_pc.toFixed(2)}%`
         : null
 
     tags.push({
       key,
       kind: meta.kind,                 // "Call wall" | "Put wall"
+      side: key.includes('call') ? 'call' : (key.includes('put') ? 'put' : 'wall'),
       timeframe: meta.timeframe,       // "End-of-day" | "Intraday"
       timeframeShort: meta.timeframeShort, // "EOD" | "Live"
       strike: wall.strike,
+      distancePct: typeof wall.distance_pc === 'number' ? wall.distance_pc : null,
       dist,
       classes: meta.classes,
     })
   }
 
   return tags
+}
+
+function orderedWallTags(hit) {
+  const tags = wallTags(hit)
+  const mode = wallSortMode.value
+
+  return [...tags].sort((a, b) => {
+    if (mode === 'call' || mode === 'put') {
+      const aPref = a.side === mode ? 0 : 1
+      const bPref = b.side === mode ? 0 : 1
+      if (aPref !== bPref) return aPref - bPref
+    }
+
+    const aDist = Number.isFinite(a.distancePct) ? a.distancePct : Number.POSITIVE_INFINITY
+    const bDist = Number.isFinite(b.distancePct) ? b.distancePct : Number.POSITIVE_INFINITY
+    if (aDist !== bDist) return aDist - bDist
+
+    return a.key.localeCompare(b.key)
+  })
+}
+
+function nearestWallDistance(hit) {
+  if (!hit?.walls) return null
+
+  let minPct = null
+  let minPts = null
+
+  for (const info of Object.values(hit.walls)) {
+    if (!info) continue
+    if (typeof info.distance_pc === 'number') {
+      minPct = minPct === null ? info.distance_pc : Math.min(minPct, info.distance_pc)
+    }
+    if (typeof info.distance_pt === 'number') {
+      minPts = minPts === null ? info.distance_pt : Math.min(minPts, info.distance_pt)
+    }
+  }
+
+  if (minPct === null && minPts === null) return null
+  return { pct: minPct, pts: minPts }
+}
+
+function hitSideCounts(hit) {
+  let call = 0
+  let put = 0
+  for (const kind of (hit?.hits || [])) {
+    if (kind.includes('call')) call++
+    if (kind.includes('put')) put++
+  }
+  return { call, put }
+}
+
+function compareWallHits(a, b) {
+  const mode = wallSortMode.value
+  const aCounts = hitSideCounts(a)
+  const bCounts = hitSideCounts(b)
+  const aBias = aCounts.call - aCounts.put
+  const bBias = bCounts.call - bCounts.put
+
+  if (mode === 'call') {
+    const aHas = aCounts.call > 0
+    const bHas = bCounts.call > 0
+    if (aHas !== bHas) return aHas ? -1 : 1
+    if (aBias !== bBias) return bBias - aBias
+  }
+  if (mode === 'put') {
+    const aHas = aCounts.put > 0
+    const bHas = bCounts.put > 0
+    if (aHas !== bHas) return aHas ? -1 : 1
+    if (aBias !== bBias) return aBias - bBias
+  }
+
+  const aNear = nearestWallDistance(a)?.pct ?? Number.POSITIVE_INFINITY
+  const bNear = nearestWallDistance(b)?.pct ?? Number.POSITIVE_INFINITY
+  if (aNear !== bNear) return aNear - bNear
+
+  return String(a?.symbol || '').localeCompare(String(b?.symbol || ''))
+}
+
+function timeframeHitCounts(tf) {
+  const rows = wallHitsByTimeframe.value[tf] || []
+  let call = 0
+  let put = 0
+
+  for (const row of rows) {
+    for (const hitType of (row?.hits || [])) {
+      if (hitType.includes('call')) call++
+      if (hitType.includes('put')) put++
+    }
+  }
+
+  return { call, put }
+}
+
+function formatCompact(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return 'n/a'
+  if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return `${n.toFixed(0)}`
+}
+
+function closestStrikeGex(strikeData, targetStrike) {
+  if (!Array.isArray(strikeData) || !strikeData.length || !Number.isFinite(Number(targetStrike))) {
+    return null
+  }
+
+  const target = Number(targetStrike)
+  let best = null
+  let bestDist = Infinity
+
+  for (const row of strikeData) {
+    const strike = Number(row?.strike)
+    const netGex = Number(row?.net_gex ?? row?.netGex)
+    if (!Number.isFinite(strike) || !Number.isFinite(netGex)) continue
+
+    const d = Math.abs(strike - target)
+    if (d < bestDist) {
+      bestDist = d
+      best = { strike, netGex }
+    }
+  }
+
+  if (!best) return null
+
+  const absVals = strikeData
+    .map(r => Number(r?.net_gex ?? r?.netGex))
+    .filter(n => Number.isFinite(n))
+    .map(n => Math.abs(n))
+
+  const maxAbs = absVals.length ? Math.max(...absVals) : 0
+  const pctOfMax = maxAbs > 0 ? (Math.abs(best.netGex) / maxAbs) * 100 : null
+
+  return {
+    strike: best.strike,
+    netGex: best.netGex,
+    pctOfMax,
+  }
 }
 
 
@@ -206,7 +364,7 @@ async function loadWatchlist() {
   }
 }
 
-// Master wall scanner – behaves differently per mode
+// Master wall scanner - behaves differently per mode
 async function loadWallHits() {
   wallHits.value = []
   wallError.value = ''
@@ -217,7 +375,7 @@ async function loadWallHits() {
     let symbols = []
 
     if (!watchlist.value.length) {
-      // no watchlist → nothing to scan
+      // no watchlist -> nothing to scan
       return
     }
 
@@ -263,9 +421,62 @@ async function loadWallHits() {
 // --- UI interactions ---
 
 function selectSymbol(sym) {
+  const next = String(sym || '').trim().toUpperCase()
+  if (!next) return
+
+  // Scanner page does not host the Dashboard listener. Route directly.
+  if ((window.location.pathname || '').includes('/scanner')) {
+    window.location.assign(`/dashboard?symbol=${encodeURIComponent(next)}`)
+    return
+  }
+
   window.dispatchEvent(
-    new CustomEvent('select-symbol', { detail: { symbol: sym } })
+    new CustomEvent('select-symbol', { detail: { symbol: next } })
   )
+}
+
+async function openWallDetail(hit, tag) {
+  wallDetailOpen.value = true
+  wallDetailLoading.value = true
+  wallDetailError.value = ''
+  wallDetail.value = {
+    symbol: hit?.symbol ?? null,
+    timeframe: hit?.timeframe ?? null,
+    spot: hit?.spot ?? null,
+    tradeDate: hit?.trade_date ?? null,
+    tag,
+    strikeData: [],
+    dataDate: null,
+    wallGex: null,
+  }
+
+  try {
+    const { data } = await axios.get('/api/gex-levels', {
+      params: {
+        symbol: hit.symbol,
+        timeframe: hit.timeframe || '30d',
+      },
+    })
+
+    const strikeData = Array.isArray(data?.strike_data) ? data.strike_data : []
+    const wallGex = closestStrikeGex(strikeData, tag?.strike)
+
+    wallDetail.value = {
+      ...wallDetail.value,
+      strikeData,
+      dataDate: data?.data_date ?? null,
+      wallGex,
+    }
+  } catch (e) {
+    wallDetailError.value =
+      e?.response?.data?.error || `Failed to load GEX profile (${e?.response?.status || 'network'})`
+  } finally {
+    wallDetailLoading.value = false
+  }
+}
+
+function closeWallDetail() {
+  wallDetailOpen.value = false
 }
 
 async function toggleWatchlist(sym) {
@@ -335,7 +546,7 @@ watch(scannerMode, (mode) => {
   if (mode === 'volume') {
     loadHotOptions()
   } else {
-    // GEX mode – recompute wall hits based on full watchlist
+    // GEX mode - recompute wall hits based on full watchlist
     loadWallHits()
   }
 })
@@ -351,7 +562,7 @@ onMounted(async () => {
   <AppLayout title="Scanner">
     <template #header>
       <h2 class="font-semibold text-xl text-gray-800 dark:text-gray-200 leading-tight">
-        Scanner – Options Universe
+        Scanner - Options Universe
       </h2>
     </template>
 
@@ -396,7 +607,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- Controls row – only for volume mode -->
+          <!-- Controls row - only for volume mode -->
           <div
             v-if="scannerMode === 'volume'"
             class="bg-gray-900/70 border border-gray-800 rounded-xl px-4 py-3 flex flex-wrap items-center gap-3"
@@ -445,7 +656,7 @@ onMounted(async () => {
               </span>
 
               <span class="hidden sm:inline">
-                · Watchlist in universe:
+                | Watchlist in universe:
                 <span class="font-mono text-emerald-300">{{ watchlistHitCount }}</span>
               </span>
 
@@ -495,7 +706,7 @@ onMounted(async () => {
             </div>
 
             <div>
-              Window: last {{ days }}d · Mode: Volume
+              Window: last {{ days }}d | Mode: Volume
             </div>
           </div>
 
@@ -518,7 +729,7 @@ onMounted(async () => {
               </div>
 
               <div>
-                Universe: Watchlist ({{ watchlist.length }} names) · Mode: GEX
+                Universe: Watchlist ({{ watchlist.length }} names) | Mode: GEX
               </div>
             </div>
 
@@ -547,8 +758,34 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                <div class="flex items-center gap-1 text-[11px] text-gray-300">
-                  <span>±%</span>
+                <div class="flex items-center gap-1 text-[11px] text-gray-300 flex-wrap justify-end">
+                  <div class="mr-2 inline-flex rounded-md overflow-hidden border border-gray-700">
+                    <button
+                      type="button"
+                      class="px-2 py-1 text-[10px] font-medium transition"
+                      :class="wallSortMode === 'nearest' ? 'bg-gray-700 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'"
+                      @click="wallSortMode = 'nearest'"
+                    >
+                      Near
+                    </button>
+                    <button
+                      type="button"
+                      class="px-2 py-1 text-[10px] font-medium transition"
+                      :class="wallSortMode === 'call' ? 'bg-emerald-700 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'"
+                      @click="wallSortMode = 'call'"
+                    >
+                      Call
+                    </button>
+                    <button
+                      type="button"
+                      class="px-2 py-1 text-[10px] font-medium transition"
+                      :class="wallSortMode === 'put' ? 'bg-red-700 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'"
+                      @click="wallSortMode = 'put'"
+                    >
+                      Put
+                    </button>
+                  </div>
+                  <span>+/-%</span>
                   <input
                     v-model.number="wallNearPct"
                     type="number"
@@ -556,7 +793,7 @@ onMounted(async () => {
                     class="w-16 px-2 py-1 bg-gray-800 border border-gray-700 rounded
                           focus:outline-none focus:border-cyan-500"
                   />
-                  <span class="ml-2">±$</span>
+                  <span class="ml-2">+/-$</span>
                   <input
                     v-model.number="wallNearPts"
                     type="number"
@@ -600,46 +837,123 @@ onMounted(async () => {
                     <div class="text-[10px] uppercase tracking-wide text-gray-400">
                       {{ tf }} walls
                     </div>
-                    <div class="text-[10px] text-gray-500">
-                      {{ wallHitsByTimeframe[tf].length }} names
+                    <div class="flex items-center gap-2 text-[10px] text-gray-500">
+                      <span>{{ wallHitsByTimeframe[tf].length }} names</span>
+                      <span class="text-emerald-300">Call {{ timeframeHitCounts(tf).call }}</span>
+                      <span class="text-red-300">Put {{ timeframeHitCounts(tf).put }}</span>
                     </div>
                   </div>
 
-                  <div class="flex flex-wrap gap-1">
-                    <button
-                      v-for="hit in wallHitsByTimeframe[tf]"
+                  <div class="space-y-1.5">
+                    <div
+                      v-for="hit in sortedWallHitsByTimeframe[tf]"
                       :key="hit.symbol + '-' + tf"
-                      @click="selectSymbol(hit.symbol)"
-                      class="px-2 py-1 rounded-lg text-[11px] font-mono
-                            bg-gray-800 border border-gray-700 hover:bg-gray-700
-                            flex items-center gap-2"
+                      class="rounded-lg border border-gray-700/70 bg-gray-800/60 px-2 py-1.5
+                             grid grid-cols-1 sm:grid-cols-[72px_108px_minmax(0,1fr)] items-center gap-2"
                     >
-                      <span class="text-cyan-300">{{ hit.symbol }}</span>
+                      <button
+                        @click="selectSymbol(hit.symbol)"
+                        class="text-cyan-300 font-mono text-[11px] hover:text-cyan-200 text-left"
+                        :title="`Open ${hit.symbol}`"
+                      >
+                        {{ hit.symbol }}
+                      </button>
 
-                    <span
-                      v-for="tag in wallTags(hit)"
-                      :key="tag.key"
-                      :title="`${tag.kind} – ${tag.timeframe}`"
-                      class="px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1"
-                      :class="tag.classes"
-                    >
-                      <span class="font-semibold">
-                        {{ tag.kind }} · {{ tag.timeframeShort }}
-                      </span>
-                      <span v-if="tag.strike">
-                        @ {{ tag.strike }}
-                      </span>
-                      <span v-if="tag.dist" class="opacity-80">
-                        ({{ tag.dist }})
-                      </span>
-                    </span>
-                    </button>
+                      <div class="text-[10px] text-gray-400">
+                        nearest:
+                        <span class="font-mono text-gray-300">
+                          {{ nearestWallDistance(hit)?.pct?.toFixed(2) ?? '--' }}%
+                        </span>
+                      </div>
+
+                      <div class="flex flex-wrap items-center gap-1 sm:justify-start">
+                        <button
+                          v-for="tag in orderedWallTags(hit)"
+                          :key="tag.key"
+                          :title="`Open ${tag.kind} profile for ${hit.symbol}`"
+                          class="px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 hover:brightness-110 transition"
+                          :class="tag.classes"
+                          @click="openWallDetail(hit, tag)"
+                        >
+                          <span class="font-semibold">
+                            {{ tag.kind }} {{ tag.timeframeShort }}
+                          </span>
+                          <span v-if="tag.strike">@ {{ tag.strike }}</span>
+                          <span v-if="tag.dist" class="opacity-80">({{ tag.dist }})</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
+          <DialogModal :show="wallDetailOpen" maxWidth="2xl" @close="closeWallDetail">
+            <template #title>
+              <div class="flex items-center justify-between">
+                <div class="text-sm md:text-base">
+                  {{ wallDetail?.symbol || 'Symbol' }} - {{ (wallDetail?.timeframe || 'N/A').toUpperCase() }} - {{ wallDetail?.tag?.kind || 'Wall' }}
+                </div>
+                <button
+                  type="button"
+                  class="text-xs px-2 py-1 rounded border border-gray-600 text-gray-300 hover:bg-gray-700"
+                  @click="wallDetail?.symbol ? selectSymbol(wallDetail.symbol) : null"
+                >
+                  Open symbol
+                </button>
+              </div>
+            </template>
+
+            <template #content>
+              <div class="space-y-3 text-gray-200">
+                <div class="flex flex-wrap gap-3 text-xs">
+                  <span>Spot: <span class="font-mono text-cyan-300">{{ Number(wallDetail?.spot || 0).toFixed(2) }}</span></span>
+                  <span>Wall: <span class="font-mono">{{ wallDetail?.tag?.strike ?? 'n/a' }}</span></span>
+                  <span v-if="wallDetail?.tag?.distancePct != null">
+                    Distance: <span class="font-mono">{{ Number(wallDetail.tag.distancePct).toFixed(2) }}%</span>
+                  </span>
+                  <span v-if="wallDetail?.dataDate">Data date: <span class="font-mono">{{ wallDetail.dataDate }}</span></span>
+                </div>
+
+                <div v-if="wallDetail?.wallGex" class="text-xs text-gray-300">
+                  Net GEX near wall:
+                  <span class="font-mono" :class="wallDetail.wallGex.netGex >= 0 ? 'text-emerald-300' : 'text-red-300'">
+                    {{ wallDetail.wallGex.netGex >= 0 ? '+' : '' }}{{ formatCompact(wallDetail.wallGex.netGex) }}
+                  </span>
+                  <span v-if="wallDetail.wallGex.pctOfMax != null" class="text-gray-400">
+                    ({{ Number(wallDetail.wallGex.pctOfMax).toFixed(1) }}% of max |GEX|)
+                  </span>
+                </div>
+
+                <div v-if="wallDetailError" class="text-xs text-red-300">
+                  {{ wallDetailError }}
+                </div>
+                <div v-else-if="wallDetailLoading" class="text-xs text-gray-400">
+                  Loading EOD Net GEX profile...
+                </div>
+                <div v-else-if="!wallDetail?.strikeData?.length" class="text-xs text-gray-500">
+                  No strike profile data available for this selection.
+                </div>
+                <NetGexChart
+                  v-else
+                  :strikeData="wallDetail.strikeData"
+                  :snapshotName="`${wallDetail.symbol || 'symbol'}-${wallDetail.timeframe || 'tf'}-gex`"
+                  heightClass="h-64 md:h-72"
+                />
+              </div>
+            </template>
+
+            <template #footer>
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded bg-gray-700 text-gray-100 hover:bg-gray-600 text-xs"
+                @click="closeWallDetail"
+              >
+                Close
+              </button>
+            </template>
+          </DialogModal>
 
           <!-- Main body: Volume grid -->
           <div v-if="scannerMode === 'volume'">
@@ -647,7 +961,7 @@ onMounted(async () => {
               {{ error }}
             </div>
             <div v-else-if="loading" class="text-gray-300 text-sm">
-              Loading…
+              Loading...
             </div>
             <div v-else class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
               <button
@@ -714,7 +1028,7 @@ onMounted(async () => {
                     <span v-if="!watchlistBusy[item.symbol]">
                       {{ isInWatchlist(item.symbol) ? '✓' : '+' }}
                     </span>
-                    <span v-else class="animate-pulse">…</span>
+                    <span v-else class="animate-pulse">...</span>
                   </button>
                 </div>
               </button>
