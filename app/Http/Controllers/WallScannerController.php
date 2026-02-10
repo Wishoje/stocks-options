@@ -102,68 +102,40 @@ class WallScannerController extends Controller
                 $hitTypes = [];
                 $walls    = [];
 
-                // --- EOD put wall ---
-                if ($row->eod_put_wall !== null) {
-                    $distPct = abs((float) $row->eod_put_dist_pct);
-                    $distPts = abs($spot - (float) $row->eod_put_wall);
+                // Keep scanner focused on one primary put wall + one primary call wall
+                // (EOD first; intraday as fallback) to avoid weaker multi-wall noise.
+                $putWall = $this->pickSingleWall([
+                    $this->wallInfo('eod_put', $row->eod_put_wall, $row->eod_put_dist_pct, $spot),
+                    $this->wallInfo('intraday_put', $row->intraday_put_wall, $row->intraday_put_dist_pct, $spot),
+                ]);
 
-                    if ($this->isHit($distPct, $distPts, $maxPct, $maxPts)) {
-                        $hitTypes[] = 'eod_put';
-                    }
-
-                    $walls['eod_put'] = [
-                        'strike'      => (float) $row->eod_put_wall,
-                        'distance_pt' => $distPts,
-                        'distance_pc' => $distPct,
+                if ($putWall) {
+                    $walls[$putWall['key']] = [
+                        'strike'      => $putWall['strike'],
+                        'distance_pt' => $putWall['distance_pt'],
+                        'distance_pc' => $putWall['distance_pc'],
                     ];
+
+                    if ($this->isHit($putWall['distance_pc'], $putWall['distance_pt'], $maxPct, $maxPts)) {
+                        $hitTypes[] = $putWall['key'];
+                    }
                 }
 
-                // --- EOD call wall ---
-                if ($row->eod_call_wall !== null) {
-                    $distPct = abs((float) $row->eod_call_dist_pct);
-                    $distPts = abs($spot - (float) $row->eod_call_wall);
+                $callWall = $this->pickSingleWall([
+                    $this->wallInfo('eod_call', $row->eod_call_wall, $row->eod_call_dist_pct, $spot),
+                    $this->wallInfo('intraday_call', $row->intraday_call_wall, $row->intraday_call_dist_pct, $spot),
+                ]);
 
-                    if ($this->isHit($distPct, $distPts, $maxPct, $maxPts)) {
-                        $hitTypes[] = 'eod_call';
-                    }
-
-                    $walls['eod_call'] = [
-                        'strike'      => (float) $row->eod_call_wall,
-                        'distance_pt' => $distPts,
-                        'distance_pc' => $distPct,
+                if ($callWall) {
+                    $walls[$callWall['key']] = [
+                        'strike'      => $callWall['strike'],
+                        'distance_pt' => $callWall['distance_pt'],
+                        'distance_pc' => $callWall['distance_pc'],
                     ];
-                }
 
-                // --- Intraday put wall ---
-                if ($row->intraday_put_wall !== null) {
-                    $distPct = abs((float) $row->intraday_put_dist_pct);
-                    $distPts = abs($spot - (float) $row->intraday_put_wall);
-
-                    if ($this->isHit($distPct, $distPts, $maxPct, $maxPts)) {
-                        $hitTypes[] = 'intraday_put';
+                    if ($this->isHit($callWall['distance_pc'], $callWall['distance_pt'], $maxPct, $maxPts)) {
+                        $hitTypes[] = $callWall['key'];
                     }
-
-                    $walls['intraday_put'] = [
-                        'strike'      => (float) $row->intraday_put_wall,
-                        'distance_pt' => $distPts,
-                        'distance_pc' => $distPct,
-                    ];
-                }
-
-                // --- Intraday call wall ---
-                if ($row->intraday_call_wall !== null) {
-                    $distPct = abs((float) $row->intraday_call_dist_pct);
-                    $distPts = abs($spot - (float) $row->intraday_call_wall);
-
-                    if ($this->isHit($distPct, $distPts, $maxPct, $maxPts)) {
-                        $hitTypes[] = 'intraday_call';
-                    }
-
-                    $walls['intraday_call'] = [
-                        'strike'      => (float) $row->intraday_call_wall,
-                        'distance_pt' => $distPts,
-                        'distance_pc' => $distPct,
-                    ];
                 }
 
                 if (!$hitTypes) {
@@ -229,5 +201,36 @@ class WallScannerController extends Controller
             $min = min($min, (float) $info['distance_pt']);
         }
         return $min === INF ? PHP_FLOAT_MAX : $min;
+    }
+
+    private function pickSingleWall(array $candidates): ?array
+    {
+        foreach ($candidates as $candidate) {
+            if ($candidate !== null) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function wallInfo(string $key, mixed $strikeRaw, mixed $distPctRaw, float $spot): ?array
+    {
+        if ($strikeRaw === null || !is_numeric($strikeRaw)) {
+            return null;
+        }
+
+        $strike = (float) $strikeRaw;
+        $distPts = abs($spot - $strike);
+        $distPct = is_numeric($distPctRaw)
+            ? abs((float) $distPctRaw)
+            : ($spot > 0 ? ($distPts / $spot) * 100.0 : INF);
+
+        return [
+            'key'         => $key,
+            'strike'      => $strike,
+            'distance_pt' => $distPts,
+            'distance_pc' => $distPct,
+        ];
     }
 }
