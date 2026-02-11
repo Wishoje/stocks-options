@@ -89,7 +89,7 @@
               <!-- CTAs -->
               <div class="mt-7 flex flex-col gap-3 sm:flex-row">
                 <Link
-                  :href="route('register')"
+                  :href="registerWithPlanUrl"
                   @click="trackHeroCta('home_hero_primary')"
                   class="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
                 >
@@ -329,7 +329,7 @@
                 </Link>
 
                 <Link
-                  :href="route('register')"
+                  :href="registerWithPlanUrl"
                   @click="trackHeroCta('home_scanner_primary')"
                   class="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
                 >
@@ -477,6 +477,7 @@ const description =
   'Options analytics terminal with 1-minute intraday snapshots, GEX levels, dealer positioning (DEX), scanners, and risk tools for daily prep and cleaner intraday decisions.'
 const url = 'https://gexoptions.com/'
 const showGlossary = !!page.props?.marketing?.show_glossary
+const registerWithPlanUrl = '/register?plan=earlybird&billing=monthly'
 
 const sharedFeatures = [
   'All symbols',
@@ -537,9 +538,14 @@ function selectPlan(p) {
 }
 
 function trackHeroCta(location) {
+  const pricingLocations = new Set([
+    'home_hero_secondary_pricing',
+    'home_hero_offer_pricing',
+    'home_pricing_section_link',
+  ])
   trackEvent('hero_cta_click', {
     location,
-    destination: location === 'home_hero_primary' ? 'register' : 'pricing',
+    destination: pricingLocations.has(location) ? 'pricing' : 'register_with_plan',
   })
 }
 

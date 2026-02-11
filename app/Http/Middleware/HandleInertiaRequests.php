@@ -35,10 +35,20 @@ class HandleInertiaRequests extends Middleware
      */
     public function share(Request $request): array
     {
+        $user = $request->user();
+        $subName = config('plans.default_subscription_name');
+        $subscribed = $user ? $user->subscribed($subName) : false;
+        $onTrial = $user ? $user->onTrial($subName) : false;
+
         return array_merge(parent::share($request), [
            'marketing' => [
                 'ga4_id' => config('services.ga4_id'),
                 'show_glossary' => (bool) env('SHOW_GLOSSARY', false),
+            ],
+            'billing' => [
+                'subscribed' => $subscribed,
+                'on_trial' => $onTrial,
+                'needs_checkout' => $user ? !($subscribed || $onTrial) : false,
             ],
         ]);
     }

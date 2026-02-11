@@ -2,10 +2,9 @@
 
 namespace App\Providers;
 
-use Illuminate\Support\ServiceProvider;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Notifications\Messages\MailMessage;
-
+use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -33,7 +32,7 @@ class AppServiceProvider extends ServiceProvider
                 ->greeting('Hey!')
                 ->line('We received a request to reset your password.')
                 ->action('Reset Password', $url)
-                ->line('If you didn’t request this, you can ignore this email.');
+                ->line("If you didn't request this, you can ignore this email.");
         });
     }
 }

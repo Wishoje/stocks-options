@@ -16,6 +16,21 @@
   </Head>
   <MarketingLayout>
     <section class="mx-auto max-w-[1440px] px-4 pt-14 sm:px-6 lg:px-8">
+      <div
+        v-if="activatingCheckout"
+        class="mb-6 rounded-2xl border border-cyan-300/30 bg-cyan-400/10 p-4 text-sm text-cyan-100"
+      >
+        Checkout succeeded. We are activating your subscription now. If this takes more than a few seconds,
+        refresh or open your dashboard again.
+      </div>
+
+      <div
+        v-else-if="canceledCheckout"
+        class="mb-6 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-100"
+      >
+        Checkout was canceled. You can pick your plan again below when you are ready.
+      </div>
+
       <div class="text-center">
         <h1 class="text-4xl font-semibold tracking-tight sm:text-5xl">Pricing</h1>
         <p class="mx-auto mt-3 max-w-2xl text-sm text-white/60">
@@ -43,10 +58,12 @@
 import MarketingLayout from '@/Layouts/MarketingLayout.vue'
 import PricingTable from '@/Components/Marketing/PricingTable.vue'
 import { Head, usePage } from '@inertiajs/vue3'
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { trackEvent } from '@/lib/ga'
 
 const page = usePage()
+const canceledCheckout = computed(() => (page.url || '').includes('canceled=1'))
+const activatingCheckout = computed(() => (page.url || '').includes('activating=1'))
 
 const title = 'GexOptions - Levels, Dealer Positioning (DEX), and Options Flow'
 const description =
@@ -98,6 +115,12 @@ const plans = [
 
 onMounted(() => {
   trackEvent('pricing_view', { source: 'pricing_page' })
+  if (canceledCheckout.value) {
+    trackEvent('checkout_canceled', { source: 'pricing_page' })
+  }
+  if (activatingCheckout.value) {
+    trackEvent('checkout_activating', { source: 'pricing_page' })
+  }
 })
 
 function selectPlan(p) {

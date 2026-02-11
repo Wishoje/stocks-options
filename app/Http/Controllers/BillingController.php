@@ -32,9 +32,16 @@ class BillingController extends Controller
 
     public function success(Request $request)
     {
-        // Cashier will sync subscription via webhook or on next request.
-        // Keep it simple: send them to the app.
-        return redirect()->route('dashboard');
+        $user = $request->user();
+        $subName = config('plans.default_subscription_name');
+
+        // If Stripe sync is complete, go straight into the app.
+        if ($user->subscribed($subName) || $user->onTrial($subName)) {
+            return redirect()->route('dashboard');
+        }
+
+        // If sync is still catching up, keep user oriented instead of bouncing.
+        return redirect()->route('pricing', ['activating' => 1]);
     }
 
     public function portal(Request $request)

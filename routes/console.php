@@ -206,3 +206,9 @@ Schedule::call(function () {
 ->between('09:35', '15:55')
 ->withoutOverlapping(10)
 ->onOneServer();
+
+Schedule::command('emails:lifecycle-run')
+    ->timezone('America/New_York')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping(15)
+    ->onOneServer();

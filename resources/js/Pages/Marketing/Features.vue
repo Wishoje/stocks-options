@@ -36,7 +36,7 @@
 
           <div class="mt-7 flex flex-wrap gap-3">
             <Link
-              :href="route('register')"
+              :href="registerWithPlanUrl"
               class="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
             >
               Start free
@@ -127,7 +127,7 @@
         </p>
         <div class="mt-6 flex flex-wrap justify-center gap-3">
           <Link
-            :href="route('register')"
+            :href="registerWithPlanUrl"
             class="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
           >
             Start free
@@ -150,6 +150,7 @@ import MarketingLayout from '@/Layouts/MarketingLayout.vue'
 import FeatureRow from '@/Components/Marketing/FeatureRow.vue'
 
 const page = usePage()
+const registerWithPlanUrl = '/register?plan=earlybird&billing=monthly'
 /**
  * NOTE (recommended):
  * In FeatureRow.vue, wrap the <ul> in v-if="bullets?.length"

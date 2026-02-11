@@ -13,7 +13,7 @@ return [
     |
     */
 
-    'name' => env('APP_NAME', 'GEXOptions'),
+    'name' => env('APP_NAME', 'GexOptions'),
 
     /*
     |--------------------------------------------------------------------------

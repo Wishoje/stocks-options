@@ -34,6 +34,7 @@
                 </Link>
 
                 <button
+                  v-if="page.props.billing?.needs_checkout"
                   type="button"
                   @click="goCheckout"
                   class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15"
@@ -48,7 +49,7 @@
 
               <template v-else>
                 <Link :href="route('login')" class="text-sm text-white/70 hover:text-white">Login</Link>
-                <Link :href="route('register')" @click="trackNavStartFree" class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15">
+                <Link :href="registerWithPlanUrl" @click="trackNavStartFree" class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15">
                   Start Free
                 </Link>
               </template>
@@ -86,6 +87,7 @@ import { trackEvent } from '@/lib/ga'
 
 const page = usePage()
 const year = new Date().getFullYear()
+const registerWithPlanUrl = '/register?plan=earlybird&billing=monthly'
 
 function logout() {
   // Jetstream logout route is POST
@@ -93,11 +95,14 @@ function logout() {
 }
 
 function goCheckout() {
-  trackEvent('checkout_start', { plan: 'earlybird', billing: 'monthly', source: 'marketing_nav' })
-  window.location.assign('/checkout?plan=earlybird&billing=monthly')
+  const current = new URL(page.url, window.location.origin)
+  const plan = current.searchParams.get('plan') || 'earlybird'
+  const billing = current.searchParams.get('billing') || 'monthly'
+  trackEvent('checkout_start', { plan, billing, source: 'marketing_nav' })
+  window.location.assign(`/checkout?plan=${encodeURIComponent(plan)}&billing=${encodeURIComponent(billing)}`)
 }
 
 function trackNavStartFree() {
-  trackEvent('hero_cta_click', { location: 'marketing_nav_start_free', destination: 'register' })
+  trackEvent('hero_cta_click', { location: 'marketing_nav_start_free', destination: 'register_with_plan' })
 }
 </script>
