@@ -48,7 +48,7 @@
 
               <template v-else>
                 <Link :href="route('login')" class="text-sm text-white/70 hover:text-white">Login</Link>
-                <Link :href="route('register')" class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15">
+                <Link :href="route('register')" @click="trackNavStartFree" class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15">
                   Start Free
                 </Link>
               </template>
@@ -63,7 +63,7 @@
     </main>
 
     <footer class="mt-20 border-t border-white/10">
-      <div class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-[1440px] px-4 py-10 sm:px-6 lg:px-8">
         <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div class="text-sm text-white/60">
             &copy; {{ year }} GEX Options, Inc. All rights reserved.
@@ -82,6 +82,7 @@
 
 <script setup>
 import { Link, router, usePage } from '@inertiajs/vue3'
+import { trackEvent } from '@/lib/ga'
 
 const page = usePage()
 const year = new Date().getFullYear()
@@ -92,6 +93,11 @@ function logout() {
 }
 
 function goCheckout() {
+  trackEvent('checkout_start', { plan: 'earlybird', billing: 'monthly', source: 'marketing_nav' })
   window.location.assign('/checkout?plan=earlybird&billing=monthly')
+}
+
+function trackNavStartFree() {
+  trackEvent('hero_cta_click', { location: 'marketing_nav_start_free', destination: 'register' })
 }
 </script>

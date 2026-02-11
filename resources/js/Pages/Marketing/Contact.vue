@@ -4,7 +4,7 @@
     <meta name="description" content="Get in touch with the GexOptions team." />
   </Head>
   <MarketingLayout>
-    <section class="mx-auto max-w-5xl px-4 pt-16 sm:px-8 lg:px-12 pb-16">
+    <section class="mx-auto max-w-[1440px] px-4 pt-16 pb-16 sm:px-6 lg:px-8">
       <div class="space-y-6 text-white">
         <div>
           <p class="text-xs uppercase tracking-[0.2em] text-cyan-300 mb-2">Contact</p>

@@ -8,13 +8,13 @@
 
         <div v-if="learn?.href" class="mt-2">
           <a :href="learn.href" class="text-sm text-cyan-300 hover:text-cyan-200">
-            {{ learn.label }} →
+            {{ learn.label }} ->
           </a>
         </div>
 
         <ul v-if="bullets?.length" class="mt-4 space-y-2 text-sm text-white/70">
           <li v-for="b in bullets" :key="b" class="flex gap-2">
-            <span class="text-cyan-200">✓</span>
+            <span class="text-cyan-200">&#10003;</span>
             <span>{{ b }}</span>
           </li>
         </ul>
@@ -25,7 +25,9 @@
         :class="flip ? 'lg:order-1 lg:border-r lg:border-white/10' : 'lg:order-2 lg:border-l lg:border-white/10'"
       >
         <div class="bg-black/25 p-3 lg:p-4">
-          <img :src="src" :alt="alt" class="w-full rounded-2xl border border-white/10" loading="lazy" />
+          <div class="aspect-[16/9] overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+            <img :src="src" :alt="alt" class="h-full w-full object-contain p-2" loading="lazy" />
+          </div>
         </div>
       </div>
     </div>

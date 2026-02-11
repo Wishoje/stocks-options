@@ -7,7 +7,9 @@
     </div>
 
     <div class="bg-black/25 p-3">
-      <img :src="src" :alt="alt" class="w-full rounded-xl border border-white/10" loading="lazy" />
+      <div class="aspect-[16/9] overflow-hidden rounded-xl border border-white/10 bg-black/30">
+        <img :src="src" :alt="alt" class="h-full w-full object-contain p-1.5" loading="lazy" />
+      </div>
     </div>
   </div>
 </template>

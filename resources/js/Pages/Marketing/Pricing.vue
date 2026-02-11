@@ -15,11 +15,11 @@
     <script type="application/ld+json" v-html="JSON.stringify(faqJsonLd)"></script>
   </Head>
   <MarketingLayout>
-    <section class="mx-auto max-w-7xl px-4 pt-14 sm:px-6 lg:px-8">
+    <section class="mx-auto max-w-[1440px] px-4 pt-14 sm:px-6 lg:px-8">
       <div class="text-center">
         <h1 class="text-4xl font-semibold tracking-tight sm:text-5xl">Pricing</h1>
         <p class="mx-auto mt-3 max-w-2xl text-sm text-white/60">
-          Early Bird access: monthly or yearly.
+          Early Bird access with full feature access. Choose monthly or yearly and save $60/year.
         </p>
       </div>
 
@@ -30,9 +30,9 @@
       <div class="mt-10 rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-white/70">
         <div class="font-semibold text-white">Safe and simple</div>
         <ul class="mt-3 grid gap-3 md:grid-cols-3">
-          <li class="flex gap-2"><span class="text-cyan-300">&#10003;</span> Cancel anytime in Billing — you’ll keep access through the end of your current period.</li>
+          <li class="flex gap-2"><span class="text-cyan-300">&#10003;</span> Cancel anytime in Billing - you keep access through the end of your current period.</li>
           <li class="flex gap-2"><span class="text-cyan-300">&#10003;</span> Change plans anytime. Stripe handles billing updates automatically (including prorations when applicable).</li>
-          <li class="flex gap-2"><span class="text-cyan-300">&#10003;</span> Secure checkout powered by Stripe — card details never touch our servers.</li>
+          <li class="flex gap-2"><span class="text-cyan-300">&#10003;</span> Secure checkout powered by Stripe - card details never touch our servers.</li>
         </ul>
       </div>
     </section>
@@ -42,11 +42,13 @@
 <script setup>
 import MarketingLayout from '@/Layouts/MarketingLayout.vue'
 import PricingTable from '@/Components/Marketing/PricingTable.vue'
-import { Head, Link, usePage } from '@inertiajs/vue3'
+import { Head, usePage } from '@inertiajs/vue3'
+import { onMounted } from 'vue'
+import { trackEvent } from '@/lib/ga'
 
 const page = usePage()
 
-const title = 'GexOptions — Levels, Dealer Positioning (DEX), and Options Flow'
+const title = 'GexOptions - Levels, Dealer Positioning (DEX), and Options Flow'
 const description =
   'Options analytics terminal with 1-minute intraday snapshots, GEX levels, dealer positioning (DEX), scanners, and risk tools for daily prep and cleaner intraday decisions.'
 const url = 'https://gexoptions.com/pricing'
@@ -67,32 +69,46 @@ const plans = [
   {
     key: 'earlybird_monthly',
     name: 'Early Bird',
-    tagline: 'All features • All symbols',
+    tagline: 'All features - All symbols',
     price: 29.99,
     unit: '/mo',
     subline: 'Billed monthly',
     cta: 'Get Early Bird (Monthly)',
     featured: true,
     badge: 'Most popular',
-    note: 'Limited-time launch pricing • Price increases later',
+    note: 'Limited-time launch pricing - price increases later',
     billing: 'monthly',
     features: sharedFeatures,
   },
   {
     key: 'earlybird_yearly',
-    name: 'Early Bird — Yearly',
-    tagline: 'All features • All symbols',
+    name: 'Early Bird - Yearly',
+    tagline: 'All features - All symbols',
     price: 299,
     unit: '/yr',
-    subline: 'Billed yearly • Save ~17%',
+    subline: 'Billed yearly - Save $60/year (~17%)',
     cta: 'Get Early Bird (Yearly)',
+    badge: 'Best value',
+    savings: 'Save $60/year vs monthly',
+    note: 'Lock in lowest effective monthly rate',
     billing: 'yearly',
     features: sharedFeatures,
   },
 ]
 
+onMounted(() => {
+  trackEvent('pricing_view', { source: 'pricing_page' })
+})
+
 function selectPlan(p) {
   const billing = p.billing || 'monthly'
+  const nextStep = page.props.auth?.user ? 'checkout' : 'register'
+  trackEvent('plan_select', { plan: 'earlybird', billing, source: 'pricing_page', next_step: nextStep })
+
+  if (nextStep === 'checkout') {
+    trackEvent('checkout_start', { plan: 'earlybird', billing, source: 'pricing_page' })
+  }
+
   const url = page.props.auth?.user
     ? `/checkout?plan=earlybird&billing=${encodeURIComponent(billing)}`
     : `/register?plan=earlybird&billing=${encodeURIComponent(billing)}`

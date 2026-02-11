@@ -28,6 +28,9 @@
       </div>
 
       <div v-if="p.subline" class="mt-2 text-sm text-white/60">{{ p.subline }}</div>
+      <div v-if="p.savings" class="mt-2 inline-flex rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-xs text-emerald-200">
+        {{ p.savings }}
+      </div>
       <div v-if="p.note" class="mt-2 text-xs text-white/50">{{ p.note }}</div>
 
       <div class="mt-5">

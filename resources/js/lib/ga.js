@@ -41,3 +41,13 @@ export function trackPageView(url) {
     page_title: document.title,
   });
 }
+
+export function trackEvent(name, params = {}) {
+  if (typeof window === 'undefined') return;
+  if (typeof window.gtag !== 'function') {
+    console.log('[GA] skipped event (gtag not ready)', name, params);
+    return;
+  }
+
+  window.gtag('event', name, params);
+}

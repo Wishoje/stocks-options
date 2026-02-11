@@ -16,7 +16,7 @@
   </Head>
   <MarketingLayout>
     <!-- HERO -->
-    <section class="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+    <section class="mx-auto max-w-[1440px] px-4 pt-6 sm:px-6 lg:px-8">
       <div class="grid gap-10 lg:grid-cols-2 lg:items-center">
         <div>
           <h1 class="text-4xl font-semibold tracking-tight sm:text-5xl">
@@ -35,13 +35,6 @@
           </div>
 
           <div class="mt-7 flex flex-wrap gap-3">
-            <a
-              href="#features"
-              class="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
-            >
-              View all features
-            </a>
-
             <Link
               :href="route('register')"
               class="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
@@ -51,9 +44,9 @@
 
             <Link
               :href="route('pricing')"
-              class="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold hover:bg-white/10"
+              class="inline-flex items-center px-1 py-2 text-sm font-semibold text-cyan-300 hover:text-cyan-200"
             >
-              Pricing
+              See pricing ->
             </Link>
           </div>
         </div>
@@ -61,37 +54,24 @@
         <div class="relative">
           <div class="absolute -inset-6 rounded-[32px] bg-gradient-to-br from-cyan-500/20 to-blue-600/10 blur-2xl" />
           <div class="relative overflow-hidden rounded-[28px] border border-white/10 bg-white/5 shadow-2xl shadow-black/40">
-            <img src="/marketing/liveFlow.png" alt="Live flow preview" class="w-full" />
+            <div class="aspect-[16/9] bg-black/30">
+              <img src="/marketing/liveFlow.png" alt="Live flow preview" class="h-full w-full object-contain p-3" />
+            </div>
           </div>
         </div>
       </div>
     </section>
 
     <!-- ALL FEATURES (uniform rows) -->
-    <section id="features" class="mx-auto max-w-7xl px-4 pt-14 sm:px-6 lg:px-8">
-      <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+    <section id="features" class="mx-auto max-w-[1440px] px-4 pt-14 sm:px-6 lg:px-8">
+      <div>
         <div>
           <h2 class="text-2xl font-semibold tracking-tight">All features</h2>
           <p class="mt-2 text-sm text-white/60 max-w-2xl">
-            Everything included in the terminal — flow, levels, positioning, scanners, and risk tools.
+            Everything included in the terminal - flow, levels, positioning, scanners, and risk tools.
           </p>
         </div>
 
-        <div class="mt-4 md:mt-0 flex gap-3">
-          <Link
-            :href="route('register')"
-            class="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:opacity-95"
-          >
-            Start free
-          </Link>
-
-          <Link
-            :href="route('pricing')"
-            class="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold hover:bg-white/10"
-          >
-            Pricing
-          </Link>
-        </div>
       </div>
 
       <div class="mt-10 space-y-6">
@@ -110,7 +90,7 @@
     </section>
 
     <!-- FAQ -->
-    <section class="mx-auto max-w-7xl px-4 pt-16 pb-16 sm:px-6 lg:px-8">
+    <section class="mx-auto max-w-[1440px] px-4 pt-16 pb-16 sm:px-6 lg:px-8">
       <div class="rounded-3xl border border-white/10 bg-white/5 p-6">
         <div class="flex items-end justify-between gap-6">
           <div>
@@ -139,11 +119,11 @@
     </section>
 
     <!-- CTA -->
-    <section class="mx-auto max-w-7xl px-4 pb-20 sm:px-6 lg:px-8">
+    <section class="mx-auto max-w-[1440px] px-4 pb-20 sm:px-6 lg:px-8">
       <div class="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-8 text-center">
         <h3 class="text-2xl font-semibold">Ready to use the full terminal?</h3>
         <p class="mt-2 text-sm text-white/60">
-          Create an account and explore the tools. Upgrade when you are ready.
+          Create an account and start your 7-day trial. See pricing anytime.
         </p>
         <div class="mt-6 flex flex-wrap justify-center gap-3">
           <Link
@@ -154,9 +134,9 @@
           </Link>
           <Link
             :href="route('pricing')"
-            class="rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold hover:bg-white/10"
+            class="inline-flex items-center px-1 py-3 text-sm font-semibold text-cyan-300 hover:text-cyan-200"
           >
-            View pricing
+            See pricing ->
           </Link>
         </div>
       </div>
@@ -173,7 +153,7 @@ const page = usePage()
 /**
  * NOTE (recommended):
  * In FeatureRow.vue, wrap the <ul> in v-if="bullets?.length"
- * so rows without bullets don’t render an empty list.
+ * so rows without bullets don't render an empty list.
  */
 
 const features = [
@@ -258,13 +238,13 @@ const features = [
     alt: 'Options calculator',
   },
 
-  // Previously "more tools" — now same sizing
+  // Previously "more tools" - now same sizing
   {
     kicker: 'Scanner',
     title: 'GEX wall scanner',
     desc: 'Scan your watchlist and instantly surface symbols sitting near key call and put walls.',
     bullets: ['Watchlist-wide scan', 'Call/put wall-hit labels', 'Jump into symbol fast'],
-    src: '/marketing/scanner.png',
+    src: '/marketing/terminal_scanner.png',
     alt: 'GEX wall scanner',
   },
   {
@@ -278,7 +258,7 @@ const features = [
   {
     kicker: 'Unusual',
     title: 'Unusual activity table',
-    desc: 'Flags strikes where activity is abnormal so you can investigate what’s driving the move.',
+    desc: "Flags strikes where activity is abnormal so you can investigate what's driving the move.",
     bullets: ['Find abnormal prints fast', 'Filters and sorting', 'Great for follow-through ideas'],
     src: '/marketing/ua.png',
     alt: 'Unusual activity',
@@ -326,8 +306,8 @@ const features = [
   {
     kicker: 'Flow',
     title: 'Vol over OI by strike',
-    desc: 'Find where today’s volume is large relative to existing open interest.',
-    bullets: ['Spot “new interest” areas', 'Easy relative activity read', 'Useful for follow-through'],
+    desc: "Find where today's volume is large relative to existing open interest.",
+    bullets: ['Spot "new interest" areas', 'Easy relative activity read', 'Useful for follow-through'],
     src: '/marketing/volOiByStrike.png',
     alt: 'Vol over OI by strike',
   },
@@ -338,15 +318,6 @@ const features = [
     bullets: ['Fast timeframe switching', 'Expiry jumping', 'Smooth workflow between tools'],
     src: '/marketing/overviewNav.jpg',
     alt: 'Timeframes and expiries navigation',
-  },
-  {
-    kicker: 'Levels',
-    title: 'Net GEX by strike',
-    desc: 'Map the level landscape and identify likely reaction zones before the open.',
-    bullets: ['Clear level clusters', 'Zoom and focus controls', 'Useful for daily planning'],
-    src: '/marketing/gex.png',
-    alt: 'Net GEX by strike',
-    learn: { label: 'What is GEX?', href: '/glossary/gex' },
   },
 ]
 
@@ -447,7 +418,7 @@ const faqJsonLd = {
   ]
 }
 
-const title = 'GexOptions Features — Flow, GEX Levels, DEX, Scanners, VRP & Term Structure'
+const title = 'GexOptions Features - Flow, GEX Levels, DEX, Scanners, VRP & Term Structure'
 const description =
   'Explore all tools in the GexOptions terminal: live flow by strike, premium, net GEX levels, dealer positioning (DEX), expiry pressure, unusual activity, VRP, term structure, and more.'
 const url = 'https://gexoptions.com/features'
