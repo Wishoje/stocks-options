@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use App\Models\Watchlist;
 use App\Support\Market;
+use App\Support\Symbols;
 
 class IntradayController extends Controller
 {
@@ -27,16 +28,82 @@ class IntradayController extends Controller
 
     public function pull(Request $request)
     {
-        $symbols = $request->input('symbols', []);
-        if (!is_array($symbols) || empty($symbols)) {
+        $symbolsInput = $request->input('symbols', []);
+        if (!is_array($symbolsInput) || empty($symbolsInput)) {
+            return response()->json(['error' => 'symbols[] required'], 422);
+        }
+
+        $symbols = collect($symbolsInput)
+            ->map(fn ($s) => Symbols::canon((string) $s))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($symbols)) {
             return response()->json(['error' => 'symbols[] required'], 422);
         }
 
         $force = (bool) $request->boolean('force', false);
+        $marketOpen = Market::isRthOpen(now('America/New_York'));
+        $skipped = [];
 
-        // if (!$force && !Market::isRthOpen(now('America/New_York'))) {
-        //     return response()->json(['ok' => true, 'skipped' => 'market_closed'], 200);
-        // }
+        // After close / pre-open: do not repull symbols that already have any intraday data.
+        // Allow new symbols (or stale-session symbols) to bootstrap.
+        if (!$force && !$marketOpen) {
+            $targetTradeDate = $this->tradingDate(now());
+            $freshCutoffUtc = \Carbon\Carbon::parse($targetTradeDate, 'America/New_York')
+                ->setTime(15, 30, 0)
+                ->setTimezone('UTC');
+
+            $latestAsofBySymbol = DB::table('option_live_counters')
+                ->whereIn('symbol', $symbols)
+                ->where('trade_date', $targetTradeDate)
+                ->select('symbol')
+                ->selectRaw('MAX(asof) as last_asof')
+                ->groupBy('symbol')
+                ->pluck('last_asof', 'symbol')
+                ->all();
+
+            $hasAnyBySymbol = DB::table('option_live_counters')
+                ->whereIn('symbol', $symbols)
+                ->distinct()
+                ->pluck('symbol')
+                ->all();
+
+            $hasAnySet = array_fill_keys($hasAnyBySymbol, true);
+            $filtered = [];
+            foreach ($symbols as $sym) {
+                $hasAny = isset($hasAnySet[$sym]);
+                $lastAsof = $latestAsofBySymbol[$sym] ?? null;
+                $sessionFresh = false;
+
+                if ($lastAsof) {
+                    try {
+                        $sessionFresh = \Carbon\Carbon::parse($lastAsof)->greaterThanOrEqualTo($freshCutoffUtc);
+                    } catch (\Throwable) {
+                        $sessionFresh = false;
+                    }
+                }
+
+                // Skip only if symbol has data and that data is fresh for the latest closed session.
+                if ($hasAny && $sessionFresh) {
+                    $skipped[] = $sym;
+                    continue;
+                }
+                $filtered[] = $sym;
+            }
+            $symbols = $filtered;
+
+            if (empty($symbols)) {
+                return response()->json([
+                    'ok' => true,
+                    'skipped' => 'market_closed_fresh_session_available',
+                    'target_trade_date' => $targetTradeDate,
+                    'skipped_symbols' => $skipped,
+                ], 200);
+            }
+        }
 
         // GLOBAL watchlist: if there are no symbols in the watchlists table at all -> run sync
         $watchlistEmpty = !Watchlist::query()->exists();
@@ -44,11 +111,21 @@ class IntradayController extends Controller
 
         if ($watchlistEmpty) {
             Bus::dispatchSync(new FetchPolygonIntradayOptionsJob($symbols));
-            return response()->json(['ok' => true, 'dispatch' => 'sync']);
+            return response()->json([
+                'ok' => true,
+                'dispatch' => 'sync',
+                'queued_symbols' => $symbols,
+                'skipped_symbols' => $skipped,
+            ]);
         }
 
         Bus::dispatch(new FetchPolygonIntradayOptionsJob($symbols));
-        return response()->json(['ok' => true, 'dispatch' => 'async']);
+        return response()->json([
+            'ok' => true,
+            'dispatch' => 'async',
+            'queued_symbols' => $symbols,
+            'skipped_symbols' => $skipped,
+        ]);
     }
 
 
@@ -57,7 +134,8 @@ class IntradayController extends Controller
     {
         $startedAt = microtime(true);
         $symbol    = strtoupper($request->query('symbol', 'SPY'));
-        $tradeDate = $this->tradingDate(now());
+        $preferredTradeDate = $this->tradingDate(now());
+        $tradeDate = $this->resolveTradeDate($symbol, $preferredTradeDate);
 
         $row = \App\Models\OptionLiveCounter::query()
             ->where('symbol', $symbol)
@@ -131,7 +209,8 @@ class IntradayController extends Controller
     public function volumeByStrike(Request $request)
     {
         $symbol = strtoupper($request->query('symbol', 'SPY'));
-        $tradeDate = $this->tradingDate(now());
+        $preferredTradeDate = $this->tradingDate(now());
+        $tradeDate = $this->resolveTradeDate($symbol, $preferredTradeDate);
 
         // Pull latest rows for this symbol+day WHERE strike is not null (so skip the totals row)
         // We'll aggregate per strike across expirations.
@@ -176,10 +255,37 @@ class IntradayController extends Controller
     private function tradingDate(\Carbon\Carbon $now): string
     {
         $ny = $now->copy()->setTimezone('America/New_York');
-        if ($ny->isWeekend()) {
+        $t = (int) $ny->format('Hi');
+        if ($ny->isWeekend() || $t < 930) {
             $ny->previousWeekday();
         }
         return $ny->toDateString();
+    }
+
+    /**
+     * Prefer the expected session date, but if no intraday rows exist for that symbol/day,
+     * fall back to the latest available trade_date so pre-open users still see last session.
+     */
+    private function resolveTradeDate(string $symbol, string $preferredTradeDate): string
+    {
+        $cacheKey = "intraday:resolvedTradeDate:{$symbol}:{$preferredTradeDate}";
+
+        return Cache::remember($cacheKey, now()->addSeconds(60), function () use ($symbol, $preferredTradeDate) {
+            $hasPreferred = DB::table('option_live_counters')
+                ->where('symbol', $symbol)
+                ->where('trade_date', $preferredTradeDate)
+                ->exists();
+
+            if ($hasPreferred) {
+                return $preferredTradeDate;
+            }
+
+            $latest = DB::table('option_live_counters')
+                ->where('symbol', $symbol)
+                ->max('trade_date');
+
+            return $latest ?: $preferredTradeDate;
+        });
     }
 
     /**
@@ -218,7 +324,8 @@ class IntradayController extends Controller
     {
         $startedAt = microtime(true);
         $symbol    = strtoupper($request->query('symbol', 'SPY'));
-        $tradeDate = $this->tradingDate(now());
+        $preferredTradeDate = $this->tradingDate(now());
+        $tradeDate = $this->resolveTradeDate($symbol, $preferredTradeDate);
 
         $cacheKey = "intraday:strikesComposite:{$symbol}:{$tradeDate}";
         $cacheHit = Cache::has($cacheKey);
@@ -352,7 +459,8 @@ class IntradayController extends Controller
     public function repricedGexByStrike(Request $request)
     {
         $symbol = strtoupper($request->query('symbol', 'SPY'));
-        $tradeDate = $this->tradingDate(now());
+        $preferredTradeDate = $this->tradingDate(now());
+        $tradeDate = $this->resolveTradeDate($symbol, $preferredTradeDate);
 
         $cacheKey = "intraday:repricedGex:{$symbol}:{$tradeDate}";
         $data = Cache::remember($cacheKey, now()->addSeconds(self::REPRICED_CACHE_SECONDS), function () use ($symbol) {

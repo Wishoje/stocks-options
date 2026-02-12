@@ -97,3 +97,22 @@ WHERE captured_at >= (UTC_TIMESTAMP() - INTERVAL 24 HOUR);
   - then reduce per-run symbol count (or split universes),
   - only then consider moving from 5m to slower cadence for non-core symbols.
 - Do not lower freshness for `SPY/QQQ` first; they are high-usage and should stay prioritized.
+
+## Phase 2A: New-Symbol Reliability (Next)
+
+### UX target
+- Selected symbol should show intraday payload in **15-60 seconds** in typical conditions.
+- Hard fail target: no symbol should remain empty beyond **2 minutes** without a clear "fetching" state.
+
+### Behavior target
+- Pre-open: show last completed session intraday instead of blank.
+- Post-close: do not repull symbols that already have intraday rows.
+- New symbols with no intraday rows: allow one bootstrap pull outside market hours.
+
+### Monitoring target
+- Track `FetchPolygonIntradayOptionsJob.noExpiries` count per hour.
+- Track queue depth and latency for:
+  - `default`
+  - `intraday`
+  - `intraday-heavy`
+- Track API latency via `intraday:perf-report` (p95/p99 by symbol).

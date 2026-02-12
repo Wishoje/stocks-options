@@ -379,6 +379,12 @@ class GexController extends Controller
         }
 
         dispatch(new \App\Jobs\PrimeSymbolJob($sym))->onQueue('default');
-        dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))->onQueue('default');
+        dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))
+            ->onQueue($this->intradayQueueForSymbol($sym));
+    }
+
+    protected function intradayQueueForSymbol(string $symbol): string
+    {
+        return in_array($symbol, ['SPY', 'QQQ'], true) ? 'intraday-heavy' : 'intraday';
     }
 }

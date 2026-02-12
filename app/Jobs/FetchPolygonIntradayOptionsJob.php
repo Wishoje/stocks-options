@@ -8,9 +8,10 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\Support\Market;
+use App\Jobs\PrimeSymbolJob;
 
 class FetchPolygonIntradayOptionsJob implements ShouldQueue
 {
@@ -71,6 +72,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                     'symbol' => $symbol,
                     'trade_date' => $tradeDate,
                 ]);
+                $this->bootstrapMissingExpiries($symbol, $tradeDate);
                 continue;
             }
 
@@ -221,9 +223,30 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
     protected function tradingDate(\Carbon\Carbon $now): string
     {
         $ny = $now->copy()->setTimezone('America/New_York');
-        if ($ny->isWeekend()) {
+        $t = (int) $ny->format('Hi');
+        if ($ny->isWeekend() || $t < 930) {
             $ny->previousWeekday();
         }
         return $ny->toDateString();
+    }
+
+    private function bootstrapMissingExpiries(string $symbol, string $tradeDate): void
+    {
+        // Prime EOD chain scaffolding once per short window.
+        $primeKey = "intraday:noexp:prime:{$symbol}";
+        if (Cache::add($primeKey, 1, now()->addMinutes(5))) {
+            PrimeSymbolJob::dispatch($symbol)->onQueue('default');
+        }
+
+        // Re-try intraday pull once after priming; preserve current queue (heavy vs normal).
+        $retryKey = "intraday:noexp:retry:{$symbol}:{$tradeDate}";
+        if (!Cache::add($retryKey, 1, now()->addMinutes(3))) {
+            return;
+        }
+
+        $targetQueue = $this->queue ?: 'intraday';
+        self::dispatch([$symbol])
+            ->delay(now()->addSeconds(45))
+            ->onQueue($targetQueue);
     }
 }

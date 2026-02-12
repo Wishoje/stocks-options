@@ -202,6 +202,27 @@
             <div class="text-amber-200/80">Some tabs will appear as soon as they’re ready; others are still loading the first snapshot.</div>
           </div>
         </div>
+        <div
+          v-if="dataMode==='intraday' && !marketOpen"
+          class="bg-slate-500/10 border border-slate-400/30 text-slate-100 text-sm px-4 py-3 rounded-lg flex items-start gap-2"
+        >
+          <svg class="w-4 h-4 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div>
+            <div class="font-semibold">
+              {{ intradayHasData ? 'Showing last completed intraday session' : `Preparing first intraday snapshot for ${userSymbol}` }}
+            </div>
+            <div class="text-slate-200/80">
+              <template v-if="intradayHasData">
+                As of {{ intradayAsOfEtLabel }} ET. Live updates resume at 9:30 AM ET.
+              </template>
+              <template v-else>
+                No prior intraday snapshot yet. We will populate this symbol and show data here.
+              </template>
+            </div>
+          </div>
+        </div>
         <!-- OVERVIEW (EOD) -->
         <section v-show="activeTab==='overview' && dataMode==='eod'" class="space-y-4">
           <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
@@ -728,6 +749,15 @@ const inflightIntraday = new Map()
 const cacheIntraday = new Map()
 const INTRADAY_TTL_MS = 60_000 // 1 minute cache window
 const intradayDataSymbol = ref(null)
+const intradayHasData = computed(() => {
+  const rows = levels.value?.strike_data
+  if (Array.isArray(rows) && rows.length > 0) return true
+
+  const callVol = Number(levels.value?.call_volume_total || 0)
+  const putVol = Number(levels.value?.put_volume_total || 0)
+  return (callVol + putVol) > 0
+})
+const intradayAsOfEtLabel = computed(() => formatEtDateTime(lastUpdated.value))
 
 // Symbol picker
 const showSymbolPicker = ref(false)
@@ -865,6 +895,19 @@ function estimatePremium(levelsObj) {
 }
 function num(v) { return Number(v || 0) }
 function fmtPct(v) { return (v === null || v === undefined) ? '—' : `${v}%` }
+function formatEtDateTime(ts) {
+  if (!ts) return '—'
+  const dt = new Date(ts)
+  if (Number.isNaN(dt.getTime())) return '—'
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(dt)
+}
 function fromNow(ts) {
   if (!ts) return ''
   const then = new Date(ts).getTime()
