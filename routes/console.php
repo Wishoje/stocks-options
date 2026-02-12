@@ -81,9 +81,9 @@ Schedule::command('intraday:prune-counters --days=7')
     ->timezone('America/New_York')
     ->dailyAt('03:00');
 
-Schedule::command('intraday:prune-option-volumes --hours=96')
+Schedule::command('intraday:prune-option-volumes --hours=24 --batch=100000 --sleep-ms=25')
     ->timezone('America/New_York')
-    ->hourly()
+    ->everyThirtyMinutes()
     ->withoutOverlapping(20)
     ->onOneServer();
 
@@ -146,8 +146,11 @@ Schedule::call(function () {
     }
 })
 ->everyFiveMinutes()
+->weekdays()
+->between('09:35', '15:55')
 ->name('intraday:polygon:pull')
 ->withoutOverlapping(2)
+->onOneServer()
 ->timezone('America/New_York');
 
 Schedule::command('prices:refresh --source=both --limit=400')

@@ -7,12 +7,21 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use App\Models\Watchlist;
 use App\Support\Market;
 
 class IntradayController extends Controller
 {
+    private const STRIKES_CACHE_SECONDS = 90;
+    private const REPRICED_CACHE_SECONDS = 90;
+    private const EOD_OI_CACHE_SECONDS = 300;
+    private const IV_CACHE_SECONDS = 45;
+    private const IV_LOOKBACK_MINUTES = 12;
+    private const PERF_SLOW_MS = 800;
+    private const PERF_SAMPLE_PERCENT = 5;
+
     // POST /api/intraday/pull { symbols: ["SPY","QQQ"] }
     private function k2($v): string { return number_format((float)$v, 2, '.', ''); }
 
@@ -46,6 +55,7 @@ class IntradayController extends Controller
     // GET /api/intraday/summary?symbol=SPY
     public function summary(Request $request)
     {
+        $startedAt = microtime(true);
         $symbol    = strtoupper($request->query('symbol', 'SPY'));
         $tradeDate = $this->tradingDate(now());
 
@@ -60,7 +70,7 @@ class IntradayController extends Controller
 
         $open = $this->isMarketOpen();
         if (!$row) {
-            return response()->json([
+            $payload = [
                 'open'   => $open,
                 'trade_date' => $tradeDate,
                 'asof'   => null,
@@ -72,7 +82,16 @@ class IntradayController extends Controller
                     'pcr_vol'  => null,
                     'premium'  => 0,
                 ],
+            ];
+
+            $this->logPerf('summary', $symbol, $startedAt, [
+                'trade_date' => $tradeDate,
+                'cache_hit' => false,
+                'has_row' => false,
+                'market_open' => $open,
             ]);
+
+            return response()->json($payload);
         }
 
         [$callVol, $putVol] = $this->sumTypeVolumes($symbol, $tradeDate);
@@ -82,7 +101,7 @@ class IntradayController extends Controller
         $asof = $row->asof ? \Carbon\Carbon::parse($row->asof) : null;
         $staleSeconds = $asof ? now('America/New_York')->diffInSeconds($asof) : null;
 
-        return response()->json([
+        $payload = [
             'open'          => $open,
             'trade_date'    => $tradeDate,
             'asof'          => $row->asof,
@@ -94,7 +113,17 @@ class IntradayController extends Controller
                 'pcr_vol'  => $pcr,
                 'premium'  => (float) $row->premium_usd,
             ],
+        ];
+
+        $this->logPerf('summary', $symbol, $startedAt, [
+            'trade_date' => $tradeDate,
+            'cache_hit' => false,
+            'has_row' => true,
+            'stale_seconds' => $staleSeconds,
+            'market_open' => $open,
         ]);
+
+        return response()->json($payload);
     }
 
 
@@ -158,19 +187,15 @@ class IntradayController extends Controller
      */
     private function sumTypeVolumes(string $symbol, string $tradeDate): array
     {
-        $callVol = \App\Models\OptionLiveCounter::query()
+        $rows = \App\Models\OptionLiveCounter::query()
             ->where('symbol', $symbol)
             ->where('trade_date', $tradeDate)
-            ->where('option_type', 'call')
-            ->sum('volume');
+            ->whereIn('option_type', ['call', 'put'])
+            ->select('option_type', DB::raw('SUM(volume) as vol'))
+            ->groupBy('option_type')
+            ->pluck('vol', 'option_type');
 
-        $putVol = \App\Models\OptionLiveCounter::query()
-            ->where('symbol', $symbol)
-            ->where('trade_date', $tradeDate)
-            ->where('option_type', 'put')
-            ->sum('volume');
-
-        return [(int)$callVol, (int)$putVol];
+        return [(int) ($rows['call'] ?? 0), (int) ($rows['put'] ?? 0)];
     }
 
      public function ua(Request $request)
@@ -191,12 +216,14 @@ class IntradayController extends Controller
      */
     public function strikesComposite(Request $request)
     {
+        $startedAt = microtime(true);
         $symbol    = strtoupper($request->query('symbol', 'SPY'));
         $tradeDate = $this->tradingDate(now());
 
         $cacheKey = "intraday:strikesComposite:{$symbol}:{$tradeDate}";
+        $cacheHit = Cache::has($cacheKey);
 
-        $data = Cache::remember($cacheKey, now()->addSeconds(60),function () use ($symbol, $tradeDate) {
+        $data = Cache::remember($cacheKey, now()->addSeconds(self::STRIKES_CACHE_SECONDS),function () use ($symbol, $tradeDate) {
             // 1) Intraday volume & premium by strike (today)
             $rows = DB::table('option_live_counters')
                 ->where('symbol', $symbol)
@@ -306,6 +333,15 @@ class IntradayController extends Controller
             ];
         });
 
+        $this->logPerf('strikesComposite', $symbol, $startedAt, [
+            'trade_date' => $tradeDate,
+            'cache_hit' => $cacheHit,
+            'items' => count($data['items'] ?? []),
+            'asof' => $data['asof'] ?? null,
+            'market_open' => (bool) ($data['open'] ?? false),
+            'stale_seconds' => $data['stale_seconds'] ?? null,
+        ]);
+
         return response()->json($data);
     }
 
@@ -319,7 +355,7 @@ class IntradayController extends Controller
         $tradeDate = $this->tradingDate(now());
 
         $cacheKey = "intraday:repricedGex:{$symbol}:{$tradeDate}";
-        $data = Cache::remember($cacheKey, now()->addSeconds(60), function () use ($symbol) {
+        $data = Cache::remember($cacheKey, now()->addSeconds(self::REPRICED_CACHE_SECONDS), function () use ($symbol) {
             // build 'byK' minimal with OI
             $eodOi = $this->eodOiByStrike($symbol);
             $byK = [];
@@ -354,31 +390,44 @@ class IntradayController extends Controller
      */
     private function eodOiByStrike(string $symbol): array
     {
-        // Pick previous trading day present in option_chain_data
-        $latest = DB::table('option_chain_data as o')
-            ->join('option_expirations as e','e.id','=','o.expiration_id')
-            ->where('e.symbol',$symbol)
-            ->max('o.data_date');
+        $latestKey = "intraday:eodOiLatest:{$symbol}";
+        $latest = Cache::remember($latestKey, now()->addSeconds(60), function () use ($symbol) {
+            return DB::table('option_chain_data as o')
+                ->join('option_expirations as e','e.id','=','o.expiration_id')
+                ->where('e.symbol',$symbol)
+                ->max('o.data_date');
+        });
 
-        if (!$latest) return [];
-
-        $rows = DB::table('option_chain_data as o')
-            ->join('option_expirations as e','e.id','=','o.expiration_id')
-            ->where('e.symbol',$symbol)
-            ->whereDate('o.data_date',$latest)
-            ->select('o.strike','o.option_type',
-                     DB::raw('SUM(COALESCE(o.open_interest,0)) as oi'))
-            ->groupBy('o.strike','o.option_type')
-            ->get();
-
-        $out = [];
-        foreach ($rows as $r) {
-            $k = $this->k2($r->strike);
-            if (!isset($out[$k])) $out[$k] = ['call'=>0,'put'=>0];
-            if ($r->option_type === 'call') $out[$k]['call'] += (int)$r->oi;
-            elseif ($r->option_type === 'put') $out[$k]['put'] += (int)$r->oi;
+        if (!$latest) {
+            return [];
         }
-        return $out;
+
+        $cacheKey = "intraday:eodOiByStrike:{$symbol}:{$latest}";
+
+        return Cache::remember($cacheKey, now()->addSeconds(self::EOD_OI_CACHE_SECONDS), function () use ($symbol, $latest) {
+            $rows = DB::table('option_chain_data as o')
+                ->join('option_expirations as e','e.id','=','o.expiration_id')
+                ->where('e.symbol',$symbol)
+                ->whereDate('o.data_date',$latest)
+                ->select('o.strike','o.option_type', DB::raw('SUM(COALESCE(o.open_interest,0)) as oi'))
+                ->groupBy('o.strike','o.option_type')
+                ->get();
+
+            $out = [];
+            foreach ($rows as $r) {
+                $k = $this->k2($r->strike);
+                if (!isset($out[$k])) {
+                    $out[$k] = ['call'=>0,'put'=>0];
+                }
+                if ($r->option_type === 'call') {
+                    $out[$k]['call'] += (int)$r->oi;
+                } elseif ($r->option_type === 'put') {
+                    $out[$k]['put'] += (int)$r->oi;
+                }
+            }
+
+            return $out;
+        });
     }
 
     /**
@@ -432,35 +481,39 @@ class IntradayController extends Controller
         $phi = exp(-0.5*$d1*$d1) / sqrt(2*M_PI);
         return $phi * exp(-$q*$tau) / (max(1e-12,$S) * $sigma * $sqrtTau);
     }
+    private function latestIvByStrike(string $symbol): array
+    {
+        if (!$this->isMarketOpen()) {
+            return [];
+        }
 
-        private function latestIvByStrike(string $symbol): array
-        {
-            // Use the Schema facade (not a function) and bail if table isn’t there
-            if (!Schema::hasTable('intraday_option_volumes')) {
-                return [];
-            }
+        if (!Schema::hasTable('intraday_option_volumes')) {
+            return [];
+        }
 
-            // Pull a recent window and collapse IV by strike.
-            // Use AVG for broad DB compatibility (median needs window funcs not always available).
-            $since = now()->subMinutes(30);
+        $bucket = now('UTC')->format('YmdHi');
+        $cacheKey = "intraday:ivByStrike:{$symbol}:{$bucket}";
+
+        return Cache::remember($cacheKey, now()->addSeconds(self::IV_CACHE_SECONDS), function () use ($symbol) {
+            // Use a tighter lookback so SPY/QQQ scans don't overwhelm DB under load.
+            $since = now()->subMinutes(self::IV_LOOKBACK_MINUTES);
 
             $rows = DB::table('intraday_option_volumes')
                 ->where('symbol', $symbol)
                 ->where('captured_at', '>=', $since)
                 ->whereNotNull('implied_volatility')
-                ->select(
-                    'strike_price as strike',
-                    DB::raw('AVG(implied_volatility) as iv')
-                )
+                ->select('strike_price as strike', DB::raw('AVG(implied_volatility) as iv'))
                 ->groupBy('strike_price')
                 ->get();
 
             $out = [];
             foreach ($rows as $r) {
-                $out[(string)$r->strike] = max(0.01, (float) $r->iv);
+                $out[(string) $r->strike] = max(0.01, (float) $r->iv);
             }
+
             return $out;
-        }
+        });
+    }
 
     private function approxTimeToNearestExpiryYears(string $symbol): ?float
     {
@@ -494,4 +547,24 @@ class IntradayController extends Controller
     {
         return \App\Support\Market::isRthOpen(now('America/New_York'));
     }
+
+    private function logPerf(string $endpoint, string $symbol, float $startedAt, array $context = []): void
+    {
+        $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+        $payload = array_merge([
+            'endpoint' => $endpoint,
+            'symbol' => $symbol,
+            'duration_ms' => $durationMs,
+        ], $context);
+
+        if ($durationMs >= self::PERF_SLOW_MS) {
+            Log::warning('intraday.perf.slow', $payload);
+            return;
+        }
+
+        if (mt_rand(1, 100) <= self::PERF_SAMPLE_PERCENT) {
+            Log::info('intraday.perf', $payload);
+        }
+    }
 }
+

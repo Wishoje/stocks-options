@@ -8,8 +8,8 @@ use Illuminate\Support\Facades\DB;
 class PruneIntradayOptionVolumes extends Command
 {
     protected $signature = 'intraday:prune-option-volumes
-        {--hours=96 : Keep this many recent hours}
-        {--batch=50000 : Rows deleted per batch}
+        {--hours=24 : Keep this many recent hours}
+        {--batch=100000 : Rows deleted per batch}
         {--sleep-ms=50 : Sleep between batches in milliseconds}';
     protected $description = 'Delete old rows from intraday_option_volumes';
 
