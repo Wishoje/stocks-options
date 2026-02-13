@@ -8,16 +8,22 @@ use Carbon\Carbon;
 use App\Models\OptionExpiration;
 use App\Models\OptionChainData;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class GexController extends Controller
 {
     // Keep in sync with the frontend timeframe options
     protected array $uiTimeframes = ['0d','1d','7d','14d','30d','90d'];
+    protected const CACHE_HOURS = 8;
+    protected const PERF_SLOW_MS = 1200;
+    protected const PERF_SAMPLE_PERCENT = 10;
 
     public function getGexLevels(Request $request)
     {
+        $startedAt = microtime(true);
         $symbol    = strtoupper($request->query('symbol', 'SPY'));
         $timeframe = $request->query('timeframe', '90d');
+        $forceRefresh = (bool) $request->boolean('refresh', false);
 
         // Resolve dates + IDs for you
         $timeframeExpirations = $this->getTimeframeExpirations($symbol, $timeframe);
@@ -25,12 +31,21 @@ class GexController extends Controller
 
         if (empty($dates)) {
             $this->kickoffSymbolPrime($symbol);
-            return response()->json([
+            $payload = [
                 'error' => "No expirations found for {$symbol}/{$timeframe}",
                 'status' => 'queued',
                 'available_timeframes'  => array_keys($timeframeExpirations),
                 'timeframe_expirations' => $timeframeExpirations,
-            ], 404);
+            ];
+            $this->logPerf($symbol, $timeframe, $startedAt, [
+                'status_code' => 404,
+                'result' => 'no_expirations',
+                'cache_hit' => false,
+                'force_refresh' => $forceRefresh,
+                'expiration_count' => 0,
+            ]);
+
+            return response()->json($payload, 404);
         }
 
         $expirationIds = OptionExpiration::where('symbol', $symbol)
@@ -38,23 +53,122 @@ class GexController extends Controller
             ->pluck('id')
             ->toArray();
 
+        $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)->max('data_date');
+        if (!$latestDate) {
+            $this->kickoffSymbolPrime($symbol);
+            $payload = [
+                'error' => "No data for {$symbol}/{$timeframe}",
+                'status' => 'fetching',
+            ];
+            $this->logPerf($symbol, $timeframe, $startedAt, [
+                'status_code' => 404,
+                'result' => 'no_data',
+                'cache_hit' => false,
+                'force_refresh' => $forceRefresh,
+                'expiration_count' => count($expirationIds),
+            ]);
+
+            return response()->json($payload, 404);
+        }
+
+        $latestStamp = OptionChainData::whereIn('expiration_id', $expirationIds)
+            ->where('data_date', $latestDate)
+            ->max('data_timestamp');
+
+        $dateSig = substr(sha1(implode(',', $dates)), 0, 12);
+        $version = substr(sha1(implode('|', [
+            $symbol,
+            $timeframe,
+            $latestDate,
+            (string) $latestStamp,
+            count($expirationIds),
+            $dateSig,
+        ])), 0, 20);
+
+        $cacheKey = "gex:levels:v2:{$symbol}:{$timeframe}:{$version}";
+        $cacheHit = !$forceRefresh && Cache::has($cacheKey);
+
+        if ($forceRefresh) {
+            $payload = $this->buildGexPayload(
+                $symbol,
+                $timeframe,
+                $dates,
+                $timeframeExpirations,
+                $expirationIds
+            );
+            if ($payload) {
+                Cache::put($cacheKey, $payload, now()->addHours(self::CACHE_HOURS));
+            }
+        } else {
+            $payload = Cache::remember($cacheKey, now()->addHours(self::CACHE_HOURS), function () use (
+                $symbol,
+                $timeframe,
+                $dates,
+                $timeframeExpirations,
+                $expirationIds
+            ) {
+                return $this->buildGexPayload(
+                    $symbol,
+                    $timeframe,
+                    $dates,
+                    $timeframeExpirations,
+                    $expirationIds
+                );
+            });
+        }
+
+        if (!$payload) {
+            $this->kickoffSymbolPrime($symbol);
+            $fallback = [
+                'error' => "No data for {$symbol}/{$timeframe}",
+                'status' => 'fetching',
+            ];
+            $this->logPerf($symbol, $timeframe, $startedAt, [
+                'status_code' => 404,
+                'result' => 'empty_payload',
+                'cache_hit' => $cacheHit,
+                'force_refresh' => $forceRefresh,
+                'expiration_count' => count($expirationIds),
+                'cache_version' => $version,
+            ]);
+
+            return response()->json($fallback, 404);
+        }
+
+        $this->logPerf($symbol, $timeframe, $startedAt, [
+            'status_code' => 200,
+            'result' => 'ok',
+            'cache_hit' => $cacheHit,
+            'force_refresh' => $forceRefresh,
+            'expiration_count' => count($expirationIds),
+            'strike_count' => count($payload['strike_data'] ?? []),
+            'data_date' => $payload['data_date'] ?? null,
+            'cache_version' => $version,
+        ]);
+
+        return response()->json($payload, 200);
+    }
+
+    protected function buildGexPayload(
+        string $symbol,
+        string $timeframe,
+        array $dates,
+        array $timeframeExpirations,
+        array $expirationIds
+    ): ?array {
         $latestDates = OptionChainData::select('expiration_id', DB::raw('MAX(data_date) as max_date'))
             ->whereIn('option_chain_data.expiration_id', $expirationIds)
             ->groupBy('expiration_id');
 
-        $todayData = OptionChainData::joinSub($latestDates, 'ld', function($join) {
+        $todayData = OptionChainData::joinSub($latestDates, 'ld', function ($join) {
                 $join->on('option_chain_data.expiration_id', '=', 'ld.expiration_id')
-                     ->on('option_chain_data.data_date',      '=', 'ld.max_date');
+                    ->on('option_chain_data.data_date',      '=', 'ld.max_date');
             })
             ->whereIn('option_chain_data.expiration_id', $expirationIds)
             ->get();
 
         if ($todayData->isEmpty()) {
-            $this->kickoffSymbolPrime($symbol);
-            return response()->json([
-                'error'=>"No data for {$symbol}/{$timeframe}",
-                'status' => 'fetching',
-            ], 404);
+            return null;
         }
 
         // 2) Core metrics
@@ -71,9 +185,9 @@ class GexController extends Controller
         foreach ($todayData as $opt) {
             $s = $opt->strike;
             $strikesRaw[$s]['call_gamma'] = ($strikesRaw[$s]['call_gamma'] ?? 0)
-                + ($opt->option_type==='call' ? $opt->gamma * $opt->open_interest * 100 : 0);
+                + ($opt->option_type === 'call' ? $opt->gamma * $opt->open_interest * 100 : 0);
             $strikesRaw[$s]['put_gamma']  = ($strikesRaw[$s]['put_gamma']  ?? 0)
-                + ($opt->option_type==='put'  ? $opt->gamma * $opt->open_interest * 100 : 0);
+                + ($opt->option_type === 'put'  ? $opt->gamma * $opt->open_interest * 100 : 0);
         }
 
         $strikeList = [];
@@ -83,15 +197,15 @@ class GexController extends Controller
                 'net_gex' => $g['call_gamma'] - $g['put_gamma'],
             ];
         }
-        usort($strikeList, fn($a,$b)=> $a['strike'] <=> $b['strike']);
+        usort($strikeList, fn($a, $b) => $a['strike'] <=> $b['strike']);
 
         // 4) HVL & walls
         $HVL          = $this->findHVL($strikeList);
-        [$c1,$c2,$c3] = $this->getTop3($strikeList, 'call');
-        [$p1,$p2,$p3] = $this->getTop3($strikeList, 'put');
+        [$c1, $c2, $c3] = $this->getTop3($strikeList, 'call');
+        [$p1, $p2, $p3] = $this->getTop3($strikeList, 'put');
 
         // 5) Prepare prior snapshots
-       $latestDate = $todayData->max('data_date'); // e.g. 2025-11-21
+        $latestDate = $todayData->max('data_date');
 
         $latest = Carbon::parse($latestDate, 'America/New_York');
         $ageDays = $latest->diffInDays(
@@ -101,17 +215,17 @@ class GexController extends Controller
         // find actual previous snapshot date (not just "latest - 1 day")
         $prevDate = OptionChainData::whereIn('expiration_id', $expirationIds)
             ->where('data_date', '<', $latestDate)
-            ->max('data_date'); // could be null if only one snapshot ever
+            ->max('data_date');
 
-        // find "week ago" snapshot – last snapshot on or before latest - 7d
+        // find "week ago" snapshot - last snapshot on or before latest - 7d
         $weekCutoff = Carbon::parse($latestDate)->subWeek()->toDateString();
         $prevWeekDate = OptionChainData::whereIn('expiration_id', $expirationIds)
             ->where('data_date', '<=', $weekCutoff)
-            ->max('data_date'); // may be null too
+            ->max('data_date');
 
         $fetchPrior = function (?string $date) use ($expirationIds) {
             if (!$date) {
-                return collect(); // no prior snapshot
+                return collect();
             }
 
             return OptionChainData::whereIn('expiration_id', $expirationIds)
@@ -122,7 +236,7 @@ class GexController extends Controller
                     DB::raw('SUM(open_interest) as oi'),
                     DB::raw('SUM(volume)       as vol')
                 )
-                ->groupBy('strike','option_type')
+                ->groupBy('strike', 'option_type')
                 ->get()
                 ->groupBy('strike');
         };
@@ -145,10 +259,10 @@ class GexController extends Controller
             $s = $row['strike'];
 
             // current totals
-            $curCallOi  = $todayData->where('strike',$s)->where('option_type','call')->sum('open_interest');
-            $curPutOi   = $todayData->where('strike',$s)->where('option_type','put' )->sum('open_interest');
-            $curCallVol = $todayData->where('strike',$s)->where('option_type','call')->sum('volume');
-            $curPutVol  = $todayData->where('strike',$s)->where('option_type','put' )->sum('volume');
+            $curCallOi  = $todayData->where('strike', $s)->where('option_type', 'call')->sum('open_interest');
+            $curPutOi   = $todayData->where('strike', $s)->where('option_type', 'put' )->sum('open_interest');
+            $curCallVol = $todayData->where('strike', $s)->where('option_type', 'call')->sum('volume');
+            $curPutVol  = $todayData->where('strike', $s)->where('option_type', 'put' )->sum('volume');
 
             // prior day
             $pd = $dayAgo->get($s, collect());
@@ -179,7 +293,7 @@ class GexController extends Controller
             $totCallVolDelta += $dCallVol;
             $totPutVolDelta  += $dPutVol;
 
-            $pctOr0 = fn($n,$d) => $d > 0 ? round($n / $d * 100, 2) : 0;
+            $pctOr0 = fn($n, $d) => $d > 0 ? round($n / $d * 100, 2) : 0;
 
             $fullStrike[] = [
                 'strike'              => $s,
@@ -208,8 +322,7 @@ class GexController extends Controller
 
         $gs = Cache::get("gamma_strength:{$symbol}:{$date}");
 
-        // 7) Send it all back
-        return response()->json([
+        return [
             'symbol'                   => $symbol,
             'timeframe'                => $timeframe,
             'data_date'                => $latestDate,
@@ -230,7 +343,7 @@ class GexController extends Controller
             'put_interest_percentage'  => $pct($putOI),
             'call_volume_total'        => $callVol,
             'put_volume_total'         => $putVol,
-            'pcr_volume'               => $callVol>0 ? round($putVol/$callVol,2) : null,
+            'pcr_volume'               => $callVol > 0 ? round($putVol / $callVol, 2) : null,
             'total_oi_delta'           => $totalOiDelta,
             'total_volume_delta'       => $totalVolDelta,
             'date_prev'                => $yesterday,
@@ -238,7 +351,27 @@ class GexController extends Controller
             'strike_data'              => $fullStrike,
             'regime_strength'          => $gs['strength'] ?? null,
             'gamma_sign'               => $gs['sign']     ?? null,
-        ], 200);
+        ];
+    }
+
+    protected function logPerf(string $symbol, string $timeframe, float $startedAt, array $context = []): void
+    {
+        $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+        $payload = array_merge([
+            'endpoint' => 'gexLevels',
+            'symbol' => $symbol,
+            'timeframe' => $timeframe,
+            'duration_ms' => $durationMs,
+        ], $context);
+
+        if ($durationMs >= self::PERF_SLOW_MS) {
+            Log::warning('eod.perf.slow', $payload);
+            return;
+        }
+
+        if (mt_rand(1, 100) <= self::PERF_SAMPLE_PERCENT) {
+            Log::info('eod.perf', $payload);
+        }
     }
 
     /**
@@ -273,28 +406,30 @@ class GexController extends Controller
         }
         if ($tf === 'monthly') {
             $d = $this->thirdFriday(\Carbon\Carbon::now());
-            // if the third Friday is in the past, take next month’s third Friday
+            // if the third Friday is in the past, take next month's third Friday
             if ($d->lt(\Carbon\Carbon::now()->startOfDay())) {
                 $d = $this->thirdFriday(\Carbon\Carbon::now()->addMonth());
             }
-            return \App\Models\OptionExpiration::where('symbol',$symbol)
+            return \App\Models\OptionExpiration::where('symbol', $symbol)
                 ->whereDate('expiration_date', $d->toDateString())
                 ->orderBy('expiration_date')
                 ->pluck('expiration_date')
                 ->unique()->values()->toArray();
         }
+
         // default
         return $this->getExpirationsWithinDays($symbol, 14);
     }
 
-    
     protected function thirdFriday(Carbon $dt): Carbon
     {
         // third Friday of the month of $dt
         $first = $dt->copy()->startOfMonth();
         // weekday() 0=Sun..6=Sat, we want Friday (5)
         $firstFriday = $first->copy()->next(Carbon::FRIDAY);
-        if ($first->isFriday()) $firstFriday = $first; // if the 1st IS Friday
+        if ($first->isFriday()) {
+            $firstFriday = $first;
+        }
         // third Friday = first Friday + 2 weeks
         return $firstFriday->copy()->addWeeks(2);
     }
@@ -304,7 +439,7 @@ class GexController extends Controller
     {
         $now       = now();
         $startDate = $now->toDateString();
-        $endDate   = $now->copy()->addDays($days)->toDateString();  // ← clone before mutating!
+        $endDate   = $now->copy()->addDays($days)->toDateString();
 
         return OptionExpiration::where('symbol', $symbol)
             ->whereBetween('expiration_date', [$startDate, $endDate])
@@ -335,8 +470,8 @@ class GexController extends Controller
     {
         $HVL = null;
         for ($i = 0; $i < count($strikeData) - 1; $i++) {
-            if ($strikeData[$i]['net_gex'] < 0 && $strikeData[$i+1]['net_gex'] >= 0) {
-                $HVL = $strikeData[$i+1]['strike'];
+            if ($strikeData[$i]['net_gex'] < 0 && $strikeData[$i + 1]['net_gex'] >= 0) {
+                $HVL = $strikeData[$i + 1]['strike'];
                 break;
             }
         }

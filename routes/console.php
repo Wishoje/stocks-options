@@ -77,6 +77,25 @@ Schedule::command('intraday:warmup --limit=200')
     ->timezone('America/New_York')
     ->at('16:15');
 
+// Prewarm EOD cache for heavy symbols near open.
+Schedule::command('gex:warm-cache --symbols=SPY,QQQ,IWM --timeframes=7d,14d,30d,90d')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->onOneServer()
+    ->withoutOverlapping(10)
+    ->at('09:25')
+    ->name('gex:warm-cache:open');
+
+// Keep SPY/QQQ EOD cache warm intraday in case new snapshots arrive.
+Schedule::command('gex:warm-cache --symbols=SPY,QQQ,IWM --timeframes=7d,14d,30d,90d')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->onOneServer()
+    ->withoutOverlapping(10)
+    ->everyThirtyMinutes()
+    ->between('09:35', '15:55')
+    ->name('gex:warm-cache:rth');
+
 Schedule::command('intraday:prune-counters --days=7')
     ->timezone('America/New_York')
     ->dailyAt('03:00');
