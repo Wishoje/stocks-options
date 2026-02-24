@@ -21,6 +21,8 @@ const selectedExpiry = ref(null)
 const chainData      = ref([])
 const entryPrice     = ref(null) // per-share price YOU paid (or want)
 const entryAuto      = ref(true)
+const snapshotAt     = ref(null)
+const refreshingLive = ref(false)
 
 // scenario + view modes
 const decayMode      = ref('breakeven')    // 'flat' | 'breakeven' | 'target'
@@ -66,6 +68,22 @@ const safePremium = (opt) => {
   return bid > 0 ? bid : ask > 0 ? ask : 0
 }
 // ----- Black–Scholes helpers -----
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const needsFollowUpPrime = (payload) => {
+  if (!payload) return true
+
+  const exp = payload.expirations || []
+  const chain = payload.chain || []
+  const status = payload.status || ''
+
+  if (!exp.length || !chain.length) return true
+  if (status === 'no_snapshot' || status === 'no_expiry_snapshot') return true
+  if (status === 'partial' && payload.refresh_queued) return true
+
+  return false
+}
 
 const riskFreeRate = 0.04 // rough guess; tweak if you want
 
@@ -391,8 +409,9 @@ const handleExpiryClick = async (value) => {
 }
 
 // ---------- API ----------
-const loadChain = async (opts = { retried: false }) => {
-  loading.value = true
+const loadChain = async (opts = { retried: false, autoPrimeOnFollowUp: true, keepLoading: false }) => {
+  const { retried = false, autoPrimeOnFollowUp = true, keepLoading = false } = opts
+  if (!keepLoading) loading.value = true
   try {
     const { data } = await axios.get('/api/option-chain', {
       params: { symbol: symbol.value, expiry: selectedExpiry.value },
@@ -401,12 +420,14 @@ const loadChain = async (opts = { retried: false }) => {
     stockPrice.value   = safeNumber(data.underlying.price)
     chainData.value    = data.chain || []
     expirations.value  = data.expirations || []
+    snapshotAt.value   = data.snapshot_at || null
     error.value        = ''
 
-    // Retry once if no data came back (likely needs priming)
-    if (!opts.retried && (!expirations.value.length || chainData.value.length === 0)) {
-      await primeCalculator(symbol.value)
-      return await loadChain({ retried: true })
+    // Retry once when API says data is missing/partial and it queued a refresh.
+    if (!retried && autoPrimeOnFollowUp && needsFollowUpPrime(data)) {
+      await primeCalculator(symbol.value, selectedExpiry.value)
+      await sleep(1200)
+      return await loadChain({ retried: true, autoPrimeOnFollowUp: false, keepLoading: true })
     }
 
     // If nothing selected yet, pick first expiry
@@ -422,11 +443,13 @@ const loadChain = async (opts = { retried: false }) => {
       ) || chainData.value[0]
 
     if (opt) selectOption(opt)
+    return data
   } catch (e) {
     console.error(e)
     error.value = 'Failed to load chain'
+    return null
   } finally {
-    loading.value = false
+    if (!keepLoading) loading.value = false
 
     await nextTick()
 
@@ -557,12 +580,55 @@ const onEntryPriceInput = () => {
 // NO watcher on selectedExpiry – we control it via handleExpiryClick + loadChain
 
 // ---------- symbol selection handler ----------
-const primeCalculator = async (sym) => {
+const primeCalculator = async (sym, expiry = null, opts = {}) => {
   try {
-    const resp = await axios.post('/api/prime-calculator', { symbol: sym })
+    const payload = { symbol: sym }
+    if (expiry) payload.expiry = expiry
+    if (opts.force) payload.force = true
+
+    const resp = await axios.post('/api/prime-calculator', payload)
     console.log('Primed calculator for', sym, resp.data)
   } catch (err) {
     console.warn('Prime calculator failed', sym, err)
+  }
+}
+
+const refreshLiveData = async () => {
+  if (refreshingLive.value) return
+
+  refreshingLive.value = true
+  loading.value = true
+  error.value = ''
+
+  try {
+    const previousSnapshot = snapshotAt.value
+    await primeCalculator(symbol.value, selectedExpiry.value, { force: true })
+
+    const maxAttempts = 8
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        await sleep(1500)
+      }
+
+      const data = await loadChain({
+        retried: true,
+        autoPrimeOnFollowUp: false,
+        keepLoading: true,
+      })
+      if (!data) continue
+
+      const snapshotChanged = previousSnapshot
+        ? (data.snapshot_at && data.snapshot_at !== previousSnapshot)
+        : !!data.snapshot_at
+      const complete = (data.status || 'ok') === 'ok' && (data.chain || []).length > 0
+
+      if (complete && (snapshotChanged || !previousSnapshot)) {
+        break
+      }
+    }
+  } finally {
+    refreshingLive.value = false
+    loading.value = false
   }
 }
 
@@ -579,7 +645,7 @@ const handleSelectSymbol = async (e) => {
   error.value          = ''
   loading.value        = true
 
-  await primeCalculator(sym)
+  await primeCalculator(sym, null)
   await loadChain()
 }
 
@@ -588,11 +654,11 @@ onMounted(async () => {
   window.addEventListener('select-symbol', handleSelectSymbol)
 
   try {
-    await primeCalculator(symbol.value)
+    await primeCalculator(symbol.value, selectedExpiry.value)
   } catch (e) {
     console.warn('Prime calculator failed, using SPY', e)
     symbol.value = 'SPY'
-    await primeCalculator('SPY')
+    await primeCalculator('SPY', null)
   }
 
   await loadChain()
@@ -648,10 +714,11 @@ onBeforeUnmount(() => {
 
             <div class="flex justify-center mt-4">
               <button
-                @click="loadChain"
+                @click="refreshLiveData"
+                :disabled="refreshingLive"
                 class="px-6 py-2 bg-cyan-600 rounded-lg hover:bg-cyan-700 transition"
               >
-                Refresh Live Data
+                {{ refreshingLive ? 'Refreshing...' : 'Refresh Live Data' }}
               </button>
             </div>
 

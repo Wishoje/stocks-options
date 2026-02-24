@@ -107,6 +107,15 @@ Route::get('/option-chain', function () {
     $expiry = request('expiry');
     $expiry = $expiry ? substr((string) $expiry, 0, 10) : null;
     $refreshQueued = false;
+    $fetchMetaKey = static fn (string $sym, ?string $exp = null): string => 'calculator:fetch-meta:' . md5($sym . '|' . ($exp ?? '*'));
+    $toExpiry = static fn ($value): ?string => $value ? substr((string) $value, 0, 10) : null;
+    $toExpirationPayload = static fn ($values): array => $values
+        ->map(fn ($value) => [
+            'value' => $value,
+            'label' => \Carbon\Carbon::parse($value)->format('m-d'),
+        ])
+        ->values()
+        ->all();
 
     $queuePrime = function (string $sym, ?string $exp = null) use (&$refreshQueued): bool {
         $lockKey = 'calculator:prime:' . md5($sym.'|'.($exp ?? '*'));
@@ -122,52 +131,69 @@ Route::get('/option-chain', function () {
     $recentCutoff = now('UTC')->subHours(24);
     $today = today()->toDateString();
 
-    // Expiration menu: use recent snapshots (not a single fetched_at), then fallback.
-    $expRows = DB::table('option_snapshots')
+    // Expiration menu source #1: recent snapshots, then all snapshots.
+    $snapshotExpiries = DB::table('option_snapshots')
         ->where('symbol', $symbol)
         ->where('expiry', '>=', $today)
         ->where('fetched_at', '>=', $recentCutoff)
-        ->select('expiry')
         ->distinct()
         ->orderBy('expiry')
-        ->get();
+        ->pluck('expiry')
+        ->map($toExpiry)
+        ->filter()
+        ->values();
 
-    if ($expRows->isEmpty()) {
-        $expRows = DB::table('option_snapshots')
+    if ($snapshotExpiries->isEmpty()) {
+        $snapshotExpiries = DB::table('option_snapshots')
             ->where('symbol', $symbol)
             ->where('expiry', '>=', $today)
-            ->select('expiry')
             ->distinct()
             ->orderBy('expiry')
-            ->get();
+            ->pluck('expiry')
+            ->map($toExpiry)
+            ->filter()
+            ->values();
+    }
+
+    // Expiration menu source #2: EOD expirations fallback for sparse snapshot menus.
+    $menuExpiries = $snapshotExpiries->unique()->sort()->values();
+    if ($menuExpiries->count() < 10) {
+        $eodExpiries = DB::table('option_expirations')
+            ->where('symbol', $symbol)
+            ->whereDate('expiration_date', '>=', $today)
+            ->orderBy('expiration_date')
+            ->pluck('expiration_date')
+            ->map($toExpiry)
+            ->filter()
+            ->values();
+
+        $menuExpiries = $menuExpiries
+            ->merge($eodExpiries)
+            ->unique()
+            ->sort()
+            ->values();
+    }
+
+    if ($expiry && !$menuExpiries->contains($expiry)) {
+        $menuExpiries = $menuExpiries->push($expiry)->unique()->sort()->values();
     }
 
     if (!$expiry) {
-        $expiry = data_get($expRows->first(), 'expiry');
+        $expiry = $snapshotExpiries->first() ?: $menuExpiries->first();
     }
 
-    // If symbol/expiry absent in DB, one-shot targeted prime.
+    // If symbol is absent in DB, queue a one-shot prime and return pending.
     if (!$expiry) {
         $queuePrime($symbol, null);
 
-        $expRows = DB::table('option_snapshots')
-            ->where('symbol', $symbol)
-            ->where('expiry', '>=', $today)
-            ->select('expiry')
-            ->distinct()
-            ->orderBy('expiry')
-            ->get();
-
-        $expiry = data_get($expRows->first(), 'expiry');
-        if (!$expiry) {
-            return response()->json([
-                'underlying'  => ['symbol' => $symbol, 'price' => null],
-                'chain'       => [],
-                'expirations' => [],
-                'status'      => 'no_snapshot',
-                'refresh_queued' => $refreshQueued,
-            ], 202);
-        }
+        return response()->json([
+            'underlying'  => ['symbol' => $symbol, 'price' => null],
+            'chain'       => [],
+            'expirations' => [],
+            'status'      => 'no_snapshot',
+            'refresh_queued' => $refreshQueued,
+            'fetch_meta' => Cache::get($fetchMetaKey($symbol, null)),
+        ], 202);
     }
 
     $spotForHealth = app(\App\Services\WallService::class)->currentPrice($symbol, null);
@@ -203,33 +229,52 @@ Route::get('/option-chain', function () {
         $latest = $stats->fetched_at;
     }
 
+    $rowCount = (int) ($stats->row_count ?? 0);
+    $minStrike = isset($stats->min_strike) ? (float) $stats->min_strike : null;
+    $maxStrike = isset($stats->max_strike) ? (float) $stats->max_strike : null;
     $looksTruncated = $spotForHealth
         && $stats
-        && isset($stats->max_strike)
-        && (float) $stats->max_strike > 0
-        && (float) $stats->max_strike < ((float) $spotForHealth * 0.85);
+        && $maxStrike
+        && $maxStrike > 0
+        && $maxStrike < ((float) $spotForHealth * 0.85);
+    $coverageTooNarrow = $spotForHealth
+        && $stats
+        && $minStrike !== null
+        && $maxStrike !== null
+        && (
+            $minStrike >= ((float) $spotForHealth * 0.99)
+            || $maxStrike <= ((float) $spotForHealth * 1.01)
+        );
+    $needsRepair = !$latest || !$stats || $rowCount < 40 || $looksTruncated || $coverageTooNarrow;
 
     // Self-heal thin/partial chains for this specific expiry.
-    if (
-        !$latest ||
-        !$stats ||
-        (int) ($stats->row_count ?? 0) < 40 ||
-        $looksTruncated
-    ) {
+    if ($needsRepair) {
         $queuePrime($symbol, $expiry);
     }
+    $status = $needsRepair ? 'partial' : 'ok';
+    $fetchMeta = Cache::get($fetchMetaKey($symbol, $expiry)) ?? Cache::get($fetchMetaKey($symbol, null));
+    $expirationsPayload = $toExpirationPayload($menuExpiries);
+    $health = [
+        'expirations_count' => count($expirationsPayload),
+        'row_count' => $rowCount,
+        'min_strike' => $minStrike,
+        'max_strike' => $maxStrike,
+        'spot_price' => $spotForHealth ? (float) $spotForHealth : null,
+        'coverage_too_narrow' => $coverageTooNarrow,
+        'looks_truncated' => $looksTruncated,
+        'is_partial' => $status !== 'ok',
+    ];
 
     if (!$latest) {
         return response()->json([
             'underlying'  => ['symbol' => $symbol, 'price' => null],
             'chain'       => [],
-            'expirations' => $expRows->map(fn ($r) => [
-                'value' => $r->expiry,
-                'label' => \Carbon\Carbon::parse($r->expiry)->format('m-d'),
-            ])->toArray(),
+            'expirations' => $expirationsPayload,
             'status'      => 'no_expiry_snapshot',
             'requested_expiry' => $expiry,
             'refresh_queued' => $refreshQueued,
+            'health' => $health,
+            'fetch_meta' => $fetchMeta,
         ], 202);
     }
 
@@ -267,26 +312,36 @@ Route::get('/option-chain', function () {
                 'label'  => $row->expiry,
             ];
         });
-
-    $expirations = $expRows
-        ->map(fn ($r) => [
-            'value' => $r->expiry,
-            'label' => \Carbon\Carbon::parse($r->expiry)->format('m-d'),
-        ])
-        ->toArray();
+    if ($status !== 'ok' || (bool) data_get($fetchMeta, 'pagination_capped', false)) {
+        \Illuminate\Support\Facades\Log::warning('CalculatorChain.health.partial', [
+            'symbol' => $symbol,
+            'expiry' => $expiry,
+            'status' => $status,
+            'refresh_queued' => $refreshQueued,
+            'row_count' => $rowCount,
+            'min_strike' => $minStrike,
+            'max_strike' => $maxStrike,
+            'spot_price' => $spot ? (float) $spot : null,
+            'expirations_count' => count($expirationsPayload),
+            'fetch_meta' => $fetchMeta,
+        ]);
+    }
 
     return [
         'underlying'  => ['symbol' => $symbol, 'price' => round($price, 2)],
         'chain'       => $chain,
-        'expirations' => $expirations,
+        'expirations' => $expirationsPayload,
+        'status' => $status,
         'snapshot_at' => $latest,
         'snapshot_stats' => [
-            'row_count' => (int) ($stats->row_count ?? 0),
-            'min_strike' => isset($stats->min_strike) ? (float) $stats->min_strike : null,
-            'max_strike' => isset($stats->max_strike) ? (float) $stats->max_strike : null,
+            'row_count' => $rowCount,
+            'min_strike' => $minStrike,
+            'max_strike' => $maxStrike,
         ],
         'requested_expiry' => $expiry,
         'refresh_queued' => $refreshQueued,
+        'health' => $health,
+        'fetch_meta' => $fetchMeta,
     ];
 });
 
@@ -304,6 +359,7 @@ Route::post('/prime-calculator', function (Request $req) {
     $expiry = $req->input('expiry');
     $expiry = $expiry ? substr((string) $expiry, 0, 10) : null;
     $sync = $req->boolean('sync', false);
+    $force = $req->boolean('force', false);
 
     if ($sync) {
         dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($sym, $expiry));
@@ -312,11 +368,13 @@ Route::post('/prime-calculator', function (Request $req) {
             'symbol' => $sym,
             'expiry' => $expiry,
             'mode' => 'sync',
+            'force' => $force,
         ]);
     }
 
-    $lockKey = 'calculator:prime:' . md5($sym.'|'.($expiry ?? '*'));
-    $queued = Cache::add($lockKey, 1, now()->addSeconds(90));
+    $ttlSeconds = $force ? 10 : 90;
+    $lockKey = 'calculator:prime:' . md5($sym.'|'.($expiry ?? '*').($force ? '|force' : ''));
+    $queued = Cache::add($lockKey, 1, now()->addSeconds($ttlSeconds));
     if ($queued) {
         \App\Jobs\FetchCalculatorChainJob::dispatch($sym, $expiry)->onQueue('calculator');
     }
@@ -327,5 +385,7 @@ Route::post('/prime-calculator', function (Request $req) {
         'expiry' => $expiry,
         'mode' => 'queue',
         'queued' => $queued,
+        'force' => $force,
+        'lock_ttl_seconds' => $ttlSeconds,
     ], $queued ? 202 : 200);
 });

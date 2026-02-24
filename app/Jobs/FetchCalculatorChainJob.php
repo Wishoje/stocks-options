@@ -7,6 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -61,6 +62,18 @@ class FetchCalculatorChainJob implements ShouldQueue
             }
             return $params;
         };
+        $metaKey = static fn (string $sym, ?string $exp = null): string => 'calculator:fetch-meta:' . md5($sym . '|' . ($exp ?? '*'));
+        $storeMeta = function (array $meta) use ($metaKey, $symbol, $targetExpiry): void {
+            Cache::put(
+                $metaKey($symbol, $targetExpiry),
+                array_merge([
+                    'symbol' => $symbol,
+                    'target_expiry' => $targetExpiry,
+                    'recorded_at' => now()->toIso8601String(),
+                ], $meta),
+                now()->addHours(12)
+            );
+        };
 
         // Log::debug('CalculatorChain.start', [
         //     'symbol' => $symbol,
@@ -70,6 +83,9 @@ class FetchCalculatorChainJob implements ShouldQueue
 
         if (!$apiKey) {
             Log::error('MassiveClient.missingKey', ['job' => 'CalculatorChain']);
+            $storeMeta([
+                'status' => 'failed_missing_api_key',
+            ]);
             return;
         }
 
@@ -124,10 +140,14 @@ class FetchCalculatorChainJob implements ShouldQueue
         // Step 2: Option chain (paginated)
         // -----------------------------
         $perPage   = 250; // first attempt, fallback to 100 if Massive rejects
-        $maxPages  = max(50, (int) env('CALC_CHAIN_MAX_PAGES', 150));
+        $baseMaxPages = max(50, (int) env('CALC_CHAIN_MAX_PAGES', 150));
+        $largeMaxPages = max($baseMaxPages, (int) env('CALC_CHAIN_MAX_PAGES_LARGE', 350));
+        $isLargeSymbol = !$targetExpiry && in_array($symbol, ['SPY', 'QQQ', 'IWM'], true);
+        $maxPages  = $isLargeSymbol ? $largeMaxPages : $baseMaxPages;
         $url       = "{$base}/v3/snapshot/options/{$symbol}";
         $contracts = [];
         $page      = 0;
+        $pageFailedStatus = null;
 
         while ($url && $page < $maxPages) {
             $page++;
@@ -190,6 +210,7 @@ class FetchCalculatorChainJob implements ShouldQueue
             // ]);
 
             if (!$resp->ok()) {
+                $pageFailedStatus = $resp->status();
                 Log::warning('CalculatorChain.pageFailed', [
                     'symbol' => $symbol,
                     'page'   => $page,
@@ -238,8 +259,10 @@ class FetchCalculatorChainJob implements ShouldQueue
                 'symbol' => $symbol,
                 'pages' => $page,
                 'max_pages' => $maxPages,
+                'target_expiry' => $targetExpiry,
             ]);
         }
+        $paginationCapped = (bool) $url;
 
         Log::info('CalculatorChain.fetchComplete', [
             'symbol'    => $symbol,
@@ -248,6 +271,16 @@ class FetchCalculatorChainJob implements ShouldQueue
 
         if (empty($contracts)) {
             Log::info('CalculatorChain.noContracts', ['symbol' => $symbol]);
+            $storeMeta([
+                'status' => 'no_contracts',
+                'pages' => $page,
+                'max_pages' => $maxPages,
+                'pagination_capped' => $paginationCapped,
+                'http_error_status' => $pageFailedStatus,
+                'contracts_fetched' => 0,
+                'contracts_kept' => 0,
+                'expiries_found' => 0,
+            ]);
             return;
         }
 
@@ -376,11 +409,27 @@ class FetchCalculatorChainJob implements ShouldQueue
                 );
             }
         }
+        $expiriesFound = collect($inserts)->pluck('expiry')->unique()->count();
+        $storeMeta([
+            'status' => $paginationCapped ? 'partial_pagination_capped' : 'ok',
+            'pages' => $page,
+            'max_pages' => $maxPages,
+            'pagination_capped' => $paginationCapped,
+            'http_error_status' => $pageFailedStatus,
+            'contracts_fetched' => count($contracts),
+            'contracts_kept' => count($inserts),
+            'expiries_found' => $expiriesFound,
+        ]);
 
         Log::info('CalculatorChain.SUCCESS', [
             'symbol'     => $symbol,
             'contracts'  => count($inserts),
             'underlying' => $underlying,
+            'target_expiry' => $targetExpiry,
+            'pages' => $page,
+            'max_pages' => $maxPages,
+            'pagination_capped' => $paginationCapped,
+            'expiries_found' => $expiriesFound,
         ]);
     }
 }
