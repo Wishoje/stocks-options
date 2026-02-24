@@ -80,7 +80,7 @@ const needsFollowUpPrime = (payload) => {
 
   if (!exp.length || !chain.length) return true
   if (status === 'no_snapshot' || status === 'no_expiry_snapshot') return true
-  if (status === 'partial' && payload.refresh_queued) return true
+  if (status === 'partial') return true
 
   return false
 }
@@ -409,8 +409,8 @@ const handleExpiryClick = async (value) => {
 }
 
 // ---------- API ----------
-const loadChain = async (opts = { retried: false, autoPrimeOnFollowUp: true, keepLoading: false }) => {
-  const { retried = false, autoPrimeOnFollowUp = true, keepLoading = false } = opts
+const loadChain = async (opts = { retries: 0, maxRetries: 6, autoPrimeOnFollowUp: true, keepLoading: false }) => {
+  const { retries = 0, maxRetries = 6, autoPrimeOnFollowUp = true, keepLoading = false } = opts
   if (!keepLoading) loading.value = true
   try {
     const { data } = await axios.get('/api/option-chain', {
@@ -423,11 +423,14 @@ const loadChain = async (opts = { retried: false, autoPrimeOnFollowUp: true, kee
     snapshotAt.value   = data.snapshot_at || null
     error.value        = ''
 
-    // Retry once when API says data is missing/partial and it queued a refresh.
-    if (!retried && autoPrimeOnFollowUp && needsFollowUpPrime(data)) {
-      await primeCalculator(symbol.value, selectedExpiry.value)
+    // Keep polling for new symbols / partial chain snapshots while backend priming finishes.
+    if (autoPrimeOnFollowUp && needsFollowUpPrime(data) && retries < maxRetries) {
+      const shouldPrime = retries === 0 || !data.refresh_queued
+      if (shouldPrime) {
+        await primeCalculator(symbol.value, selectedExpiry.value, { force: retries > 0 })
+      }
       await sleep(1200)
-      return await loadChain({ retried: true, autoPrimeOnFollowUp: false, keepLoading: true })
+      return await loadChain({ retries: retries + 1, maxRetries, autoPrimeOnFollowUp: true, keepLoading: true })
     }
 
     // If nothing selected yet, pick first expiry
@@ -611,7 +614,8 @@ const refreshLiveData = async () => {
       }
 
       const data = await loadChain({
-        retried: true,
+        retries: 0,
+        maxRetries: 0,
         autoPrimeOnFollowUp: false,
         keepLoading: true,
       })
@@ -685,7 +689,7 @@ onBeforeUnmount(() => {
 
           <!-- Global "booting" / loading / waiting for full data -->
           <div
-            v-else-if="loading || !hasData"
+            v-else-if="loading"
             class="text-center py-20"
           >
             <div
@@ -710,6 +714,9 @@ onBeforeUnmount(() => {
               >
                 {{ exp.label }}
               </button>
+              <span v-if="!expirations.length" class="text-xs text-amber-300">
+                No expirations loaded yet.
+              </span>
             </div>
 
             <div class="flex justify-center mt-4">
@@ -799,6 +806,11 @@ onBeforeUnmount(() => {
                           ${{ formatPrice(safePremium(row.put)) }}
                         </span>
                         <span v-else>—</span>
+                      </td>
+                    </tr>
+                    <tr v-if="!groupedStrikes.length">
+                      <td colspan="3" class="py-6 text-center text-sm text-amber-300">
+                        No chain rows yet. Click "Refresh Live Data" and wait a few seconds.
                       </td>
                     </tr>
                   </tbody>

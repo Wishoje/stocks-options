@@ -155,24 +155,21 @@ Route::get('/option-chain', function () {
             ->values();
     }
 
-    // Expiration menu source #2: EOD expirations fallback for sparse snapshot menus.
-    $menuExpiries = $snapshotExpiries->unique()->sort()->values();
-    if ($menuExpiries->count() < 10) {
-        $eodExpiries = DB::table('option_expirations')
-            ->where('symbol', $symbol)
-            ->whereDate('expiration_date', '>=', $today)
-            ->orderBy('expiration_date')
-            ->pluck('expiration_date')
-            ->map($toExpiry)
-            ->filter()
-            ->values();
+    // Expiration menu source #2: always merge EOD expirations.
+    $eodExpiries = DB::table('option_expirations')
+        ->where('symbol', $symbol)
+        ->whereDate('expiration_date', '>=', $today)
+        ->orderBy('expiration_date')
+        ->pluck('expiration_date')
+        ->map($toExpiry)
+        ->filter()
+        ->values();
 
-        $menuExpiries = $menuExpiries
-            ->merge($eodExpiries)
-            ->unique()
-            ->sort()
-            ->values();
-    }
+    $menuExpiries = $snapshotExpiries
+        ->merge($eodExpiries)
+        ->unique()
+        ->sort()
+        ->values();
 
     if ($expiry && !$menuExpiries->contains($expiry)) {
         $menuExpiries = $menuExpiries->push($expiry)->unique()->sort()->values();
