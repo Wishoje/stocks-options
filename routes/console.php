@@ -65,6 +65,26 @@ Schedule::command('watchlist:preload')
     ->onOneServer()
     ->at('16:15');
 
+// Strict repair for core liquid names.
+Schedule::command('watchlist:repair-missing --check-incomplete --profile=core --symbols=SPY,QQQ,IWM,AAPL,MSFT,NVDA --chunk=6 --days=90')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->withoutOverlapping(30)
+    ->onOneServer()
+    ->everyThirtyMinutes()
+    ->between('18:15', '20:15')
+    ->name('watchlist:repair-missing:eod:core');
+
+// Broad repair for full watchlist universe with tolerant thresholds.
+Schedule::command('watchlist:repair-missing --check-incomplete --profile=broad --chunk=10 --days=90')
+    ->weekdays()
+    ->timezone('America/New_York')
+    ->withoutOverlapping(30)
+    ->onOneServer()
+    ->everyThirtyMinutes()
+    ->between('18:30', '20:30')
+    ->name('watchlist:repair-missing:eod:broad');
+
 Schedule::command('preload:hot-options --limit=200 --days=10')
     ->weekdays()
     ->timezone('America/New_York')

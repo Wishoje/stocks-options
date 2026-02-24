@@ -13,6 +13,7 @@ use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\SymbolSearchController;
 use App\Http\Controllers\IntradayController;
 use App\Http\Controllers\WallScannerController;
+use App\Http\Controllers\EodHealthController;
 use App\Jobs\PrimeSymbolJob;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
@@ -58,6 +59,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         dispatch(new PrimeSymbolJob($sym));
         return response()->noContent(204);
     });
+
+    Route::get('/eod/health', [EodHealthController::class, 'index'])
+        ->middleware('eodhealth');
 });
 Route::get('/symbols', [SymbolSearchController::class, 'lookup']);
 Route::get('/iv/term', [VolController::class,'term']);

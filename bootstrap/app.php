@@ -32,6 +32,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'subscribed' => \App\Http\Middleware\EnsureSubscribed::class,
             'feature'    => \App\Http\Middleware\EnsureFeature::class,
+            'eodhealth'  => \App\Http\Middleware\EnsureEodHealthAccess::class,
         ]);
 
         $middleware->validateCsrfTokens(except: [

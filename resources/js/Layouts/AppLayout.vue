@@ -82,6 +82,13 @@ const logout = () => {
                                 >
                                     Scanner
                                 </NavLink>
+                                <NavLink
+                                    v-if="[3,4].includes(Number($page.props.auth.user.id))"
+                                    :href="route('eod.health')"
+                                    :active="route().current('eod.health')"
+                                >
+                                    EOD Health
+                                </NavLink>
                             </div>
                         </div>
 
@@ -235,6 +242,13 @@ const logout = () => {
                             :active="route().current('options.scanner')"
                         >
                             Scanner
+                        </ResponsiveNavLink>
+                        <ResponsiveNavLink
+                            v-if="[3,4].includes(Number($page.props.auth.user.id))"
+                            :href="route('eod.health')"
+                            :active="route().current('eod.health')"
+                        >
+                            EOD Health
                         </ResponsiveNavLink>
                     </div>
 

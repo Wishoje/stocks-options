@@ -6,6 +6,7 @@ use App\Http\Controllers\BillingController;
 use Laravel\Cashier\Http\Controllers\WebhookController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ContactController;
+use App\Http\Controllers\EodHealthController;
 use Inertia\Inertia;
 
 Route::post('/stripe/webhook', [WebhookController::class, 'handleWebhook'])
@@ -47,4 +48,8 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'subscribed
 
     Route::get('/scanner', fn () => Inertia::render('Scanner'))
         ->name('options.scanner');
+
+    Route::get('/eod-health', [EodHealthController::class, 'page'])
+        ->middleware('eodhealth')
+        ->name('eod.health');
 });
