@@ -160,6 +160,9 @@ Key events:
 - `eod.fetch.symbol.no_expiries_in_window`: provider returned data but none within configured horizon.
 - `eod.fetch.symbol.skipped`: duplicate guard prevented a concurrent pull.
 
+If you see `massive_pages=...` plus `pagination_capped=true` repeatedly for large symbols
+(`SPY`, `QQQ`, `IWM`), increase `EOD_CHAIN_MAX_PAGES` (default `120`) and redeploy.
+
 ## EOD health dashboard
 
 Authenticated route:

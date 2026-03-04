@@ -106,6 +106,12 @@ function fetchMetaChips(meta) {
   if (meta.massive_http_status) {
     chips.push(`massive_http: ${meta.massive_http_status}`)
   }
+  if (meta.massive_pages != null) {
+    chips.push(`massive_pages: ${meta.massive_pages}`)
+  }
+  if (meta.pagination_capped) {
+    chips.push('pagination_capped')
+  }
   if (meta.finnhub_http_status) {
     chips.push(`finnhub_http: ${meta.finnhub_http_status}`)
   }

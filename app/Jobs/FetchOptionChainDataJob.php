@@ -50,8 +50,10 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     public function handle(): void
     {
-        $date = $this->tradingDate(now());
-        $endWindow = ($this->days ? now()->addDays($this->days) : now()->addDays(90))->endOfDay();
+        $nowNy = now('America/New_York');
+        $date = $this->tradingDate($nowNy->copy());
+        $windowStart = $nowNy->copy()->startOfDay();
+        $windowEnd = ($this->days ? $nowNy->copy()->addDays($this->days) : $nowNy->copy()->addDays(90))->endOfDay();
 
         foreach ($this->symbols as $symbol) {
             $context = [
@@ -89,7 +91,6 @@ class FetchOptionChainDataJob implements ShouldQueue
             }
 
             // Filter expirations to our configured window.
-            $nowTs = now()->timestamp;
             $expWindowSets = [];
             foreach ($sets as $set) {
                 $expDate = $set['expirationDate'] ?? null;
@@ -97,18 +98,22 @@ class FetchOptionChainDataJob implements ShouldQueue
                     continue;
                 }
 
-                $expTs = strtotime($expDate);
-                if ($expTs === false) {
+                try {
+                    // Treat expiration as end-of-day in ET so same-day expiries are included.
+                    $expAtNy = Carbon::createFromFormat('Y-m-d', substr((string) $expDate, 0, 10), 'America/New_York')->endOfDay();
+                } catch (\Throwable $e) {
                     continue;
                 }
 
-                if ($expTs >= $nowTs && $expTs <= $endWindow->timestamp) {
-                    $expWindowSets[] = [
-                        'date' => $expDate,
-                        'ts' => $expTs,
-                        'opts' => $set['options'] ?? [],
-                    ];
+                if ($expAtNy->lt($windowStart) || $expAtNy->gt($windowEnd)) {
+                    continue;
                 }
+
+                $expWindowSets[] = [
+                    'date' => $expDate,
+                    'ts' => $expAtNy->timestamp,
+                    'opts' => $set['options'] ?? [],
+                ];
             }
 
             if (!$expWindowSets) {
@@ -277,6 +282,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'finnhub_status' => $finnhubMeta['status'] ?? 'not_attempted',
                 'massive_status' => $massiveMeta['status'] ?? 'ok',
                 'massive_pages' => $massiveMeta['pages'] ?? null,
+                'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
             ]];
         }
 
@@ -288,6 +294,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             'massive_status' => $massiveMeta['status'] ?? 'not_attempted',
             'massive_http_status' => $massiveMeta['http_status'] ?? null,
             'massive_pages' => $massiveMeta['pages'] ?? null,
+            'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
         ]];
     }
 
@@ -366,9 +373,11 @@ class FetchOptionChainDataJob implements ShouldQueue
         $spot      = null;
         $lastStatus = null;
         $pages = 0;
+        $maxPages = max(50, (int) env('EOD_CHAIN_MAX_PAGES', 120));
+        $paginationCapped = false;
 
         // Pull all pages
-        for ($page = 0; $page < 50; $page++) {
+        for ($page = 0; $page < $maxPages; $page++) {
             $pages++;
             $reqUrl = $cursor ?: $url;
             $params = [];
@@ -417,11 +426,16 @@ class FetchOptionChainDataJob implements ShouldQueue
             }
         }
 
+        if ($cursor) {
+            $paginationCapped = true;
+        }
+
         if (empty($contracts)) {
             return [null, [
                 'status' => $lastStatus ? 'http_error' : 'empty_payload',
                 'http_status' => $lastStatus,
                 'pages' => $pages,
+                'pagination_capped' => $paginationCapped,
             ]];
         }
 
@@ -492,6 +506,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             return [null, [
                 'status' => 'normalized_empty',
                 'pages' => $pages,
+                'pagination_capped' => $paginationCapped,
             ]];
         }
 
@@ -499,6 +514,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             'status' => 'ok',
             'set_count' => count($sets),
             'pages' => $pages,
+            'pagination_capped' => $paginationCapped,
         ]];
     }
 
