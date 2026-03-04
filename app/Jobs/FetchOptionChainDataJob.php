@@ -373,7 +373,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         $spot      = null;
         $lastStatus = null;
         $pages = 0;
-        $maxPages = max(50, (int) env('EOD_CHAIN_MAX_PAGES', 120));
+        $maxPages = max(50, (int) config('services.massive.eod_chain_max_pages', 120));
         $paginationCapped = false;
 
         // Pull all pages

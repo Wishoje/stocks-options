@@ -45,6 +45,7 @@ return [
         'mode'   => env('MASSIVE_AUTH_MODE', 'header'), // header|bearer|query
         'header' => env('MASSIVE_API_HEADER', 'X-API-Key'),
         'qparam' => env('MASSIVE_API_QUERY', 'apiKey'),
+        'eod_chain_max_pages' => (int) env('EOD_CHAIN_MAX_PAGES', 120),
     ],
 
     // Google Analytics 4

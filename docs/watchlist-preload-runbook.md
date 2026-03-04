@@ -163,6 +163,12 @@ Key events:
 If you see `massive_pages=...` plus `pagination_capped=true` repeatedly for large symbols
 (`SPY`, `QQQ`, `IWM`), increase `EOD_CHAIN_MAX_PAGES` (default `120`) and redeploy.
 
+Validation command (cached-config safe):
+
+```bash
+php artisan tinker --execute='dump(config("services.massive.eod_chain_max_pages"));'
+```
+
 ## EOD health dashboard
 
 Authenticated route:
