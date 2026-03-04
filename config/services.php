@@ -46,6 +46,7 @@ return [
         'header' => env('MASSIVE_API_HEADER', 'X-API-Key'),
         'qparam' => env('MASSIVE_API_QUERY', 'apiKey'),
         'eod_chain_max_pages' => (int) env('EOD_CHAIN_MAX_PAGES', 120),
+        'eod_chain_page_limit' => (int) env('EOD_CHAIN_PAGE_LIMIT', 250),
     ],
 
     // Google Analytics 4

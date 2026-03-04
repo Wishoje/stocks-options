@@ -109,6 +109,9 @@ function fetchMetaChips(meta) {
   if (meta.massive_pages != null) {
     chips.push(`massive_pages: ${meta.massive_pages}`)
   }
+  if (meta.massive_page_limit != null) {
+    chips.push(`massive_limit: ${meta.massive_page_limit}`)
+  }
   if (meta.pagination_capped) {
     chips.push('pagination_capped')
   }

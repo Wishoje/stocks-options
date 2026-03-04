@@ -282,6 +282,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'finnhub_status' => $finnhubMeta['status'] ?? 'not_attempted',
                 'massive_status' => $massiveMeta['status'] ?? 'ok',
                 'massive_pages' => $massiveMeta['pages'] ?? null,
+                'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
                 'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
             ]];
         }
@@ -294,6 +295,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             'massive_status' => $massiveMeta['status'] ?? 'not_attempted',
             'massive_http_status' => $massiveMeta['http_status'] ?? null,
             'massive_pages' => $massiveMeta['pages'] ?? null,
+            'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
             'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
         ]];
     }
@@ -374,6 +376,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         $lastStatus = null;
         $pages = 0;
         $maxPages = max(50, (int) config('services.massive.eod_chain_max_pages', 120));
+        $pageLimit = max(1, min(250, (int) config('services.massive.eod_chain_page_limit', 250)));
         $paginationCapped = false;
 
         // Pull all pages
@@ -381,6 +384,10 @@ class FetchOptionChainDataJob implements ShouldQueue
             $pages++;
             $reqUrl = $cursor ?: $url;
             $params = [];
+
+            if (!$cursor) {
+                $params['limit'] = $pageLimit;
+            }
 
             if (!$cursor && $mode === 'query') {
                 $params[$qparam] = $key;
@@ -393,6 +400,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                     'status' => 'unauthorized',
                     'http_status' => 401,
                     'pages' => $pages,
+                    'page_limit' => $pageLimit,
                 ]];
             }
 
@@ -435,6 +443,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'status' => $lastStatus ? 'http_error' : 'empty_payload',
                 'http_status' => $lastStatus,
                 'pages' => $pages,
+                'page_limit' => $pageLimit,
                 'pagination_capped' => $paginationCapped,
             ]];
         }
@@ -506,6 +515,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             return [null, [
                 'status' => 'normalized_empty',
                 'pages' => $pages,
+                'page_limit' => $pageLimit,
                 'pagination_capped' => $paginationCapped,
             ]];
         }
@@ -514,6 +524,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             'status' => 'ok',
             'set_count' => count($sets),
             'pages' => $pages,
+            'page_limit' => $pageLimit,
             'pagination_capped' => $paginationCapped,
         ]];
     }

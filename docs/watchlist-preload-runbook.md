@@ -162,6 +162,7 @@ Key events:
 
 If you see `massive_pages=...` plus `pagination_capped=true` repeatedly for large symbols
 (`SPY`, `QQQ`, `IWM`), increase `EOD_CHAIN_MAX_PAGES` (default `120`) and redeploy.
+You can also tune `EOD_CHAIN_PAGE_LIMIT` (default `250`) to reduce page churn.
 
 Validation command (cached-config safe):
 
