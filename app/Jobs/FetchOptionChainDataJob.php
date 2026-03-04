@@ -50,21 +50,37 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     public function handle(): void
     {
-        $date      = $this->tradingDate(now());
+        $date = $this->tradingDate(now());
         $endWindow = ($this->days ? now()->addDays($this->days) : now()->addDays(90))->endOfDay();
 
         foreach ($this->symbols as $symbol) {
-            // Duplicate-work guard per symbol/date
-            if (!Cache::add("optchain:pulling:{$symbol}:{$date}", 1, now()->addMinutes($this->guardMinutes))) {
-                Log::info("Skip {$symbol} — another worker is already pulling for {$date}");
+            $context = [
+                'symbol' => $symbol,
+                'target_date' => $date,
+                'days' => $this->days,
+            ];
+
+            // Duplicate-work guard per symbol/date.
+            $guardKey = "optchain:pulling:{$symbol}:{$date}";
+            if (!Cache::add($guardKey, 1, now()->addMinutes($this->guardMinutes))) {
+                $meta = array_merge($context, [
+                    'status' => 'skipped_duplicate_guard',
+                    'guard_key' => $guardKey,
+                ]);
+                Log::channel('eod_repair')->warning('eod.fetch.symbol.skipped', $meta);
+                $this->storeFetchMeta($symbol, $date, $meta);
                 continue;
             }
 
-            // ---- Finnhub → Massive fallback with normalized chain ----
-            [$spot, $sets] = $this->fetchChain($symbol);
+            // Finnhub -> Massive fallback with normalized chain.
+            [$spot, $sets, $providerMeta] = $this->fetchChain($symbol);
 
             if (!$sets || !is_array($sets)) {
-                Log::warning("No option data for {$symbol} from Finnhub or Massive.");
+                $meta = array_merge($context, [
+                    'status' => 'no_provider_data',
+                ], $providerMeta);
+                Log::channel('eod_repair')->warning('eod.fetch.symbol.no_provider_data', $meta);
+                $this->storeFetchMeta($symbol, $date, $meta);
                 continue;
             }
 
@@ -72,8 +88,8 @@ class FetchOptionChainDataJob implements ShouldQueue
                 Log::warning("No/invalid spot for {$symbol}, skipping greeks and most filtering.");
             }
 
-            // Filter expirations to our window
-            $nowTs        = now()->timestamp;
+            // Filter expirations to our configured window.
+            $nowTs = now()->timestamp;
             $expWindowSets = [];
             foreach ($sets as $set) {
                 $expDate = $set['expirationDate'] ?? null;
@@ -89,20 +105,26 @@ class FetchOptionChainDataJob implements ShouldQueue
                 if ($expTs >= $nowTs && $expTs <= $endWindow->timestamp) {
                     $expWindowSets[] = [
                         'date' => $expDate,
-                        'ts'   => $expTs,
+                        'ts' => $expTs,
                         'opts' => $set['options'] ?? [],
                     ];
                 }
             }
 
             if (!$expWindowSets) {
-                Log::info("No expirations in window for {$symbol} (days={$this->days})");
+                $meta = array_merge($context, [
+                    'status' => 'no_expiries_in_window',
+                    'expiries_total' => count($sets),
+                    'expiries_in_window' => 0,
+                ], $providerMeta);
+                Log::channel('eod_repair')->warning('eod.fetch.symbol.no_expiries_in_window', $meta);
+                $this->storeFetchMeta($symbol, $date, $meta);
                 continue;
             }
 
-            // Preload/create expiration ids in bulk
+            // Preload/create expiration ids in bulk.
             $expDates = collect($expWindowSets)->pluck('date')->unique()->values();
-            $expMap   = OptionExpiration::query()
+            $expMap = OptionExpiration::query()
                 ->where('symbol', $symbol)
                 ->whereIn('expiration_date', $expDates)
                 ->pluck('id', 'expiration_date');
@@ -111,7 +133,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             foreach ($expDates as $d) {
                 if (!isset($expMap[$d])) {
                     $toInsert[] = [
-                        'symbol'          => $symbol,
+                        'symbol' => $symbol,
                         'expiration_date' => $d,
                     ];
                 }
@@ -119,18 +141,17 @@ class FetchOptionChainDataJob implements ShouldQueue
 
             if ($toInsert) {
                 DB::table('option_expirations')->insert($toInsert);
-                // refresh map
                 $expMap = OptionExpiration::query()
                     ->where('symbol', $symbol)
                     ->whereIn('expiration_date', $expDates)
                     ->pluck('id', 'expiration_date');
             }
 
-            // Strike filters
+            // Strike filters.
             $minStrike = $spot > 0 ? $spot * (1 - $this->strikeBandPct) : 0;
             $maxStrike = $spot > 0 ? $spot * (1 + $this->strikeBandPct) : INF;
 
-            // Greeks near-ATM band
+            // Greeks near-ATM band.
             $nearMin = $spot > 0 ? $spot * (1 - $this->greeksNearPct) : 0;
             $nearMax = $spot > 0 ? $spot * (1 + $this->greeksNearPct) : INF;
 
@@ -138,9 +159,8 @@ class FetchOptionChainDataJob implements ShouldQueue
 
             foreach ($expWindowSets as $set) {
                 $expDate = $set['date'];
-                $expTs   = $set['ts'];
-                $expId   = (int) $expMap[$expDate];
-
+                $expTs = $set['ts'];
+                $expId = (int) $expMap[$expDate];
                 $rows = [];
 
                 foreach (['CALL' => 'call', 'PUT' => 'put'] as $apiSide => $side) {
@@ -150,24 +170,19 @@ class FetchOptionChainDataJob implements ShouldQueue
                     }
 
                     foreach ($list as $opt) {
-                        $strike = (float)($opt['strike'] ?? 0);
-                        if (
-                            $strike <= 0 ||
-                            $strike < $minStrike ||
-                            $strike > $maxStrike
-                        ) {
+                        $strike = (float) ($opt['strike'] ?? 0);
+                        if ($strike <= 0 || $strike < $minStrike || $strike > $maxStrike) {
                             continue;
                         }
 
-                        $oi  = (int)($opt['openInterest'] ?? 0);
-                        $vol = (int)($opt['volume'] ?? 0);
+                        $oi = (int) ($opt['openInterest'] ?? 0);
+                        $vol = (int) ($opt['volume'] ?? 0);
                         if ($oi < $this->minKeepOI && $vol < $this->minKeepVol) {
                             continue;
                         }
 
-                        // IV normalize
                         $ivRaw = $opt['impliedVolatility'] ?? null;
-                        $iv    = null;
+                        $iv = null;
                         if ($ivRaw !== null) {
                             $iv = (float) $ivRaw;
                             if ($iv > 1.0) {
@@ -178,30 +193,28 @@ class FetchOptionChainDataJob implements ShouldQueue
                             }
                         }
 
-                        // Time to expiry (years)
                         $T = $this->timeToExpirationYears($expTs);
 
-                        // Greeks: only if IV present and near ATM
                         $gamma = $delta = $vega = null;
                         if ($iv !== null && $T > 0 && $strike >= $nearMin && $strike <= $nearMax && $spot > 0) {
                             $gamma = $this->computeGamma($spot, $strike, $T, $iv, 0.0);
                             $delta = $this->computeDelta($side, $spot, $strike, $T, $iv, 0.0);
-                            $vega  = $this->computeVega ($spot, $strike, $T, $iv, 0.0);
+                            $vega = $this->computeVega($spot, $strike, $T, $iv, 0.0);
                         }
 
                         $rows[] = [
-                            'expiration_id'     => $expId,
-                            'data_date'         => $date,
-                            'option_type'       => $side,
-                            'strike'            => $strike,
-                            'open_interest'     => $oi,
-                            'volume'            => $vol,
-                            'gamma'             => $gamma,
-                            'delta'             => $delta,
-                            'vega'              => $vega,
-                            'iv'                => $iv,
-                            'underlying_price'  => $spot ?: null,
-                            'data_timestamp'    => now(),
+                            'expiration_id' => $expId,
+                            'data_date' => $date,
+                            'option_type' => $side,
+                            'strike' => $strike,
+                            'open_interest' => $oi,
+                            'volume' => $vol,
+                            'gamma' => $gamma,
+                            'delta' => $delta,
+                            'vega' => $vega,
+                            'iv' => $iv,
+                            'underlying_price' => $spot ?: null,
+                            'data_timestamp' => now(),
                         ];
                     }
                 }
@@ -227,51 +240,70 @@ class FetchOptionChainDataJob implements ShouldQueue
                 }
             }
 
-            Log::info("Fetched {$symbol}: kept {$totalKept} rows (days=" . ($this->days ?? 14) . ", band=" . ($this->strikeBandPct * 100) . "%).");
+            $meta = array_merge($context, [
+                'status' => 'ok',
+                'expiries_total' => count($sets),
+                'expiries_in_window' => count($expWindowSets),
+                'rows_kept' => $totalKept,
+                'spot' => $spot,
+            ], $providerMeta);
+            Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
+            $this->storeFetchMeta($symbol, $date, $meta);
         }
     }
 
     // ---------- Provider selection + adapters ----------
 
     /**
-     * Try Finnhub first, then Massive. Returns [spot, sets].
+     * Try Finnhub first, then Massive.
      *
-     * sets is normalized to Finnhub-style:
-     * [
-     *   [
-     *     'expirationDate' => 'YYYY-MM-DD',
-     *     'options' => [
-     *       'CALL' => [ ['strike'=>..., 'openInterest'=>..., 'volume'=>..., 'impliedVolatility'=>...], ... ],
-     *       'PUT'  => [ ... ],
-     *     ],
-     *   ],
-     *   ...
-     * ]
+     * @return array{0:float,1:array,2:array<string,mixed>}
      */
     protected function fetchChain(string $symbol): array
     {
-        if ($chain = $this->fetchFinnhubChain($symbol)) {
-            return $chain;
+        [$finnhubChain, $finnhubMeta] = $this->fetchFinnhubChain($symbol);
+        if ($finnhubChain !== null) {
+            return [$finnhubChain[0], $finnhubChain[1], [
+                'provider' => 'finnhub',
+                'provider_status' => 'ok',
+            ]];
         }
 
-        if ($chain = $this->fetchMassiveChain($symbol)) {
-            return $chain;
+        [$massiveChain, $massiveMeta] = $this->fetchMassiveChain($symbol);
+        if ($massiveChain !== null) {
+            return [$massiveChain[0], $massiveChain[1], [
+                'provider' => 'massive',
+                'provider_status' => 'ok',
+                'finnhub_status' => $finnhubMeta['status'] ?? 'not_attempted',
+                'massive_status' => $massiveMeta['status'] ?? 'ok',
+                'massive_pages' => $massiveMeta['pages'] ?? null,
+            ]];
         }
 
-        return [0.0, []];
+        return [0.0, [], [
+            'provider' => 'none',
+            'provider_status' => 'failed',
+            'finnhub_status' => $finnhubMeta['status'] ?? 'not_attempted',
+            'finnhub_http_status' => $finnhubMeta['http_status'] ?? null,
+            'massive_status' => $massiveMeta['status'] ?? 'not_attempted',
+            'massive_http_status' => $massiveMeta['http_status'] ?? null,
+            'massive_pages' => $massiveMeta['pages'] ?? null,
+        ]];
     }
 
     /**
      * Finnhub adapter.
+     *
+     * @return array{0:?array{0:float,1:array},1:array<string,mixed>}
      */
-    protected function fetchFinnhubChain(string $symbol): ?array
+    protected function fetchFinnhubChain(string $symbol): array
     {
         $apiKey = env('FINNHUB_API_KEY') ?: config('services.finnhub.api_key');
         if (!$apiKey) {
-            return null;
+            return [null, ['status' => 'missing_api_key']];
         }
 
-        $url  = 'https://finnhub.io/api/v1/stock/option-chain';
+        $url = 'https://finnhub.io/api/v1/stock/option-chain';
         $resp = Http::retry(3, 250, throw: false)
             ->timeout(15)
             ->acceptJson()
@@ -281,25 +313,32 @@ class FetchOptionChainDataJob implements ShouldQueue
             ]);
 
         if ($resp->failed()) {
-            Log::error("Finnhub option-chain failed for {$symbol}: {$resp->status()} {$resp->body()}");
-            return null;
+            return [null, [
+                'status' => 'http_error',
+                'http_status' => $resp->status(),
+            ]];
         }
 
         $json = $resp->json() ?? [];
         $sets = $json['data'] ?? [];
         if (!is_array($sets) || !$sets) {
-            return null;
+            return [null, ['status' => 'empty_payload']];
         }
 
-        $spot = (float)($json['lastTradePrice'] ?? 0);
+        $spot = (float) ($json['lastTradePrice'] ?? 0);
 
-        return [$spot, $sets];
+        return [[$spot, $sets], [
+            'status' => 'ok',
+            'set_count' => count($sets),
+        ]];
     }
 
     /**
      * Massive adapter (snapshot/options) normalized to Finnhub-style sets.
+     *
+     * @return array{0:?array{0:float,1:array},1:array<string,mixed>}
      */
-    protected function fetchMassiveChain(string $symbol): ?array
+    protected function fetchMassiveChain(string $symbol): array
     {
         $base   = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
         $key    = config('services.massive.key');
@@ -308,8 +347,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         $qparam = config('services.massive.qparam', 'apiKey');
 
         if (empty($key)) {
-            Log::error('Massive option-chain missing API key');
-            return null;
+            return [null, ['status' => 'missing_api_key']];
         }
 
         $client = Http::acceptJson()
@@ -326,9 +364,12 @@ class FetchOptionChainDataJob implements ShouldQueue
         $cursor    = null;
         $contracts = [];
         $spot      = null;
+        $lastStatus = null;
+        $pages = 0;
 
         // Pull all pages
         for ($page = 0; $page < 50; $page++) {
+            $pages++;
             $reqUrl = $cursor ?: $url;
             $params = [];
 
@@ -339,15 +380,15 @@ class FetchOptionChainDataJob implements ShouldQueue
             $resp = $client->get($reqUrl, $params);
 
             if ($resp->status() === 401) {
-                Log::warning('Massive option-chain unauthorized', ['symbol' => $symbol]);
-                return null;
+                return [null, [
+                    'status' => 'unauthorized',
+                    'http_status' => 401,
+                    'pages' => $pages,
+                ]];
             }
 
             if ($resp->failed()) {
-                Log::warning('Massive option-chain httpError', [
-                    'symbol' => $symbol,
-                    'code'   => $resp->status(),
-                ]);
+                $lastStatus = $resp->status();
                 break;
             }
 
@@ -377,8 +418,11 @@ class FetchOptionChainDataJob implements ShouldQueue
         }
 
         if (empty($contracts)) {
-            Log::info('Massive option-chain: no contracts', ['symbol' => $symbol]);
-            return null;
+            return [null, [
+                'status' => $lastStatus ? 'http_error' : 'empty_payload',
+                'http_status' => $lastStatus,
+                'pages' => $pages,
+            ]];
         }
 
         $spot = (float)($spot ?? 0);
@@ -445,10 +489,28 @@ class FetchOptionChainDataJob implements ShouldQueue
         $sets = array_values($byExp);
 
         if (!$sets) {
-            return null;
+            return [null, [
+                'status' => 'normalized_empty',
+                'pages' => $pages,
+            ]];
         }
 
-        return [$spot, $sets];
+        return [[$spot, $sets], [
+            'status' => 'ok',
+            'set_count' => count($sets),
+            'pages' => $pages,
+        ]];
+    }
+
+    protected function storeFetchMeta(string $symbol, string $date, array $meta): void
+    {
+        Cache::put(
+            "eod:fetch-meta:{$symbol}:{$date}",
+            array_merge($meta, [
+                'recorded_at' => now()->toIso8601String(),
+            ]),
+            now()->addDays(7)
+        );
     }
 
     // ---------- Helpers ----------
@@ -536,3 +598,4 @@ class FetchOptionChainDataJob implements ShouldQueue
         return $S * $nd1 * sqrt($T);
     }
 }
+

@@ -139,6 +139,27 @@ php artisan tinker --execute='echo "jobs_default=".DB::table("jobs")->where("que
 
 If backlog is high, make sure workers are running and sized correctly.
 
+## Repair visibility logs
+
+The app now writes detailed per-symbol repair/fetch outcomes to:
+
+- `storage/logs/eod-repair-YYYY-MM-DD.log`
+
+Useful tail command:
+
+```bash
+tail -F storage/logs/eod-repair*.log | grep --line-buffered -E "eod\\.repair|eod\\.fetch"
+```
+
+Key events:
+
+- `eod.repair.scan`: summary of missing/incomplete candidates per run.
+- `eod.repair.chunk_queued`: each chunk queued to the batch.
+- `eod.fetch.symbol.ok`: symbol ingested with `rows_kept`.
+- `eod.fetch.symbol.no_provider_data`: provider fallback exhausted.
+- `eod.fetch.symbol.no_expiries_in_window`: provider returned data but none within configured horizon.
+- `eod.fetch.symbol.skipped`: duplicate guard prevented a concurrent pull.
+
 ## EOD health dashboard
 
 Authenticated route:

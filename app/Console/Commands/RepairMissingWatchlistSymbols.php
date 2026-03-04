@@ -16,6 +16,7 @@ use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class RepairMissingWatchlistSymbols extends Command
 {
@@ -140,6 +141,22 @@ class RepairMissingWatchlistSymbols extends Command
         $incomplete = collect(array_keys($incompleteReasons))->values();
         $toRepair = $missing->merge($incomplete)->unique()->values();
 
+        Log::channel('eod_repair')->info('eod.repair.scan', [
+            'target_date' => $targetDate,
+            'profile' => $profile,
+            'check_incomplete' => $checkIncomplete,
+            'min_expirations' => $minExpirations,
+            'min_strikes' => $minStrikes,
+            'min_strike_ratio' => $minStrikeRatio,
+            'symbols_total' => count($symbols),
+            'covered' => $covered->count(),
+            'missing' => $missing->count(),
+            'incomplete' => $incomplete->count(),
+            'repair_candidates' => $toRepair->count(),
+            'with_backfill' => $withBackfill,
+            'dry_run' => $dryRun,
+        ]);
+
         $this->info(sprintf(
             'Target date=%s, symbols=%d, covered=%d, missing=%d, incomplete=%d, repair_candidates=%d',
             $targetDate,
@@ -170,6 +187,13 @@ class RepairMissingWatchlistSymbols extends Command
         }
 
         if ($toRepair->isEmpty() || $dryRun) {
+            if ($dryRun) {
+                Log::channel('eod_repair')->info('eod.repair.dry_run', [
+                    'target_date' => $targetDate,
+                    'missing_symbols' => $missing->values()->all(),
+                    'incomplete_reasons' => $incompleteReasons,
+                ]);
+            }
             return self::SUCCESS;
         }
 
@@ -203,9 +227,24 @@ class RepairMissingWatchlistSymbols extends Command
 
             $first->chain($chain);
             $batch->add($first);
+
+            Log::channel('eod_repair')->info('eod.repair.chunk_queued', [
+                'target_date' => $targetDate,
+                'batch_id' => $batch->id,
+                'symbols' => array_values($group),
+                'with_backfill' => $withBackfill,
+                'days' => $days,
+                'chain_head' => $first::class,
+            ]);
         }
 
         $this->info("Queued repair batch: {$batch->id}");
+        Log::channel('eod_repair')->info('eod.repair.batch_queued', [
+            'target_date' => $targetDate,
+            'batch_id' => $batch->id,
+            'chunks' => count(array_chunk($toRepair->all(), $chunkSize)),
+            'symbols_total' => $toRepair->count(),
+        ]);
 
         return self::SUCCESS;
     }

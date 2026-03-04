@@ -89,6 +89,14 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'eod_repair' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/eod-repair.log'),
+            'level' => env('EOD_REPAIR_LOG_LEVEL', 'info'),
+            'days' => env('EOD_REPAIR_LOG_DAYS', 30),
+            'replace_placeholders' => true,
+        ],
+
         'slack' => [
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),

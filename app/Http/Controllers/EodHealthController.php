@@ -6,6 +6,7 @@ use App\Support\EodHealth;
 use App\Support\Symbols;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -127,6 +128,7 @@ class EodHealthController extends Controller
             $missing = $stats === null;
             $prev = $prevStats[$sym] ?? ['prev_strikes_n' => 0, 'prev_date' => null];
             $prevStrikes = (int) ($prev['prev_strikes_n'] ?? 0);
+            $fetchMeta = Cache::get("eod:fetch-meta:{$sym}:{$targetDate}");
             $strikeRatio = (!$missing && $prevStrikes > 0)
                 ? round(((int) ($stats['strikes_n'] ?? 0)) / $prevStrikes, 4)
                 : null;
@@ -161,6 +163,7 @@ class EodHealthController extends Controller
                 'prev_date' => $prev['prev_date'] ?? null,
                 'prev_strikes_n' => $prevStrikes,
                 'strike_ratio_vs_prev_day' => $strikeRatio,
+                'last_fetch_meta' => is_array($fetchMeta) ? $fetchMeta : null,
             ];
         }
 

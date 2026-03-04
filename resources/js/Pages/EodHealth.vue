@@ -86,6 +86,36 @@ function reasonLabel(reason) {
   return String(reason).replaceAll('_', ' ')
 }
 
+function fetchMetaChips(meta) {
+  if (!meta || typeof meta !== 'object') return []
+
+  const chips = []
+
+  if (meta.status) {
+    chips.push(`fetch: ${meta.status}`)
+  }
+  if (meta.provider) {
+    chips.push(`provider: ${meta.provider}`)
+  }
+  if (meta.finnhub_status && meta.finnhub_status !== 'not_attempted') {
+    chips.push(`finnhub: ${meta.finnhub_status}`)
+  }
+  if (meta.massive_status && meta.massive_status !== 'not_attempted') {
+    chips.push(`massive: ${meta.massive_status}`)
+  }
+  if (meta.massive_http_status) {
+    chips.push(`massive_http: ${meta.massive_http_status}`)
+  }
+  if (meta.finnhub_http_status) {
+    chips.push(`finnhub_http: ${meta.finnhub_http_status}`)
+  }
+  if (meta.rows_kept != null) {
+    chips.push(`rows_kept: ${meta.rows_kept}`)
+  }
+
+  return chips
+}
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -234,6 +264,15 @@ onMounted(load)
                         class="inline-flex px-2 py-0.5 rounded bg-gray-100 text-gray-700 text-xs"
                       >
                         {{ reasonLabel(reason) }}
+                      </span>
+                    </div>
+                    <div v-if="fetchMetaChips(row.last_fetch_meta).length" class="flex flex-wrap gap-1 mt-1">
+                      <span
+                        v-for="chip in fetchMetaChips(row.last_fetch_meta)"
+                        :key="chip"
+                        class="inline-flex px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 text-xs"
+                      >
+                        {{ chip }}
                       </span>
                     </div>
                   </td>
