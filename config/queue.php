@@ -76,6 +76,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Queue Backlog Monitoring
+    |--------------------------------------------------------------------------
+    |
+    | The scheduler runs "queue:monitor" every minute using these settings.
+    | When a queue exceeds max_size, Laravel dispatches QueueBusy events.
+    |
+    */
+
+    'monitor' => [
+        'enabled' => filter_var(env('QUEUE_MONITOR_ENABLED', true), FILTER_VALIDATE_BOOL),
+        'connection' => env('QUEUE_MONITOR_CONNECTION', env('QUEUE_CONNECTION', 'database')),
+        'queues' => array_values(array_filter(array_map(
+            static fn (string $queue): string => trim($queue),
+            explode(',', (string) env('QUEUE_MONITOR_QUEUES', 'default,intraday,intraday-heavy,calculator,quotes'))
+        ))),
+        'max_size' => (int) env('QUEUE_MONITOR_MAX_SIZE', 250),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Job Batching
     |--------------------------------------------------------------------------
     |

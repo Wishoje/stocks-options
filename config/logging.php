@@ -73,6 +73,22 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'scheduler' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/scheduler.log'),
+            'level' => env('SCHEDULER_LOG_LEVEL', 'info'),
+            'days' => env('SCHEDULER_LOG_DAYS', 30),
+            'replace_placeholders' => true,
+        ],
+
+        'queue_monitor' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/queue-monitor.log'),
+            'level' => env('QUEUE_MONITOR_LOG_LEVEL', 'info'),
+            'days' => env('QUEUE_MONITOR_LOG_DAYS', 30),
+            'replace_placeholders' => true,
+        ],
+
         'slack' => [
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),

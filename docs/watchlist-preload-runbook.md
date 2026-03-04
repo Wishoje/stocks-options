@@ -164,3 +164,5 @@ Optional query params:
 - `min_expirations=...`
 - `min_strikes=...`
 - `min_strike_ratio=...`
+
+See also: [EOD Data Integrity Audit](eod-data-integrity-audit.md) for cross-view stale/mixed-data risks.

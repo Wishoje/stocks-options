@@ -254,3 +254,23 @@ Schedule::command('emails:lifecycle-run')
     ->everyThirtyMinutes()
     ->withoutOverlapping(15)
     ->onOneServer();
+
+$monitorEnabled = (bool) config('queue.monitor.enabled');
+$monitorConnection = (string) config('queue.monitor.connection', config('queue.default'));
+$monitorQueues = config('queue.monitor.queues', []);
+$monitorMaxSize = (int) config('queue.monitor.max_size', 250);
+
+if ($monitorEnabled && is_array($monitorQueues)) {
+    $queueTargets = collect($monitorQueues)
+        ->filter()
+        ->map(fn (string $queue) => "{$monitorConnection}:{$queue}")
+        ->implode(',');
+
+    if ($queueTargets !== '') {
+        Schedule::command("queue:monitor {$queueTargets} --max={$monitorMaxSize}")
+            ->everyMinute()
+            ->withoutOverlapping(1)
+            ->onOneServer()
+            ->name('queue:monitor:backlog');
+    }
+}

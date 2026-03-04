@@ -33,6 +33,7 @@ If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Lar
 
 - [EOD GEX Cache and Prewarm](docs/eod-gex-cache.md)
 - [Watchlist Preload Runbook](docs/watchlist-preload-runbook.md)
+- [EOD Data Integrity Audit](docs/eod-data-integrity-audit.md)
 
 ## Laravel Sponsors
 
