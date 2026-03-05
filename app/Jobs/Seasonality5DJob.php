@@ -29,6 +29,8 @@ class Seasonality5DJob implements ShouldQueue
     public function handle(): void
     {
         $asOf = $this->tradingDate(now());
+        $minCalendarSamples = 5;
+        $rollingLookbackDays = 252;
 
         foreach ($this->symbols as $sym) {
             $symbol = \App\Support\Symbols::canon($sym);
@@ -152,9 +154,37 @@ class Seasonality5DJob implements ShouldQueue
             }
 
             $avg = fn($xs)=>count($xs)? array_sum($xs)/count($xs): null;
+            $calendarValid = count($cum5s);
+            $useRollingFallback = $calendarValid < $minCalendarSamples;
 
-            $d1 = $avg($d1s);  $d2 = $avg($d2s);  $d3 = $avg($d3s);
-            $d4 = $avg($d4s);  $d5 = $avg($d5s);  $m5 = $avg($cum5s);
+            if ($useRollingFallback) {
+                [$d1, $d2, $d3, $d4, $d5, $m5, $rollingValid, $rollingDaysUsed] =
+                    $this->rollingForwardAverages($closes, $rollingLookbackDays);
+
+                $method = 'rolling_lookback_days';
+                $lookbackYears = null;
+                $lookbackDays = $rollingDaysUsed;
+                $windowDays = null;
+                $metaSamples = [
+                    'n_valid' => $rollingValid,
+                    'uncond_n' => count($uncondCum5),
+                    'calendar_n_anchors' => count($anchors),
+                    'calendar_n_valid' => $calendarValid,
+                ];
+            } else {
+                $d1 = $avg($d1s);  $d2 = $avg($d2s);  $d3 = $avg($d3s);
+                $d4 = $avg($d4s);  $d5 = $avg($d5s);  $m5 = $avg($cum5s);
+
+                $method = 'calendar_window_across_years';
+                $lookbackYears = $this->lookbackYears;
+                $lookbackDays = null;
+                $windowDays = $this->calWindowDays;
+                $metaSamples = [
+                    'n_anchors' => count($anchors),
+                    'n_valid'   => $calendarValid,
+                    'uncond_n'  => count($uncondCum5),
+                ];
+            }
 
             // z-score vs UNCONDITIONAL distribution so it’s comparable across dates
             $z = null;
@@ -169,21 +199,66 @@ class Seasonality5DJob implements ShouldQueue
                 [
                     'd1'=>$d1,'d2'=>$d2,'d3'=>$d3,'d4'=>$d4,'d5'=>$d5,
                     'cum5'=>$m5,'z'=>$z,
+                    'lookback_years' => $lookbackYears,
+                    'lookback_days'  => $lookbackDays,
+                    'window_days'    => $windowDays,
                     'meta'=>json_encode([
-                        'method' => 'calendar_window_across_years',
-                        'window_days' => $this->calWindowDays,
-                        'lookback_years' => $this->lookbackYears,
-                        'samples' => [
-                            'n_anchors' => count($anchors),
-                            'n_valid'   => count($cum5s),
-                            'uncond_n'  => count($uncondCum5),
-                        ],
+                        'method' => $method,
+                        'window_days' => $windowDays,
+                        'lookback_years' => $lookbackYears,
+                        'lookback_days' => $lookbackDays,
+                        'samples' => $metaSamples,
                         'as_of' => $asOf,
                     ]),
                     'updated_at'=>now(),'created_at'=>now()
                 ]
             );
         }
+    }
+
+    /**
+     * Compute average forward returns from recent rolling anchors.
+     *
+     * @return array{0:?float,1:?float,2:?float,3:?float,4:?float,5:?float,6:int,7:int}
+     */
+    protected function rollingForwardAverages(array $closes, int $lookbackDays): array
+    {
+        $n = count($closes);
+        if ($n < 6) {
+            return [null, null, null, null, null, null, 0, 0];
+        }
+
+        $usableAnchors = max(1, min($lookbackDays, $n - 5));
+        $start = max(0, ($n - 5) - $usableAnchors);
+        $end = $n - 6;
+
+        $d1s=[]; $d2s=[]; $d3s=[]; $d4s=[]; $d5s=[]; $cum5s=[];
+        for ($i = $start; $i <= $end; $i++) {
+            $p0 = (float) $closes[$i];
+            $p1 = (float) $closes[$i + 1];
+            $p2 = (float) $closes[$i + 2];
+            $p3 = (float) $closes[$i + 3];
+            $p4 = (float) $closes[$i + 4];
+            $p5 = (float) $closes[$i + 5];
+
+            if ($p0<=0 || $p1<=0 || $p2<=0 || $p3<=0 || $p4<=0 || $p5<=0) {
+                continue;
+            }
+
+            $d1s[] = ($p1/$p0) - 1.0;
+            $d2s[] = ($p2/$p1) - 1.0;
+            $d3s[] = ($p3/$p2) - 1.0;
+            $d4s[] = ($p4/$p3) - 1.0;
+            $d5s[] = ($p5/$p4) - 1.0;
+            $cum5s[] = ($p5/$p0) - 1.0;
+        }
+
+        $avg = fn($xs) => count($xs) ? array_sum($xs)/count($xs) : null;
+
+        return [
+            $avg($d1s), $avg($d2s), $avg($d3s), $avg($d4s), $avg($d5s), $avg($cum5s),
+            count($cum5s), $usableAnchors,
+        ];
     }
 
     protected function tradingDate(Carbon $now): string
