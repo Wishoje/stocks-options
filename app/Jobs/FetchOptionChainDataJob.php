@@ -284,6 +284,8 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'massive_pages' => $massiveMeta['pages'] ?? null,
                 'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
                 'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
+                'expiry_backfill_requested' => $massiveMeta['expiry_backfill_requested'] ?? 0,
+                'expiry_backfill_fetched' => $massiveMeta['expiry_backfill_fetched'] ?? 0,
             ]];
         }
 
@@ -362,81 +364,30 @@ class FetchOptionChainDataJob implements ShouldQueue
         $client = Http::acceptJson()
             ->timeout(20)
             ->retry(2, 300, throw: false);
-
         if ($mode === 'bearer') {
             $client = $client->withToken($key);
         } elseif ($mode === 'header') {
             $client = $client->withHeaders([$header => $key]);
         }
 
-        $url       = "{$base}/v3/snapshot/options/{$symbol}";
-        $cursor    = null;
-        $contracts = [];
-        $spot      = null;
-        $lastStatus = null;
-        $pages = 0;
         $maxPages = max(50, (int) config('services.massive.eod_chain_max_pages', 120));
         $pageLimit = max(1, min(250, (int) config('services.massive.eod_chain_page_limit', 250)));
-        $paginationCapped = false;
 
-        // Pull all pages
-        for ($page = 0; $page < $maxPages; $page++) {
-            $pages++;
-            $reqUrl = $cursor ?: $url;
-            $params = [];
-
-            if (!$cursor) {
-                $params['limit'] = $pageLimit;
-            }
-
-            if (!$cursor && $mode === 'query') {
-                $params[$qparam] = $key;
-            }
-
-            $resp = $client->get($reqUrl, $params);
-
-            if ($resp->status() === 401) {
-                return [null, [
-                    'status' => 'unauthorized',
-                    'http_status' => 401,
-                    'pages' => $pages,
-                    'page_limit' => $pageLimit,
-                ]];
-            }
-
-            if ($resp->failed()) {
-                $lastStatus = $resp->status();
-                break;
-            }
-
-            $json  = $resp->json() ?: [];
-            $batch = $json['results'] ?? [];
-            if (!is_array($batch) || !$batch) {
-                break;
-            }
-
-            foreach ($batch as $c) {
-                $contracts[] = $c;
-
-                // Grab an underlying spot if we don't have one yet
-                if ($spot === null) {
-                    $spot = $c['underlying_asset']['price'] ?? null;
-                }
-            }
-
-            $cursor = $json['next_url'] ?? null;
-            if ($cursor && !str_starts_with($cursor, 'http')) {
-                $cursor = $base . $cursor;
-            }
-
-            if (!$cursor) {
-                break;
-            }
-        }
-
-        if ($cursor) {
-            $paginationCapped = true;
-        }
+        $bulk = $this->fetchMassiveContracts(
+            $client,
+            $base,
+            $symbol,
+            $mode,
+            $qparam,
+            (string) $key,
+            $pageLimit,
+            $maxPages
+        );
+        $contracts = $bulk['contracts'];
+        $spot = (float) ($bulk['spot'] ?? 0.0);
+        $pages = (int) ($bulk['meta']['pages'] ?? 0);
+        $lastStatus = $bulk['meta']['http_status'] ?? null;
+        $paginationCapped = (bool) ($bulk['meta']['pagination_capped'] ?? false);
 
         if (empty($contracts)) {
             return [null, [
@@ -448,65 +399,49 @@ class FetchOptionChainDataJob implements ShouldQueue
             ]];
         }
 
-        $spot = (float)($spot ?? 0);
+        $byExp = $this->normalizeMassiveContracts($contracts);
 
-        // Normalize to Finnhub-style sets
-        $byExp = [];
+        // If broad pagination is capped, backfill missing known expiries one by one.
+        $expiryBackfillRequested = 0;
+        $expiryBackfillFetched = 0;
+        if ($paginationCapped) {
+            $knownExpiries = $this->massiveExpiryHints($symbol, array_keys($byExp));
+            $missingExpiries = array_values(array_diff($knownExpiries, array_keys($byExp)));
+            $expiryBackfillRequested = count($missingExpiries);
+            $maxPagesPerExpiry = max(5, (int) config('services.massive.eod_chain_max_pages_per_expiry', 80));
 
-        foreach ($contracts as $c) {
-            $details = $c['details'] ?? [];
-            $session = $c['session'] ?? ($c['day'] ?? []);
+            foreach ($missingExpiries as $expiry) {
+                $res = $this->fetchMassiveContracts(
+                    $client,
+                    $base,
+                    $symbol,
+                    $mode,
+                    $qparam,
+                    (string) $key,
+                    $pageLimit,
+                    $maxPagesPerExpiry,
+                    $expiry
+                );
 
-            $expRaw = $details['expiration_date'] ?? null;
-            if (!$expRaw) {
-                continue;
-            }
+                $pages += (int) ($res['meta']['pages'] ?? 0);
+                $lastStatus = $res['meta']['http_status'] ?? $lastStatus;
+                $paginationCapped = $paginationCapped || (bool) ($res['meta']['pagination_capped'] ?? false);
 
-            $expDate = substr($expRaw, 0, 10);
-            $strike  = (float)($details['strike_price'] ?? 0);
-            if ($strike <= 0) {
-                continue;
-            }
-
-            $sideRaw = strtolower((string)($details['contract_type'] ?? ''));
-            $side    = $sideRaw === 'call'
-                ? 'CALL'
-                : ($sideRaw === 'put' ? 'PUT' : null);
-
-            if (!$side) {
-                continue;
-            }
-
-            $oi  = (int)($c['open_interest'] ?? 0);
-            $vol = (int)($session['volume'] ?? 0);
-
-            $iv = $c['implied_volatility'] ?? null;
-            if ($iv !== null) {
-                $iv = (float) $iv;
-                if ($iv > 1.0) {
-                    $iv = $iv / 100.0;
+                $contractsForExpiry = $res['contracts'];
+                if (!$contractsForExpiry) {
+                    continue;
                 }
-                if ($iv <= 0) {
-                    $iv = null;
+
+                if ($spot <= 0 && (float) ($res['spot'] ?? 0) > 0) {
+                    $spot = (float) $res['spot'];
+                }
+
+                $expSet = $this->normalizeMassiveContracts($contractsForExpiry);
+                if (isset($expSet[$expiry])) {
+                    $byExp[$expiry] = $expSet[$expiry];
+                    $expiryBackfillFetched++;
                 }
             }
-
-            if (!isset($byExp[$expDate])) {
-                $byExp[$expDate] = [
-                    'expirationDate' => $expDate,
-                    'options'        => [
-                        'CALL' => [],
-                        'PUT'  => [],
-                    ],
-                ];
-            }
-
-            $byExp[$expDate]['options'][$side][] = [
-                'strike'           => $strike,
-                'openInterest'     => $oi,
-                'volume'           => $vol,
-                'impliedVolatility'=> $iv,
-            ];
         }
 
         $sets = array_values($byExp);
@@ -526,7 +461,208 @@ class FetchOptionChainDataJob implements ShouldQueue
             'pages' => $pages,
             'page_limit' => $pageLimit,
             'pagination_capped' => $paginationCapped,
+            'expiry_backfill_requested' => $expiryBackfillRequested,
+            'expiry_backfill_fetched' => $expiryBackfillFetched,
         ]];
+    }
+
+    /**
+     * @return array{
+     *   contracts:array<int,array<string,mixed>>,
+     *   spot:float,
+     *   meta:array<string,mixed>
+     * }
+     */
+    protected function fetchMassiveContracts(
+        \Illuminate\Http\Client\PendingRequest $client,
+        string $base,
+        string $symbol,
+        string $mode,
+        string $qparam,
+        string $key,
+        int $pageLimit,
+        int $maxPages,
+        ?string $expiry = null
+    ): array {
+        $url       = "{$base}/v3/snapshot/options/{$symbol}";
+        $cursor    = null;
+        $contracts = [];
+        $spot      = null;
+        $lastStatus = null;
+        $pages = 0;
+
+        for ($page = 0; $page < $maxPages; $page++) {
+            $pages++;
+            $reqUrl = $cursor ?: $url;
+            $params = [];
+
+            if (!$cursor) {
+                $params['limit'] = $pageLimit;
+                if ($expiry) {
+                    $params['expiration_date'] = $expiry;
+                }
+            }
+
+            if (!$cursor && $mode === 'query') {
+                $params[$qparam] = $key;
+            }
+
+            $resp = $client->get($reqUrl, $params);
+
+            if ($resp->status() === 401) {
+                return [
+                    'contracts' => [],
+                    'spot' => 0.0,
+                    'meta' => [
+                        'status' => 'unauthorized',
+                        'http_status' => 401,
+                        'pages' => $pages,
+                        'page_limit' => $pageLimit,
+                        'pagination_capped' => false,
+                        'expiry' => $expiry,
+                    ],
+                ];
+            }
+
+            if ($resp->failed()) {
+                $lastStatus = $resp->status();
+                break;
+            }
+
+            $json  = $resp->json() ?: [];
+            $batch = $json['results'] ?? [];
+            if (!is_array($batch) || !$batch) {
+                break;
+            }
+
+            foreach ($batch as $c) {
+                $contracts[] = $c;
+                if ($spot === null) {
+                    $spot = $c['underlying_asset']['price'] ?? null;
+                }
+            }
+
+            $cursor = $json['next_url'] ?? null;
+            if ($cursor && !str_starts_with($cursor, 'http')) {
+                $cursor = $base . $cursor;
+            }
+            if (!$cursor) {
+                break;
+            }
+        }
+
+        return [
+            'contracts' => $contracts,
+            'spot' => (float) ($spot ?? 0.0),
+            'meta' => [
+                'status' => empty($contracts) ? ($lastStatus ? 'http_error' : 'empty_payload') : 'ok',
+                'http_status' => $lastStatus,
+                'pages' => $pages,
+                'page_limit' => $pageLimit,
+                'pagination_capped' => (bool) $cursor,
+                'expiry' => $expiry,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $contracts
+     * @return array<string,array<string,mixed>>
+     */
+    protected function normalizeMassiveContracts(array $contracts): array
+    {
+        $byExp = [];
+
+        foreach ($contracts as $c) {
+            $details = $c['details'] ?? [];
+            $session = $c['session'] ?? ($c['day'] ?? []);
+
+            $expRaw = $details['expiration_date'] ?? null;
+            if (!$expRaw) {
+                continue;
+            }
+
+            $expDate = substr((string) $expRaw, 0, 10);
+            $strike  = (float) ($details['strike_price'] ?? 0);
+            if ($strike <= 0) {
+                continue;
+            }
+
+            $sideRaw = strtolower((string) ($details['contract_type'] ?? ''));
+            $side    = $sideRaw === 'call'
+                ? 'CALL'
+                : ($sideRaw === 'put' ? 'PUT' : null);
+            if (!$side) {
+                continue;
+            }
+
+            $oi  = (int) ($c['open_interest'] ?? 0);
+            $vol = (int) ($session['volume'] ?? 0);
+
+            $iv = $c['implied_volatility'] ?? null;
+            if ($iv !== null) {
+                $iv = (float) $iv;
+                if ($iv > 1.0) {
+                    $iv = $iv / 100.0;
+                }
+                if ($iv <= 0) {
+                    $iv = null;
+                }
+            }
+
+            if (!isset($byExp[$expDate])) {
+                $byExp[$expDate] = [
+                    'expirationDate' => $expDate,
+                    'options' => [
+                        'CALL' => [],
+                        'PUT' => [],
+                    ],
+                ];
+            }
+
+            $byExp[$expDate]['options'][$side][] = [
+                'strike' => $strike,
+                'openInterest' => $oi,
+                'volume' => $vol,
+                'impliedVolatility' => $iv,
+            ];
+        }
+
+        return $byExp;
+    }
+
+    /**
+     * Build hint expiries from known DB expirations so capped bulk pagination can be filled per expiry.
+     *
+     * @param array<int|string,string> $existingExpiries
+     * @return array<int,string>
+     */
+    protected function massiveExpiryHints(string $symbol, array $existingExpiries): array
+    {
+        $nowNy = now('America/New_York');
+        $windowStart = $nowNy->copy()->startOfDay()->toDateString();
+        $windowEnd = ($this->days ? $nowNy->copy()->addDays($this->days) : $nowNy->copy()->addDays(90))
+            ->endOfDay()
+            ->toDateString();
+        $maxHints = max(5, (int) config('services.massive.eod_chain_max_hint_expiries', 40));
+
+        $knownExpiries = OptionExpiration::query()
+            ->where('symbol', $symbol)
+            ->whereDate('expiration_date', '>=', $windowStart)
+            ->whereDate('expiration_date', '<=', $windowEnd)
+            ->orderBy('expiration_date')
+            ->limit($maxHints)
+            ->pluck('expiration_date')
+            ->map(static fn ($d) => substr((string) $d, 0, 10))
+            ->all();
+
+        $hints = array_values(array_unique(array_merge($existingExpiries, $knownExpiries)));
+        sort($hints);
+        if (count($hints) > $maxHints) {
+            $hints = array_slice($hints, 0, $maxHints);
+        }
+
+        return $hints;
     }
 
     protected function storeFetchMeta(string $symbol, string $date, array $meta): void
