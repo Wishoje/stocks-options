@@ -9,6 +9,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class ComputeExpiryPressureJob implements ShouldQueue
@@ -55,8 +56,19 @@ class ComputeExpiryPressureJob implements ShouldQueue
 
                 if ($rows->isEmpty()) continue;
 
-                // spot proxy = avg underlying_price of snapshot
+                // spot proxy = avg underlying_price of snapshot, with fallbacks
                 $spot = (float) round($rows->avg('underlying_price') ?? 0, 4);
+                if ($spot <= 0) {
+                    $spot = $this->resolveSpot($symbol, $latest);
+                }
+                if ($spot <= 0) {
+                    Log::warning('expiry_pressure.skipped_no_spot', [
+                        'symbol' => $symbol,
+                        'data_date' => $latest,
+                        'exp_date' => $expDate,
+                    ]);
+                    continue;
+                }
 
                 // 1) Build OI histogram near spot (window ±10% or fixed strikes)
                 $oiByStrike = [];
@@ -180,5 +192,43 @@ class ComputeExpiryPressureJob implements ShouldQueue
             if (!$d->isWeekend()) $left--;
         }
         return $d->toDateString();
+    }
+
+    protected function resolveSpot(string $symbol, string $dataDate): float
+    {
+        $live = (float) (DB::table('underlying_quotes')
+            ->where('symbol', $symbol)
+            ->where('last_price', '>', 0)
+            ->orderByDesc('asof')
+            ->value('last_price') ?? 0);
+        if ($live > 0) {
+            return $live;
+        }
+
+        $closeExact = (float) (DB::table('prices_daily')
+            ->where('symbol', $symbol)
+            ->whereDate('trade_date', $dataDate)
+            ->value('close') ?? 0);
+        if ($closeExact > 0) {
+            return $closeExact;
+        }
+
+        $closePrev = (float) (DB::table('prices_daily')
+            ->where('symbol', $symbol)
+            ->whereDate('trade_date', '<=', $dataDate)
+            ->orderByDesc('trade_date')
+            ->value('close') ?? 0);
+        if ($closePrev > 0) {
+            return $closePrev;
+        }
+
+        $snap = (float) (DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->whereDate('fetched_at', $dataDate)
+            ->where('underlying_price', '>', 0)
+            ->orderByDesc('fetched_at')
+            ->value('underlying_price') ?? 0);
+
+        return $snap > 0 ? $snap : 0.0;
     }
 }

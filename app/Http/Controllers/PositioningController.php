@@ -21,6 +21,13 @@ class PositioningController extends Controller
         if (!$date) {
             $date = DB::table('dex_by_expiry')->where('symbol', $symbol)->max('data_date');
         }
+        if ($date && !$this->hasUsableDex($symbol, $date)) {
+            $date = DB::table('dex_by_expiry')
+                ->where('symbol', $symbol)
+                ->whereRaw('ABS(dex_total) > 0')
+                ->max('data_date')
+                ?: $date;
+        }
 
         $today = now('America/New_York')->toDateString();
         $start = now('America/New_York')->copy()->subDays($lookback)->toDateString();
@@ -83,5 +90,14 @@ class PositioningController extends Controller
         }
 
         return $ny->toDateString();
+    }
+
+    protected function hasUsableDex(string $symbol, string $date): bool
+    {
+        return DB::table('dex_by_expiry')
+            ->where('symbol', $symbol)
+            ->whereDate('data_date', $date)
+            ->whereRaw('ABS(dex_total) > 0')
+            ->exists();
     }
 }

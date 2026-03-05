@@ -61,6 +61,13 @@ class GexController extends Controller
         if (!$latestDate) {
             $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)->max('data_date');
         }
+        if ($latestDate && !$this->hasUsableGreeks($expirationIds, $latestDate)) {
+            $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)
+                ->whereNotNull('gamma')
+                ->where('gamma', '!=', 0)
+                ->max('data_date')
+                ?: $latestDate;
+        }
         if (!$latestDate) {
             $this->kickoffSymbolPrime($symbol);
             $payload = [
@@ -528,6 +535,15 @@ class GexController extends Controller
     protected function intradayQueueForSymbol(string $symbol): string
     {
         return in_array($symbol, ['SPY', 'QQQ'], true) ? 'intraday-heavy' : 'intraday';
+    }
+
+    protected function hasUsableGreeks(array $expirationIds, string $date): bool
+    {
+        return OptionChainData::whereIn('expiration_id', $expirationIds)
+            ->whereDate('data_date', $date)
+            ->whereNotNull('gamma')
+            ->where('gamma', '!=', 0)
+            ->exists();
     }
 
     protected function completedSessionDate(): string

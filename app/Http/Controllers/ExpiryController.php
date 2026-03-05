@@ -28,6 +28,12 @@ class ExpiryController extends Controller
                     ->where('symbol',$symbol)
                     ->max('data_date');
             }
+            if ($latestDate && !$this->hasUsableSpot($symbol, $latestDate)) {
+                $latestDate = DB::table('expiry_pressure')
+                    ->where('symbol', $symbol)
+                    ->max('data_date')
+                    ?: $latestDate;
+            }
 
             if (!$latestDate) {
                 return response()->json([
@@ -116,6 +122,12 @@ class ExpiryController extends Controller
             $items = [];
             foreach ($symbols as $sym) {
                 $d = $latest[$sym] ?? null;
+                if ($d && !$this->hasUsableSpot($sym, $d)) {
+                    $d = \DB::table('expiry_pressure')
+                        ->where('symbol', $sym)
+                        ->max('data_date')
+                        ?: $d;
+                }
                 if (!$d) { $items[$sym] = ['data_date'=>null,'headline_pin'=>null]; continue; }
 
                 // compute end date (next N trading days)
@@ -155,6 +167,16 @@ class ExpiryController extends Controller
         }
 
         return $ny->toDateString();
+    }
+
+    protected function hasUsableSpot(string $symbol, string $date): bool
+    {
+        return DB::table('option_chain_data as o')
+            ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+            ->where('e.symbol', $symbol)
+            ->whereDate('o.data_date', $date)
+            ->where('o.underlying_price', '>', 0)
+            ->exists();
     }
 
 }
