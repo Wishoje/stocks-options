@@ -76,10 +76,15 @@ class FetchOptionChainDataJob implements ShouldQueue
 
             // Finnhub -> Massive fallback with normalized chain.
             [$spot, $sets, $providerMeta] = $this->fetchChain($symbol);
+            $providerSpot = (float) $spot;
+            [$spot, $spotSource] = $this->resolveSpot($symbol, $date, $providerSpot);
 
             if (!$sets || !is_array($sets)) {
                 $meta = array_merge($context, [
                     'status' => 'no_provider_data',
+                    'spot' => $spot,
+                    'spot_source' => $spotSource,
+                    'provider_spot' => $providerSpot,
                 ], $providerMeta);
                 Log::channel('eod_repair')->warning('eod.fetch.symbol.no_provider_data', $meta);
                 $this->storeFetchMeta($symbol, $date, $meta);
@@ -121,6 +126,9 @@ class FetchOptionChainDataJob implements ShouldQueue
                     'status' => 'no_expiries_in_window',
                     'expiries_total' => count($sets),
                     'expiries_in_window' => 0,
+                    'spot' => $spot,
+                    'spot_source' => $spotSource,
+                    'provider_spot' => $providerSpot,
                 ], $providerMeta);
                 Log::channel('eod_repair')->warning('eod.fetch.symbol.no_expiries_in_window', $meta);
                 $this->storeFetchMeta($symbol, $date, $meta);
@@ -251,6 +259,8 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'expiries_in_window' => count($expWindowSets),
                 'rows_kept' => $totalKept,
                 'spot' => $spot,
+                'spot_source' => $spotSource,
+                'provider_spot' => $providerSpot,
             ], $providerMeta);
             Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
             $this->storeFetchMeta($symbol, $date, $meta);
@@ -663,6 +673,56 @@ class FetchOptionChainDataJob implements ShouldQueue
         }
 
         return $hints;
+    }
+
+    /**
+     * Resolve spot with provider-first fallback for EOD ingest.
+     *
+     * @return array{0:float,1:string} [spot, source]
+     */
+    protected function resolveSpot(string $symbol, string $targetDate, float $providerSpot): array
+    {
+        if ($providerSpot > 0) {
+            return [$providerSpot, 'provider'];
+        }
+
+        $live = (float) (DB::table('underlying_quotes')
+            ->where('symbol', $symbol)
+            ->where('last_price', '>', 0)
+            ->orderByDesc('asof')
+            ->value('last_price') ?? 0);
+        if ($live > 0) {
+            return [$live, 'underlying_quotes'];
+        }
+
+        $closeExact = (float) (DB::table('prices_daily')
+            ->where('symbol', $symbol)
+            ->whereDate('trade_date', $targetDate)
+            ->value('close') ?? 0);
+        if ($closeExact > 0) {
+            return [$closeExact, 'prices_daily_exact'];
+        }
+
+        $closePrev = (float) (DB::table('prices_daily')
+            ->where('symbol', $symbol)
+            ->whereDate('trade_date', '<=', $targetDate)
+            ->orderByDesc('trade_date')
+            ->value('close') ?? 0);
+        if ($closePrev > 0) {
+            return [$closePrev, 'prices_daily_prev'];
+        }
+
+        $snap = (float) (DB::table('option_snapshots')
+            ->where('symbol', $symbol)
+            ->whereDate('fetched_at', $targetDate)
+            ->where('underlying_price', '>', 0)
+            ->orderByDesc('fetched_at')
+            ->value('underlying_price') ?? 0);
+        if ($snap > 0) {
+            return [$snap, 'option_snapshots'];
+        }
+
+        return [0.0, 'none'];
     }
 
     protected function storeFetchMeta(string $symbol, string $date, array $meta): void

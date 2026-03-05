@@ -13,13 +13,21 @@ class ExpiryController extends Controller
     {
         $symbol = \App\Support\Symbols::canon($req->query('symbol','SPY'));
         $days   = (int) $req->query('days', 3);
+        $anchor = $this->completedSessionDate();
 
         $cacheKey = "expiry_pressure:{$symbol}:{$days}";
-        return Cache::remember($cacheKey, now()->addHours(1), function() use ($symbol,$days) {
+        return Cache::remember($cacheKey, now()->addHours(1), function() use ($symbol,$days,$anchor) {
 
             $latestDate = DB::table('expiry_pressure')
                 ->where('symbol',$symbol)
+                ->whereDate('data_date', '<=', $anchor)
                 ->max('data_date');
+
+            if (!$latestDate) {
+                $latestDate = DB::table('expiry_pressure')
+                    ->where('symbol',$symbol)
+                    ->max('data_date');
+            }
 
             if (!$latestDate) {
                 return response()->json([
@@ -86,14 +94,24 @@ class ExpiryController extends Controller
         }
 
         $cacheKey = 'expiry_pressure_batch:'.md5($symbols->join(',').":{$days}");
-        return \Cache::remember($cacheKey, now()->addHour(), function() use ($symbols,$days) {
+        $anchor = $this->completedSessionDate();
+        return \Cache::remember($cacheKey, now()->addHour(), function() use ($symbols,$days,$anchor) {
 
             // latest data_date per symbol
             $latest = \DB::table('expiry_pressure')
                 ->select('symbol', \DB::raw('MAX(data_date) as d'))
                 ->whereIn('symbol', $symbols)
+                ->whereDate('data_date', '<=', $anchor)
                 ->groupBy('symbol')
                 ->pluck('d','symbol'); // ['SPY'=>'2025-10-10', ...]
+
+            if ($latest->isEmpty()) {
+                $latest = \DB::table('expiry_pressure')
+                    ->select('symbol', \DB::raw('MAX(data_date) as d'))
+                    ->whereIn('symbol', $symbols)
+                    ->groupBy('symbol')
+                    ->pluck('d','symbol');
+            }
 
             $items = [];
             foreach ($symbols as $sym) {
@@ -122,6 +140,21 @@ class ExpiryController extends Controller
 
             return response()->json(['items'=>$items], 200);
         });
+    }
+
+    protected function completedSessionDate(): string
+    {
+        $ny = now('America/New_York');
+        if ($ny->isWeekend()) {
+            return $ny->previousWeekday()->toDateString();
+        }
+
+        $cutoff = $ny->copy()->startOfDay()->setTime(16, 15);
+        if ($ny->lt($cutoff)) {
+            return $ny->previousWeekday()->toDateString();
+        }
+
+        return $ny->toDateString();
     }
 
 }

@@ -53,7 +53,14 @@ class GexController extends Controller
             ->pluck('id')
             ->toArray();
 
-        $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)->max('data_date');
+        $anchorDate = $this->completedSessionDate();
+        $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)
+            ->whereDate('data_date', '<=', $anchorDate)
+            ->max('data_date');
+
+        if (!$latestDate) {
+            $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)->max('data_date');
+        }
         if (!$latestDate) {
             $this->kickoffSymbolPrime($symbol);
             $payload = [
@@ -521,5 +528,20 @@ class GexController extends Controller
     protected function intradayQueueForSymbol(string $symbol): string
     {
         return in_array($symbol, ['SPY', 'QQQ'], true) ? 'intraday-heavy' : 'intraday';
+    }
+
+    protected function completedSessionDate(): string
+    {
+        $ny = now('America/New_York');
+        if ($ny->isWeekend()) {
+            return $ny->previousWeekday()->toDateString();
+        }
+
+        $cutoff = $ny->copy()->startOfDay()->setTime(16, 15);
+        if ($ny->lt($cutoff)) {
+            return $ny->previousWeekday()->toDateString();
+        }
+
+        return $ny->toDateString();
     }
 }
