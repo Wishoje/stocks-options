@@ -170,12 +170,16 @@ class GexController extends Controller
         array $timeframeExpirations,
         array $expirationIds
     ): ?array {
-        $latestDates = OptionChainData::select('expiration_id', DB::raw('MAX(data_date) as max_date'))
+        // Use per-(expiration, option_type) max_date so calls and puts each use
+        // their own latest snapshot. Prevents a freshly-upserted call row from
+        // hiding older puts that haven't been re-ingested for the same date yet.
+        $latestDates = OptionChainData::select('expiration_id', 'option_type', DB::raw('MAX(data_date) as max_date'))
             ->whereIn('option_chain_data.expiration_id', $expirationIds)
-            ->groupBy('expiration_id');
+            ->groupBy('expiration_id', 'option_type');
 
         $todayData = OptionChainData::joinSub($latestDates, 'ld', function ($join) {
                 $join->on('option_chain_data.expiration_id', '=', 'ld.expiration_id')
+                    ->on('option_chain_data.option_type',    '=', 'ld.option_type')
                     ->on('option_chain_data.data_date',      '=', 'ld.max_date');
             })
             ->whereIn('option_chain_data.expiration_id', $expirationIds)
