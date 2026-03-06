@@ -26,15 +26,15 @@ class FetchOptionChainDataJob implements ShouldQueue
     protected ?int $days;
 
     // ----- Tunables (adjust as needed) -----
-    /** Keep strikes within ±X% of spot */
-    protected float $strikeBandPct = 0.40;
+    /** Keep strikes within ±X% of spot (precision default widened). */
+    protected float $strikeBandPct = 2.00;
 
-    /** Minimal activity to keep a row (drop dead contracts quickly) */
+    /** Minimal activity to keep a row (drop dead contracts quickly). */
     protected int $minKeepOI  = 1;
     protected int $minKeepVol = 1;
 
-    /** Compute Greeks only near ATM to cut CPU load (set to 1.0 to compute across full band) */
-    protected float $greeksNearPct = 0.15; // ±15% around spot
+    /** Compute Greeks within ±X% of spot (precision default widened). */
+    protected float $greeksNearPct = 2.00;
 
     /** Cache guard to prevent duplicate pulls per symbol/day */
     protected int $guardMinutes = 10;
@@ -50,6 +50,8 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     public function handle(): void
     {
+        $this->loadRuntimeTunables();
+
         $nowNy = now('America/New_York');
         $date = $this->tradingDate($nowNy->copy());
         $windowStart = $nowNy->copy()->startOfDay();
@@ -161,12 +163,14 @@ class FetchOptionChainDataJob implements ShouldQueue
             }
 
             // Strike filters.
-            $minStrike = $spot > 0 ? $spot * (1 - $this->strikeBandPct) : 0;
-            $maxStrike = $spot > 0 ? $spot * (1 + $this->strikeBandPct) : INF;
+            $useStrikeBand = $spot > 0 && $this->strikeBandPct > 0;
+            $minStrike = $useStrikeBand ? $spot * (1 - $this->strikeBandPct) : 0;
+            $maxStrike = $useStrikeBand ? $spot * (1 + $this->strikeBandPct) : INF;
 
             // Greeks near-ATM band.
-            $nearMin = $spot > 0 ? $spot * (1 - $this->greeksNearPct) : 0;
-            $nearMax = $spot > 0 ? $spot * (1 + $this->greeksNearPct) : INF;
+            $useGreeksBand = $spot > 0 && $this->greeksNearPct > 0;
+            $nearMin = $useGreeksBand ? $spot * (1 - $this->greeksNearPct) : 0;
+            $nearMax = $useGreeksBand ? $spot * (1 + $this->greeksNearPct) : INF;
 
             $totalKept = 0;
 
@@ -184,7 +188,7 @@ class FetchOptionChainDataJob implements ShouldQueue
 
                     foreach ($list as $opt) {
                         $strike = (float) ($opt['strike'] ?? 0);
-                        if ($strike <= 0 || $strike < $minStrike || $strike > $maxStrike) {
+                        if ($strike <= 0 || ($useStrikeBand && ($strike < $minStrike || $strike > $maxStrike))) {
                             continue;
                         }
 
@@ -209,7 +213,12 @@ class FetchOptionChainDataJob implements ShouldQueue
                         $T = $this->timeToExpirationYears($expTs);
 
                         $gamma = $delta = $vega = null;
-                        if ($iv !== null && $T > 0 && $strike >= $nearMin && $strike <= $nearMax && $spot > 0) {
+                        if (
+                            $iv !== null
+                            && $T > 0
+                            && $spot > 0
+                            && (!$useGreeksBand || ($strike >= $nearMin && $strike <= $nearMax))
+                        ) {
                             $gamma = $this->computeGamma($spot, $strike, $T, $iv, 0.0);
                             $delta = $this->computeDelta($side, $spot, $strike, $T, $iv, 0.0);
                             $vega = $this->computeVega($spot, $strike, $T, $iv, 0.0);
@@ -261,10 +270,27 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'spot' => $spot,
                 'spot_source' => $spotSource,
                 'provider_spot' => $providerSpot,
+                'strike_band_pct' => $this->strikeBandPct,
+                'greeks_near_pct' => $this->greeksNearPct,
+                'min_keep_oi' => $this->minKeepOI,
+                'min_keep_vol' => $this->minKeepVol,
             ], $providerMeta);
             Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
             $this->storeFetchMeta($symbol, $date, $meta);
         }
+    }
+
+    protected function loadRuntimeTunables(): void
+    {
+        $band = (float) config('services.massive.eod_strike_band_pct', $this->strikeBandPct);
+        $greeksBand = (float) config('services.massive.eod_greeks_near_pct', $this->greeksNearPct);
+        $minOi = (int) config('services.massive.eod_min_keep_oi', $this->minKeepOI);
+        $minVol = (int) config('services.massive.eod_min_keep_vol', $this->minKeepVol);
+
+        $this->strikeBandPct = max(0.0, $band);
+        $this->greeksNearPct = max(0.0, $greeksBand);
+        $this->minKeepOI = max(0, $minOi);
+        $this->minKeepVol = max(0, $minVol);
     }
 
     // ---------- Provider selection + adapters ----------

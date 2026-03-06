@@ -110,27 +110,35 @@ export default {
       const rows = this.sortedData
       if (!rows.length) return []
 
-      // get absolute Net GEX values
-      const vals = rows.map(r => Math.abs(Number(r.net_gex ?? r.netGex ?? 0)))
-      const maxAbs = Math.max(...vals)
+      const vals = rows.map(r => Number(r.net_gex ?? r.netGex ?? 0))
+      const absVals = vals.map(v => Math.abs(v))
+      const maxAbs = Math.max(...absVals)
 
-      // if everything is ~0, just show all
+      // If everything is ~0, just show all.
       if (!isFinite(maxAbs) || maxAbs === 0) return rows
 
-      // threshold: keep strikes where |GEX| >= 2% of max, but at least 1k
-      const threshold = Math.max(maxAbs * 0.02, 1_000)
+      // Side-specific thresholds prevent strong positive side from hiding
+      // meaningful negative side bars (or vice versa).
+      const maxPos = Math.max(...vals.map(v => (v > 0 ? v : 0)))
+      const maxNegAbs = Math.max(...vals.map(v => (v < 0 ? Math.abs(v) : 0)))
+      const posThreshold = maxPos > 0 ? Math.max(maxPos * 0.02, 1_000) : Infinity
+      const negThreshold = maxNegAbs > 0 ? Math.max(maxNegAbs * 0.02, 1_000) : Infinity
 
       let firstIdx = -1
       let lastIdx = -1
 
       vals.forEach((v, idx) => {
-        if (v >= threshold) {
+        const keep =
+          (v > 0 && v >= posThreshold) ||
+          (v < 0 && Math.abs(v) >= negThreshold)
+
+        if (keep) {
           if (firstIdx === -1) firstIdx = idx
           lastIdx = idx
         }
       })
 
-      // if we somehow didn't find any, show all
+      // If we somehow didn't find any, show all.
       if (firstIdx === -1 || lastIdx === -1) return rows
 
       // add padding strikes on both sides
