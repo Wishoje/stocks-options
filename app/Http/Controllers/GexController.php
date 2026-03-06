@@ -195,13 +195,19 @@ class GexController extends Controller
         $pct = fn($x) => $totalOI > 0 ? round($x / $totalOI * 100, 2) : 0;
 
         // 3) Net-GEX per strike
+        // Formula: gamma × OI × 100 (contract multiplier) × spot²
+        // Spot² converts raw gamma to dollar GEX (matches industry-standard scaling).
         $strikesRaw = [];
         foreach ($todayData as $opt) {
-            $s = $opt->strike;
-            $strikesRaw[$s]['call_gamma'] = ($strikesRaw[$s]['call_gamma'] ?? 0)
-                + ($opt->option_type === 'call' ? $opt->gamma * $opt->open_interest * 100 : 0);
-            $strikesRaw[$s]['put_gamma']  = ($strikesRaw[$s]['put_gamma']  ?? 0)
-                + ($opt->option_type === 'put'  ? $opt->gamma * $opt->open_interest * 100 : 0);
+            $s      = $opt->strike;
+            $spot   = (float) ($opt->underlying_price ?? 0);
+            $spotSq = $spot > 0 ? $spot * $spot : 1.0;
+            $gex    = ($opt->gamma ?? 0) * $opt->open_interest * 100 * $spotSq;
+            if ($opt->option_type === 'call') {
+                $strikesRaw[$s]['call_gamma'] = ($strikesRaw[$s]['call_gamma'] ?? 0) + $gex;
+            } else {
+                $strikesRaw[$s]['put_gamma']  = ($strikesRaw[$s]['put_gamma']  ?? 0) + $gex;
+            }
         }
 
         $strikeList = [];
