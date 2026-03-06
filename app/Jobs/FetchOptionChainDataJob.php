@@ -36,6 +36,9 @@ class FetchOptionChainDataJob implements ShouldQueue
     /** Compute Greeks within ±X% of spot (precision default widened). */
     protected float $greeksNearPct = 2.00;
 
+    /** Refetch expiry slices that are missing either call or put side. */
+    protected bool $repairPartialExpiries = true;
+
     /** Cache guard to prevent duplicate pulls per symbol/day */
     protected int $guardMinutes = 10;
 
@@ -274,6 +277,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'greeks_near_pct' => $this->greeksNearPct,
                 'min_keep_oi' => $this->minKeepOI,
                 'min_keep_vol' => $this->minKeepVol,
+                'repair_partial_expiries' => $this->repairPartialExpiries,
             ], $providerMeta);
             Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
             $this->storeFetchMeta($symbol, $date, $meta);
@@ -286,11 +290,16 @@ class FetchOptionChainDataJob implements ShouldQueue
         $greeksBand = (float) config('services.massive.eod_greeks_near_pct', $this->greeksNearPct);
         $minOi = (int) config('services.massive.eod_min_keep_oi', $this->minKeepOI);
         $minVol = (int) config('services.massive.eod_min_keep_vol', $this->minKeepVol);
+        $repairPartial = (bool) config(
+            'services.massive.eod_chain_repair_partial_expiries',
+            $this->repairPartialExpiries
+        );
 
         $this->strikeBandPct = max(0.0, $band);
         $this->greeksNearPct = max(0.0, $greeksBand);
         $this->minKeepOI = max(0, $minOi);
         $this->minKeepVol = max(0, $minVol);
+        $this->repairPartialExpiries = $repairPartial;
     }
 
     // ---------- Provider selection + adapters ----------
@@ -436,17 +445,27 @@ class FetchOptionChainDataJob implements ShouldQueue
         }
 
         $byExp = $this->normalizeMassiveContracts($contracts);
+        $incompleteExpiries = $this->massiveIncompleteExpiries($byExp);
 
         // If broad pagination is capped, backfill missing known expiries one by one.
         $expiryBackfillRequested = 0;
         $expiryBackfillFetched = 0;
-        if ($paginationCapped) {
+        $expiryBackfillIncompleteRequested = 0;
+        $expiryBackfillIncompleteFetched = 0;
+        if ($paginationCapped || ($this->repairPartialExpiries && $incompleteExpiries)) {
             $knownExpiries = $this->massiveExpiryHints($symbol, array_keys($byExp));
             $missingExpiries = array_values(array_diff($knownExpiries, array_keys($byExp)));
-            $expiryBackfillRequested = count($missingExpiries);
+            $repairExpiries = $missingExpiries;
+            if ($this->repairPartialExpiries && $incompleteExpiries) {
+                $repairExpiries = array_merge($repairExpiries, $incompleteExpiries);
+                $expiryBackfillIncompleteRequested = count($incompleteExpiries);
+            }
+            $repairExpiries = array_values(array_unique($repairExpiries));
+            $expiryBackfillRequested = count($repairExpiries);
             $maxPagesPerExpiry = max(5, (int) config('services.massive.eod_chain_max_pages_per_expiry', 80));
 
-            foreach ($missingExpiries as $expiry) {
+            foreach ($repairExpiries as $expiry) {
+                $wasIncomplete = in_array($expiry, $incompleteExpiries, true);
                 $res = $this->fetchMassiveContracts(
                     $client,
                     $base,
@@ -476,6 +495,9 @@ class FetchOptionChainDataJob implements ShouldQueue
                 if (isset($expSet[$expiry])) {
                     $byExp[$expiry] = $expSet[$expiry];
                     $expiryBackfillFetched++;
+                    if ($wasIncomplete && !$this->massiveExpiryMissingSide($byExp[$expiry])) {
+                        $expiryBackfillIncompleteFetched++;
+                    }
                 }
             }
         }
@@ -499,6 +521,8 @@ class FetchOptionChainDataJob implements ShouldQueue
             'pagination_capped' => $paginationCapped,
             'expiry_backfill_requested' => $expiryBackfillRequested,
             'expiry_backfill_fetched' => $expiryBackfillFetched,
+            'expiry_backfill_incomplete_requested' => $expiryBackfillIncompleteRequested,
+            'expiry_backfill_incomplete_fetched' => $expiryBackfillIncompleteFetched,
         ]];
     }
 
@@ -665,6 +689,32 @@ class FetchOptionChainDataJob implements ShouldQueue
         }
 
         return $byExp;
+    }
+
+    /**
+     * @param array<string,array<string,mixed>> $byExp
+     * @return array<int,string>
+     */
+    protected function massiveIncompleteExpiries(array $byExp): array
+    {
+        $incomplete = [];
+        foreach ($byExp as $exp => $set) {
+            if ($this->massiveExpiryMissingSide($set)) {
+                $incomplete[] = (string) $exp;
+            }
+        }
+        sort($incomplete);
+        return $incomplete;
+    }
+
+    /**
+     * @param array<string,mixed> $set
+     */
+    protected function massiveExpiryMissingSide(array $set): bool
+    {
+        $calls = count($set['options']['CALL'] ?? []);
+        $puts = count($set['options']['PUT'] ?? []);
+        return $calls === 0 || $puts === 0;
     }
 
     /**
