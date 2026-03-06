@@ -214,7 +214,7 @@ class GexController extends Controller
         foreach ($strikesRaw as $strike => $g) {
             $strikeList[] = [
                 'strike'  => $strike,
-                'net_gex' => $g['call_gamma'] - $g['put_gamma'],
+                'net_gex' => ($g['call_gamma'] ?? 0) - ($g['put_gamma'] ?? 0),
             ];
         }
         usort($strikeList, fn($a, $b) => $a['strike'] <=> $b['strike']);
