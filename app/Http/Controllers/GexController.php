@@ -217,8 +217,10 @@ class GexController extends Controller
         $strikeList = [];
         foreach ($strikesRaw as $strike => $g) {
             $strikeList[] = [
-                'strike'  => $strike,
-                'net_gex' => ($g['call_gamma'] ?? 0) - ($g['put_gamma'] ?? 0),
+                'strike'   => $strike,
+                'net_gex'  => ($g['call_gamma'] ?? 0) - ($g['put_gamma'] ?? 0),
+                'call_gex' => $g['call_gamma'] ?? 0,
+                'put_gex'  => $g['put_gamma']  ?? 0,
             ];
         }
         usort($strikeList, fn($a, $b) => $a['strike'] <=> $b['strike']);
@@ -322,6 +324,8 @@ class GexController extends Controller
             $fullStrike[] = [
                 'strike'              => $s,
                 'net_gex'             => $row['net_gex'],
+                'call_gex'            => $row['call_gex'],
+                'put_gex'             => $row['put_gex'],
                 'call_oi_delta'       => $dCallOi,
                 'put_oi_delta'        => $dPutOi,
                 'call_oi_delta_pct'   => $pctOr0($dCallOi, $pCallOi),

@@ -17,6 +17,15 @@
         <label class="inline-flex items-center gap-1 cursor-pointer select-none">
           <input
             type="checkbox"
+            v-model="splitView"
+            class="rounded border-gray-600 bg-gray-900 text-cyan-500 focus:ring-cyan-500"
+          />
+          <span>Split Call/Put</span>
+        </label>
+
+        <label class="inline-flex items-center gap-1 cursor-pointer select-none">
+          <input
+            type="checkbox"
             v-model="focusActivity"
             class="rounded border-gray-600 bg-gray-900 text-cyan-500 focus:ring-cyan-500"
           />
@@ -93,6 +102,7 @@ export default {
     return {
       autoBucket: false,      // OFF by default now
       focusActivity: true,    // ON by default
+      splitView: false,       // when true: show call_gex (green) + put_gex (red) separately
       MAX_BARS: 100,          // fewer bars → chunkier
       PADDING_STRIKES: 8,     // extra strikes to include around activity band
     }
@@ -159,6 +169,8 @@ export default {
         return rows.map(r => ({
           label: String(r.strike),
           value: Number(r.net_gex ?? r.netGex ?? 0),
+          call:  Number(r.call_gex ?? r.callGex ?? 0),
+          put:   Number(r.put_gex  ?? r.putGex  ?? 0),
         }))
       }
 
@@ -174,6 +186,8 @@ export default {
         start: min + i * niceStep,
         end: min + (i + 1) * niceStep,
         sum: 0,
+        call: 0,
+        put: 0,
       }))
 
       for (const r of rows) {
@@ -182,28 +196,57 @@ export default {
           bucketCount - 1,
           Math.max(0, Math.floor((s - min) / niceStep)),
         )
-        buckets[idx].sum += Number(r.net_gex ?? r.netGex ?? 0)
+        buckets[idx].sum  += Number(r.net_gex ?? r.netGex ?? 0)
+        buckets[idx].call += Number(r.call_gex ?? r.callGex ?? 0)
+        buckets[idx].put  += Number(r.put_gex  ?? r.putGex  ?? 0)
       }
 
       return buckets
-        .filter(b => b.sum !== 0)
+        .filter(b => b.sum !== 0 || b.call !== 0 || b.put !== 0)
         .map(b => ({
           label:
             niceStep >= 5
               ? `${Math.round(b.start)}–${Math.round(b.end)}`
               : `${b.start.toFixed(2)}–${b.end.toFixed(2)}`,
           value: b.sum,
+          call:  b.call,
+          put:   b.put,
         }))
     },
 
     chartData() {
       const labels = this.displayPoints.map(p => p.label)
-      const data = this.displayPoints.map(p => p.value)
 
+      if (this.splitView) {
+        // Call GEX as positive green bars, Put GEX as negative red bars
+        return {
+          labels,
+          datasets: [
+            {
+              label: 'Call GEX',
+              data: this.displayPoints.map(p => p.call),
+              backgroundColor: 'rgba(52,211,153,0.9)',
+              borderRadius: 3,
+              barPercentage: 0.85,
+              categoryPercentage: 0.9,
+            },
+            {
+              label: 'Put GEX',
+              data: this.displayPoints.map(p => -p.put),
+              backgroundColor: 'rgba(248,113,113,0.85)',
+              borderRadius: 3,
+              barPercentage: 0.85,
+              categoryPercentage: 0.9,
+            },
+          ],
+        }
+      }
+
+      const data = this.displayPoints.map(p => p.value)
       const colors = data.map(v =>
         v >= 0
-          ? 'rgba(52,211,153,0.9)'    // green instead of cyan
-          : 'rgba(248,113,113,0.85)', // red-ish
+          ? 'rgba(52,211,153,0.9)'
+          : 'rgba(248,113,113,0.85)',
       )
 
       return {
@@ -222,32 +265,50 @@ export default {
     },
 
     chartOptions() {
-      const maxAbs = this.displayPoints.reduce(
-        (m, p) => Math.max(m, Math.abs(p.value)),
-        0,
-      )
-      const pad = maxAbs ? maxAbs * 0.1 : 0
+      let yMin, yMax
+
+      if (this.splitView) {
+        const maxCall = this.displayPoints.reduce((m, p) => Math.max(m, p.call), 0)
+        const maxPut  = this.displayPoints.reduce((m, p) => Math.max(m, p.put),  0)
+        const maxAbs  = Math.max(maxCall, maxPut)
+        const pad     = maxAbs ? maxAbs * 0.1 : 0
+        yMin = maxAbs ? -(maxPut  + pad) : undefined
+        yMax = maxAbs ? +(maxCall + pad) : undefined
+      } else {
+        const maxAbs = this.displayPoints.reduce((m, p) => Math.max(m, Math.abs(p.value)), 0)
+        const pad    = maxAbs ? maxAbs * 0.1 : 0
+        yMin = maxAbs ? -(maxAbs + pad) : undefined
+        yMax = maxAbs ? +(maxAbs + pad) : undefined
+      }
+
+      const formatVal = value => {
+        const v = Number(value)
+        if (Math.abs(v) >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1) + 'B'
+        if (Math.abs(v) >= 1_000_000)     return (v / 1_000_000).toFixed(1)     + 'M'
+        if (Math.abs(v) >= 1_000)         return (v / 1_000).toFixed(1)         + 'k'
+        return v.toString()
+      }
 
       return {
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
         plugins: {
-          legend: { display: false },
+          legend: { display: this.splitView, labels: { color: '#e5e7eb' } },
           tooltip: {
             backgroundColor: 'rgba(15,23,42,0.95)',
             borderColor: 'rgba(148,163,184,0.6)',
             borderWidth: 1,
             padding: 10,
             callbacks: {
-              title: items => {
-                const item = items[0]
-                return `Strike ${item.label}`
-              },
+              title: items => `Strike ${items[0].label}`,
               label: ctx => {
+                const label = ctx.dataset.label || 'Net GEX'
                 const v = ctx.parsed.y
-                const sign = v > 0 ? '+' : ''
-                return `Net GEX: ${sign}${v.toLocaleString()}`
+                // In split mode, put bars are negated for visual display — show raw magnitude
+                const display = (this.splitView && label === 'Put GEX') ? Math.abs(v) : v
+                const sign = display > 0 ? '+' : ''
+                return `${label}: ${sign}${formatVal(display)}`
               },
             },
           },
@@ -279,11 +340,11 @@ export default {
             },
           },
           y: {
-            min: maxAbs ? -(maxAbs + pad) : undefined,
-            max: maxAbs ? maxAbs + pad : undefined,
+            min: yMin,
+            max: yMax,
             title: {
               display: true,
-              text: 'Net GEX',
+              text: this.splitView ? 'GEX (Call ↑ / Put ↓)' : 'Net GEX',
               color: '#9ca3af',
               font: { size: 11 },
             },
@@ -292,12 +353,7 @@ export default {
             },
             ticks: {
               color: '#6b7280',
-              callback: value => {
-                const v = Number(value)
-                if (Math.abs(v) >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M'
-                if (Math.abs(v) >= 1_000) return (v / 1_000).toFixed(1) + 'k'
-                return v.toString()
-              },
+              callback: formatVal,
             },
           },
         },
