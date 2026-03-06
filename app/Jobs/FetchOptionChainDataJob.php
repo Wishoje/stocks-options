@@ -24,6 +24,8 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     /** @var int|null Max days out to keep expirations (client-side filter) */
     protected ?int $days;
+    /** @var string|null Forced data_date (YYYY-MM-DD) for backfills/repairs */
+    protected ?string $targetDate;
 
     // ----- Tunables (adjust as needed) -----
     /** Keep strikes within ±X% of spot (precision default widened). */
@@ -42,13 +44,14 @@ class FetchOptionChainDataJob implements ShouldQueue
     /** Cache guard to prevent duplicate pulls per symbol/day */
     protected int $guardMinutes = 10;
 
-    public function __construct(array $symbols, ?int $days = null)
+    public function __construct(array $symbols, ?int $days = null, ?string $targetDate = null)
     {
         $this->symbols = array_values(array_unique(array_map(
             static fn($s) => \App\Support\Symbols::canon($s),
             $symbols
         )));
         $this->days = $days;
+        $this->targetDate = $targetDate ? substr((string) $targetDate, 0, 10) : null;
     }
 
     public function handle(): void
@@ -56,9 +59,15 @@ class FetchOptionChainDataJob implements ShouldQueue
         $this->loadRuntimeTunables();
 
         $nowNy = now('America/New_York');
-        $date = $this->tradingDate($nowNy->copy());
-        $windowStart = $nowNy->copy()->startOfDay();
-        $windowEnd = ($this->days ? $nowNy->copy()->addDays($this->days) : $nowNy->copy()->addDays(90))->endOfDay();
+        $date = $this->targetDate ?: $this->tradingDate($nowNy->copy());
+        try {
+            $anchorNy = Carbon::createFromFormat('Y-m-d', $date, 'America/New_York')->startOfDay();
+        } catch (\Throwable $e) {
+            $anchorNy = $nowNy->copy()->startOfDay();
+            $date = $this->tradingDate($nowNy->copy());
+        }
+        $windowStart = $anchorNy->copy()->startOfDay();
+        $windowEnd = ($this->days ? $anchorNy->copy()->addDays($this->days) : $anchorNy->copy()->addDays(90))->endOfDay();
 
         foreach ($this->symbols as $symbol) {
             $context = [

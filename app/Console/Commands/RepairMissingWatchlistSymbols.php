@@ -244,7 +244,7 @@ class RepairMissingWatchlistSymbols extends Command
                 $first = new PricesBackfillJob($group, 400);
                 $chain = [
                     new PricesDailyJob($group),
-                    new FetchOptionChainDataJob($group, $days),
+                    new FetchOptionChainDataJob($group, $days, $targetDate),
                     new ComputeVolMetricsJob($group),
                     new Seasonality5DJob($group, 15, 2),
                     new ComputeExpiryPressureJob($group, 3),
@@ -254,7 +254,7 @@ class RepairMissingWatchlistSymbols extends Command
             } else {
                 $first = new PricesDailyJob($group);
                 $chain = [
-                    new FetchOptionChainDataJob($group, $days),
+                    new FetchOptionChainDataJob($group, $days, $targetDate),
                     new ComputeVolMetricsJob($group),
                     new Seasonality5DJob($group, 15, 2),
                     new ComputeExpiryPressureJob($group, 3),
