@@ -243,21 +243,24 @@ class AuditEodGexCommand extends Command
         $strikesRaw = [];
         foreach ($todayData as $opt) {
             $strike = (float) $opt->strike;
+            $strikeKey = $this->strikeKey($strike);
             $spot = (float) ($opt->underlying_price ?? 0);
             $spotSq = $spot > 0 ? $spot * $spot : 1.0;
             $gex = (float) ($opt->gamma ?? 0) * (float) ($opt->open_interest ?? 0) * 100.0 * $spotSq;
 
             if (($opt->option_type ?? null) === 'call') {
-                $strikesRaw[$strike]['call_gex'] = ($strikesRaw[$strike]['call_gex'] ?? 0.0) + $gex;
+                $strikesRaw[$strikeKey]['strike'] = $strike;
+                $strikesRaw[$strikeKey]['call_gex'] = ($strikesRaw[$strikeKey]['call_gex'] ?? 0.0) + $gex;
             } else {
-                $strikesRaw[$strike]['put_gex'] = ($strikesRaw[$strike]['put_gex'] ?? 0.0) + $gex;
+                $strikesRaw[$strikeKey]['strike'] = $strike;
+                $strikesRaw[$strikeKey]['put_gex'] = ($strikesRaw[$strikeKey]['put_gex'] ?? 0.0) + $gex;
             }
         }
 
         $strikeList = [];
-        foreach ($strikesRaw as $strike => $g) {
+        foreach ($strikesRaw as $g) {
             $strikeList[] = [
-                'strike' => (float) $strike,
+                'strike' => (float) ($g['strike'] ?? 0.0),
                 'net_gex' => (float) (($g['call_gex'] ?? 0.0) - ($g['put_gex'] ?? 0.0)),
                 'call_gex' => (float) ($g['call_gex'] ?? 0.0),
                 'put_gex' => (float) ($g['put_gex'] ?? 0.0),
