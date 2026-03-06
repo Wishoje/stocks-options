@@ -137,6 +137,8 @@ class AuditEodGexCommand extends Command
                 'status' => $apiResponse['status'],
                 'data_date' => $apiBody['data_date'] ?? null,
                 'date_prev' => $apiBody['date_prev'] ?? null,
+                'date_prev_gap_trading_days' => $apiBody['date_prev_gap_trading_days'] ?? null,
+                'date_prev_is_stale' => $apiBody['date_prev_is_stale'] ?? null,
                 'date_prev_week' => $apiBody['date_prev_week'] ?? null,
                 'expiration_dates' => $expirationDates,
                 'strike_rows' => count($apiBody['strike_data'] ?? []),
@@ -499,9 +501,11 @@ class AuditEodGexCommand extends Command
         $levels = $report['top_levels'];
 
         $this->line(sprintf(
-            'API data_date=%s prev=%s prev_week=%s strike_rows=%d',
+            'API data_date=%s prev=%s gap=%s stale=%s prev_week=%s strike_rows=%d',
             $api['data_date'] ?? 'n/a',
             $api['date_prev'] ?? 'n/a',
+            $api['date_prev_gap_trading_days'] ?? 'n/a',
+            !empty($api['date_prev_is_stale']) ? 'yes' : 'no',
             $api['date_prev_week'] ?? 'n/a',
             (int) ($api['strike_rows'] ?? 0)
         ));

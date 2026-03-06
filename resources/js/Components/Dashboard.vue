@@ -470,7 +470,16 @@
               </div>
             </div>
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-3">ΔOI by Strike (EOD)</h4>
+              <div class="mb-3">
+                <h4 class="font-semibold">ΔOI by Strike (EOD)</h4>
+                <p v-if="levels?.date_prev" class="text-xs mt-1" :class="levels?.date_prev_is_stale ? 'text-amber-300' : 'text-gray-400'">
+                  Comparing against {{ levels.date_prev }}
+                  <span v-if="levels?.date_prev_gap_trading_days != null">
+                    ({{ levels.date_prev_gap_trading_days }} trading day<span v-if="levels.date_prev_gap_trading_days !== 1">s</span> back)
+                  </span>
+                  <span v-if="levels?.date_prev_is_stale"> because the prior session snapshot for this expiry set is incomplete.</span>
+                </p>
+              </div>
               <StrikeDeltaChart
                 :strikeData="strikeSeriesForDelta"
                 height-class="h-80 md:h-96 xl:h-[26rem]"
@@ -478,7 +487,16 @@
               />
             </div>
             <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-3">ΔVol by Strike (EOD)</h4>
+              <div class="mb-3">
+                <h4 class="font-semibold">ΔVol by Strike (EOD)</h4>
+                <p v-if="levels?.date_prev" class="text-xs mt-1" :class="levels?.date_prev_is_stale ? 'text-amber-300' : 'text-gray-400'">
+                  Comparing against {{ levels.date_prev }}
+                  <span v-if="levels?.date_prev_gap_trading_days != null">
+                    ({{ levels.date_prev_gap_trading_days }} trading day<span v-if="levels.date_prev_gap_trading_days !== 1">s</span> back)
+                  </span>
+                  <span v-if="levels?.date_prev_is_stale"> because the prior session snapshot for this expiry set is incomplete.</span>
+                </p>
+              </div>
               <VolumeDeltaChart
                 :strikeData="strikeSeriesForDelta"
                 height-class="h-80 md:h-96 xl:h-[26rem]"

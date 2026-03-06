@@ -300,6 +300,9 @@ class GexController extends Controller
         // for the response payload, keep your previous naming
         $yesterday = $prevDate;
         $lastWeek  = $prevWeekDate;
+        $prevGapTradingDays = $this->tradingWeekdayGap($latestDate, $prevDate);
+        $prevWeekGapTradingDays = $this->tradingWeekdayGap($latestDate, $prevWeekDate);
+        $prevIsStale = $prevGapTradingDays !== null && $prevGapTradingDays > 1;
 
         // 6) Assemble full strike data with call/put deltas
         $fullStrike = [];
@@ -402,7 +405,10 @@ class GexController extends Controller
             'total_oi_delta'           => $totalOiDelta,
             'total_volume_delta'       => $totalVolDelta,
             'date_prev'                => $yesterday,
+            'date_prev_gap_trading_days' => $prevGapTradingDays,
+            'date_prev_is_stale'       => $prevIsStale,
             'date_prev_week'           => $lastWeek,
+            'date_prev_week_gap_trading_days' => $prevWeekGapTradingDays,
             'strike_data'              => $fullStrike,
             'regime_strength'          => $gs['strength'] ?? null,
             'gamma_sign'               => $gs['sign']     ?? null,
@@ -608,5 +614,29 @@ class GexController extends Controller
         }
 
         return $ny->toDateString();
+    }
+
+    protected function tradingWeekdayGap(?string $latestDate, ?string $priorDate): ?int
+    {
+        if (!$latestDate || !$priorDate) {
+            return null;
+        }
+
+        $latest = Carbon::parse($latestDate, 'America/New_York')->startOfDay();
+        $prior = Carbon::parse($priorDate, 'America/New_York')->startOfDay();
+        if ($prior->gte($latest)) {
+            return 0;
+        }
+
+        $gap = 0;
+        $cursor = $prior->copy();
+        while ($cursor->lt($latest)) {
+            $cursor->addDay();
+            if (!$cursor->isWeekend()) {
+                $gap++;
+            }
+        }
+
+        return $gap;
     }
 }
