@@ -100,6 +100,35 @@ class RepairMissingWatchlistSymbols extends Command
 
         $incompleteReasons = [];
         if ($checkIncomplete) {
+            $expirySideGaps = DB::table('option_chain_data as o')
+                ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+                ->whereDate('o.data_date', $targetDate)
+                ->whereIn('e.symbol', $symbols)
+                ->select(
+                    'e.symbol',
+                    'e.expiration_date',
+                    DB::raw('COUNT(DISTINCT o.option_type) as option_types_n'),
+                    DB::raw('SUM(CASE WHEN o.option_type = "call" THEN 1 ELSE 0 END) as calls_n'),
+                    DB::raw('SUM(CASE WHEN o.option_type = "put" THEN 1 ELSE 0 END) as puts_n')
+                )
+                ->groupBy('e.symbol', 'e.expiration_date')
+                ->get()
+                ->groupBy(function ($row) {
+                    return Symbols::canon((string) $row->symbol) ?? (string) $row->symbol;
+                })
+                ->map(function ($rows) {
+                    $gaps = collect($rows)->filter(function ($row) {
+                        return (int) $row->option_types_n < 2
+                            || (int) $row->calls_n === 0
+                            || (int) $row->puts_n === 0;
+                    });
+
+                    return [
+                        'count' => $gaps->count(),
+                        'dates' => $gaps->pluck('expiration_date')->map(fn ($d) => (string) $d)->values()->all(),
+                    ];
+                });
+
             $prevDates = DB::table('option_chain_data as o')
                 ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
                 ->whereIn('e.symbol', $symbols)
@@ -131,6 +160,15 @@ class RepairMissingWatchlistSymbols extends Command
             foreach ($targetStats as $sym => $stats) {
                 $prevStrikes = (int) ($prevStats[$sym] ?? 0);
                 $reasons = EodHealth::incompleteReasons($stats, $prevStrikes, $thresholds);
+                $sideGapCount = (int) data_get($expirySideGaps, "{$sym}.count", 0);
+                $sideGapDates = (array) data_get($expirySideGaps, "{$sym}.dates", []);
+                if ($sideGapCount > 0) {
+                    $reasons[] = sprintf(
+                        'expiry_side_gap(%d):%s',
+                        $sideGapCount,
+                        implode('|', array_slice($sideGapDates, 0, 6))
+                    );
+                }
 
                 if (!empty($reasons)) {
                     $incompleteReasons[$sym] = $reasons;

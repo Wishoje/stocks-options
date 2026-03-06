@@ -89,6 +89,7 @@ class EodHealth
         foreach ($reasons as $reason) {
             if (
                 str_starts_with($reason, 'missing_call_or_put') ||
+                str_starts_with($reason, 'expiry_side_gap') ||
                 str_starts_with($reason, 'low_expirations') ||
                 str_starts_with($reason, 'low_strike_count')
             ) {
