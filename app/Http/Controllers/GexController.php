@@ -99,7 +99,7 @@ class GexController extends Controller
             $dateSig,
         ])), 0, 20);
 
-        $cacheKey = "gex:levels:v2:{$symbol}:{$timeframe}:{$version}";
+        $cacheKey = "gex:levels:v3:{$symbol}:{$timeframe}:{$version}";
         $cacheHit = !$forceRefresh && Cache::has($cacheKey);
 
         if ($forceRefresh) {
@@ -108,7 +108,8 @@ class GexController extends Controller
                 $timeframe,
                 $dates,
                 $timeframeExpirations,
-                $expirationIds
+                $expirationIds,
+                $anchorDate
             );
             if ($payload) {
                 Cache::put($cacheKey, $payload, now()->addHours(self::CACHE_HOURS));
@@ -119,14 +120,16 @@ class GexController extends Controller
                 $timeframe,
                 $dates,
                 $timeframeExpirations,
-                $expirationIds
+                $expirationIds,
+                $anchorDate
             ) {
                 return $this->buildGexPayload(
                     $symbol,
                     $timeframe,
                     $dates,
                     $timeframeExpirations,
-                    $expirationIds
+                    $expirationIds,
+                    $anchorDate
                 );
             });
         }
@@ -168,19 +171,43 @@ class GexController extends Controller
         string $timeframe,
         array $dates,
         array $timeframeExpirations,
-        array $expirationIds
+        array $expirationIds,
+        ?string $anchorDate = null
     ): ?array {
-        // Use per-(expiration, option_type) max_date so calls and puts each use
-        // their own latest snapshot. Prevents a freshly-upserted call row from
-        // hiding older puts that haven't been re-ingested for the same date yet.
-        $latestDates = OptionChainData::select('expiration_id', 'option_type', DB::raw('MAX(data_date) as max_date'))
-            ->whereIn('option_chain_data.expiration_id', $expirationIds)
-            ->groupBy('expiration_id', 'option_type');
+        // Pick one cohesive snapshot date per expiration. We prefer the latest
+        // date where both call and put rows exist, then fall back to latest any.
+        $dateCandidates = OptionChainData::select(
+                'expiration_id',
+                'data_date',
+                DB::raw("SUM(CASE WHEN option_type = 'call' THEN 1 ELSE 0 END) as call_rows_n"),
+                DB::raw("SUM(CASE WHEN option_type = 'put'  THEN 1 ELSE 0 END) as put_rows_n")
+            )
+            ->whereIn('expiration_id', $expirationIds)
+            ->when($anchorDate, fn ($q) => $q->whereDate('data_date', '<=', $anchorDate))
+            ->groupBy('expiration_id', 'data_date');
+
+        $balancedDates = DB::query()
+            ->fromSub($dateCandidates, 'dc')
+            ->select('expiration_id', DB::raw('MAX(data_date) as max_date'))
+            ->where('call_rows_n', '>', 0)
+            ->where('put_rows_n', '>', 0)
+            ->groupBy('expiration_id');
+
+        $fallbackDates = OptionChainData::select('expiration_id', DB::raw('MAX(data_date) as max_date'))
+            ->whereIn('expiration_id', $expirationIds)
+            ->when($anchorDate, fn ($q) => $q->whereDate('data_date', '<=', $anchorDate))
+            ->groupBy('expiration_id');
+
+        $latestDates = DB::query()
+            ->fromSub($fallbackDates, 'fb')
+            ->leftJoinSub($balancedDates, 'bd', function ($join) {
+                $join->on('fb.expiration_id', '=', 'bd.expiration_id');
+            })
+            ->select('fb.expiration_id', DB::raw('COALESCE(bd.max_date, fb.max_date) as max_date'));
 
         $todayData = OptionChainData::joinSub($latestDates, 'ld', function ($join) {
                 $join->on('option_chain_data.expiration_id', '=', 'ld.expiration_id')
-                    ->on('option_chain_data.option_type',    '=', 'ld.option_type')
-                    ->on('option_chain_data.data_date',      '=', 'ld.max_date');
+                    ->on('option_chain_data.data_date', '=', 'ld.max_date');
             })
             ->whereIn('option_chain_data.expiration_id', $expirationIds)
             ->get();
@@ -425,9 +452,11 @@ class GexController extends Controller
      */
     protected function resolveExpirationDates(string $symbol, string $tf): array
     {
+        // UI labels are DTE-ish (0DTE, 1DTE, 1W, 2W, 1M, 3M), so use
+        // trading-day lookaheads instead of calendar-day lookaheads.
         $map = [
-            '0d'=>0,'1d'=>1,'7d'=>7,'14d'=>14,'21d'=>21,'30d'=>30,
-            '45d'=>45,'60d'=>60,'90d'=>90,
+            '0d'=>0,'1d'=>1,'7d'=>5,'14d'=>10,'21d'=>15,'30d'=>21,
+            '45d'=>32,'60d'=>43,'90d'=>64,
         ];
         if (isset($map[$tf])) {
             return $this->getExpirationsWithinDays($symbol, $map[$tf]);
@@ -465,9 +494,15 @@ class GexController extends Controller
     // Helper: find expirations within X days
     protected function getExpirationsWithinDays(string $symbol, int $days): array
     {
-        $now       = now();
-        $startDate = $now->toDateString();
-        $endDate   = $now->copy()->addDays($days)->toDateString();
+        $anchorNy = now('America/New_York')->startOfDay();
+        if ($anchorNy->isWeekend()) {
+            $anchorNy = $anchorNy->previousWeekday()->startOfDay();
+        }
+
+        $startDate = $anchorNy->toDateString();
+        $endDate   = $days > 0
+            ? $anchorNy->copy()->addWeekdays($days)->toDateString()
+            : $startDate;
 
         return OptionExpiration::where('symbol', $symbol)
             ->whereBetween('expiration_date', [$startDate, $endDate])

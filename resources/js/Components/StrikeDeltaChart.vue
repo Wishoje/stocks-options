@@ -105,28 +105,31 @@ export default {
         .sort((a, b) => Number(a.strike) - Number(b.strike))
     },
 
-    // Focus on band where ΔOI is meaningful
+    // Focus on band where Delta OI is meaningful
     focusedData() {
       const rows = this.sortedData
       if (!rows.length) return []
 
-      const vals = rows.map(r => {
-        const c = Math.abs(Number(r.call_oi_delta ?? 0))
-        const p = Math.abs(Number(r.put_oi_delta ?? 0))
-        return Math.max(c, p)
-      })
+      const callVals = rows.map(r => Math.abs(Number(r.call_oi_delta ?? 0)))
+      const putVals  = rows.map(r => Math.abs(Number(r.put_oi_delta ?? 0)))
+      const maxCall = Math.max(...callVals)
+      const maxPut  = Math.max(...putVals)
+      if ((!isFinite(maxCall) || maxCall === 0) && (!isFinite(maxPut) || maxPut === 0)) {
+        return rows
+      }
 
-      const maxAbs = Math.max(...vals)
-      if (!isFinite(maxAbs) || maxAbs === 0) return rows
-
-      // Keep strikes where max(|ΔOI|) >= 2% of max, but at least 50
-      const threshold = Math.max(maxAbs * 0.02, 50)
+      // Side-aware thresholds prevent dominant calls from clipping all puts (or vice versa).
+      const callThreshold = maxCall > 0 ? Math.max(maxCall * 0.02, 50) : Infinity
+      const putThreshold  = maxPut  > 0 ? Math.max(maxPut  * 0.02, 50) : Infinity
 
       let firstIdx = -1
       let lastIdx = -1
 
-      vals.forEach((v, idx) => {
-        if (v >= threshold) {
+      rows.forEach((r, idx) => {
+        const c = Math.abs(Number(r.call_oi_delta ?? 0))
+        const p = Math.abs(Number(r.put_oi_delta ?? 0))
+        const keep = c >= callThreshold || p >= putThreshold
+        if (keep) {
           if (firstIdx === -1) firstIdx = idx
           lastIdx = idx
         }
@@ -180,13 +183,13 @@ export default {
       }
 
       return buckets
-        // keep buckets that have *some* activity
+        // keep buckets that have some activity
         .filter(b => b.call !== 0 || b.put !== 0)
         .map(b => ({
           label:
             niceStep >= 5
-              ? `${Math.round(b.start)}–${Math.round(b.end)}`
-              : `${b.start.toFixed(2)}–${b.end.toFixed(2)}`,
+              ? `${Math.round(b.start)}-${Math.round(b.end)}`
+              : `${b.start.toFixed(2)}-${b.end.toFixed(2)}`,
           call: b.call,
           put: b.put,
         }))
@@ -201,7 +204,7 @@ export default {
         labels,
         datasets: [
           {
-            label: 'Call ΔOI',
+            label: 'Call Delta OI',
             data: callData,
             backgroundColor: 'rgba(52,211,153,0.9)', // green-ish like volume calls
             borderRadius: 3,
@@ -209,7 +212,7 @@ export default {
             categoryPercentage: 0.9,
           },
           {
-            label: 'Put ΔOI',
+            label: 'Put Delta OI',
             data: putData,
             backgroundColor: 'rgba(248,113,113,0.85)', // red-ish (bearish)
             borderRadius: 3,
@@ -288,7 +291,7 @@ export default {
             max: maxAbs ? maxAbs + pad : undefined,
             title: {
               display: true,
-              text: 'ΔOI',
+              text: 'Delta OI',
               color: '#9ca3af',
               font: { size: 11 },
             },

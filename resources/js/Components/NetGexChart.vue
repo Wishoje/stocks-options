@@ -103,7 +103,7 @@ export default {
       autoBucket: false,      // OFF by default now
       focusActivity: true,    // ON by default
       splitView: false,       // when true: show call_gex (green) + put_gex (red) separately
-      MAX_BARS: 100,          // fewer bars → chunkier
+      MAX_BARS: 100,          // fewer bars -> chunkier
       PADDING_STRIKES: 8,     // extra strikes to include around activity band
     }
   },
@@ -121,26 +121,41 @@ export default {
       if (!rows.length) return []
 
       const vals = rows.map(r => Number(r.net_gex ?? r.netGex ?? 0))
+      const callVals = rows.map(r => Math.abs(Number(r.call_gex ?? r.callGex ?? 0)))
+      const putVals  = rows.map(r => Math.abs(Number(r.put_gex ?? r.putGex ?? 0)))
       const absVals = vals.map(v => Math.abs(v))
       const maxAbs = Math.max(...absVals)
+      const maxCall = Math.max(...callVals)
+      const maxPut  = Math.max(...putVals)
 
       // If everything is ~0, just show all.
-      if (!isFinite(maxAbs) || maxAbs === 0) return rows
+      if (
+        (!isFinite(maxAbs) || maxAbs === 0) &&
+        (!isFinite(maxCall) || maxCall === 0) &&
+        (!isFinite(maxPut) || maxPut === 0)
+      ) return rows
 
-      // Side-specific thresholds prevent strong positive side from hiding
-      // meaningful negative side bars (or vice versa).
+      // Side-specific thresholds prevent one side (or near-netting) from hiding the other.
       const maxPos = Math.max(...vals.map(v => (v > 0 ? v : 0)))
       const maxNegAbs = Math.max(...vals.map(v => (v < 0 ? Math.abs(v) : 0)))
-      const posThreshold = maxPos > 0 ? Math.max(maxPos * 0.02, 1_000) : Infinity
-      const negThreshold = maxNegAbs > 0 ? Math.max(maxNegAbs * 0.02, 1_000) : Infinity
+      const posThreshold  = maxPos > 0 ? Math.max(maxPos * 0.02, 1_000) : Infinity
+      const negThreshold  = maxNegAbs > 0 ? Math.max(maxNegAbs * 0.02, 1_000) : Infinity
+      const callThreshold = maxCall > 0 ? Math.max(maxCall * 0.02, 1_000) : Infinity
+      const putThreshold  = maxPut  > 0 ? Math.max(maxPut  * 0.02, 1_000) : Infinity
 
       let firstIdx = -1
       let lastIdx = -1
 
-      vals.forEach((v, idx) => {
+      rows.forEach((r, idx) => {
+        const v = Number(r.net_gex ?? r.netGex ?? 0)
+        const c = Math.abs(Number(r.call_gex ?? r.callGex ?? 0))
+        const p = Math.abs(Number(r.put_gex ?? r.putGex ?? 0))
+
         const keep =
           (v > 0 && v >= posThreshold) ||
-          (v < 0 && Math.abs(v) >= negThreshold)
+          (v < 0 && Math.abs(v) >= negThreshold) ||
+          c >= callThreshold ||
+          p >= putThreshold
 
         if (keep) {
           if (firstIdx === -1) firstIdx = idx
@@ -164,7 +179,7 @@ export default {
       const rows = baseRows
       if (!rows.length) return []
 
-      // no bucket → 1:1 mapping
+      // no bucket -> 1:1 mapping
       if (!this.autoBucket || rows.length <= this.MAX_BARS) {
         return rows.map(r => ({
           label: String(r.strike),
@@ -206,8 +221,8 @@ export default {
         .map(b => ({
           label:
             niceStep >= 5
-              ? `${Math.round(b.start)}–${Math.round(b.end)}`
-              : `${b.start.toFixed(2)}–${b.end.toFixed(2)}`,
+              ? `${Math.round(b.start)}-${Math.round(b.end)}`
+              : `${b.start.toFixed(2)}-${b.end.toFixed(2)}`,
           value: b.sum,
           call:  b.call,
           put:   b.put,
@@ -305,7 +320,7 @@ export default {
               label: ctx => {
                 const label = ctx.dataset.label || 'Net GEX'
                 const v = ctx.parsed.y
-                // In split mode, put bars are negated for visual display — show raw magnitude
+                // In split mode, put bars are negated for visual display - show raw magnitude
                 const display = (this.splitView && label === 'Put GEX') ? Math.abs(v) : v
                 const sign = display > 0 ? '+' : ''
                 return `${label}: ${sign}${formatVal(display)}`
@@ -344,7 +359,7 @@ export default {
             max: yMax,
             title: {
               display: true,
-              text: this.splitView ? 'GEX (Call ↑ / Put ↓)' : 'Net GEX',
+              text: this.splitView ? 'GEX (Call up / Put down)' : 'Net GEX',
               color: '#9ca3af',
               font: { size: 11 },
             },
