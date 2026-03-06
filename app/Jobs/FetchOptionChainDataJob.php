@@ -331,6 +331,10 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
                 'expiry_backfill_requested' => $massiveMeta['expiry_backfill_requested'] ?? 0,
                 'expiry_backfill_fetched' => $massiveMeta['expiry_backfill_fetched'] ?? 0,
+                'expiry_backfill_incomplete_requested' => $massiveMeta['expiry_backfill_incomplete_requested'] ?? 0,
+                'expiry_backfill_incomplete_fetched' => $massiveMeta['expiry_backfill_incomplete_fetched'] ?? 0,
+                'expiry_backfill_side_requested' => $massiveMeta['expiry_backfill_side_requested'] ?? 0,
+                'expiry_backfill_side_fetched' => $massiveMeta['expiry_backfill_side_fetched'] ?? 0,
             ]];
         }
 
@@ -452,6 +456,8 @@ class FetchOptionChainDataJob implements ShouldQueue
         $expiryBackfillFetched = 0;
         $expiryBackfillIncompleteRequested = 0;
         $expiryBackfillIncompleteFetched = 0;
+        $expiryBackfillSideRequested = 0;
+        $expiryBackfillSideFetched = 0;
         if ($paginationCapped || ($this->repairPartialExpiries && $incompleteExpiries)) {
             $knownExpiries = $this->massiveExpiryHints($symbol, array_keys($byExp));
             $missingExpiries = array_values(array_diff($knownExpiries, array_keys($byExp)));
@@ -495,6 +501,53 @@ class FetchOptionChainDataJob implements ShouldQueue
                 if (isset($expSet[$expiry])) {
                     $byExp[$expiry] = $expSet[$expiry];
                     $expiryBackfillFetched++;
+                    if ($wasIncomplete && $this->repairPartialExpiries && $this->massiveExpiryMissingSide($byExp[$expiry])) {
+                        $missingSides = $this->massiveMissingSides($byExp[$expiry]);
+                        $expiryBackfillSideRequested += count($missingSides);
+
+                        foreach ($missingSides as $missingSide) {
+                            $sideRes = $this->fetchMassiveContracts(
+                                $client,
+                                $base,
+                                $symbol,
+                                $mode,
+                                $qparam,
+                                (string) $key,
+                                $pageLimit,
+                                $maxPagesPerExpiry,
+                                $expiry,
+                                $missingSide
+                            );
+
+                            $pages += (int) ($sideRes['meta']['pages'] ?? 0);
+                            $lastStatus = $sideRes['meta']['http_status'] ?? $lastStatus;
+                            $paginationCapped = $paginationCapped || (bool) ($sideRes['meta']['pagination_capped'] ?? false);
+
+                            $sideContracts = $sideRes['contracts'] ?? [];
+                            if (!$sideContracts) {
+                                continue;
+                            }
+
+                            if ($spot <= 0 && (float) ($sideRes['spot'] ?? 0) > 0) {
+                                $spot = (float) $sideRes['spot'];
+                            }
+
+                            $sideSet = $this->normalizeMassiveContracts($sideContracts);
+                            if (!isset($sideSet[$expiry])) {
+                                continue;
+                            }
+
+                            $byExp[$expiry] = $this->mergeMassiveExpirySet(
+                                $byExp[$expiry] ?? [
+                                    'expirationDate' => $expiry,
+                                    'options' => ['CALL' => [], 'PUT' => []],
+                                ],
+                                $sideSet[$expiry]
+                            );
+                            $expiryBackfillSideFetched++;
+                        }
+                    }
+
                     if ($wasIncomplete && !$this->massiveExpiryMissingSide($byExp[$expiry])) {
                         $expiryBackfillIncompleteFetched++;
                     }
@@ -523,6 +576,8 @@ class FetchOptionChainDataJob implements ShouldQueue
             'expiry_backfill_fetched' => $expiryBackfillFetched,
             'expiry_backfill_incomplete_requested' => $expiryBackfillIncompleteRequested,
             'expiry_backfill_incomplete_fetched' => $expiryBackfillIncompleteFetched,
+            'expiry_backfill_side_requested' => $expiryBackfillSideRequested,
+            'expiry_backfill_side_fetched' => $expiryBackfillSideFetched,
         ]];
     }
 
@@ -542,7 +597,8 @@ class FetchOptionChainDataJob implements ShouldQueue
         string $key,
         int $pageLimit,
         int $maxPages,
-        ?string $expiry = null
+        ?string $expiry = null,
+        ?string $contractType = null
     ): array {
         $url       = "{$base}/v3/snapshot/options/{$symbol}";
         $cursor    = null;
@@ -550,6 +606,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         $spot      = null;
         $lastStatus = null;
         $pages = 0;
+        $contractType = in_array($contractType, ['call', 'put'], true) ? $contractType : null;
 
         for ($page = 0; $page < $maxPages; $page++) {
             $pages++;
@@ -560,6 +617,9 @@ class FetchOptionChainDataJob implements ShouldQueue
                 $params['limit'] = $pageLimit;
                 if ($expiry) {
                     $params['expiration_date'] = $expiry;
+                }
+                if ($contractType) {
+                    $params['contract_type'] = $contractType;
                 }
             }
 
@@ -580,6 +640,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                         'page_limit' => $pageLimit,
                         'pagination_capped' => false,
                         'expiry' => $expiry,
+                        'contract_type' => $contractType,
                     ],
                 ];
             }
@@ -621,6 +682,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'page_limit' => $pageLimit,
                 'pagination_capped' => (bool) $cursor,
                 'expiry' => $expiry,
+                'contract_type' => $contractType,
             ],
         ];
     }
@@ -715,6 +777,46 @@ class FetchOptionChainDataJob implements ShouldQueue
         $calls = count($set['options']['CALL'] ?? []);
         $puts = count($set['options']['PUT'] ?? []);
         return $calls === 0 || $puts === 0;
+    }
+
+    /**
+     * @param array<string,mixed> $set
+     * @return array<int,string>
+     */
+    protected function massiveMissingSides(array $set): array
+    {
+        $missing = [];
+        $calls = count($set['options']['CALL'] ?? []);
+        $puts = count($set['options']['PUT'] ?? []);
+        if ($calls === 0) {
+            $missing[] = 'call';
+        }
+        if ($puts === 0) {
+            $missing[] = 'put';
+        }
+        return $missing;
+    }
+
+    /**
+     * Merge one normalized expiry set into another without duplicating sides.
+     *
+     * @param array<string,mixed> $base
+     * @param array<string,mixed> $incoming
+     * @return array<string,mixed>
+     */
+    protected function mergeMassiveExpirySet(array $base, array $incoming): array
+    {
+        $out = $base;
+        $out['expirationDate'] = $incoming['expirationDate'] ?? ($base['expirationDate'] ?? null);
+        $out['options'] = [
+            'CALL' => !empty($incoming['options']['CALL'] ?? null)
+                ? array_values($incoming['options']['CALL'])
+                : array_values($base['options']['CALL'] ?? []),
+            'PUT' => !empty($incoming['options']['PUT'] ?? null)
+                ? array_values($incoming['options']['PUT'])
+                : array_values($base['options']['PUT'] ?? []),
+        ];
+        return $out;
     }
 
     /**
