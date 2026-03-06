@@ -224,8 +224,19 @@ class FetchOptionChainDataJob implements ShouldQueue
 
                         $T = $this->timeToExpirationYears($expTs);
 
+                        // Prefer pre-computed Greeks from the API (Polygon provides them).
+                        // Fall back to our IV-based computation only when not available.
+                        $apiGamma = isset($opt['apiGamma']) && is_numeric($opt['apiGamma']) ? (float) $opt['apiGamma'] : null;
+                        $apiDelta = isset($opt['apiDelta']) && is_numeric($opt['apiDelta']) ? (float) $opt['apiDelta'] : null;
+                        $apiVega  = isset($opt['apiVega'])  && is_numeric($opt['apiVega'])  ? (float) $opt['apiVega']  : null;
+
                         $gamma = $delta = $vega = null;
-                        if (
+                        if ($apiGamma !== null) {
+                            // Use API-provided Greeks — accurate for all strikes including far OTM.
+                            $gamma = $apiGamma;
+                            $delta = $apiDelta;
+                            $vega  = $apiVega;
+                        } elseif (
                             $iv !== null
                             && $T > 0
                             && $spot > 0
@@ -233,7 +244,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                         ) {
                             $gamma = $this->computeGamma($spot, $strike, $T, $iv, 0.0);
                             $delta = $this->computeDelta($side, $spot, $strike, $T, $iv, 0.0);
-                            $vega = $this->computeVega($spot, $strike, $T, $iv, 0.0);
+                            $vega  = $this->computeVega($spot, $strike, $T, $iv, 0.0);
                         }
 
                         $rows[] = [
@@ -751,11 +762,23 @@ class FetchOptionChainDataJob implements ShouldQueue
                 ];
             }
 
+            // Pass pre-computed Greeks from the API (Polygon provides them directly).
+            // We prefer these over our own IV-derived computation because the IV > 1.0
+            // conversion in this normalizer is wrong for Polygon's decimal IV format,
+            // which causes near-zero gamma for high-IV far-OTM options.
+            $apiGreeks = $c['greeks'] ?? [];
+            $apiGamma  = isset($apiGreeks['gamma'])  ? (float) $apiGreeks['gamma']  : null;
+            $apiDelta  = isset($apiGreeks['delta'])  ? (float) $apiGreeks['delta']  : null;
+            $apiVega   = isset($apiGreeks['vega'])   ? (float) $apiGreeks['vega']   : null;
+
             $byExp[$expDate]['options'][$side][] = [
-                'strike' => $strike,
-                'openInterest' => $oi,
-                'volume' => $vol,
+                'strike'           => $strike,
+                'openInterest'     => $oi,
+                'volume'           => $vol,
                 'impliedVolatility' => $iv,
+                'apiGamma'         => $apiGamma,
+                'apiDelta'         => $apiDelta,
+                'apiVega'          => $apiVega,
             ];
         }
 
