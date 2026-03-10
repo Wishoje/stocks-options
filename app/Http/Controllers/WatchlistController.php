@@ -21,6 +21,17 @@ class WatchlistController extends Controller
             ->get(['id','symbol']);
     }
 
+    public function universe()
+    {
+        return Watchlist::query()
+            ->select('symbol')
+            ->distinct()
+            ->orderBy('symbol')
+            ->get()
+            ->map(fn (Watchlist $row) => ['symbol' => $row->symbol])
+            ->values();
+    }
+
     public function store(Request $req)
     {
         $symbol = \App\Support\Symbols::canon($req->input('symbol', ''));

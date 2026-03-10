@@ -49,6 +49,7 @@ Route::get('/intraday/ua', [IntradayController::class, 'ua']);
 Route::middleware(['auth:sanctum'])->group(function () {
     // Watchlist
     Route::get('/watchlist', [WatchlistController::class, 'index']);
+    Route::get('/watchlist/universe', [WatchlistController::class, 'universe']);
     Route::post('/watchlist', [WatchlistController::class, 'store']);
     Route::delete('/watchlist/{id}', [WatchlistController::class, 'destroy']);
 

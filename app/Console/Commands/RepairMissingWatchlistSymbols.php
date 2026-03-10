@@ -30,6 +30,7 @@ class RepairMissingWatchlistSymbols extends Command
                             {--min-expirations= : Override minimum distinct expirations for a symbol on target date}
                             {--min-strikes= : Override minimum distinct strikes for a symbol on target date}
                             {--min-strike-ratio= : Override min target/previous strike-count ratio before marking incomplete}
+                            {--allow-nonhistorical-chain-repair : Allow queueing past-date option-chain repairs even though the current fetcher is not historical}
                             {--with-backfill : Include PricesBackfillJob before daily/chain jobs}
                             {--dry-run : Report missing/incomplete symbols only, do not queue jobs}';
 
@@ -40,6 +41,18 @@ class RepairMissingWatchlistSymbols extends Command
         $targetDate = $this->resolveTargetDate((string) $this->option('date'));
         if ($targetDate === null) {
             $this->error('Invalid --date. Use YYYY-MM-DD.');
+            return self::FAILURE;
+        }
+
+        $currentTradingDate = $this->tradingDate(now('America/New_York'));
+        $allowNonHistoricalChainRepair = (bool) $this->option('allow-nonhistorical-chain-repair');
+        if (!$allowNonHistoricalChainRepair && $targetDate !== $currentTradingDate) {
+            $this->error(sprintf(
+                'Refusing past-date option-chain repair for %s. FetchOptionChainDataJob stores target_date=%s but fetches the current chain, so this would not produce historically accurate option_chain_data. Use only the current trading date (%s), or pass --allow-nonhistorical-chain-repair if you explicitly want that behavior.',
+                $targetDate,
+                $targetDate,
+                $currentTradingDate
+            ));
             return self::FAILURE;
         }
 

@@ -30,9 +30,16 @@ const days  = ref(10)  // lookback window
 // Watchlist state
 const watchlist = ref([])       // [{id, symbol, ...}, ...]
 const watchlistBusy = ref({})   // { [symbol]: boolean }
+const scannerUniverse = ref([]) // [{symbol}, ...] aggregated across all users
 
 const watchlistSymbols = computed(
   () => new Set(watchlist.value.map(w => w.symbol))
+)
+
+const scannerUniverseSymbols = computed(() =>
+  scannerUniverse.value
+    .map(item => item.symbol)
+    .filter(Boolean)
 )
 
 // Wall scanner state
@@ -364,6 +371,15 @@ async function loadWatchlist() {
   }
 }
 
+async function loadScannerUniverse() {
+  try {
+    const { data } = await axios.get('/api/watchlist/universe')
+    scannerUniverse.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.error('scanner universe load failed', e)
+  }
+}
+
 // Master wall scanner - behaves differently per mode
 async function loadWallHits() {
   wallHits.value = []
@@ -374,8 +390,13 @@ async function loadWallHits() {
     // Choose symbol universe for GEX scan
     let symbols = []
 
-    if (!watchlist.value.length) {
-      // no watchlist -> nothing to scan
+    if (scannerMode.value === 'volume' && !watchlist.value.length) {
+      // Volume mode still depends on the signed-in user's watchlist.
+      return
+    }
+
+    if (scannerMode.value === 'gex' && !scannerUniverseSymbols.value.length && !watchlist.value.length) {
+      // No global universe yet and no personal fallback.
       return
     }
 
@@ -386,8 +407,10 @@ async function loadWallHits() {
         .map(w => w.symbol)
         .filter(sym => hotSet.has(sym))
     } else {
-      // GEX mode: scan ALL watchlist names
-      symbols = watchlist.value.map(w => w.symbol)
+      // GEX mode: scan the global watchlist universe across all users.
+      symbols = scannerUniverseSymbols.value.length
+        ? [...scannerUniverseSymbols.value]
+        : watchlist.value.map(w => w.symbol)
     }
 
     symbols = symbols
@@ -503,6 +526,12 @@ async function toggleWatchlist(sym) {
         },
       })
     )
+
+    await loadScannerUniverse()
+
+    if (scannerMode.value === 'gex') {
+      await loadWallHits()
+    }
   } catch (e) {
     console.error('toggleWatchlist error', e)
   } finally {
@@ -523,13 +552,13 @@ const usingFallback = computed(
 const modeTitle = computed(() =>
   scannerMode.value === 'volume'
     ? 'Most Active Option Underlyings'
-    : 'GEX Wall Scanner (Watchlist)'
+    : 'GEX Wall Scanner (Global Watchlists)'
 )
 
 const modeSubtitle = computed(() =>
   scannerMode.value === 'volume'
     ? 'Ranked by open interest & volume over the selected lookback window.'
-    : 'Shows your watchlist names sitting near large GEX walls across multiple timeframes.'
+    : 'Shows symbols from all users watchlists sitting near large GEX walls across multiple timeframes.'
 )
 
 // --- Watches & lifecycle ---
@@ -553,6 +582,7 @@ watch(scannerMode, (mode) => {
 
 onMounted(async () => {
   await loadWatchlist()
+  await loadScannerUniverse()
   await loadHotOptions()
   await loadWallHits()
 })
@@ -729,7 +759,7 @@ onMounted(async () => {
               </div>
 
               <div>
-                Universe: Watchlist ({{ watchlist.length }} names) | Mode: GEX
+                Universe: Global watchlists ({{ scannerUniverseSymbols.length || watchlist.length }} names) | Mode: GEX
               </div>
             </div>
 
@@ -738,11 +768,11 @@ onMounted(async () => {
               <div class="flex items-center gap-2 justify-between">
                 <div class="flex items-center gap-2">
                   <span class="text-xs uppercase tracking-wide text-gray-400">
-                    Wall hits (watchlist)
+                    Wall hits (global watchlists)
                   </span>
 
                   <span class="text-[10px] text-gray-500">
-                    scanning: all watchlist names
+                    scanning: all symbols from all users watchlists
                   </span>
                   <div class="flex flex-wrap gap-2 text-[10px] text-gray-300 mt-1">
                     <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded
@@ -823,7 +853,7 @@ onMounted(async () => {
 
               <!-- Empty state -->
               <div v-if="!wallLoading && !wallError && !wallHits.length" class="text-[11px] text-gray-500">
-                No watchlist names currently sitting on the biggest walls at these thresholds.
+                No global watchlist symbols are currently sitting on the biggest walls at these thresholds.
               </div>
 
               <!-- Hits grouped by timeframe -->

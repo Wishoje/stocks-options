@@ -6,13 +6,14 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use App\Models\SymbolWallSnapshot;
 use App\Services\WallService;
+use App\Support\Market;
 
 class ComputeSymbolWallSnapshots extends Command
 {
     protected $signature = 'walls:compute
                             {--timeframe=30d : EOD GEX timeframe (1d,7d,14d,30d or all)}
                             {--limit=400 : Max symbols from hot_option_symbols}
-                            {--source=hot : hot|all}';
+                            {--source=both : hot|watchlist|both|all}';
 
     protected $description = 'Precompute EOD + intraday walls and distances for a symbol universe';
 
@@ -31,8 +32,10 @@ class ComputeSymbolWallSnapshots extends Command
 
         $nowEt = now('America/New_York');
         $tradeDate = $nowEt->toDateString();
-        // Weekend coverage: allow Friday-close spot to remain eligible.
-        $spotMaxAgeMinutes = $nowEt->isWeekend() ? (72 * 60) : 30;
+        $marketOpen = Market::isRthOpen($nowEt);
+        $spotMaxAgeMinutes = $nowEt->isWeekend()
+            ? (72 * 60)
+            : ($marketOpen ? 30 : (6 * 60));
 
         // Resolve which timeframes to compute.
         if ($timeframeOpt === 'all') {
@@ -45,33 +48,21 @@ class ComputeSymbolWallSnapshots extends Command
             }
         }
 
-        // 1) Choose universe.
-        if ($source === 'hot') {
-            $latestTradeDate = DB::table('hot_option_symbols')->max('trade_date');
-
-            if (!$latestTradeDate) {
-                $this->warn('No hot_option_symbols rows found.');
-                return self::SUCCESS;
-            }
-
-            $symbols = DB::table('hot_option_symbols')
-                ->whereDate('trade_date', $latestTradeDate)
-                ->orderBy('rank')
-                ->limit($limit)
-                ->pluck('symbol')
-                ->map(fn ($s) => \App\Support\Symbols::canon($s))
+        $symbols = match ($source) {
+            'hot' => $this->hotSymbols($limit),
+            'watchlist' => $this->watchlistSymbols(),
+            'both' => collect($this->hotSymbols($limit))
+                ->merge($this->watchlistSymbols())
                 ->unique()
                 ->values()
-                ->all();
-        } else {
-            $symbols = DB::table('option_expirations')
-                ->select('symbol')->distinct()
-                ->pluck('symbol')
-                ->map(fn ($s) => \App\Support\Symbols::canon($s))
+                ->all(),
+            'all' => $this->allSymbols(),
+            default => collect($this->hotSymbols($limit))
+                ->merge($this->watchlistSymbols())
                 ->unique()
                 ->values()
-                ->all();
-        }
+                ->all(),
+        };
 
         if (!$symbols) {
             $this->warn('No symbols to process.');
@@ -86,11 +77,10 @@ class ComputeSymbolWallSnapshots extends Command
 
         foreach ($symbols as $sym) {
             try {
-                // Weekdays: strict freshness. Weekends: tolerate older spot from Friday.
+                // During RTH stay strict. After close, tolerate the latest session close.
                 $spot = $walls->latestSpot($sym, $spotMaxAgeMinutes);
 
-                // Weekend-only fallback to last known spot (Friday close context).
-                if ($spot === null && $nowEt->isWeekend()) {
+                if ($spot === null && !$marketOpen) {
                     $spot = $walls->latestSpot($sym, null);
                 }
 
@@ -99,10 +89,11 @@ class ComputeSymbolWallSnapshots extends Command
                     continue;
                 }
 
-                // Intraday call wall can still be live, we just measure distance vs DB spot.
-                $intr      = $walls->intradayCallWall($sym, $spotMaxAgeMinutes);
-                $intrCall  = $intr['call_wall'] ?? null;
-                $intrDist  = $intrCall ? $walls->distancePct($spot, $intrCall) : null;
+                $intr       = $walls->intradayWalls($sym, $spotMaxAgeMinutes);
+                $intrPut    = $intr['put_wall'] ?? null;
+                $intrCall   = $intr['call_wall'] ?? null;
+                $intrPutDp  = $intrPut ? $walls->distancePct($spot, $intrPut) : null;
+                $intrCallDp = $intrCall ? $walls->distancePct($spot, $intrCall) : null;
 
                 foreach ($timeframes as $tf) {
                     $eod       = $walls->eodWalls($sym, $tf);
@@ -117,8 +108,10 @@ class ComputeSymbolWallSnapshots extends Command
                         'eod_call_wall'          => $eodCall,
                         'eod_put_dist_pct'       => $eodPutDp,
                         'eod_call_dist_pct'      => $eodCallDp,
+                        'intraday_put_wall'      => $intrPut,
                         'intraday_call_wall'     => $intrCall,
-                        'intraday_call_dist_pct' => $intrDist,
+                        'intraday_put_dist_pct'  => $intrPutDp,
+                        'intraday_call_dist_pct' => $intrCallDp,
                     ];
 
                     SymbolWallSnapshot::updateOrCreate(
@@ -138,5 +131,51 @@ class ComputeSymbolWallSnapshots extends Command
         $this->info('Done.');
 
         return self::SUCCESS;
+    }
+
+    private function hotSymbols(int $limit): array
+    {
+        $latestTradeDate = DB::table('hot_option_symbols')->max('trade_date');
+
+        if (!$latestTradeDate) {
+            return [];
+        }
+
+        return DB::table('hot_option_symbols')
+            ->whereDate('trade_date', $latestTradeDate)
+            ->orderBy('rank')
+            ->limit($limit)
+            ->pluck('symbol')
+            ->map(fn ($s) => \App\Support\Symbols::canon($s))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function watchlistSymbols(): array
+    {
+        return DB::table('watchlists')
+            ->select('symbol')
+            ->distinct()
+            ->pluck('symbol')
+            ->map(fn ($s) => \App\Support\Symbols::canon($s))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function allSymbols(): array
+    {
+        return DB::table('option_expirations')
+            ->select('symbol')
+            ->distinct()
+            ->pluck('symbol')
+            ->map(fn ($s) => \App\Support\Symbols::canon($s))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
     }
 }

@@ -38,7 +38,7 @@ Schedule::command('prices:seed SPY QQQ IWM')
     ->withoutOverlapping(15)
     ->at('16:05');
 
-Schedule::command('walls:compute --timeframe=all --limit=400 --source=hot')
+Schedule::command('walls:compute --timeframe=all --limit=400 --source=both')
     ->weekdays()
     ->timezone('America/New_York')
     ->withoutOverlapping(30)
@@ -144,7 +144,7 @@ Schedule::command('hot-options:prune --days=120')
     ->withoutOverlapping(20)
     ->onOneServer();
 
-Schedule::command('walls:compute --timeframe=all --limit=400 --source=hot')
+Schedule::command('walls:compute --timeframe=all --limit=400 --source=both')
     ->weekdays()
     ->timezone('America/New_York')
     ->everyFifteenMinutes()

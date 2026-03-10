@@ -161,7 +161,7 @@ class WallService
         ];
     }
 
-    public function intradayCallWall(string $symbol, ?int $maxAgeMinutes = null): array
+    public function intradayWalls(string $symbol, ?int $maxAgeMinutes = null): array
     {
         $data  = $this->intradayComposite($symbol);
         if (!$data) {
@@ -181,20 +181,46 @@ class WallService
             return [];
         }
 
-        $best = null;
+        $bestCall = null;
+        $bestPut = null;
         foreach ($items as $row) {
             $ng = $row['net_gex_live'] ?? null;
-            if ($ng === null) continue;
-            if ($best === null || $ng > $best['net_gex_live']) {
-                $best = $row;
+            $strike = $row['strike'] ?? null;
+            if ($ng === null || $strike === null || !is_numeric($ng) || !is_numeric($strike)) {
+                continue;
+            }
+
+            $ng = (float) $ng;
+
+            if ($ng > 0 && ($bestCall === null || $ng > (float) $bestCall['net_gex_live'])) {
+                $bestCall = $row;
+            }
+
+            if ($ng < 0 && ($bestPut === null || $ng < (float) $bestPut['net_gex_live'])) {
+                $bestPut = $row;
             }
         }
 
-        if (!$best) return [];
+        $walls = [];
 
-        return [
-            'call_wall' => $best['strike'],
-        ];
+        if ($bestCall) {
+            $walls['call_wall'] = (float) $bestCall['strike'];
+        }
+
+        if ($bestPut) {
+            $walls['put_wall'] = (float) $bestPut['strike'];
+        }
+
+        return $walls;
+    }
+
+    public function intradayCallWall(string $symbol, ?int $maxAgeMinutes = null): array
+    {
+        $walls = $this->intradayWalls($symbol, $maxAgeMinutes);
+
+        return isset($walls['call_wall'])
+            ? ['call_wall' => $walls['call_wall']]
+            : [];
     }
 
     /**

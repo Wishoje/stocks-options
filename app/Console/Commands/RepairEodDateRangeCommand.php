@@ -20,6 +20,7 @@ class RepairEodDateRangeCommand extends Command
                             {--min-expirations= : Override minimum distinct expirations}
                             {--min-strikes= : Override minimum distinct strikes}
                             {--min-strike-ratio= : Override minimum target/previous strike-count ratio}
+                            {--allow-nonhistorical-chain-repair : Allow queueing past-date option-chain repairs even though the fetcher is not historical}
                             {--dry-run : Report dates and wrapped command output only}';
 
     protected $description = 'Queue EOD repairs across a trading-date range to restore stale strike-delta baselines.';
@@ -44,6 +45,7 @@ class RepairEodDateRangeCommand extends Command
         $profile = trim((string) $this->option('profile')) ?: 'core';
         $checkIncomplete = $this->truthy($this->option('check-incomplete'));
         $withBackfill = $this->truthy($this->option('with-backfill'));
+        $allowNonHistoricalChainRepair = (bool) $this->option('allow-nonhistorical-chain-repair');
         $dryRun = (bool) $this->option('dry-run');
 
         $dates = [];
@@ -57,6 +59,21 @@ class RepairEodDateRangeCommand extends Command
         if (empty($dates)) {
             $this->warn('No trading dates in the selected range.');
             return self::SUCCESS;
+        }
+
+        $currentTradingDate = $this->tradingDate(now('America/New_York'));
+        $historicalDates = array_values(array_filter(
+            $dates,
+            fn (string $date) => $date !== $currentTradingDate
+        ));
+        if (!$allowNonHistoricalChainRepair && !empty($historicalDates)) {
+            $this->error(sprintf(
+                'Refusing historical option-chain repair for %s. FetchOptionChainDataJob stores target_date but fetches the current chain, so this would not restore historically accurate option_chain_data. Current trading date is %s. Re-run only for %s, or pass --allow-nonhistorical-chain-repair if you explicitly want that behavior.',
+                implode(', ', $historicalDates),
+                $currentTradingDate,
+                $currentTradingDate
+            ));
+            return self::FAILURE;
         }
 
         $this->info(sprintf(
@@ -84,6 +101,9 @@ class RepairEodDateRangeCommand extends Command
             }
             if ($withBackfill) {
                 $options['--with-backfill'] = true;
+            }
+            if ($allowNonHistoricalChainRepair) {
+                $options['--allow-nonhistorical-chain-repair'] = true;
             }
             if ($dryRun) {
                 $options['--dry-run'] = true;
@@ -139,5 +159,15 @@ class RepairEodDateRangeCommand extends Command
         $value = is_string($value) ? strtolower(trim($value)) : $value;
 
         return in_array($value, [true, 1, '1', 'true', 'yes', 'on'], true);
+    }
+
+    private function tradingDate(Carbon $now): string
+    {
+        $ny = $now->copy()->setTimezone('America/New_York');
+        if ($ny->isWeekend()) {
+            $ny->previousWeekday();
+        }
+
+        return $ny->toDateString();
     }
 }
