@@ -4,12 +4,12 @@ namespace App\Jobs;
 
 use App\Models\AiExport;
 use App\Services\AiExportBuilder;
+use RuntimeException;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Storage;
 
 class BuildAiExportJob implements ShouldQueue
 {
@@ -43,17 +43,17 @@ class BuildAiExportJob implements ShouldQueue
 
         $stamp = now('America/Chicago')->format('Y-m-d_H-i-s');
         $fileName = "watchlist-eod-ai-export-{$stamp}-{$export->id}.json";
-        $filePath = "ai-exports/user-{$export->user_id}/{$fileName}";
+        $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
-        Storage::disk('local')->put(
-            $filePath,
-            json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-        );
+        if ($json === false) {
+            throw new RuntimeException('Failed to encode AI export JSON.');
+        }
 
         $export->forceFill([
             'status' => 'completed',
-            'file_disk' => 'local',
-            'file_path' => $filePath,
+            'payload_json' => $json,
+            'file_disk' => null,
+            'file_path' => null,
             'file_name' => $fileName,
             'generated_at' => $payload['generated_at'] ?? now()->toIso8601String(),
             'completed_at' => now(),

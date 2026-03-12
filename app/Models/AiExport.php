@@ -13,6 +13,7 @@ class AiExport extends Model
         'symbols',
         'indicators',
         'options',
+        'payload_json',
         'file_disk',
         'file_path',
         'file_name',

@@ -107,7 +107,23 @@ class AiExportController extends Controller
             return response()->json(['message' => 'Export is not ready yet.'], 409);
         }
 
+        if (is_string($export->payload_json) && $export->payload_json !== '') {
+            return response()->streamDownload(
+                function () use ($export) {
+                    echo $export->payload_json;
+                },
+                $export->file_name ?: "watchlist-eod-ai-export-{$export->id}.json",
+                ['Content-Type' => 'application/json']
+            );
+        }
+
         if (!$export->file_disk || !$export->file_path || !Storage::disk($export->file_disk)->exists($export->file_path)) {
+            $export->forceFill([
+                'status' => 'failed',
+                'error_message' => 'Export payload missing from database and storage.',
+                'completed_at' => $export->completed_at ?? now(),
+            ])->save();
+
             return response()->json(['message' => 'Export file is missing.'], 404);
         }
 
