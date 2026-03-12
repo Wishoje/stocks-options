@@ -49,6 +49,9 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'subscribed
     Route::get('/scanner', fn () => Inertia::render('Scanner'))
         ->name('options.scanner');
 
+    Route::get('/ai-export', fn () => Inertia::render('AiExport'))
+        ->name('options.ai-export');
+
     Route::get('/eod-health', [EodHealthController::class, 'page'])
         ->middleware('eodhealth')
         ->name('eod.health');

@@ -13,6 +13,7 @@ use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\SymbolSearchController;
 use App\Http\Controllers\IntradayController;
 use App\Http\Controllers\WallScannerController;
+use App\Http\Controllers\AiExportController;
 use App\Http\Controllers\EodHealthController;
 use App\Jobs\PrimeSymbolJob;
 use App\Models\User;
@@ -50,6 +51,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Watchlist
     Route::get('/watchlist', [WatchlistController::class, 'index']);
     Route::get('/watchlist/universe', [WatchlistController::class, 'universe']);
+    Route::get('/watchlist/eod-exports', [AiExportController::class, 'index'])->name('api.ai-export.index');
+    Route::post('/watchlist/eod-export', [AiExportController::class, 'queue'])->name('api.ai-export.queue');
+    Route::get('/watchlist/eod-export/{export}', [AiExportController::class, 'show'])->name('api.ai-export.show');
+    Route::get('/watchlist/eod-export/{export}/download', [AiExportController::class, 'download'])->name('api.ai-export.download');
     Route::post('/watchlist', [WatchlistController::class, 'store']);
     Route::delete('/watchlist/{id}', [WatchlistController::class, 'destroy']);
 

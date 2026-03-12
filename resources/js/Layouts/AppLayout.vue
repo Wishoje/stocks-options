@@ -83,6 +83,12 @@ const logout = () => {
                                     Scanner
                                 </NavLink>
                                 <NavLink
+                                    :href="route('options.ai-export')"
+                                    :active="route().current('options.ai-export')"
+                                >
+                                    AI Export
+                                </NavLink>
+                                <NavLink
                                     v-if="[3,4].includes(Number($page.props.auth.user.id))"
                                     :href="route('eod.health')"
                                     :active="route().current('eod.health')"
@@ -242,6 +248,12 @@ const logout = () => {
                             :active="route().current('options.scanner')"
                         >
                             Scanner
+                        </ResponsiveNavLink>
+                        <ResponsiveNavLink
+                            :href="route('options.ai-export')"
+                            :active="route().current('options.ai-export')"
+                        >
+                            AI Export
                         </ResponsiveNavLink>
                         <ResponsiveNavLink
                             v-if="[3,4].includes(Number($page.props.auth.user.id))"
