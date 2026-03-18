@@ -30,6 +30,7 @@ class RepairMissingWatchlistSymbols extends Command
                             {--min-expirations= : Override minimum distinct expirations for a symbol on target date}
                             {--min-strikes= : Override minimum distinct strikes for a symbol on target date}
                             {--min-strike-ratio= : Override min target/previous strike-count ratio before marking incomplete}
+                            {--min-side-ratio= : Override min call/put strike ratio before marking incomplete}
                             {--allow-nonhistorical-chain-repair : Allow queueing past-date option-chain repairs even though the current fetcher is not historical}
                             {--with-backfill : Include PricesBackfillJob before daily/chain jobs}
                             {--dry-run : Report missing/incomplete symbols only, do not queue jobs}';
@@ -64,12 +65,14 @@ class RepairMissingWatchlistSymbols extends Command
             $profile,
             $this->option('min-expirations'),
             $this->option('min-strikes'),
-            $this->option('min-strike-ratio')
+            $this->option('min-strike-ratio'),
+            $this->option('min-side-ratio')
         );
         $profile = $thresholds['profile'];
         $minExpirations = $thresholds['min_expirations'];
         $minStrikes = $thresholds['min_strikes'];
         $minStrikeRatio = $thresholds['min_strike_ratio'];
+        $minSideRatio = $thresholds['min_side_ratio'];
         $withBackfill = (bool) $this->option('with-backfill');
         $dryRun = (bool) $this->option('dry-run');
 
@@ -89,6 +92,8 @@ class RepairMissingWatchlistSymbols extends Command
                 DB::raw('COUNT(DISTINCT o.option_type) as option_types_n'),
                 DB::raw('COUNT(DISTINCT o.expiration_id) as expirations_n'),
                 DB::raw('COUNT(DISTINCT o.strike) as strikes_n'),
+                DB::raw("COUNT(DISTINCT CASE WHEN o.option_type = 'call' THEN o.strike END) as call_strikes_n"),
+                DB::raw("COUNT(DISTINCT CASE WHEN o.option_type = 'put' THEN o.strike END) as put_strikes_n")
             )
             ->groupBy('e.symbol')
             ->get()
@@ -102,6 +107,8 @@ class RepairMissingWatchlistSymbols extends Command
                     'option_types_n' => (int) $row->option_types_n,
                     'expirations_n' => (int) $row->expirations_n,
                     'strikes_n' => (int) $row->strikes_n,
+                    'call_strikes_n' => (int) $row->call_strikes_n,
+                    'put_strikes_n' => (int) $row->put_strikes_n,
                 ]];
             });
 
@@ -121,24 +128,36 @@ class RepairMissingWatchlistSymbols extends Command
                     'e.symbol',
                     'e.expiration_date',
                     DB::raw('COUNT(DISTINCT o.option_type) as option_types_n'),
-                    DB::raw('SUM(CASE WHEN o.option_type = "call" THEN 1 ELSE 0 END) as calls_n'),
-                    DB::raw('SUM(CASE WHEN o.option_type = "put" THEN 1 ELSE 0 END) as puts_n')
+                    DB::raw('COUNT(DISTINCT CASE WHEN o.option_type = "call" THEN o.strike END) as call_strikes_n'),
+                    DB::raw('COUNT(DISTINCT CASE WHEN o.option_type = "put" THEN o.strike END) as put_strikes_n')
                 )
                 ->groupBy('e.symbol', 'e.expiration_date')
                 ->get()
                 ->groupBy(function ($row) {
                     return Symbols::canon((string) $row->symbol) ?? (string) $row->symbol;
                 })
-                ->map(function ($rows) {
-                    $gaps = collect($rows)->filter(function ($row) {
+                ->map(function ($rows) use ($minSideRatio) {
+                    $gaps = collect($rows)->filter(function ($row) use ($minSideRatio) {
                         return (int) $row->option_types_n < 2
-                            || (int) $row->calls_n === 0
-                            || (int) $row->puts_n === 0;
+                            || !EodHealth::sideRatioMeetsThreshold(
+                                (int) ($row->call_strikes_n ?? 0),
+                                (int) ($row->put_strikes_n ?? 0),
+                                $minSideRatio
+                            );
                     });
 
                     return [
                         'count' => $gaps->count(),
                         'dates' => $gaps->pluck('expiration_date')->map(fn ($d) => (string) $d)->values()->all(),
+                        'ratios' => $gaps->map(function ($row) {
+                            return [
+                                'expiration_date' => (string) $row->expiration_date,
+                                'side_ratio' => round((float) (EodHealth::sideStrikeRatio(
+                                    (int) ($row->call_strikes_n ?? 0),
+                                    (int) ($row->put_strikes_n ?? 0)
+                                ) ?? 0.0), 3),
+                            ];
+                        })->values()->all(),
                     ];
                 });
 
@@ -175,12 +194,24 @@ class RepairMissingWatchlistSymbols extends Command
                 $reasons = EodHealth::incompleteReasons($stats, $prevStrikes, $thresholds);
                 $sideGapCount = (int) data_get($expirySideGaps, "{$sym}.count", 0);
                 $sideGapDates = (array) data_get($expirySideGaps, "{$sym}.dates", []);
+                $sideGapRatios = (array) data_get($expirySideGaps, "{$sym}.ratios", []);
                 if ($sideGapCount > 0) {
                     $reasons[] = sprintf(
                         'expiry_side_gap(%d):%s',
                         $sideGapCount,
                         implode('|', array_slice($sideGapDates, 0, 6))
                     );
+                    $ratioLabels = array_map(
+                        static fn (array $row) => sprintf('%s=%.3f', $row['expiration_date'] ?? 'n/a', (float) ($row['side_ratio'] ?? 0)),
+                        array_slice($sideGapRatios, 0, 6)
+                    );
+                    if (!empty($ratioLabels)) {
+                        $reasons[] = sprintf(
+                            'expiry_side_ratio(<%.2f):%s',
+                            $minSideRatio,
+                            implode('|', $ratioLabels)
+                        );
+                    }
                 }
 
                 if (!empty($reasons)) {
@@ -199,6 +230,7 @@ class RepairMissingWatchlistSymbols extends Command
             'min_expirations' => $minExpirations,
             'min_strikes' => $minStrikes,
             'min_strike_ratio' => $minStrikeRatio,
+            'min_side_ratio' => $minSideRatio,
             'symbols_total' => count($symbols),
             'covered' => $covered->count(),
             'missing' => $missing->count(),
@@ -224,6 +256,10 @@ class RepairMissingWatchlistSymbols extends Command
                 $minExpirations,
                 $minStrikes,
                 $minStrikeRatio
+            ));
+            $this->line(sprintf(
+                'Min call/put side ratio: %.2f',
+                $minSideRatio
             ));
         }
 

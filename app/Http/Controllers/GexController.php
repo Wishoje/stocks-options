@@ -175,12 +175,14 @@ class GexController extends Controller
         ?string $anchorDate = null
     ): ?array {
         // Pick one cohesive snapshot date per expiration. We prefer the latest
-        // date where both call and put rows exist, then fall back to latest any.
+        // date where both call and put strike counts are reasonably balanced,
+        // then fall back to latest any.
+        $minSideRatio = max(0.01, min(1.0, (float) config('services.massive.eod_min_side_strike_ratio', 0.35)));
         $dateCandidates = OptionChainData::select(
                 'expiration_id',
                 'data_date',
-                DB::raw("SUM(CASE WHEN option_type = 'call' THEN 1 ELSE 0 END) as call_rows_n"),
-                DB::raw("SUM(CASE WHEN option_type = 'put'  THEN 1 ELSE 0 END) as put_rows_n")
+                DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'call' THEN strike END) as call_strikes_n"),
+                DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'put'  THEN strike END) as put_strikes_n")
             )
             ->whereIn('expiration_id', $expirationIds)
             ->when($anchorDate, fn ($q) => $q->whereDate('data_date', '<=', $anchorDate))
@@ -189,8 +191,12 @@ class GexController extends Controller
         $balancedDates = DB::query()
             ->fromSub($dateCandidates, 'dc')
             ->select('expiration_id', DB::raw('MAX(data_date) as max_date'))
-            ->where('call_rows_n', '>', 0)
-            ->where('put_rows_n', '>', 0)
+            ->where('call_strikes_n', '>', 0)
+            ->where('put_strikes_n', '>', 0)
+            ->whereRaw(
+                'LEAST(call_strikes_n, put_strikes_n) / NULLIF(GREATEST(call_strikes_n, put_strikes_n), 0) >= ?',
+                [$minSideRatio]
+            )
             ->groupBy('expiration_id');
 
         $fallbackDates = OptionChainData::select('expiration_id', DB::raw('MAX(data_date) as max_date'))

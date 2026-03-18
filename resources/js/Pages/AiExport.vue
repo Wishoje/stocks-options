@@ -281,7 +281,8 @@ onUnmounted(() => {
                   Export your full watchlist EOD indicator bundle without waiting on the request
                 </h3>
                 <p class="text-sm leading-6 text-cyan-50/80">
-                  Large bundles now run in the queue. Submit the export, keep working, and download the JSON from the ready list below when it finishes.
+                  Large bundles now run in the queue. Each symbol now includes a compact AI-friendly summary block on top of the full raw indicator payloads.
+                  Submit the export, keep working, and download the JSON from the ready list below when it finishes.
                 </p>
               </div>
 
@@ -465,7 +466,40 @@ onUnmounted(() => {
                 </div>
 
                 <div class="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs leading-5 text-amber-100/90">
-                  JSON is still the export format so nested strike data, clusters, and metadata survive intact for AI use.
+                  JSON is still the export format so nested strike data, clusters, and metadata survive intact for AI use. The new
+                  <span class="font-semibold">summary</span> block gives AI a lighter first-pass view per symbol.
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-gray-800 bg-gray-900/90 p-5">
+                <h3 class="text-lg font-semibold text-white">Current payload shape</h3>
+                <div class="mt-3 rounded-xl border border-gray-800 bg-gray-950/80 p-3 font-mono text-[11px] leading-5 text-cyan-100/80">
+                  generated_at<br>
+                  symbols[]<br>
+                  indicators[]<br>
+                  options.gex_timeframe<br>
+                  items[].symbol<br>
+                  items[].summary.data_dates<br>
+                  items[].summary.wall<br>
+                  items[].summary.qscore<br>
+                  items[].summary.gex<br>
+                  items[].summary.dealer_positioning<br>
+                  items[].summary.expiry_pressure<br>
+                  items[].summary.iv_skew<br>
+                  items[].summary.term_structure<br>
+                  items[].summary.vrp<br>
+                  items[].summary.seasonality<br>
+                  items[].summary.unusual_activity<br>
+                  items[].wall_snapshots<br>
+                  items[].gex_levels<br>
+                  items[].qscore<br>
+                  items[].dealer_positioning<br>
+                  items[].expiry_pressure<br>
+                  items[].iv_skew<br>
+                  items[].term_structure<br>
+                  items[].vrp<br>
+                  items[].seasonality<br>
+                  items[].unusual_activity
                 </div>
               </div>
 

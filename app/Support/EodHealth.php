@@ -7,13 +7,20 @@ class EodHealth
     /**
      * Resolve thresholds by profile and optional overrides.
      *
-     * @return array{profile:string,min_expirations:int,min_strikes:int,min_strike_ratio:float}
+     * @return array{
+     *   profile:string,
+     *   min_expirations:int,
+     *   min_strikes:int,
+     *   min_strike_ratio:float,
+     *   min_side_ratio:float
+     * }
      */
     public static function resolveThresholds(
         ?string $profile,
         mixed $minExpirationsOpt = null,
         mixed $minStrikesOpt = null,
-        mixed $minStrikeRatioOpt = null
+        mixed $minStrikeRatioOpt = null,
+        mixed $minSideRatioOpt = null
     ): array {
         $profile = strtolower(trim((string) $profile));
         if (!in_array($profile, ['broad', 'core'], true)) {
@@ -21,8 +28,8 @@ class EodHealth
         }
 
         $preset = $profile === 'core'
-            ? ['min_expirations' => 8, 'min_strikes' => 35, 'min_strike_ratio' => 0.65]
-            : ['min_expirations' => 2, 'min_strikes' => 12, 'min_strike_ratio' => 0.45];
+            ? ['min_expirations' => 8, 'min_strikes' => 35, 'min_strike_ratio' => 0.65, 'min_side_ratio' => 0.50]
+            : ['min_expirations' => 2, 'min_strikes' => 12, 'min_strike_ratio' => 0.45, 'min_side_ratio' => 0.35];
 
         $minExpirations = $minExpirationsOpt === null || $minExpirationsOpt === ''
             ? $preset['min_expirations']
@@ -37,16 +44,47 @@ class EodHealth
             : (float) $minStrikeRatioOpt;
         $minStrikeRatio = max(0.01, min(1.0, $minStrikeRatio));
 
+        $minSideRatio = $minSideRatioOpt === null || $minSideRatioOpt === ''
+            ? (float) $preset['min_side_ratio']
+            : (float) $minSideRatioOpt;
+        $minSideRatio = max(0.01, min(1.0, $minSideRatio));
+
         return [
             'profile' => $profile,
             'min_expirations' => $minExpirations,
             'min_strikes' => $minStrikes,
             'min_strike_ratio' => $minStrikeRatio,
+            'min_side_ratio' => $minSideRatio,
         ];
     }
 
+    public static function sideStrikeRatio(int $callStrikes, int $putStrikes): ?float
+    {
+        $hi = max($callStrikes, $putStrikes);
+        if ($hi <= 0) {
+            return null;
+        }
+
+        return min($callStrikes, $putStrikes) / $hi;
+    }
+
+    public static function sideRatioMeetsThreshold(int $callStrikes, int $putStrikes, float $minRatio): bool
+    {
+        if ($callStrikes <= 0 || $putStrikes <= 0) {
+            return false;
+        }
+
+        return (self::sideStrikeRatio($callStrikes, $putStrikes) ?? 0.0) >= max(0.01, min(1.0, $minRatio));
+    }
+
     /**
-     * @param array{option_types_n?:int,expirations_n?:int,strikes_n?:int} $stats
+     * @param array{
+     *   option_types_n?:int,
+     *   expirations_n?:int,
+     *   strikes_n?:int,
+     *   call_strikes_n?:int,
+     *   put_strikes_n?:int
+     * } $stats
      * @return string[]
      */
     public static function incompleteReasons(array $stats, int $prevStrikes, array $thresholds): array
@@ -61,6 +99,25 @@ class EodHealth
         }
         if (($stats['strikes_n'] ?? 0) < (int) $thresholds['min_strikes']) {
             $reasons[] = 'low_strike_count';
+        }
+
+        $sideRatio = self::sideStrikeRatio(
+            (int) ($stats['call_strikes_n'] ?? 0),
+            (int) ($stats['put_strikes_n'] ?? 0)
+        );
+        if (
+            $sideRatio !== null
+            && !self::sideRatioMeetsThreshold(
+                (int) ($stats['call_strikes_n'] ?? 0),
+                (int) ($stats['put_strikes_n'] ?? 0),
+                (float) ($thresholds['min_side_ratio'] ?? 0.35)
+            )
+        ) {
+            $reasons[] = sprintf(
+                'side_ratio_below_threshold(%.2f<%.2f)',
+                $sideRatio,
+                (float) ($thresholds['min_side_ratio'] ?? 0.35)
+            );
         }
 
         if ($prevStrikes > 0) {
@@ -90,6 +147,8 @@ class EodHealth
             if (
                 str_starts_with($reason, 'missing_call_or_put') ||
                 str_starts_with($reason, 'expiry_side_gap') ||
+                str_starts_with($reason, 'expiry_side_ratio') ||
+                str_starts_with($reason, 'side_ratio_below_threshold') ||
                 str_starts_with($reason, 'low_expirations') ||
                 str_starts_with($reason, 'low_strike_count')
             ) {

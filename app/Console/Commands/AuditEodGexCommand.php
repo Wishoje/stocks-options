@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Http\Controllers\GexController;
 use App\Models\OptionChainData;
 use App\Models\OptionExpiration;
+use App\Support\EodHealth;
 use App\Support\Symbols;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -201,12 +202,13 @@ class AuditEodGexCommand extends Command
 
     private function latestSnapshotDates(array $expirationIds, string $anchorDate)
     {
+        $minSideRatio = max(0.01, min(1.0, (float) config('services.massive.eod_min_side_strike_ratio', 0.35)));
         $dateCandidates = OptionChainData::query()
             ->select(
                 'expiration_id',
                 'data_date',
-                DB::raw("SUM(CASE WHEN option_type = 'call' THEN 1 ELSE 0 END) as call_rows_n"),
-                DB::raw("SUM(CASE WHEN option_type = 'put' THEN 1 ELSE 0 END) as put_rows_n")
+                DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'call' THEN strike END) as call_strikes_n"),
+                DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'put' THEN strike END) as put_strikes_n")
             )
             ->whereIn('expiration_id', $expirationIds)
             ->whereDate('data_date', '<=', $anchorDate)
@@ -215,8 +217,12 @@ class AuditEodGexCommand extends Command
         $balancedDates = DB::query()
             ->fromSub($dateCandidates, 'dc')
             ->select('expiration_id', DB::raw('MAX(data_date) as max_date'))
-            ->where('call_rows_n', '>', 0)
-            ->where('put_rows_n', '>', 0)
+            ->where('call_strikes_n', '>', 0)
+            ->where('put_strikes_n', '>', 0)
+            ->whereRaw(
+                'LEAST(call_strikes_n, put_strikes_n) / NULLIF(GREATEST(call_strikes_n, put_strikes_n), 0) >= ?',
+                [$minSideRatio]
+            )
             ->groupBy('expiration_id');
 
         $fallbackDates = OptionChainData::query()
@@ -358,6 +364,7 @@ class AuditEodGexCommand extends Command
         $latestDates,
         string $auditCapDate
     ): array {
+        $minSideRatio = max(0.01, min(1.0, (float) config('services.massive.eod_min_side_strike_ratio', 0.35)));
         $selected = DB::query()
             ->fromSub($latestDates, 'ld')
             ->get()
@@ -370,8 +377,8 @@ class AuditEodGexCommand extends Command
                 ->whereDate('data_date', '<=', $auditCapDate)
                 ->select(
                     'data_date',
-                    DB::raw("SUM(CASE WHEN option_type = 'call' THEN 1 ELSE 0 END) as call_rows_n"),
-                    DB::raw("SUM(CASE WHEN option_type = 'put' THEN 1 ELSE 0 END) as put_rows_n"),
+                    DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'call' THEN strike END) as call_strikes_n"),
+                    DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'put' THEN strike END) as put_strikes_n"),
                     DB::raw('COUNT(DISTINCT strike) as strike_count')
                 )
                 ->groupBy('data_date')
@@ -379,7 +386,11 @@ class AuditEodGexCommand extends Command
                 ->get();
 
             $latestAny = $rows->first();
-            $latestBalanced = $rows->first(fn ($row) => (int) $row->call_rows_n > 0 && (int) $row->put_rows_n > 0);
+            $latestBalanced = $rows->first(fn ($row) => EodHealth::sideRatioMeetsThreshold(
+                (int) ($row->call_strikes_n ?? 0),
+                (int) ($row->put_strikes_n ?? 0),
+                $minSideRatio
+            ));
             $selectedDate = optional($selected->get($expirationId))->max_date;
 
             $selRows = OptionChainData::query()
@@ -399,8 +410,11 @@ class AuditEodGexCommand extends Command
                 'latest_any_date' => $latestAny->data_date ?? null,
                 'latest_balanced_date' => $latestBalanced->data_date ?? null,
                 'selected_date' => $selectedDate,
-                'latest_any_call_rows' => (int) ($latestAny->call_rows_n ?? 0),
-                'latest_any_put_rows' => (int) ($latestAny->put_rows_n ?? 0),
+                'latest_any_call_rows' => (int) ($latestAny->call_strikes_n ?? 0),
+                'latest_any_put_rows' => (int) ($latestAny->put_strikes_n ?? 0),
+                'latest_any_side_ratio' => ($latestAny && ($latestAny->call_strikes_n ?? 0) > 0 && ($latestAny->put_strikes_n ?? 0) > 0)
+                    ? round((float) EodHealth::sideStrikeRatio((int) $latestAny->call_strikes_n, (int) $latestAny->put_strikes_n), 3)
+                    : null,
                 'selected_call_oi' => (int) ($selRows->call_oi ?? 0),
                 'selected_put_oi' => (int) ($selRows->put_oi ?? 0),
                 'selected_call_vol' => (int) ($selRows->call_vol ?? 0),

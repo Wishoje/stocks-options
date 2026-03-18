@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use App\Models\OptionExpiration;
+use App\Support\EodHealth;
 use Carbon\Carbon;
 
 class FetchOptionChainDataJob implements ShouldQueue
@@ -40,6 +41,7 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     /** Refetch expiry slices that are missing either call or put side. */
     protected bool $repairPartialExpiries = true;
+    protected float $minSideStrikeRatio = 0.35;
 
     /** Cache guard to prevent duplicate pulls per symbol/day */
     protected int $guardMinutes = 10;
@@ -297,6 +299,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'greeks_near_pct' => $this->greeksNearPct,
                 'min_keep_oi' => $this->minKeepOI,
                 'min_keep_vol' => $this->minKeepVol,
+                'min_side_strike_ratio' => $this->minSideStrikeRatio,
                 'repair_partial_expiries' => $this->repairPartialExpiries,
             ], $providerMeta);
             Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
@@ -314,12 +317,14 @@ class FetchOptionChainDataJob implements ShouldQueue
             'services.massive.eod_chain_repair_partial_expiries',
             $this->repairPartialExpiries
         );
+        $minSideStrikeRatio = (float) config('services.massive.eod_min_side_strike_ratio', $this->minSideStrikeRatio);
 
         $this->strikeBandPct = max(0.0, $band);
         $this->greeksNearPct = max(0.0, $greeksBand);
         $this->minKeepOI = max(0, $minOi);
         $this->minKeepVol = max(0, $minVol);
         $this->repairPartialExpiries = $repairPartial;
+        $this->minSideStrikeRatio = max(0.01, min(1.0, $minSideStrikeRatio));
     }
 
     // ---------- Provider selection + adapters ----------
@@ -521,11 +526,11 @@ class FetchOptionChainDataJob implements ShouldQueue
                 if (isset($expSet[$expiry])) {
                     $byExp[$expiry] = $expSet[$expiry];
                     $expiryBackfillFetched++;
-                    if ($wasIncomplete && $this->repairPartialExpiries && $this->massiveExpiryMissingSide($byExp[$expiry])) {
-                        $missingSides = $this->massiveMissingSides($byExp[$expiry]);
-                        $expiryBackfillSideRequested += count($missingSides);
+                    if ($wasIncomplete && $this->repairPartialExpiries && $this->massiveExpiryNeedsRepair($byExp[$expiry])) {
+                        $repairSides = $this->massiveRepairSides($byExp[$expiry]);
+                        $expiryBackfillSideRequested += count($repairSides);
 
-                        foreach ($missingSides as $missingSide) {
+                        foreach ($repairSides as $repairSide) {
                             $sideRes = $this->fetchMassiveContracts(
                                 $client,
                                 $base,
@@ -536,7 +541,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                                 $pageLimit,
                                 $maxPagesPerExpiry,
                                 $expiry,
-                                $missingSide
+                                $repairSide
                             );
 
                             $pages += (int) ($sideRes['meta']['pages'] ?? 0);
@@ -568,7 +573,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                         }
                     }
 
-                    if ($wasIncomplete && !$this->massiveExpiryMissingSide($byExp[$expiry])) {
+                    if ($wasIncomplete && !$this->massiveExpiryNeedsRepair($byExp[$expiry])) {
                         $expiryBackfillIncompleteFetched++;
                     }
                 }
@@ -793,12 +798,20 @@ class FetchOptionChainDataJob implements ShouldQueue
     {
         $incomplete = [];
         foreach ($byExp as $exp => $set) {
-            if ($this->massiveExpiryMissingSide($set)) {
+            if ($this->massiveExpiryNeedsRepair($set)) {
                 $incomplete[] = (string) $exp;
             }
         }
         sort($incomplete);
         return $incomplete;
+    }
+
+    /**
+     * @param array<string,mixed> $set
+     */
+    protected function massiveExpiryNeedsRepair(array $set): bool
+    {
+        return !$this->massiveExpirySideRatioHealthy($set);
     }
 
     /**
@@ -813,20 +826,39 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     /**
      * @param array<string,mixed> $set
+     */
+    protected function massiveExpirySideRatioHealthy(array $set): bool
+    {
+        $calls = count($set['options']['CALL'] ?? []);
+        $puts = count($set['options']['PUT'] ?? []);
+
+        return EodHealth::sideRatioMeetsThreshold($calls, $puts, $this->minSideStrikeRatio);
+    }
+
+    /**
+     * @param array<string,mixed> $set
      * @return array<int,string>
      */
-    protected function massiveMissingSides(array $set): array
+    protected function massiveRepairSides(array $set): array
     {
-        $missing = [];
+        $repair = [];
         $calls = count($set['options']['CALL'] ?? []);
         $puts = count($set['options']['PUT'] ?? []);
         if ($calls === 0) {
-            $missing[] = 'call';
+            $repair[] = 'call';
         }
         if ($puts === 0) {
-            $missing[] = 'put';
+            $repair[] = 'put';
         }
-        return $missing;
+        if (!empty($repair)) {
+            return $repair;
+        }
+
+        if (!$this->massiveExpirySideRatioHealthy($set)) {
+            $repair[] = $calls < $puts ? 'call' : 'put';
+        }
+
+        return $repair;
     }
 
     /**
@@ -1031,4 +1063,3 @@ class FetchOptionChainDataJob implements ShouldQueue
         return $S * $nd1 * sqrt($T);
     }
 }
-

@@ -20,6 +20,7 @@ class RepairEodDateRangeCommand extends Command
                             {--min-expirations= : Override minimum distinct expirations}
                             {--min-strikes= : Override minimum distinct strikes}
                             {--min-strike-ratio= : Override minimum target/previous strike-count ratio}
+                            {--min-side-ratio= : Override min call/put strike ratio per symbol or expiry}
                             {--allow-nonhistorical-chain-repair : Allow queueing past-date option-chain repairs even though the fetcher is not historical}
                             {--dry-run : Report dates and wrapped command output only}';
 
@@ -109,7 +110,7 @@ class RepairEodDateRangeCommand extends Command
                 $options['--dry-run'] = true;
             }
 
-            foreach (['min-expirations', 'min-strikes', 'min-strike-ratio'] as $opt) {
+            foreach (['min-expirations', 'min-strikes', 'min-strike-ratio', 'min-side-ratio'] as $opt) {
                 $value = $this->option($opt);
                 if ($value !== null && $value !== '') {
                     $options["--{$opt}"] = $value;

@@ -51,6 +51,7 @@ return [
         'eod_chain_max_hint_expiries' => (int) env('EOD_CHAIN_MAX_HINT_EXPIRIES', 40),
         'eod_chain_repair_partial_expiries' =>
             filter_var(env('EOD_CHAIN_REPAIR_PARTIAL_EXPIRIES', true), FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true,
+        'eod_min_side_strike_ratio' => (float) env('EOD_MIN_SIDE_STRIKE_RATIO', 0.35),
         // EOD ingest precision knobs (higher values = more complete, slower compute).
         'eod_strike_band_pct' => (float) env('EOD_STRIKE_BAND_PCT', 2.0),
         'eod_greeks_near_pct' => (float) env('EOD_GREEKS_NEAR_PCT', 2.0),

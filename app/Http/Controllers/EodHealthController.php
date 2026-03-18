@@ -30,6 +30,7 @@ class EodHealthController extends Controller
             $request->query('min_expirations'),
             $request->query('min_strikes'),
             $request->query('min_strike_ratio'),
+            $request->query('min_side_ratio'),
         );
 
         $symbols = $this->resolveSymbolUniverse((string) $request->query('symbols', ''));
@@ -160,6 +161,12 @@ class EodHealthController extends Controller
                 'strikes_n' => $stats['strikes_n'] ?? 0,
                 'call_strikes_n' => $stats['call_strikes_n'] ?? 0,
                 'put_strikes_n' => $stats['put_strikes_n'] ?? 0,
+                'side_ratio' => !$missing
+                    ? round((float) (EodHealth::sideStrikeRatio(
+                        (int) ($stats['call_strikes_n'] ?? 0),
+                        (int) ($stats['put_strikes_n'] ?? 0)
+                    ) ?? 0.0), 4)
+                    : null,
                 'prev_date' => $prev['prev_date'] ?? null,
                 'prev_strikes_n' => $prevStrikes,
                 'strike_ratio_vs_prev_day' => $strikeRatio,
