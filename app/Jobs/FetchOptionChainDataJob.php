@@ -475,6 +475,8 @@ class FetchOptionChainDataJob implements ShouldQueue
 
         $byExp = $this->normalizeMassiveContracts($contracts);
         $incompleteExpiries = $this->massiveIncompleteExpiries($byExp);
+        $knownExpiries = $this->massiveExpiryHints($symbol, array_keys($byExp));
+        $forceExpiryRebuild = $paginationCapped;
 
         // If broad pagination is capped, backfill missing known expiries one by one.
         $expiryBackfillRequested = 0;
@@ -483,10 +485,9 @@ class FetchOptionChainDataJob implements ShouldQueue
         $expiryBackfillIncompleteFetched = 0;
         $expiryBackfillSideRequested = 0;
         $expiryBackfillSideFetched = 0;
-        if ($paginationCapped || ($this->repairPartialExpiries && $incompleteExpiries)) {
-            $knownExpiries = $this->massiveExpiryHints($symbol, array_keys($byExp));
+        if ($forceExpiryRebuild || ($this->repairPartialExpiries && $incompleteExpiries)) {
             $missingExpiries = array_values(array_diff($knownExpiries, array_keys($byExp)));
-            $repairExpiries = $missingExpiries;
+            $repairExpiries = $forceExpiryRebuild ? $knownExpiries : $missingExpiries;
             if ($this->repairPartialExpiries && $incompleteExpiries) {
                 $repairExpiries = array_merge($repairExpiries, $incompleteExpiries);
                 $expiryBackfillIncompleteRequested = count($incompleteExpiries);
@@ -526,8 +527,11 @@ class FetchOptionChainDataJob implements ShouldQueue
                 if (isset($expSet[$expiry])) {
                     $byExp[$expiry] = $expSet[$expiry];
                     $expiryBackfillFetched++;
-                    if ($wasIncomplete && $this->repairPartialExpiries && $this->massiveExpiryNeedsRepair($byExp[$expiry])) {
-                        $repairSides = $this->massiveRepairSides($byExp[$expiry]);
+                    if ($this->repairPartialExpiries && $this->massiveExpiryNeedsRepair($byExp[$expiry])) {
+                        $repairSides = $forceExpiryRebuild
+                            ? ['call', 'put']
+                            : $this->massiveRepairSides($byExp[$expiry]);
+                        $repairSides = array_values(array_unique($repairSides));
                         $expiryBackfillSideRequested += count($repairSides);
 
                         foreach ($repairSides as $repairSide) {
@@ -573,7 +577,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                         }
                     }
 
-                    if ($wasIncomplete && !$this->massiveExpiryNeedsRepair($byExp[$expiry])) {
+                    if (($wasIncomplete || $forceExpiryRebuild) && !$this->massiveExpiryNeedsRepair($byExp[$expiry])) {
                         $expiryBackfillIncompleteFetched++;
                     }
                 }
@@ -691,6 +695,10 @@ class FetchOptionChainDataJob implements ShouldQueue
             $cursor = $json['next_url'] ?? null;
             if ($cursor && !str_starts_with($cursor, 'http')) {
                 $cursor = $base . $cursor;
+            }
+            if ($cursor && $mode === 'query' && !str_contains($cursor, urlencode($qparam).'=')) {
+                $cursor .= (str_contains($cursor, '?') ? '&' : '?')
+                    . urlencode($qparam) . '=' . urlencode($key);
             }
             if (!$cursor) {
                 break;
