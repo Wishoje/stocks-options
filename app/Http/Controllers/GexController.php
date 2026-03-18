@@ -588,7 +588,7 @@ class GexController extends Controller
             return;
         }
 
-        dispatch(new \App\Jobs\PrimeSymbolJob($sym))->onQueue('default');
+        dispatch(new \App\Jobs\PrimeSymbolJob($sym))->onQueue(\App\Jobs\PrimeSymbolJob::QUEUE);
         dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))
             ->onQueue($this->intradayQueueForSymbol($sym));
     }

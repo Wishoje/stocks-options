@@ -127,7 +127,7 @@ class SymbolStatusController extends Controller
         }
 
         if (Cache::add("symbol-status:prime:{$sym}", 1, now()->addSeconds(45))) {
-            dispatch(new \App\Jobs\PrimeSymbolJob($sym))->onQueue('default');
+            dispatch(new \App\Jobs\PrimeSymbolJob($sym))->onQueue(\App\Jobs\PrimeSymbolJob::QUEUE);
         }
 
         if (Cache::add("symbol-status:intraday:{$sym}", 1, now()->addSeconds(45))) {

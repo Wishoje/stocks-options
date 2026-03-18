@@ -15,7 +15,12 @@ class PrimeSymbolJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public function __construct(public string $symbol) {}
+    public const QUEUE = 'prime';
+
+    public function __construct(public string $symbol)
+    {
+        $this->onQueue(self::QUEUE);
+    }
 
     public function handle(): void
     {
@@ -59,6 +64,6 @@ class PrimeSymbolJob implements ShouldQueue
             new \App\Jobs\ComputeExpiryPressureJob([$s], 3),
             new \App\Jobs\ComputePositioningJob([$s]),
             new \App\Jobs\ComputeUAJob([$s]),
-        ])->onQueue('default')->dispatch();
+        ])->onQueue(self::QUEUE)->dispatch();
     }
 }

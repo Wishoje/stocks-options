@@ -62,7 +62,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/prime', function (Request $req) {
         $sym = \App\Support\Symbols::canon($req->input('symbol',''));
         if (!$sym) return response()->noContent(204);
-        dispatch(new PrimeSymbolJob($sym));
+        dispatch(new PrimeSymbolJob($sym))->onQueue(PrimeSymbolJob::QUEUE);
         return response()->noContent(204);
     });
 

@@ -235,7 +235,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
         // Prime EOD chain scaffolding once per short window.
         $primeKey = "intraday:noexp:prime:{$symbol}";
         if (Cache::add($primeKey, 1, now()->addMinutes(5))) {
-            PrimeSymbolJob::dispatch($symbol)->onQueue('default');
+            PrimeSymbolJob::dispatch($symbol)->onQueue(PrimeSymbolJob::QUEUE);
         }
 
         // Re-try intraday pull once after priming; preserve current queue (heavy vs normal).

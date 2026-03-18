@@ -44,7 +44,7 @@ class WatchlistController extends Controller
 
         // prime immediately (non-blocking), debounced to avoid storms
         if (Cache::add("watchlist:prime:{$symbol}", 1, now()->addSeconds(45))) {
-            dispatch(new PrimeSymbolJob($symbol))->onQueue('default');
+            dispatch(new PrimeSymbolJob($symbol))->onQueue(PrimeSymbolJob::QUEUE);
         }
 
         // Intraday bootstrap:
