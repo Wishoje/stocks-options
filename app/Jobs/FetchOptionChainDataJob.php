@@ -819,8 +819,8 @@ class FetchOptionChainDataJob implements ShouldQueue
      */
     protected function massiveExpiryMissingSide(array $set): bool
     {
-        $calls = count($set['options']['CALL'] ?? []);
-        $puts = count($set['options']['PUT'] ?? []);
+        $calls = $this->massiveDistinctStrikeCount($set, 'CALL');
+        $puts = $this->massiveDistinctStrikeCount($set, 'PUT');
         return $calls === 0 || $puts === 0;
     }
 
@@ -829,8 +829,8 @@ class FetchOptionChainDataJob implements ShouldQueue
      */
     protected function massiveExpirySideRatioHealthy(array $set): bool
     {
-        $calls = count($set['options']['CALL'] ?? []);
-        $puts = count($set['options']['PUT'] ?? []);
+        $calls = $this->massiveDistinctStrikeCount($set, 'CALL');
+        $puts = $this->massiveDistinctStrikeCount($set, 'PUT');
 
         return EodHealth::sideRatioMeetsThreshold($calls, $puts, $this->minSideStrikeRatio);
     }
@@ -842,8 +842,8 @@ class FetchOptionChainDataJob implements ShouldQueue
     protected function massiveRepairSides(array $set): array
     {
         $repair = [];
-        $calls = count($set['options']['CALL'] ?? []);
-        $puts = count($set['options']['PUT'] ?? []);
+        $calls = $this->massiveDistinctStrikeCount($set, 'CALL');
+        $puts = $this->massiveDistinctStrikeCount($set, 'PUT');
         if ($calls === 0) {
             $repair[] = 'call';
         }
@@ -859,6 +859,31 @@ class FetchOptionChainDataJob implements ShouldQueue
         }
 
         return $repair;
+    }
+
+    /**
+     * Count distinct strikes for a normalized expiry side so repair decisions match DB health checks.
+     *
+     * @param array<string,mixed> $set
+     */
+    protected function massiveDistinctStrikeCount(array $set, string $side): int
+    {
+        $options = $set['options'][$side] ?? [];
+        if (!is_array($options) || empty($options)) {
+            return 0;
+        }
+
+        $strikes = [];
+        foreach ($options as $option) {
+            $strike = isset($option['strike']) ? (float) $option['strike'] : 0.0;
+            if ($strike <= 0) {
+                continue;
+            }
+
+            $strikes[(string) $strike] = true;
+        }
+
+        return count($strikes);
     }
 
     /**
