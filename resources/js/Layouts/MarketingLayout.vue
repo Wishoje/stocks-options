@@ -24,6 +24,31 @@
 
           <!-- RIGHT -->
           <div class="flex items-center gap-8">
+            <button
+              type="button"
+              class="inline-flex items-center justify-center rounded-lg border border-white/10 bg-white/5 p-2 text-white/70 hover:bg-white/10 hover:text-white md:hidden"
+              :aria-expanded="showMobileMenu ? 'true' : 'false'"
+              aria-label="Toggle navigation menu"
+              @click="showMobileMenu = !showMobileMenu"
+            >
+              <svg class="size-6" stroke="currentColor" fill="none" viewBox="0 0 24 24">
+                <path
+                  :class="{ hidden: showMobileMenu, 'inline-flex': !showMobileMenu }"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 6h16M4 12h16M4 18h16"
+                />
+                <path
+                  :class="{ hidden: !showMobileMenu, 'inline-flex': showMobileMenu }"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+
             <nav class="hidden items-center gap-8 md:flex">
               <Link :href="route('features')" class="text-sm text-white/70 hover:text-white">Features</Link>
               <Link :href="route('contact')" class="text-sm text-white/70 hover:text-white">Contact</Link>
@@ -56,6 +81,69 @@
             </nav>
           </div>
         </div>
+
+        <div v-if="showMobileMenu" class="border-t border-white/10 pb-4 pt-3 md:hidden">
+          <nav class="flex flex-col gap-2">
+            <Link
+              :href="route('features')"
+              class="rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
+              @click="closeMobileMenu"
+            >
+              Features
+            </Link>
+            <Link
+              :href="route('contact')"
+              class="rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
+              @click="closeMobileMenu"
+            >
+              Contact
+            </Link>
+
+            <template v-if="page.props.auth?.user">
+              <Link
+                :href="route('pricing')"
+                class="rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
+                @click="closeMobileMenu"
+              >
+                Pricing
+              </Link>
+
+              <button
+                v-if="page.props.billing?.needs_checkout"
+                type="button"
+                class="rounded-xl bg-white/10 px-3 py-2 text-left text-sm text-white/85 hover:bg-white/15"
+                @click="goCheckout"
+              >
+                Finish Checkout
+              </button>
+
+              <button
+                type="button"
+                class="rounded-xl px-3 py-2 text-left text-sm text-white/75 hover:bg-white/5 hover:text-white"
+                @click="logout"
+              >
+                Logout
+              </button>
+            </template>
+
+            <template v-else>
+              <Link
+                :href="route('login')"
+                class="rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
+                @click="closeMobileMenu"
+              >
+                Login
+              </Link>
+              <Link
+                :href="registerWithPlanUrl"
+                class="rounded-xl bg-white/10 px-3 py-2 text-sm text-white/90 hover:bg-white/15"
+                @click="trackMobileStartFree"
+              >
+                Start Free
+              </Link>
+            </template>
+          </nav>
+        </div>
       </div>
     </header>
 
@@ -82,19 +170,23 @@
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
 import { trackEvent } from '@/lib/ga'
 
 const page = usePage()
 const year = new Date().getFullYear()
 const registerWithPlanUrl = '/register?plan=earlybird&billing=monthly'
+const showMobileMenu = ref(false)
 
 function logout() {
   // Jetstream logout route is POST
+  showMobileMenu.value = false
   router.post(route('logout'))
 }
 
 function goCheckout() {
+  showMobileMenu.value = false
   const current = new URL(page.url, window.location.origin)
   const plan = current.searchParams.get('plan') || 'earlybird'
   const billing = current.searchParams.get('billing') || 'monthly'
@@ -104,5 +196,14 @@ function goCheckout() {
 
 function trackNavStartFree() {
   trackEvent('hero_cta_click', { location: 'marketing_nav_start_free', destination: 'register_with_plan' })
+}
+
+function closeMobileMenu() {
+  showMobileMenu.value = false
+}
+
+function trackMobileStartFree() {
+  closeMobileMenu()
+  trackNavStartFree()
 }
 </script>

@@ -50,34 +50,53 @@
       </div>
     </div>
     <!-- Trading Terminal Header -->
-    <header class="border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm sticky top-0 z-50">
-      <div class="px-4 py-3 flex items-center justify-between">
-        <!-- Left: Title + Symbol -->
-        <div class="flex items-center gap-3">
-          <h1 class="text-xl font-bold tracking-tight">GEX Levels & Analytics</h1>
-          <div class="flex items-center gap-2">
-            <span class="text-lg font-mono text-cyan-400">{{ userSymbol }}</span>
-            <button @click="showSymbolPicker = true" class="text-xs text-gray-400 hover:text-white">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
+    <header class="sticky top-0 z-50 border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm">
+      <div class="flex flex-col gap-3 px-3 py-3 sm:px-4 md:flex-row md:items-center md:justify-between">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 sm:gap-3">
+            <h1 class="truncate text-base font-bold leading-tight tracking-tight sm:text-xl">
+              GEX Levels<span class="hidden sm:inline"> & Analytics</span>
+            </h1>
+
+            <div class="flex min-w-0 items-center gap-1.5 sm:gap-2">
+              <span class="truncate text-base font-mono text-cyan-400 sm:text-lg">{{ userSymbol }}</span>
+              <button @click="showSymbolPicker = true" class="text-xs text-gray-400 hover:text-white">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
               <span
                 v-if="dataMode === 'intraday' && intradayTransition"
-                class="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-100"
+                class="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-100 sm:text-[11px]"
               >
-                <svg class="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="h-3 w-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M12 4v2m0 12v2m8-8h-2M6 12H4m13.657-5.657l-1.414 1.414M7.757 16.243l-1.414 1.414m0-11.314l1.414 1.414M16.243 16.243l1.414 1.414" />
                 </svg>
-                Updating…
-            </span>
+                Updating...
+              </span>
+            </div>
+          </div>
+
+          <div v-if="dataMode === 'eod'" class="mt-2 flex items-center gap-2 md:hidden">
+            <span class="text-[10px] uppercase tracking-wider text-gray-400">Timeframe</span>
+            <div class="flex rounded-lg overflow-hidden border border-gray-700">
+              <button
+                v-for="tf in visibleTimeframeOptions"
+                :key="`mobile-${tf.value}`"
+                @click="gexTf = tf.value"
+                class="px-2.5 py-1 text-[11px] font-medium transition"
+                :class="gexTf === tf.value ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'"
+              >
+                {{ tf.label }}
+              </button>
+            </div>
           </div>
         </div>
 
-        <!-- Center: EOD Timeframe Picker -->
-        <div v-if="dataMode === 'eod'" class="hidden md:flex items-center gap-2">
-          <span class="text-xs text-gray-400 uppercase tracking-wider">Timeframe</span>
+        <div v-if="dataMode === 'eod'" class="hidden items-center gap-2 md:flex">
+          <span class="text-xs uppercase tracking-wider text-gray-400">Timeframe</span>
           <div class="flex rounded-lg overflow-hidden border border-gray-700">
             <button
               v-for="tf in visibleTimeframeOptions"
@@ -91,45 +110,44 @@
           </div>
         </div>
 
-        <!-- Right: Mode Toggle + Freshness -->
-        <div class="flex items-center gap-3">
-          <!-- Mode Toggle -->
+        <div class="flex items-start justify-between gap-3 md:items-center">
           <div class="flex rounded-lg overflow-hidden border border-gray-700">
             <button
               @click="setMode('eod')"
-              class="px-4 py-1.5 text-sm font-medium transition flex items-center gap-1.5"
+              class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition sm:gap-1.5 sm:px-4 sm:text-sm"
               :class="dataMode === 'eod' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               EOD
             </button>
+
             <button
               @click="setMode('intraday')"
-              class="px-4 py-1.5 text-sm font-medium transition flex items-center gap-1.5"
+              class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition sm:gap-1.5 sm:px-4 sm:text-sm"
               :class="dataMode === 'intraday' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              Intraday (Live)
+              <span class="hidden sm:inline">Intraday</span>
+              <span class="sm:hidden">Live</span>
               <span v-if="dataMode === 'intraday'" class="text-[10px] opacity-80">15m</span>
             </button>
           </div>
 
-          <!-- Freshness -->
-          <div class="text-xs text-gray-400">
+          <div class="text-right text-[11px] text-gray-400 sm:text-xs">
             <span v-if="dataMode === 'eod' && levels?.data_date">
               EOD: {{ levels.data_date }}
-              <span v-if="levels.data_age_days > 0" class="ml-1 text-[11px] text-amber-400">
+              <span v-if="levels.data_age_days > 0" class="ml-1 text-[10px] text-amber-400 sm:text-[11px]">
                 ({{ levels.data_age_days }}d old)
               </span>
             </span>
-            <span v-else-if="dataMode === 'intraday'" class="flex items-center gap-1">
-              <span class="text-green-400 font-medium">{{ marketOpen ? 'Live' : 'Market Closed' }}</span>
+            <span v-else-if="dataMode === 'intraday'" class="flex items-center justify-end gap-1">
+              <span class="font-medium text-green-400">{{ marketOpen ? 'Live' : 'Market Closed' }}</span>
               <button @click="manualRefresh" class="ml-1 text-cyan-400 hover:text-cyan-300">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
               </button>
@@ -153,21 +171,21 @@
     </div>
 
     <!-- Tabs -->
-    <div class="sticky top-[65px] z-40 bg-gray-900/95 backdrop-blur-sm border-b border-gray-800">
-      <nav class="flex gap-1 px-4 py-2 overflow-x-auto no-scrollbar">
+    <div class="sticky top-[65px] z-40 border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm">
+      <nav class="flex gap-1 overflow-x-auto px-3 py-2 no-scrollbar sm:px-4">
         <button
           v-for="t in tabMeta"
           :key="t.key"
           :disabled="t.state !== 'ready'"
           @click="t.state === 'ready' && activate(t.key)"
-          class="px-5 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap flex items-center gap-2"
+          class="flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition sm:gap-2 sm:px-5 sm:text-sm"
           :class="activeTab === t.key && t.state === 'ready'
             ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-500/20'
             : t.state === 'ready'
               ? 'text-gray-400 hover:text-white hover:bg-gray-800'
               : 'text-gray-500 bg-gray-800/60 cursor-not-allowed'"
         >
-          <component :is="t.icon" class="w-4 h-4" />
+          <component :is="t.icon" class="h-4 w-4" />
           {{ t.label }}
           <span v-if="t.badge" class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-white/20">
             {{ t.badge }}
