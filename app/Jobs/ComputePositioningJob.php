@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\EodSnapshotSelector;
 use Illuminate\Bus\Queueable;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -10,7 +11,6 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
-use Carbon\Carbon;
 
 class ComputePositioningJob implements ShouldQueue
 {
@@ -20,7 +20,8 @@ class ComputePositioningJob implements ShouldQueue
 
     public function handle(): void
     {
-        $date = $this->tradingDate(now());
+        $selector = app(EodSnapshotSelector::class);
+        $date = $selector->completedSessionDate(now());
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);
@@ -35,17 +36,12 @@ class ComputePositioningJob implements ShouldQueue
             }
 
             $expIds = array_values($expMap->toArray());
-
-            // latest per-expiry snapshot
-            $latest = DB::table('option_chain_data')
-                ->select('expiration_id', DB::raw('MAX(data_date) as d'))
-                ->whereIn('expiration_id', $expIds)
-                ->groupBy('expiration_id');
+            $selectedDates = $selector->selectedDateRows($expIds, $date)->keyBy('expiration_id');
 
             $rows = DB::table('option_chain_data as o')
-                ->joinSub($latest, 'ld', fn($j)=>$j
+                ->joinSub($selector->selectedDatesSubquery($expIds, $date), 'ld', fn($j)=>$j
                     ->on('o.expiration_id','=','ld.expiration_id')
-                    ->on('o.data_date','=','ld.d'))
+                    ->on('o.data_date','=','ld.max_date'))
                 ->whereIn('o.expiration_id', $expIds)
                 ->get([
                     'o.expiration_id','o.option_type','o.delta','o.gamma','o.open_interest',
@@ -84,6 +80,7 @@ class ComputePositioningJob implements ShouldQueue
                         'data_date' => $date,
                         'exp_date'  => $expDate,
                         'dex_total' => $dex,
+                        'source_chain_date' => $selectedDates[$expId]->max_date ?? null,
                         'created_at'=> now(), 'updated_at'=> now(),
                     ]);
                 }
@@ -113,14 +110,13 @@ class ComputePositioningJob implements ShouldQueue
                 'date' => $date,
                 'strength' => $strength,
                 'sign' => ($num >= 0 ? +1 : -1), // +1 net long gamma, -1 net short gamma
+                'source_meta' => [
+                    'anchor_date' => $date,
+                    'selected_snapshot_dates' => $selectedDates->mapWithKeys(
+                        fn ($row, $expirationId) => [$expirationId => $row->max_date]
+                    )->all(),
+                ],
             ], now()->addDay());
         }
-    }
-
-    protected function tradingDate(Carbon $now): string
-    {
-        $ny = $now->copy()->setTimezone('America/New_York');
-        if ($ny->isWeekend()) $ny->previousWeekday();
-        return $ny->toDateString();
     }
 }

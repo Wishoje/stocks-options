@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\EodSnapshotSelector;
 use Illuminate\Bus\Queueable;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -20,39 +21,36 @@ class ComputeExpiryPressureJob implements ShouldQueue
 
     public function handle(): void
     {
-        $date = $this->tradingDate(now());
+        $selector = app(EodSnapshotSelector::class);
+        $date = $selector->completedSessionDate(now());
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);
 
             // find expiries within N trading days
-            $end = $this->addTradingDays(Carbon::now('America/New_York')->toDateString(), $this->days);
-            $expDates = DB::table('option_expirations')
+            $end = $this->addTradingDays($date, $this->days);
+            $expMap = DB::table('option_expirations')
                 ->where('symbol', $symbol)
                 ->whereBetween('expiration_date', [$date, $end])
                 ->orderBy('expiration_date')
-                ->pluck('expiration_date');
+                ->pluck('id', 'expiration_date');
 
-            if ($expDates->isEmpty()) continue;
+            if ($expMap->isEmpty()) continue;
 
-            foreach ($expDates as $expDate) {
+            $expIds = array_values($expMap->toArray());
+            $selectedDates = $selector->selectedDateRows($expIds, $date)->keyBy('expiration_id');
+            $rowsByExpiry = DB::table('option_chain_data as o')
+                ->joinSub($selector->selectedDatesSubquery($expIds, $date), 'ld', fn($j)=>$j
+                    ->on('o.expiration_id','=','ld.expiration_id')
+                    ->on('o.data_date','=','ld.max_date'))
+                ->whereIn('o.expiration_id', $expIds)
+                ->get(['o.expiration_id','o.strike','o.option_type','o.open_interest','o.underlying_price'])
+                ->groupBy('expiration_id');
 
-                // get the latest data_date for this expiry
-                $latest = DB::table('option_chain_data as o')
-                    ->join('option_expirations as e','e.id','=','o.expiration_id')
-                    ->where('e.symbol', $symbol)
-                    ->whereDate('e.expiration_date', $expDate)
-                    ->max('o.data_date');
-
+            foreach ($expMap as $expDate => $expId) {
+                $latest = $selectedDates[$expId]->max_date ?? null;
                 if (!$latest) continue;
-
-                // pull snapshot rows for that latest date and expiry
-                $rows = DB::table('option_chain_data as o')
-                    ->join('option_expirations as e','e.id','=','o.expiration_id')
-                    ->where('e.symbol', $symbol)
-                    ->whereDate('e.expiration_date', $expDate)
-                    ->whereDate('o.data_date', $latest)
-                    ->get(['o.strike','o.option_type','o.open_interest','o.underlying_price']);
+                $rows = $rowsByExpiry->get($expId, collect());
 
                 if ($rows->isEmpty()) continue;
 
@@ -170,18 +168,13 @@ class ComputeExpiryPressureJob implements ShouldQueue
                         'pin_score'    => $pinScore,
                         'clusters_json'=> json_encode($uniq, JSON_THROW_ON_ERROR),
                         'max_pain'     => $bestP,
+                        'source_chain_date' => $latest,
                         'updated_at'   => now(),
                         'created_at'   => now(),
                     ]
                 );
             }
         }
-    }
-
-    protected function tradingDate(Carbon $now): string {
-        $ny = $now->copy()->setTimezone('America/New_York');
-        if ($ny->isWeekend()) $ny->previousWeekday();
-        return $ny->toDateString();
     }
 
     protected function addTradingDays(string $start, int $n): string {

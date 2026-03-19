@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\EodSnapshotSelector;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -29,7 +30,7 @@ class VolController extends Controller
         $items = DB::table('iv_term')
             ->where('symbol',$symbol)->where('data_date',$date)
             ->orderBy('exp_date')
-            ->get(['exp_date as exp','iv']);
+            ->get(['exp_date as exp','iv','source_chain_date']);
 
         $payload = ['symbol'=>$symbol,'date'=>$date,'items'=>$items];
         Cache::put($cacheKey, $payload, 86400);
@@ -49,7 +50,7 @@ class VolController extends Controller
         $row = DB::table('vrp_daily')
             ->where('symbol',$symbol)
             ->orderByDesc('data_date')
-            ->first(['data_date as date','iv1m','rv20','vrp','z']);
+            ->first(['data_date as date','iv1m','rv20','vrp','z','source_meta_json']);
 
         if (!$row) {
             return response()->json([
@@ -57,8 +58,17 @@ class VolController extends Controller
             ], 202);
         }
 
-        Cache::put($cacheKey, $row, 86400);
-        return response()->json($row, 200);
+        $payload = [
+            'date' => $row->date,
+            'iv1m' => $row->iv1m,
+            'rv20' => $row->rv20,
+            'vrp' => $row->vrp,
+            'z' => $row->z,
+            'source_meta' => $row->source_meta_json ? json_decode($row->source_meta_json, true) : null,
+        ];
+
+        Cache::put($cacheKey, $payload, 86400);
+        return response()->json($payload, 200);
     }
 
     public function skew(Request $req)
@@ -84,6 +94,7 @@ class VolController extends Controller
                     'curvature'=>$row->curvature,
                     'skew_pc_dod'=>$row->skew_pc_dod,
                     'curvature_dod'=>$row->curvature_dod,
+                    'source_chain_date'=>$row->source_chain_date,
                 ] : (object)[], 200);
             }
 
@@ -105,6 +116,7 @@ class VolController extends Controller
                     'curvature'=>$r->curvature,
                     'skew_pc_dod'=>$r->skew_pc_dod,
                     'curvature_dod'=>$r->curvature_dod,
+                    'source_chain_date'=>$r->source_chain_date,
                 ])->values(),
             ], 200);
         });
@@ -115,7 +127,9 @@ class VolController extends Controller
         $symbol = strtoupper($req->query('symbol', 'SPY'));
         $expArg = $req->query('exp'); // optional YYYY-MM-DD
 
-        // latest chain date per expiry (same logic the job uses)
+        $selector = app(EodSnapshotSelector::class);
+
+        // Selected chain date per expiry (same logic the job uses)
         $expMap = \DB::table('option_expirations')
             ->where('symbol', $symbol)
             ->pluck('id', 'expiration_date'); // ['YYYY-MM-DD' => id]
@@ -129,15 +143,10 @@ class VolController extends Controller
 
         $expIds = array_values($expMap->toArray());
 
-        $latest = \DB::table('option_chain_data')
-            ->select('expiration_id', \DB::raw('MAX(data_date) as d'))
-            ->whereIn('expiration_id', $expIds)
-            ->groupBy('expiration_id');
-
         $rows = \DB::table('option_chain_data as o')
-            ->joinSub($latest, 'ld', fn($j)=>$j
+            ->joinSub($selector->selectedDatesSubquery($expIds, $selector->resolvedAnchorDate()), 'ld', fn($j)=>$j
                 ->on('o.expiration_id','=','ld.expiration_id')
-                ->on('o.data_date','=','ld.d'))
+                ->on('o.data_date','=','ld.max_date'))
             ->whereIn('o.expiration_id', $expIds)
             ->get(['o.expiration_id','o.option_type','o.strike','o.delta','o.iv','o.underlying_price']);
 

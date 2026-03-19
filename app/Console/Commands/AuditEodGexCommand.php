@@ -5,7 +5,7 @@ namespace App\Console\Commands;
 use App\Http\Controllers\GexController;
 use App\Models\OptionChainData;
 use App\Models\OptionExpiration;
-use App\Support\EodHealth;
+use App\Support\EodSnapshotSelector;
 use App\Support\Symbols;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -93,14 +93,9 @@ class AuditEodGexCommand extends Command
             return self::FAILURE;
         }
 
-        $latestDates = $this->latestSnapshotDates($expirationIds->values()->all(), $auditCapDate);
-        $todayData = OptionChainData::query()
-            ->joinSub($latestDates, 'ld', function ($join) {
-                $join->on('option_chain_data.expiration_id', '=', 'ld.expiration_id')
-                    ->on('option_chain_data.data_date', '=', 'ld.max_date');
-            })
-            ->whereIn('option_chain_data.expiration_id', $expirationIds->values()->all())
-            ->get();
+        $selector = app(EodSnapshotSelector::class);
+        $latestDates = $selector->selectedDatesSubquery($expirationIds->values()->all(), $auditCapDate);
+        $todayData = $selector->selectedRows($expirationIds->values()->all(), ['option_chain_data.*'], $auditCapDate);
 
         if ($todayData->isEmpty()) {
             $report = [
@@ -122,10 +117,9 @@ class AuditEodGexCommand extends Command
         $payloadRows = collect($apiBody['strike_data'] ?? []);
         $comparison = $this->compareStrikeData($payloadRows, collect($recomputed['strike_data']));
         $expirySummary = $this->expirationSummary(
-            $symbol,
             $expirationIds,
-            $latestDates,
-            $auditCapDate
+            $auditCapDate,
+            $selector
         );
 
         $fetchMeta = Cache::get("eod:fetch-meta:{$symbol}:{$auditCapDate}");
@@ -198,45 +192,6 @@ class AuditEodGexCommand extends Command
             'status' => $response->getStatusCode(),
             'body' => json_decode($response->getContent(), true),
         ];
-    }
-
-    private function latestSnapshotDates(array $expirationIds, string $anchorDate)
-    {
-        $minSideRatio = max(0.01, min(1.0, (float) config('services.massive.eod_min_side_strike_ratio', 0.35)));
-        $dateCandidates = OptionChainData::query()
-            ->select(
-                'expiration_id',
-                'data_date',
-                DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'call' THEN strike END) as call_strikes_n"),
-                DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'put' THEN strike END) as put_strikes_n")
-            )
-            ->whereIn('expiration_id', $expirationIds)
-            ->whereDate('data_date', '<=', $anchorDate)
-            ->groupBy('expiration_id', 'data_date');
-
-        $balancedDates = DB::query()
-            ->fromSub($dateCandidates, 'dc')
-            ->select('expiration_id', DB::raw('MAX(data_date) as max_date'))
-            ->where('call_strikes_n', '>', 0)
-            ->where('put_strikes_n', '>', 0)
-            ->whereRaw(
-                'LEAST(call_strikes_n, put_strikes_n) / NULLIF(GREATEST(call_strikes_n, put_strikes_n), 0) >= ?',
-                [$minSideRatio]
-            )
-            ->groupBy('expiration_id');
-
-        $fallbackDates = OptionChainData::query()
-            ->select('expiration_id', DB::raw('MAX(data_date) as max_date'))
-            ->whereIn('expiration_id', $expirationIds)
-            ->whereDate('data_date', '<=', $anchorDate)
-            ->groupBy('expiration_id');
-
-        return DB::query()
-            ->fromSub($fallbackDates, 'fb')
-            ->leftJoinSub($balancedDates, 'bd', function ($join) {
-                $join->on('fb.expiration_id', '=', 'bd.expiration_id');
-            })
-            ->select('fb.expiration_id', DB::raw('COALESCE(bd.max_date, fb.max_date) as max_date'));
     }
 
     private function recomputeStrikePayload(Collection $todayData, array $expirationIds): array
@@ -359,39 +314,16 @@ class AuditEodGexCommand extends Command
     }
 
     private function expirationSummary(
-        string $symbol,
         Collection $expirationIds,
-        $latestDates,
-        string $auditCapDate
+        string $auditCapDate,
+        EodSnapshotSelector $selector
     ): array {
-        $minSideRatio = max(0.01, min(1.0, (float) config('services.massive.eod_min_side_strike_ratio', 0.35)));
-        $selected = DB::query()
-            ->fromSub($latestDates, 'ld')
-            ->get()
-            ->keyBy('expiration_id');
+        $selected = $selector->summary($expirationIds->values()->all(), $auditCapDate);
 
         $perExpiration = [];
         foreach ($expirationIds as $expirationDate => $expirationId) {
-            $rows = OptionChainData::query()
-                ->where('expiration_id', $expirationId)
-                ->whereDate('data_date', '<=', $auditCapDate)
-                ->select(
-                    'data_date',
-                    DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'call' THEN strike END) as call_strikes_n"),
-                    DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'put' THEN strike END) as put_strikes_n"),
-                    DB::raw('COUNT(DISTINCT strike) as strike_count')
-                )
-                ->groupBy('data_date')
-                ->orderByDesc('data_date')
-                ->get();
-
-            $latestAny = $rows->first();
-            $latestBalanced = $rows->first(fn ($row) => EodHealth::sideRatioMeetsThreshold(
-                (int) ($row->call_strikes_n ?? 0),
-                (int) ($row->put_strikes_n ?? 0),
-                $minSideRatio
-            ));
-            $selectedDate = optional($selected->get($expirationId))->max_date;
+            $summary = $selected->get($expirationId, []);
+            $selectedDate = $summary['selected_date'] ?? null;
 
             $selRows = OptionChainData::query()
                 ->where('expiration_id', $expirationId)
@@ -407,25 +339,27 @@ class AuditEodGexCommand extends Command
             $perExpiration[] = [
                 'expiration_date' => $expirationDate,
                 'expiration_id' => $expirationId,
-                'latest_any_date' => $latestAny->data_date ?? null,
-                'latest_balanced_date' => $latestBalanced->data_date ?? null,
+                'latest_any_date' => $summary['latest_any_date'] ?? null,
+                'latest_balanced_date' => $summary['latest_balanced_date'] ?? null,
                 'selected_date' => $selectedDate,
-                'latest_any_call_rows' => (int) ($latestAny->call_strikes_n ?? 0),
-                'latest_any_put_rows' => (int) ($latestAny->put_strikes_n ?? 0),
-                'latest_any_side_ratio' => ($latestAny && ($latestAny->call_strikes_n ?? 0) > 0 && ($latestAny->put_strikes_n ?? 0) > 0)
-                    ? round((float) EodHealth::sideStrikeRatio((int) $latestAny->call_strikes_n, (int) $latestAny->put_strikes_n), 3)
+                'latest_any_call_rows' => (int) ($summary['latest_any_call_rows'] ?? 0),
+                'latest_any_put_rows' => (int) ($summary['latest_any_put_rows'] ?? 0),
+                'latest_any_side_ratio' => isset($summary['latest_any_side_ratio'])
+                    ? round((float) $summary['latest_any_side_ratio'], 3)
                     : null,
                 'selected_call_oi' => (int) ($selRows->call_oi ?? 0),
                 'selected_put_oi' => (int) ($selRows->put_oi ?? 0),
                 'selected_call_vol' => (int) ($selRows->call_vol ?? 0),
                 'selected_put_vol' => (int) ($selRows->put_vol ?? 0),
                 'selected_has_both_sides' => $selectedDate !== null
-                    && (($latestBalanced->data_date ?? null) === $selectedDate),
+                    && (($summary['latest_balanced_date'] ?? null) === $selectedDate),
             ];
         }
 
         return [
-            'selected_snapshot_dates' => $selected->mapWithKeys(fn ($row) => [(string) $row->expiration_id => $row->max_date])->all(),
+            'selected_snapshot_dates' => $selected->mapWithKeys(
+                fn ($row, $expirationId) => [(string) $expirationId => $row['selected_date'] ?? null]
+            )->filter()->all(),
             'per_expiration' => $perExpiration,
         ];
     }

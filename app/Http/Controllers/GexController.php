@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use App\Models\OptionExpiration;
 use App\Models\OptionChainData;
+use App\Support\EodSnapshotSelector;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -53,7 +54,8 @@ class GexController extends Controller
             ->pluck('id')
             ->toArray();
 
-        $anchorDate = $this->completedSessionDate();
+        $selector = app(EodSnapshotSelector::class);
+        $anchorDate = $selector->resolvedAnchorDate();
         $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)
             ->whereDate('data_date', '<=', $anchorDate)
             ->max('data_date');
@@ -174,49 +176,8 @@ class GexController extends Controller
         array $expirationIds,
         ?string $anchorDate = null
     ): ?array {
-        // Pick one cohesive snapshot date per expiration. We prefer the latest
-        // date where both call and put strike counts are reasonably balanced,
-        // then fall back to latest any.
-        $minSideRatio = max(0.01, min(1.0, (float) config('services.massive.eod_min_side_strike_ratio', 0.35)));
-        $dateCandidates = OptionChainData::select(
-                'expiration_id',
-                'data_date',
-                DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'call' THEN strike END) as call_strikes_n"),
-                DB::raw("COUNT(DISTINCT CASE WHEN option_type = 'put'  THEN strike END) as put_strikes_n")
-            )
-            ->whereIn('expiration_id', $expirationIds)
-            ->when($anchorDate, fn ($q) => $q->whereDate('data_date', '<=', $anchorDate))
-            ->groupBy('expiration_id', 'data_date');
-
-        $balancedDates = DB::query()
-            ->fromSub($dateCandidates, 'dc')
-            ->select('expiration_id', DB::raw('MAX(data_date) as max_date'))
-            ->where('call_strikes_n', '>', 0)
-            ->where('put_strikes_n', '>', 0)
-            ->whereRaw(
-                'LEAST(call_strikes_n, put_strikes_n) / NULLIF(GREATEST(call_strikes_n, put_strikes_n), 0) >= ?',
-                [$minSideRatio]
-            )
-            ->groupBy('expiration_id');
-
-        $fallbackDates = OptionChainData::select('expiration_id', DB::raw('MAX(data_date) as max_date'))
-            ->whereIn('expiration_id', $expirationIds)
-            ->when($anchorDate, fn ($q) => $q->whereDate('data_date', '<=', $anchorDate))
-            ->groupBy('expiration_id');
-
-        $latestDates = DB::query()
-            ->fromSub($fallbackDates, 'fb')
-            ->leftJoinSub($balancedDates, 'bd', function ($join) {
-                $join->on('fb.expiration_id', '=', 'bd.expiration_id');
-            })
-            ->select('fb.expiration_id', DB::raw('COALESCE(bd.max_date, fb.max_date) as max_date'));
-
-        $todayData = OptionChainData::joinSub($latestDates, 'ld', function ($join) {
-                $join->on('option_chain_data.expiration_id', '=', 'ld.expiration_id')
-                    ->on('option_chain_data.data_date', '=', 'ld.max_date');
-            })
-            ->whereIn('option_chain_data.expiration_id', $expirationIds)
-            ->get();
+        $selector = app(EodSnapshotSelector::class);
+        $todayData = $selector->selectedRows($expirationIds, ['option_chain_data.*'], $anchorDate);
 
         if ($todayData->isEmpty()) {
             return null;
@@ -380,11 +341,7 @@ class GexController extends Controller
         $totalOiDelta  = $totCallOiDelta + $totPutOiDelta;
         $totalVolDelta = $totCallVolDelta + $totPutVolDelta;
 
-        $date = Carbon::now('America/New_York')->isWeekend()
-            ? Carbon::now('America/New_York')->previousWeekday()->toDateString()
-            : Carbon::now('America/New_York')->toDateString();
-
-        $gs = Cache::get("gamma_strength:{$symbol}:{$date}");
+        $gs = Cache::get("gamma_strength:{$symbol}:{$latestDate}");
 
         return [
             'symbol'                   => $symbol,
@@ -418,6 +375,7 @@ class GexController extends Controller
             'strike_data'              => $fullStrike,
             'regime_strength'          => $gs['strength'] ?? null,
             'gamma_sign'               => $gs['sign']     ?? null,
+            'regime_source_meta'       => $gs['source_meta'] ?? null,
         ];
     }
 
@@ -605,21 +563,6 @@ class GexController extends Controller
             ->whereNotNull('gamma')
             ->where('gamma', '!=', 0)
             ->exists();
-    }
-
-    protected function completedSessionDate(): string
-    {
-        $ny = now('America/New_York');
-        if ($ny->isWeekend()) {
-            return $ny->previousWeekday()->toDateString();
-        }
-
-        $cutoff = $ny->copy()->startOfDay()->setTime(16, 15);
-        if ($ny->lt($cutoff)) {
-            return $ny->previousWeekday()->toDateString();
-        }
-
-        return $ny->toDateString();
     }
 
     protected function tradingWeekdayGap(?string $latestDate, ?string $priorDate): ?int

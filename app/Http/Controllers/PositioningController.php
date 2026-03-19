@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class PositioningController extends Controller
 {
@@ -62,10 +63,12 @@ class PositioningController extends Controller
             ->get([
                 DB::raw('e.expiration_date as exp_date'),
                 DB::raw('COALESCE(d.dex_total, 0.0) as dex_total'),
+                DB::raw('d.source_chain_date as source_chain_date'),
             ]);
 
         $total = DB::table('dex_by_expiry')
             ->where('symbol', $symbol)->where('data_date', $date)->sum('dex_total');
+        $gammaStrength = $date ? Cache::get("gamma_strength:{$symbol}:{$date}") : null;
 
         return response()->json([
             'symbol'    => $symbol,
@@ -73,6 +76,9 @@ class PositioningController extends Controller
             'today'     => $today,         // calendar today (for marker)
             'by_expiry' => $by,
             'total'     => (float) $total,
+            'regime_strength' => $gammaStrength['strength'] ?? null,
+            'gamma_sign' => $gammaStrength['sign'] ?? null,
+            'regime_source_meta' => $gammaStrength['source_meta'] ?? null,
             'window'    => ['start' => $start, 'end' => $end],
         ]);
     }

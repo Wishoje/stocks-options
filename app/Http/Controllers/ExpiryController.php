@@ -57,7 +57,7 @@ class ExpiryController extends Controller
                 ->where('data_date',$latestDate)
                 ->whereBetween('exp_date', [$latestDate, $limit])
                 ->orderBy('exp_date')
-                ->get(['exp_date','pin_score','clusters_json','max_pain']);
+                ->get(['exp_date','pin_score','clusters_json','max_pain','source_chain_date']);
 
             $entries = [];
             $headline = null;
@@ -75,6 +75,7 @@ class ExpiryController extends Controller
                         ];
                     }, $clusters),
                     'max_pain'  => $r->max_pain !== null ? (float)$r->max_pain : null,
+                    'source_chain_date' => $r->source_chain_date,
                 ];
                 $headline = max($headline ?? 0, (int)$r->pin_score);
             }

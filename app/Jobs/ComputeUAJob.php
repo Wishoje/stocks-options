@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\EodSnapshotSelector;
 use Illuminate\Bus\Queueable;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -22,11 +23,15 @@ class ComputeUAJob implements ShouldQueue
         public float $Z_SCORE_MIN  = 3.0,
         public float $VOL_OI_MIN   = 0.50,
         public int   $VOL_MIN      = 50,
-        public int   $MIN_SAMPLES  = 1,   // minimum history points per strike (was 5)
+        public int   $MIN_SAMPLES  = 1,
+        public int   $MIN_Z_SAMPLES = 3,
     ) {}
 
     public function handle(): void
     {
+        $selector = app(EodSnapshotSelector::class);
+        $anchorDate = $selector->resolvedAnchorDate();
+
         // cache schema probes once per run (avoid per-query cost)
         $hasMid   = Schema::hasColumn('option_chain_data', 'mid_price');
         $hasLast  = Schema::hasColumn('option_chain_data', 'last_price');
@@ -38,6 +43,7 @@ class ComputeUAJob implements ShouldQueue
             $latest = DB::table('option_chain_data as o')
                 ->join('option_expirations as e','e.id','=','o.expiration_id')
                 ->where('e.symbol',$symbol)
+                ->whereDate('o.data_date', '<=', $anchorDate)
                 ->max('o.data_date');
 
             if (!$latest) continue;
@@ -107,7 +113,8 @@ class ComputeUAJob implements ShouldQueue
                     ->join('option_expirations as e','e.id','=','o.expiration_id')
                     ->where('e.symbol', $symbol)
                     ->whereDate('e.expiration_date', $exp)
-                    ->whereBetween('o.data_date', [$start, $latest])
+                    ->whereDate('o.data_date', '>=', $start)
+                    ->whereDate('o.data_date', '<', $latest)
                     ->selectRaw('o.data_date, o.strike, SUM(o.volume) as total_vol')
                     ->groupBy('o.data_date','o.strike')
                     ->get();
@@ -122,22 +129,34 @@ class ComputeUAJob implements ShouldQueue
                 $payload = [];
                 foreach ($aggToday as $k => $v) {
                     $histArr = $series[$k] ?? [];
-                    if (count($histArr) < $this->MIN_SAMPLES) continue;
+                    $historySamples = count($histArr);
+                    $mu = null;
+                    $sigma = null;
+                    $z = null;
 
-                    [$mu, $sigma] = $this->winsorizedStats($histArr);
-                    $sigma = max($sigma, 1.0);
+                    if ($historySamples >= $this->MIN_SAMPLES && $historySamples > 0) {
+                        [$mu, $sigma] = $this->winsorizedStats($histArr);
+                        $sigma = max($sigma, 1.0);
+                    }
 
-                    $z   = ((int)$v['total_vol'] - $mu) / $sigma;
+                    if ($historySamples >= $this->MIN_Z_SAMPLES && !is_null($mu) && !is_null($sigma)) {
+                        $z = ((int) $v['total_vol'] - $mu) / $sigma;
+                    }
+
                     $oi  = max(1, (int)($oiToday[$k] ?? 0));
                     $rat = (int)$v['total_vol'] / $oi;
+                    $confidence = $historySamples >= $this->MIN_Z_SAMPLES ? 'normal' : 'low';
 
-                    if ($v['total_vol'] >= $this->VOL_MIN && ($z >= $this->Z_SCORE_MIN || $rat >= $this->VOL_OI_MIN)) {
+                    if (
+                        $v['total_vol'] >= $this->VOL_MIN
+                        && (($z !== null && $z >= $this->Z_SCORE_MIN) || $rat >= $this->VOL_OI_MIN)
+                    ) {
                         $payload[] = [
                             'symbol'    => $symbol,
                             'data_date' => $latest,
                             'exp_date'  => $exp,
                             'strike'    => $k,
-                            'z_score'   => round($z, 3),
+                            'z_score'   => $z !== null ? round($z, 3) : null,
                             'vol_oi'    => round($rat, 4),
                             'meta'      => json_encode([
                                 'call_vol'    => (int)($v['call_vol'] ?? 0),
@@ -147,8 +166,11 @@ class ComputeUAJob implements ShouldQueue
                                 'premium_usd' => isset($v['total_prem']) && $v['total_prem'] !== null ? round($v['total_prem'], 2) : null,
                                 'call_prem'   => isset($v['call_prem']) ? round($v['call_prem'],2) : null,
                                 'put_prem'    => isset($v['put_prem'])  ? round($v['put_prem'],2)  : null,
-                                'mu'          => round($mu,2),
-                                'sigma'       => round($sigma,2),
+                                'mu'          => $mu !== null ? round($mu, 2) : null,
+                                'sigma'       => $sigma !== null ? round($sigma, 2) : null,
+                                'history_samples' => $historySamples,
+                                'confidence' => $confidence,
+                                'baseline_excludes_today' => true,
                             ], JSON_THROW_ON_ERROR),
                             'created_at'=> now(),
                             'updated_at'=> now(),

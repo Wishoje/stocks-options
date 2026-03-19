@@ -194,7 +194,7 @@ class ActivityController extends Controller
                 return [
                     'exp_date' => $r->exp_date,
                     'strike'   => (float)$r->strike,
-                    'z_score'  => (float)$r->z_score,
+                    'z_score'  => $r->z_score !== null ? (float)$r->z_score : null,
                     'vol_oi'   => (float)$r->vol_oi,
                     'meta'     => $meta,
                 ];
