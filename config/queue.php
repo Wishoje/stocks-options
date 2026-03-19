@@ -89,7 +89,7 @@ return [
         'connection' => env('QUEUE_MONITOR_CONNECTION', env('QUEUE_CONNECTION', 'database')),
         'queues' => array_values(array_filter(array_map(
             static fn (string $queue): string => trim($queue),
-            explode(',', (string) env('QUEUE_MONITOR_QUEUES', 'default,intraday,intraday-heavy,calculator,quotes'))
+            explode(',', (string) env('QUEUE_MONITOR_QUEUES', 'bootstrap,prime,default,intraday,intraday-heavy,calculator,quotes'))
         ))),
         'max_size' => (int) env('QUEUE_MONITOR_MAX_SIZE', 250),
     ],

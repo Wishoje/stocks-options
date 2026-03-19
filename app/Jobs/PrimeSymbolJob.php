@@ -2,8 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Support\EodSnapshotSelector;
 use Illuminate\Bus\Queueable;
-use Illuminate\Bus\Batch;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -25,45 +25,85 @@ class PrimeSymbolJob implements ShouldQueue
     public function handle(): void
     {
         $s = $this->symbol;
+        $selector = app(EodSnapshotSelector::class);
 
-        $today = now('America/New_York')->isWeekend()
-            ? now('America/New_York')->previousWeekday()->toDateString()
-            : now('America/New_York')->toDateString();
+        $completedSessionDate = $selector->completedSessionDate(now('America/New_York'));
+        $tradeDate = $completedSessionDate;
+        $anchorDate = $selector->resolvedAnchorDate();
 
         $hasPrices = DB::table('prices_daily')
-            ->where('symbol',$s)->where('trade_date',$today)->exists();
+            ->where('symbol',$s)->where('trade_date',$completedSessionDate)->exists();
 
-        $hasAnyExp = DB::table('option_expirations')->where('symbol',$s)->exists();
+        $priceRows = (int) DB::table('prices_daily')
+            ->where('symbol', $s)
+            ->count();
 
-        $hasChainsToday = $hasAnyExp && DB::table('option_chain_data as o')
+        $hasChainsForTradeDate = DB::table('option_chain_data as o')
             ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
             ->where('e.symbol', $s)
-            ->whereDate('o.data_date', $today)
+            ->whereDate('o.data_date', $tradeDate)
             ->exists();
 
-        $hasSeasonalityToday = DB::table('seasonality_5d')
+        $hasSeasonalityForTradeDate = DB::table('seasonality_5d')
             ->where('symbol', $s)
-            ->whereDate('data_date', $today)
+            ->whereDate('data_date', $tradeDate)
             ->exists();
 
-        $hasExpiryPressureToday = DB::table('expiry_pressure')
+        $hasExpiryPressureForTradeDate = DB::table('expiry_pressure')
             ->where('symbol', $s)
-            ->whereDate('data_date', $today)
+            ->whereDate('data_date', $tradeDate)
             ->exists();
 
-        // Only short-circuit if all downstream artifacts already exist
-        if ($hasPrices && $hasChainsToday && $hasSeasonalityToday && $hasExpiryPressureToday) return;
+        $hasPositioningForTradeDate = DB::table('dex_by_expiry')
+            ->where('symbol', $s)
+            ->whereDate('data_date', $tradeDate)
+            ->exists();
 
-        // Run sequentially to guarantee upstream data is ready before dependent jobs execute
-        Bus::chain([
-            new \App\Jobs\PricesBackfillJob([$s], 400),
-            new \App\Jobs\PricesDailyJob([$s]),
-            new \App\Jobs\FetchOptionChainDataJob([$s], 90),
-            new \App\Jobs\ComputeVolMetricsJob([$s]),
-            new \App\Jobs\Seasonality5DJob([$s], 15, 2),
-            new \App\Jobs\ComputeExpiryPressureJob([$s], 3),
-            new \App\Jobs\ComputePositioningJob([$s]),
-            new \App\Jobs\ComputeUAJob([$s]),
-        ])->onQueue(self::QUEUE)->dispatch();
+        $hasVolMetricsForAnchorDate = DB::table('iv_term')
+            ->where('symbol', $s)
+            ->whereDate('data_date', $anchorDate)
+            ->exists();
+
+        $hasUaForAnchorDate = DB::table('unusual_activity')
+            ->where('symbol', $s)
+            ->whereDate('data_date', $anchorDate)
+            ->exists();
+
+        $jobs = [];
+
+        if ($priceRows < 30) {
+            $jobs[] = new \App\Jobs\PricesBackfillJob([$s], 400);
+        }
+        if (!$hasPrices) {
+            $jobs[] = new \App\Jobs\PricesDailyJob([$s]);
+        }
+        if (!$hasChainsForTradeDate) {
+            $jobs[] = new \App\Jobs\FetchOptionChainDataJob([$s], 90);
+        }
+        if (!$hasVolMetricsForAnchorDate) {
+            $jobs[] = new \App\Jobs\ComputeVolMetricsJob([$s]);
+        }
+        if (!$hasSeasonalityForTradeDate) {
+            $jobs[] = new \App\Jobs\Seasonality5DJob([$s], 15, 2);
+        }
+        if (!$hasExpiryPressureForTradeDate) {
+            $jobs[] = new \App\Jobs\ComputeExpiryPressureJob([$s], 3, $tradeDate);
+        }
+        if (!$hasPositioningForTradeDate) {
+            $jobs[] = new \App\Jobs\ComputePositioningJob([$s], $tradeDate);
+        }
+        if (!$hasUaForAnchorDate) {
+            $jobs[] = new \App\Jobs\ComputeUAJob([$s]);
+        }
+
+        if ($jobs === []) {
+            return;
+        }
+
+        foreach ($jobs as $job) {
+            $job->onQueue(self::QUEUE);
+        }
+
+        Bus::chain($jobs)->onQueue(self::QUEUE)->dispatch();
     }
 }

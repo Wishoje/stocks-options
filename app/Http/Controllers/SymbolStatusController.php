@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\BootstrapUserSymbolJob;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -126,11 +127,12 @@ class SymbolStatusController extends Controller
             return;
         }
 
-        if (Cache::add("symbol-status:prime:{$sym}", 1, now()->addSeconds(45))) {
-            dispatch(new \App\Jobs\PrimeSymbolJob($sym))->onQueue(\App\Jobs\PrimeSymbolJob::QUEUE);
-        }
+        BootstrapUserSymbolJob::dispatchIfNeeded($sym, 'symbol_status');
+        $hasExpiries = DB::table('option_expirations')
+            ->where('symbol', $sym)
+            ->exists();
 
-        if (Cache::add("symbol-status:intraday:{$sym}", 1, now()->addSeconds(45))) {
+        if ($hasExpiries && Cache::add("symbol-status:intraday:{$sym}", 1, now()->addSeconds(45))) {
             dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))
                 ->onQueue($this->intradayQueueForSymbol($sym));
         }

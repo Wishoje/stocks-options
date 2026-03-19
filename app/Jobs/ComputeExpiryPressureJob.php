@@ -17,12 +17,12 @@ class ComputeExpiryPressureJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
-    public function __construct(public array $symbols, public int $days = 3) {}
+    public function __construct(public array $symbols, public int $days = 3, public ?string $anchorDate = null) {}
 
     public function handle(): void
     {
         $selector = app(EodSnapshotSelector::class);
-        $date = $selector->completedSessionDate(now());
+        $date = $this->anchorDate ?: $selector->completedSessionDate(now());
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);

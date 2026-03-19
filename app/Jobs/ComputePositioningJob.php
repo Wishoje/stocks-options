@@ -21,12 +21,12 @@ class ComputePositioningJob implements ShouldQueue
     protected const DEX_HISTORY_DAYS = 30;
     protected const DEX_FORWARD_DAYS = 90;
 
-    public function __construct(public array $symbols) {}
+    public function __construct(public array $symbols, public ?string $anchorDate = null) {}
 
     public function handle(): void
     {
         $selector = app(EodSnapshotSelector::class);
-        $date = $selector->resolvedAnchorDate();
+        $date = $this->anchorDate ?: $selector->resolvedAnchorDate();
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);

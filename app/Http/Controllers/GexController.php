@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\BootstrapUserSymbolJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -546,9 +547,15 @@ class GexController extends Controller
             return;
         }
 
-        dispatch(new \App\Jobs\PrimeSymbolJob($sym))->onQueue(\App\Jobs\PrimeSymbolJob::QUEUE);
-        dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))
-            ->onQueue($this->intradayQueueForSymbol($sym));
+        BootstrapUserSymbolJob::dispatchIfNeeded($sym, 'gex_controller');
+        $hasExpiries = DB::table('option_expirations')
+            ->where('symbol', $sym)
+            ->exists();
+
+        if ($hasExpiries) {
+            dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))
+                ->onQueue($this->intradayQueueForSymbol($sym));
+        }
     }
 
     protected function intradayQueueForSymbol(string $symbol): string

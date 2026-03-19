@@ -15,6 +15,7 @@ use App\Http\Controllers\IntradayController;
 use App\Http\Controllers\WallScannerController;
 use App\Http\Controllers\AiExportController;
 use App\Http\Controllers\EodHealthController;
+use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\PrimeSymbolJob;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
@@ -62,7 +63,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/prime', function (Request $req) {
         $sym = \App\Support\Symbols::canon($req->input('symbol',''));
         if (!$sym) return response()->noContent(204);
-        dispatch(new PrimeSymbolJob($sym))->onQueue(PrimeSymbolJob::QUEUE);
+        BootstrapUserSymbolJob::dispatchIfNeeded($sym, 'api_prime');
         return response()->noContent(204);
     });
 

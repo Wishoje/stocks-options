@@ -11,7 +11,6 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\Jobs\PrimeSymbolJob;
 
 class FetchPolygonIntradayOptionsJob implements ShouldQueue
 {
@@ -235,7 +234,7 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
         // Prime EOD chain scaffolding once per short window.
         $primeKey = "intraday:noexp:prime:{$symbol}";
         if (Cache::add($primeKey, 1, now()->addMinutes(5))) {
-            PrimeSymbolJob::dispatch($symbol)->onQueue(PrimeSymbolJob::QUEUE);
+            BootstrapUserSymbolJob::dispatchIfNeeded($symbol, 'intraday_no_expiries', 300);
         }
 
         // Re-try intraday pull once after priming; preserve current queue (heavy vs normal).

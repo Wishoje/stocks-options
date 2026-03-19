@@ -7,8 +7,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use App\Models\Watchlist;
+use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
-use App\Jobs\PrimeSymbolJob;
 use App\Support\Market;
 
 class WatchlistController extends Controller
@@ -42,10 +42,7 @@ class WatchlistController extends Controller
             []
         );
 
-        // prime immediately (non-blocking), debounced to avoid storms
-        if (Cache::add("watchlist:prime:{$symbol}", 1, now()->addSeconds(45))) {
-            dispatch(new PrimeSymbolJob($symbol))->onQueue(PrimeSymbolJob::QUEUE);
-        }
+        BootstrapUserSymbolJob::dispatchIfNeeded($symbol, 'watchlist_store');
 
         // Intraday bootstrap:
         // - during market hours: always allow
@@ -54,8 +51,11 @@ class WatchlistController extends Controller
         $hasIntraday = DB::table('option_live_counters')
             ->where('symbol', $symbol)
             ->exists();
+        $hasExpiries = DB::table('option_expirations')
+            ->where('symbol', $symbol)
+            ->exists();
 
-        if ($marketOpen || !$hasIntraday) {
+        if (($marketOpen || !$hasIntraday) && $hasExpiries) {
             if (Cache::add("watchlist:intraday:{$symbol}", 1, now()->addSeconds(45))) {
                 dispatch(new FetchPolygonIntradayOptionsJob([$symbol]))
                     ->onQueue($this->intradayQueueForSymbol($symbol));
