@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Support\EodSnapshotSelector;
+use Carbon\Carbon;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -22,7 +23,7 @@ class ComputeVolMetricsJob implements ShouldQueue
     public function handle(): void
     {
         $selector = app(EodSnapshotSelector::class);
-        $date = $selector->completedSessionDate(now());
+        $date = $selector->resolvedAnchorDate();
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);
@@ -53,6 +54,7 @@ class ComputeVolMetricsJob implements ShouldQueue
                 ]
             );
 
+            DB::table('iv_skew')->where('symbol', $symbol)->where('data_date', $date)->delete();
             $this->computeSkewCurvature($symbol, $date, $expMap, $selectedDates, $rows);
 
             Cache::forget("iv_term:{$symbol}");
@@ -66,7 +68,11 @@ class ComputeVolMetricsJob implements ShouldQueue
      */
     protected function selectedChainContext(string $symbol, string $date, EodSnapshotSelector $selector): array
     {
-        $expMap = DB::table('option_expirations')->where('symbol', $symbol)->pluck('id', 'expiration_date');
+        $expMap = DB::table('option_expirations')
+            ->where('symbol', $symbol)
+            ->whereDate('expiration_date', '>=', Carbon::parse($date, 'America/New_York')->toDateString())
+            ->orderBy('expiration_date')
+            ->pluck('id', 'expiration_date');
         if ($expMap->isEmpty()) {
             return [$expMap, collect(), collect()];
         }

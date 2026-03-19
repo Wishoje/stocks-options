@@ -56,6 +56,11 @@ class ComputeUAJob implements ShouldQueue
 
             if ($expiries->isEmpty()) continue;
 
+            DB::table('unusual_activity')
+                ->where('symbol', $symbol)
+                ->where('data_date', $latest)
+                ->delete();
+
             foreach ($expiries as $exp) {
                 // build column list safely
                 $cols = ['o.strike','o.option_type','o.volume','o.open_interest'];
