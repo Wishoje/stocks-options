@@ -40,51 +40,36 @@
           <div class="xl:col-span-7 2xl:col-span-6">
             <div class="max-w-3xl">
               <h1 class="text-4xl font-semibold tracking-tight sm:text-5xl">
-                Trade with clarity:
-                <span class="text-cyan-200">levels</span>,
-                <span class="text-blue-200">positioning</span>,
-                and flow<span class="text-white/70"> in one place</span>.
+                Know the important levels
+                <span class="text-cyan-200">before the open</span>
+                and confirm the move
+                <span class="text-white/70">before you click</span>.
               </h1>
 
               <p class="mt-4 text-base text-white/70">
-                Stop guessing. Spot the levels that matter, confirm with positioning, and follow real flow while it's happening.
-                Built for fast daily prep and more confident execution.
+                Map likely support and resistance, see where hedging pressure may matter, and track options flow in one
+                terminal instead of bouncing between six tabs. Built for faster prep and cleaner intraday decisions.
               </p>
 
               <!-- persuasion bullets -->
               <ul class="mt-5 grid gap-2 text-sm text-white/70 sm:grid-cols-2">
                 <li class="flex gap-2">
                   <span class="text-cyan-200">&#10003;</span>
-                  Find real "walls" and reaction zones faster
+                  Plan the key levels before the bell
                 </li>
                 <li class="flex gap-2">
                   <span class="text-cyan-200">&#10003;</span>
-                  See dealer positioning context by expiry (DEX)
+                  Stop guessing where price may stall or squeeze
                 </li>
                 <li class="flex gap-2">
                   <span class="text-cyan-200">&#10003;</span>
-                  Track intraday flow without tick noise (1-min snapshots)
+                  See flow and positioning in one place
                 </li>
                 <li class="flex gap-2">
                   <span class="text-cyan-200">&#10003;</span>
-                  Size risk with payoff + P&L tools in seconds
+                  Define risk and sizing in seconds
                 </li>
               </ul>
-
-              <div v-if="showGlossary" class="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div class="text-sm font-semibold text-white/90">New to these terms?</div>
-                <div class="mt-1 text-sm text-white/60">
-                  Start with the quick glossary: GEX, DEX, 0DTE, Pin Risk, VRP, Term Structure.
-                </div>
-                <div class="mt-3 flex flex-wrap gap-2">
-                  <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/gex">GEX</a>
-                  <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/dex">DEX</a>
-                  <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/0dte">0DTE</a>
-                  <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/pin-risk">Pin Risk</a>
-                  <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/vrp">VRP</a>
-                  <a class="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70 hover:bg-white/10" href="/glossary/term-structure">Term Structure</a>
-                </div>
-              </div>
 
               <!-- CTAs -->
               <div class="mt-7 flex flex-col gap-3 sm:flex-row">
@@ -107,7 +92,7 @@
               <div class="mt-4 flex flex-wrap gap-2 text-xs text-white/50">
                 <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1">No financial advice</span>
                 <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1">Built for repeatable prep</span>
-                <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1">Fast scanning UI</span>
+                <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1">Browser-based, no install</span>
               </div>
 
             </div>
@@ -120,46 +105,47 @@
                 Why traders start here
               </div>
               <h3 class="mt-3 text-2xl font-semibold leading-tight text-white">
-                Built for decisions, not chart collecting.
+                Built for a trade plan, not just another chart.
               </h3>
               <p class="mt-3 text-sm text-white/65">
-                Get the full workflow in one terminal: scan, validate levels, confirm with positioning, and execute with clearer risk.
+                See what matters before the open, confirm it at the open, and stay focused during the session without
+                tab hopping between disconnected tools.
               </p>
 
               <ul class="mt-5 space-y-2.5 text-sm text-white/70">
                 <li class="flex gap-2.5">
                   <span class="text-cyan-200">&#10003;</span>
-                  1-minute intraday updates during market hours
+                  Find likely support and resistance before price gets there
                 </li>
                 <li class="flex gap-2.5">
                   <span class="text-cyan-200">&#10003;</span>
-                  7-day free trial with full platform access
+                  See when dealer hedging may amplify the move
                 </li>
                 <li class="flex gap-2.5">
                   <span class="text-cyan-200">&#10003;</span>
-                  Equities and ETFs with options chains
+                  Catch aggressive options flow faster
                 </li>
                 <li class="flex gap-2.5">
                   <span class="text-cyan-200">&#10003;</span>
-                  Secure Stripe checkout and cancel anytime
+                  Build one repeatable workflow for prep and execution
                 </li>
               </ul>
 
               <div class="mt-5 grid gap-3 sm:grid-cols-2">
                 <div class="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <div class="text-sm font-semibold">Daily prep in minutes</div>
-                  <div class="mt-1 text-xs text-white/60">Scan the watchlist and map key levels fast.</div>
+                  <div class="text-sm font-semibold">Before the open</div>
+                  <div class="mt-1 text-xs text-white/60">Map the levels and expiries that deserve attention.</div>
                 </div>
                 <div class="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <div class="text-sm font-semibold">Positioning confirmation</div>
-                  <div class="mt-1 text-xs text-white/60">Validate setups with expiry-level dealer context.</div>
+                  <div class="text-sm font-semibold">During the session</div>
+                  <div class="mt-1 text-xs text-white/60">Use flow and scanner signals to confirm or reject the setup.</div>
                 </div>
               </div>
 
               <div class="mt-5 rounded-2xl border border-cyan-300/25 bg-cyan-400/10 p-4">
                 <div class="text-sm font-semibold text-white">From $29.99/mo</div>
                 <div class="mt-1 text-xs text-white/70">
-                  7-day trial. Cancel anytime. Full features included.
+                  7-day trial. Full access from day one. Cancel anytime.
                 </div>
                 <Link
                   :href="route('pricing')"
@@ -177,9 +163,10 @@
         <div class="mt-2 pb-6">
           <div class="flex items-end justify-between gap-6">
             <div>
-              <h2 class="text-xl font-semibold">Core workflow tools</h2>
+              <h2 class="text-xl font-semibold">What traders use most</h2>
               <p class="mt-2 text-sm text-white/60">
-                These are the "daily drivers" most traders start with. There are many more tools inside the platform.
+                Start with the outcomes first. The technical views below are the tools most traders use to build that
+                workflow.
               </p>
             </div>
           </div>
@@ -187,52 +174,52 @@
           <!-- Bigger ShotCards (your ShotCard component should be the "bigger" version) -->
           <div class="mt-6 grid gap-5 2xl:grid-cols-2">
             <ShotCard
-              title="Intraday: Live Flow (1-min snapshots)"
-              pill="Intraday"
+              title="Catch aggressive flow without watching every tick"
+              pill="Live Flow"
               :bullets="[
-                'Updated every 60 seconds during market hours',
-                'Quickly see call vs put pressure by strike',
-                'Great for 0DTE / same-day setups'
+                '1-minute snapshots keep the view readable',
+                'See where call and put pressure is building',
+                'Useful for same-day confirmation and follow-through'
               ]"
               thumb="/marketing/liveFlow.png"
               thumbAlt="Live Flow by Strike"
             />
 
             <ShotCard
-              title="EOD: Net GEX by Strike + Levels"
-              pill="EOD"
+              title="Mark likely support and resistance before price gets there"
+              pill="Net GEX"
               :bullets="[
-                'Walls / zones where price tends to react',
-                'Combine with DEX for positioning context',
-                'Build tomorrow\'s plan in minutes'
+                'Spot likely reaction zones before the session starts',
+                'Use dealer context to understand why they matter',
+                'Build tomorrow\'s map in minutes'
               ]"
               thumb="/marketing/gex.png"
               thumbAlt="Net GEX by Strike"
             />
 
             <ShotCard
-              title="Options Calculator"
-              pill="Tools"
+              title="Define the trade before you enter"
+              pill="Calculator"
               thumbFit="cover"
               thumbObjectPosition="object-top"
               :bullets="[
-                'Scenario modeling with P&L curve',
-                'Payoff tables for easy planning',
-                'Fast sizing for intraday pivots'
+                'Model the move, payoff, and max loss fast',
+                'Use payoff tables to plan entries and exits',
+                'Size risk before the trade is live'
               ]"
               thumb="/marketing/calculator.png"
               thumbAlt="Options Calculator"
             />
 
             <ShotCard
-              title="Dealer Positioning (DEX)"
-              pill="EOD"
+              title="See when hedging pressure may help or hurt the move"
+              pill="DEX"
               thumbFit="cover"
               thumbObjectPosition="object-top"
               :bullets="[
-                'See dealer delta positioning by expiry',
-                'Add context behind levels and walls',
-                'Spot expiries that actually matter'
+                'See positioning by expiry instead of guessing',
+                'Add context behind levels and squeezes',
+                'Spot the expiries that actually matter'
               ]"
               thumb="/marketing/dex.png"
               thumbAlt="Dealer Positioning (DEX)"
@@ -243,9 +230,9 @@
           <div class="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5">
             <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div class="text-sm text-white/70">
-                <span class="text-white/90 font-semibold">And this is just the surface.</span>
-                Unusual Activity, Premium by Strike, Volatility suite (VRP/term/seasonality), expiry pressure, scanners,
-                and more.
+                <span class="text-white/90 font-semibold">Then go deeper when you need it.</span>
+                Unusual activity, watchlist scanners, expiry tools, premium views, volatility context, and more are all
+                included.
               </div>
             </div>
           </div>
@@ -254,27 +241,28 @@
           <div class="mt-8">
             <div class="rounded-3xl border border-white/10 bg-white/5 p-6">
               <div class="max-w-3xl">
-                <h2 class="text-xl font-semibold">Built for traders who want structure</h2>
+                <h2 class="text-xl font-semibold">Why traders stick with it</h2>
                 <p class="mt-2 text-sm text-white/60">
-                  Most tools show a single angle. GexOptions is designed to stack context:
-                  <span class="text-white/75">flow</span> (what's happening now) +
-                  <span class="text-white/75">levels</span> (where it matters) +
-                  <span class="text-white/75">positioning</span> (why it moves).
+                  Most platforms give you one angle at a time. GexOptions stacks
+                  <span class="text-white/75">levels</span>,
+                  <span class="text-white/75">positioning</span>, and
+                  <span class="text-white/75">flow</span> so you can make a decision with context instead of reacting
+                  blindly.
                 </p>
               </div>
 
               <div class="mt-5 grid gap-3 md:grid-cols-3">
                 <ValueCard
                   title="Faster daily prep"
-                  desc="Scan watchlist, identify walls, and build a level-based plan in minutes."
+                  desc="Go from watchlist to clear plan in minutes instead of checking names one by one."
                 />
                 <ValueCard
-                  title="Cleaner intraday decisions"
-                  desc="One-minute snapshots reduce noise while still showing meaningful shifts."
+                  title="Fewer impulse trades"
+                  desc="Use levels, positioning, and flow together before acting on a move."
                 />
                 <ValueCard
                   title="Better risk discipline"
-                  desc="Use payoff + sizing tools so entries/exits are not guesswork."
+                  desc="Model payoff and sizing before entry so risk is defined, not guessed."
                 />
               </div>
             </div>
@@ -288,10 +276,10 @@
       <div class="rounded-3xl border border-white/10 bg-white/5 p-6">
         <div class="flex items-end justify-between gap-6">
           <div>
-            <h2 class="text-2xl font-semibold tracking-tight">Scan your whole watchlist in seconds</h2>
+            <h2 class="text-2xl font-semibold tracking-tight">Find what matters on your watchlist in seconds</h2>
             <p class="mt-2 text-sm text-white/60 max-w-3xl">
-              The scanner highlights symbols sitting near key GEX walls across timeframes - so you know what deserves
-              attention. Click a hit and jump straight into that symbol's levels + flow.
+              Instead of checking symbols one by one, scan the whole list and surface the names sitting near important
+              levels. Click a hit and jump straight into that symbol's map and flow.
             </p>
           </div>
         </div>
@@ -301,22 +289,23 @@
           <div class="lg:col-span-5">
             <div class="rounded-2xl border border-white/10 bg-black/20 p-5">
               <div class="text-sm text-white/70">
-                <span class="text-white/90 font-semibold">Find wall hits fast:</span>
-                scan everything, spot what's near key levels, and focus your time where it matters.
+                <span class="text-white/90 font-semibold">Cut the tab hopping:</span>
+                scan everything at once, spot which names are near the important levels, and spend time only where
+                there is an actual setup.
               </div>
 
               <ul class="mt-4 space-y-2.5 text-sm text-white/70">
                 <li class="flex gap-2.5">
                   <span class="mt-2 h-1.5 w-1.5 rounded-full bg-cyan-300/80" />
-                  Watchlist-wide scanning (no tab hopping)
+                  Scan the watchlist in one pass
                 </li>
                 <li class="flex gap-2.5">
                   <span class="mt-2 h-1.5 w-1.5 rounded-full bg-cyan-300/80" />
-                  Quick wall-hit labels (call/put walls)
+                  Surface the names sitting near key levels
                 </li>
                 <li class="flex gap-2.5">
                   <span class="mt-2 h-1.5 w-1.5 rounded-full bg-cyan-300/80" />
-                  Built for tomorrow's plan (and intraday focus)
+                  Jump straight into the symbol that deserves attention
                 </li>
               </ul>
 
@@ -359,16 +348,16 @@
               <div class="px-4 pb-4">
                 <div class="mt-2 grid gap-2 sm:grid-cols-3">
                   <div class="rounded-xl border border-white/10 bg-white/5 p-3">
-                    <div class="text-xs font-semibold">Watchlist-wide</div>
-                    <div class="mt-1 text-xs text-white/60">Scan everything at once.</div>
+                    <div class="text-xs font-semibold">One scan</div>
+                    <div class="mt-1 text-xs text-white/60">Run the whole watchlist at once.</div>
                   </div>
                   <div class="rounded-xl border border-white/10 bg-white/5 p-3">
-                    <div class="text-xs font-semibold">Wall-hit labels</div>
-                    <div class="mt-1 text-xs text-white/60">Hits surfaced fast.</div>
+                    <div class="text-xs font-semibold">Level proximity</div>
+                    <div class="mt-1 text-xs text-white/60">See which names need attention.</div>
                   </div>
                   <div class="rounded-xl border border-white/10 bg-white/5 p-3">
-                    <div class="text-xs font-semibold">Rapid prep</div>
-                    <div class="mt-1 text-xs text-white/60">Built for planning.</div>
+                    <div class="text-xs font-semibold">Faster focus</div>
+                    <div class="mt-1 text-xs text-white/60">Spend time only on valid setups.</div>
                   </div>
                 </div>
               </div>
@@ -387,40 +376,41 @@
 
     <section class="mx-auto max-w-[1440px] px-4 pt-14 sm:px-6 lg:px-8">
       <div class="rounded-3xl border border-white/10 bg-white/5 p-6">
-        <h2 class="text-2xl font-semibold tracking-tight">Common use cases</h2>
+        <h2 class="text-2xl font-semibold tracking-tight">A practical example: planning SPY before the open</h2>
         <p class="mt-2 text-sm text-white/60 max-w-3xl">
-          People do not buy features - they buy outcomes. Here are a few repeatable workflows inside the terminal.
+          The value is not the chart itself. It is having a plan before price reaches the level and a way to confirm or
+          reject that plan once the session starts.
         </p>
 
         <div class="mt-6 grid gap-4 lg:grid-cols-3">
           <div class="rounded-2xl border border-white/10 bg-black/20 p-5">
-            <div class="text-sm font-semibold text-white/90">0DTE Fade Reversal</div>
+            <div class="text-sm font-semibold text-white/90">1. Mark the map before the bell</div>
             <ul class="mt-3 space-y-2 text-sm text-white/65">
-              <li>Scan for GEX walls near spot</li>
-              <li>Confirm premium exhaustion in flow</li>
-              <li>Validate with DEX / expiry pressure</li>
+              <li>Identify likely support and resistance</li>
+              <li>Note which expiries may matter most</li>
+              <li>Write down the levels that would change your bias</li>
             </ul>
-            <div class="mt-3 text-xs text-white/50">Outcome: higher-confidence fades at key zones.</div>
+            <div class="mt-3 text-xs text-white/50">Outcome: you start the day with a plan instead of reacting late.</div>
           </div>
 
           <div class="rounded-2xl border border-white/10 bg-black/20 p-5">
-            <div class="text-sm font-semibold text-white/90">Momentum Breakout</div>
+            <div class="text-sm font-semibold text-white/90">2. Confirm or reject the move at the open</div>
             <ul class="mt-3 space-y-2 text-sm text-white/65">
-              <li>Watch delta OI expansion</li>
-              <li>Confirm wall breaks with flow imbalance</li>
-              <li>Align with term/VRP regime</li>
+              <li>Watch whether aggressive flow appears at the planned level</li>
+              <li>See if price is being absorbed, rejected, or pushed through</li>
+              <li>Stay selective when flow and positioning disagree</li>
             </ul>
-            <div class="mt-3 text-xs text-white/50">Outcome: trade continuation with structure.</div>
+            <div class="mt-3 text-xs text-white/50">Outcome: fewer random entries and cleaner confirmation.</div>
           </div>
 
           <div class="rounded-2xl border border-white/10 bg-black/20 p-5">
-            <div class="text-sm font-semibold text-white/90">Expiry Pin Risk Week</div>
+            <div class="text-sm font-semibold text-white/90">3. Stay focused during the session</div>
             <ul class="mt-3 space-y-2 text-sm text-white/65">
-              <li>Check pin score + strike clusters</li>
-              <li>Map levels with Net GEX</li>
-              <li>Use flow to avoid noise</li>
+              <li>Scan the watchlist for names near important levels</li>
+              <li>Jump directly into the symbols with real setup potential</li>
+              <li>Ignore the noise from everything else</li>
             </ul>
-            <div class="mt-3 text-xs text-white/50">Outcome: fewer "random" chop days.</div>
+            <div class="mt-3 text-xs text-white/50">Outcome: more attention on the names that actually matter.</div>
           </div>
         </div>
       </div>
@@ -472,22 +462,20 @@ import { trackEvent } from '@/lib/ga'
 
 const page = usePage()
 
-const title = 'GexOptions - Levels, Dealer Positioning (DEX), and Options Flow'
+const title = 'GexOptions - Premarket Levels, Positioning, and Options Flow'
 const description =
-  'Options analytics terminal with 1-minute intraday snapshots, GEX levels, dealer positioning (DEX), scanners, and risk tools for daily prep and cleaner intraday decisions.'
+  'Map key levels before the open, confirm moves with positioning and options flow, and manage watchlists and risk in one trading terminal.'
 const url = 'https://gexoptions.com/'
-const showGlossary = !!page.props?.marketing?.show_glossary
 const registerWithPlanUrl = '/register?plan=earlybird&billing=monthly'
 
 const sharedFeatures = [
   'All symbols',
-  'EOD + 1-min intraday snapshots',
-  'Net GEX by strike + levels',
-  'Dealer positioning (DEX) + expiry pressure',
-  'Live Flow + Premium by strike',
-  'Unusual Activity + filters',
-  'Options Calculator (P&L charts + payoff tables)',
-  'Volatility suite (term, VRP, seasonality)',
+  'Premarket level map + 1-minute intraday updates',
+  'Net GEX levels + dealer positioning (DEX)',
+  'Live flow + premium by strike',
+  'Unusual activity + watchlist scanning',
+  'Options calculator + payoff planning',
+  'Volatility suite + expiry context',
   'Watchlist scanners',
 ]
 

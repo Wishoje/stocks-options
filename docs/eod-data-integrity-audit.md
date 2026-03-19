@@ -2,6 +2,8 @@
 
 This document summarizes known ways EOD views can show stale, mixed, or incomplete data.
 
+For the forward-looking remediation plan, see [EOD Trust Plan](eod-trust-plan.md).
+
 ## Scope
 
 Reviewed EOD-facing endpoints and pages:
@@ -123,3 +125,4 @@ php artisan watchlist:repair-missing --date=YYYY-MM-DD --profile=broad --check-i
 
 - [Watchlist Preload Runbook](watchlist-preload-runbook.md)
 - [EOD GEX Cache and Prewarm](eod-gex-cache.md)
+- [EOD Trust Plan](eod-trust-plan.md)
