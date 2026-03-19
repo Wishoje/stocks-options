@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\BootstrapUserSymbolJob;
+use App\Support\EodSnapshotSelector;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -20,7 +21,7 @@ class SymbolStatusController extends Controller
         if ($ny->isWeekend()) {
             $ny = $ny->previousWeekday();
         }
-        $tradeDate = $ny->toDateString();
+        $tradeDate = app(EodSnapshotSelector::class)->completedSessionDate($ny->copy());
 
         // --- resolve expiration dates for the timeframe ---
         $daysMap = ['0d' => 0, '1d' => 1, '7d' => 7, '14d' => 14, '21d' => 21, '30d' => 30, '45d' => 45, '60d' => 60, '90d' => 90];

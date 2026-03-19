@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use App\Models\OptionExpiration;
+use App\Support\EodSnapshotSelector;
 use App\Support\EodHealth;
 use Carbon\Carbon;
 
@@ -1015,11 +1016,7 @@ class FetchOptionChainDataJob implements ShouldQueue
 
     protected function tradingDate(Carbon $now): string
     {
-        $ny = $now->copy()->setTimezone('America/New_York');
-        if ($ny->isWeekend()) {
-            $ny->previousWeekday();
-        }
-        return $ny->toDateString();
+        return app(EodSnapshotSelector::class)->completedSessionDate($now);
     }
 
     protected function timeToExpirationYears(int $expirationTimestamp): float
