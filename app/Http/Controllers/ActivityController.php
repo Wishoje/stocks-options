@@ -17,6 +17,9 @@ class ActivityController extends Controller
         $minVolOI    = (float)($req->query('min_vol_oi', 1.0));
         $minVol      = (int)($req->query('min_vol', 0));
         $minPremium  = (float)($req->query('min_premium', 0));
+        if ($minPremium <= 0) {
+            $minPremium = $this->defaultPremiumFloor($symbol);
+        }
         $limit       = (int)($req->query('limit', 50));     // global cap
         $perExp      = (int)($req->query('per_expiry', 5)); // top-N per expiry
         $sideFilter  = $req->query('only_side');            // 'call'|'put'|null
@@ -225,6 +228,21 @@ class ActivityController extends Controller
 
         return (($b->z_score ?? null) <=> ($a->z_score ?? null))
             ?: ((float) $b->vol_oi <=> (float) $a->vol_oi);
+    }
+
+    private function defaultPremiumFloor(string $symbol): float
+    {
+        $symbol = strtoupper($symbol);
+
+        if (in_array($symbol, ['SPY', 'QQQ', 'SPX', 'NDX'], true)) {
+            return 100000.0;
+        }
+
+        if (in_array($symbol, ['IWM', 'DIA', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'META', 'GOOG', 'GOOGL'], true)) {
+            return 50000.0;
+        }
+
+        return 25000.0;
     }
 
     // prefer last close for same date, else last print
