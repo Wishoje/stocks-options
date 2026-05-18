@@ -364,6 +364,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                         'massive_pages' => $massiveMeta['pages'] ?? null,
                         'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
                         'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
+                        'candidate_expiries_generated' => $massiveMeta['candidate_expiries_generated'] ?? 0,
                         'expiry_backfill_requested' => $massiveMeta['expiry_backfill_requested'] ?? 0,
                         'expiry_backfill_fetched' => $massiveMeta['expiry_backfill_fetched'] ?? 0,
                         'expiry_backfill_incomplete_requested' => $massiveMeta['expiry_backfill_incomplete_requested'] ?? 0,
@@ -385,6 +386,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                     'massive_pages' => $massiveMeta['pages'] ?? null,
                     'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
                     'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
+                    'candidate_expiries_generated' => $massiveMeta['candidate_expiries_generated'] ?? 0,
                 ]];
             }
 
@@ -407,6 +409,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 'massive_pages' => $massiveMeta['pages'] ?? null,
                 'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
                 'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
+                'candidate_expiries_generated' => $massiveMeta['candidate_expiries_generated'] ?? 0,
                 'expiry_backfill_requested' => $massiveMeta['expiry_backfill_requested'] ?? 0,
                 'expiry_backfill_fetched' => $massiveMeta['expiry_backfill_fetched'] ?? 0,
                 'expiry_backfill_incomplete_requested' => $massiveMeta['expiry_backfill_incomplete_requested'] ?? 0,
@@ -426,6 +429,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             'massive_pages' => $massiveMeta['pages'] ?? null,
             'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
             'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
+            'candidate_expiries_generated' => $massiveMeta['candidate_expiries_generated'] ?? 0,
         ]];
     }
 
@@ -588,6 +592,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             $windowStart,
             $windowEnd
         );
+        $candidateExpiries = $this->massiveCandidateExpirations($symbol, $windowStart, $windowEnd);
 
         $maxPages = max(50, (int) config('services.massive.eod_chain_max_pages', 120));
         $pageLimit = max(1, min(250, (int) config('services.massive.eod_chain_page_limit', 250)));
@@ -626,7 +631,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         $incompleteExpiries = $this->massiveIncompleteExpiries($byExp);
         $knownExpiries = $this->massiveExpiryHints(
             $symbol,
-            array_values(array_unique(array_merge(array_keys($byExp), $referenceExpiries))),
+            array_values(array_unique(array_merge(array_keys($byExp), $referenceExpiries, $candidateExpiries))),
             $windowStart,
             $windowEnd
         );
@@ -759,6 +764,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             'reference_pages' => $referenceMeta['pages'] ?? null,
             'reference_http_status' => $referenceMeta['http_status'] ?? null,
             'reference_expiries_found' => count($referenceExpiries),
+            'candidate_expiries_generated' => count($candidateExpiries),
             'expiry_backfill_requested' => $expiryBackfillRequested,
             'expiry_backfill_fetched' => $expiryBackfillFetched,
             'expiry_backfill_incomplete_requested' => $expiryBackfillIncompleteRequested,
@@ -766,6 +772,38 @@ class FetchOptionChainDataJob implements ShouldQueue
             'expiry_backfill_side_requested' => $expiryBackfillSideRequested,
             'expiry_backfill_side_fetched' => $expiryBackfillSideFetched,
         ]];
+    }
+
+    /**
+     * Generate likely expiration dates when provider discovery is sparse.
+     *
+     * SPY/QQQ/IWM have daily expirations, so probing weekdays is the practical
+     * way to avoid accepting a reference page that only exposes the front dates.
+     * Other underlyings commonly have Friday weeklies/monthlies; the reference
+     * endpoint still supplies the fuller list when available.
+     *
+     * @return array<int,string>
+     */
+    protected function massiveCandidateExpirations(string $symbol, ?Carbon $windowStart, ?Carbon $windowEnd): array
+    {
+        if (!$windowStart || !$windowEnd) {
+            return [];
+        }
+
+        $dailyExpirationSymbols = ['SPY', 'QQQ', 'IWM'];
+        $includeWeekdays = in_array($symbol, $dailyExpirationSymbols, true);
+        $candidates = [];
+        $cursor = $windowStart->copy()->startOfDay();
+        $end = $windowEnd->copy()->startOfDay();
+
+        while ($cursor->lte($end)) {
+            if (!$cursor->isWeekend() && ($includeWeekdays || $cursor->isFriday())) {
+                $candidates[] = $cursor->toDateString();
+            }
+            $cursor->addDay();
+        }
+
+        return $candidates;
     }
 
     /**

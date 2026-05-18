@@ -87,6 +87,83 @@ class FetchOptionChainDataJobTest extends TestCase
         $this->assertSame(3, $meta['massive_expiries_in_window'] ?? null);
     }
 
+    public function test_eod_fetch_probes_daily_expiration_candidates_when_reference_discovery_is_sparse(): void
+    {
+        config()->set('services.finnhub.api_key', 'finnhub-test');
+        config()->set('services.massive.key', 'massive-test');
+        config()->set('services.massive.base', 'https://api.massive.com');
+        config()->set('services.massive.eod_chain_max_hint_expiries', 90);
+
+        Http::fake(function (Request $request) {
+            $url = (string) $request->url();
+
+            if (str_contains($url, 'finnhub.io/api/v1/stock/option-chain')) {
+                return Http::response([
+                    'lastTradePrice' => 500.0,
+                    'data' => [
+                        $this->finnhubSet('2026-05-18'),
+                        $this->finnhubSet('2026-05-19'),
+                    ],
+                ]);
+            }
+
+            if (str_contains($url, '/v3/reference/options/contracts')) {
+                return Http::response([
+                    'results' => [
+                        ['expiration_date' => '2026-05-18'],
+                        ['expiration_date' => '2026-05-19'],
+                    ],
+                ]);
+            }
+
+            if (str_contains($url, '/v3/snapshot/options/SPY') && str_contains($url, 'expiration_date=2026-05-20')) {
+                return Http::response([
+                    'results' => $this->massiveContracts('2026-05-20'),
+                ]);
+            }
+
+            if (str_contains($url, '/v3/snapshot/options/SPY') && str_contains($url, 'expiration_date=2026-05-22')) {
+                return Http::response([
+                    'results' => $this->massiveContracts('2026-05-22'),
+                ]);
+            }
+
+            if (str_contains($url, '/v3/snapshot/options/SPY') && str_contains($url, 'expiration_date=')) {
+                return Http::response(['results' => []]);
+            }
+
+            if (str_contains($url, '/v3/snapshot/options/SPY')) {
+                return Http::response([
+                    'results' => $this->massiveContracts('2026-05-18'),
+                ]);
+            }
+
+            return Http::response([], 404);
+        });
+
+        (new FetchOptionChainDataJob(['SPY'], 30, '2026-05-18'))->handle();
+
+        $expirationsWithRows = DB::table('option_chain_data as o')
+            ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+            ->where('e.symbol', 'SPY')
+            ->whereDate('o.data_date', '2026-05-18')
+            ->distinct()
+            ->orderBy('e.expiration_date')
+            ->pluck('e.expiration_date')
+            ->map(fn ($date) => (string) $date)
+            ->all();
+
+        $this->assertSame([
+            '2026-05-18',
+            '2026-05-20',
+            '2026-05-22',
+        ], $expirationsWithRows);
+
+        $meta = Cache::get('eod:fetch-meta:SPY:2026-05-18');
+        $this->assertGreaterThan(2, $meta['candidate_expiries_generated'] ?? 0);
+        $this->assertSame(2, $meta['expiry_backfill_fetched'] ?? null);
+    }
+
     /**
      * @return array<string,mixed>
      */
