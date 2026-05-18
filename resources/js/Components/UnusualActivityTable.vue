@@ -51,12 +51,12 @@
               </span>
             </td>
 
-            <td class="text-right font-semibold" :class="row.z_score>=4?'text-red-300':'text-amber-300'">
-              {{ row.z_score.toFixed(2) }}
+            <td class="text-right font-semibold" :class="zScoreClass(row)">
+              {{ formatNumber(row.z_score, 2, 'N/A') }}
             </td>
 
-            <td class="text-right" :class="row.vol_oi>=1 ? 'text-emerald-300 font-medium' : ''">
-              {{ row.vol_oi.toFixed(2) }}
+            <td class="text-right" :class="volOiClass(row)">
+              {{ formatNumber(row.vol_oi) }}
             </td>
 
             <td class="text-right">{{ (row.meta?.total_vol ?? 0).toLocaleString() }}</td>
@@ -92,12 +92,34 @@ function sortBy(k){ key.value = k; dir.value = (dir.value==='asc'?'desc':'asc') 
 const sorted = computed(()=>{
   const arr = [...props.rows]
   arr.sort((a,b)=>{
-    const av=a[key.value], bv=b[key.value]
+    const av = sortableValue(a, key.value)
+    const bv = sortableValue(b, key.value)
+    if (av == null && bv == null) return 0
+    if (av == null) return 1
+    if (bv == null) return -1
     if (av===bv) return 0
     return dir.value==='asc' ? (av<bv?-1:1) : (av>bv?-1:1)
   })
   return arr
 })
+function sortableValue(row, field) {
+  if (field === 'exp_date') return row?.exp_date || null
+  const value = Number(row?.[field])
+  return Number.isFinite(value) ? value : null
+}
+function formatNumber(value, digits = 2, fallback = '0.00') {
+  const number = Number(value)
+  return Number.isFinite(number) ? number.toFixed(digits) : fallback
+}
+function zScoreClass(row) {
+  const value = Number(row?.z_score)
+  if (!Number.isFinite(value)) return 'text-gray-400'
+  return value >= 4 ? 'text-red-300' : 'text-amber-300'
+}
+function volOiClass(row) {
+  const value = Number(row?.vol_oi)
+  return Number.isFinite(value) && value >= 1 ? 'text-emerald-300 font-medium' : ''
+}
 function formatCurrency(n) {
   try { return new Intl.NumberFormat(undefined, { style:'currency', currency:'USD', maximumFractionDigits:0 }).format(n) }
   catch { return `$${Math.round(n).toLocaleString()}` }

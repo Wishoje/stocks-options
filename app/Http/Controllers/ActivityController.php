@@ -23,6 +23,7 @@ class ActivityController extends Controller
         $withPrem    = filter_var($req->query('with_premium', true), FILTER_VALIDATE_BOOLEAN);
         $nearPct     = (float)($req->query('near_spot_pct', 0)); // e.g. 10 => ±10%
         $sort        = $req->query('sort', 'z_score');      // z_score|vol_oi|premium
+        $sort        = in_array($sort, ['z_score', 'vol_oi', 'premium'], true) ? $sort : 'z_score';
         $useIntraday = (bool)$req->boolean('intraday');
 
         $ttl = now()->addMinutes(15);
@@ -83,9 +84,13 @@ class ActivityController extends Controller
                 }
             }
 
-            $rows = $q->orderByDesc('z_score')
-                    ->orderByDesc('vol_oi')
-                    ->get(['exp_date','strike','z_score','vol_oi','meta']);
+            if ($sort === 'vol_oi') {
+                $q->orderByDesc('vol_oi')->orderByDesc('z_score');
+            } else {
+                $q->orderByDesc('z_score')->orderByDesc('vol_oi');
+            }
+
+            $rows = $q->get(['exp_date','strike','z_score','vol_oi','meta']);
 
             // If intraday & today, pull live volumes per strike and override row meta before filtering/picking.
             $liveByStrike = [];
@@ -154,9 +159,7 @@ class ActivityController extends Controller
 
             $picked = [];
             foreach ($grouped as $ed => $arr) {
-                usort($arr, function($a,$b){
-                    return ($b->z_score <=> $a->z_score) ?: ($b->vol_oi <=> $a->vol_oi);
-                });
+                usort($arr, fn($a,$b) => $this->compareActivityRows($a, $b, $sort));
                 $picked = array_merge($picked, array_slice($arr, 0, max(1,$perExp)));
             }
 
@@ -168,7 +171,7 @@ class ActivityController extends Controller
                     return (float)($mb['premium_usd'] ?? 0) <=> (float)($ma['premium_usd'] ?? 0);
                 });
             } else {
-                usort($picked, fn($a,$b)=>($b->z_score <=> $a->z_score) ?: ($b->vol_oi <=> $a->vol_oi));
+                usort($picked, fn($a,$b) => $this->compareActivityRows($a, $b, $sort));
             }
 
             $picked = array_slice($picked, 0, max(1,$limit));
@@ -211,6 +214,17 @@ class ActivityController extends Controller
 
             return response()->json(['symbol'=>$symbol,'data_date'=>$latest,'items'=>$items], 200);
         });
+    }
+
+    private function compareActivityRows(object $a, object $b, string $sort): int
+    {
+        if ($sort === 'vol_oi') {
+            return ((float) $b->vol_oi <=> (float) $a->vol_oi)
+                ?: (($b->z_score ?? null) <=> ($a->z_score ?? null));
+        }
+
+        return (($b->z_score ?? null) <=> ($a->z_score ?? null))
+            ?: ((float) $b->vol_oi <=> (float) $a->vol_oi);
     }
 
     // prefer last close for same date, else last print

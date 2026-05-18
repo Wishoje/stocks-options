@@ -144,6 +144,12 @@ Schedule::command('hot-options:prune --days=120')
     ->withoutOverlapping(20)
     ->onOneServer();
 
+Schedule::command('options:prune-chain-data --days=180 --batch=50000 --sleep-ms=50')
+    ->timezone('America/New_York')
+    ->weeklyOn(0, '03:35')
+    ->withoutOverlapping(120)
+    ->onOneServer();
+
 Schedule::command('walls:compute --timeframe=all --limit=400 --source=both')
     ->weekdays()
     ->timezone('America/New_York')
