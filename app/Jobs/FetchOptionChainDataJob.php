@@ -92,7 +92,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             }
 
             // Finnhub -> Massive fallback with normalized chain.
-            [$spot, $sets, $providerMeta] = $this->fetchChain($symbol);
+            [$spot, $sets, $providerMeta] = $this->fetchChain($symbol, $windowStart, $windowEnd);
             $providerSpot = (float) $spot;
             [$spot, $spotSource] = $this->resolveSpot($symbol, $date, $providerSpot);
 
@@ -335,17 +335,69 @@ class FetchOptionChainDataJob implements ShouldQueue
      *
      * @return array{0:float,1:array,2:array<string,mixed>}
      */
-    protected function fetchChain(string $symbol): array
+    protected function fetchChain(string $symbol, ?Carbon $windowStart = null, ?Carbon $windowEnd = null): array
     {
         [$finnhubChain, $finnhubMeta] = $this->fetchFinnhubChain($symbol);
         if ($finnhubChain !== null) {
+            $finnhubSets = $finnhubChain[1];
+            $finnhubWindowExpiries = $this->countChainExpirationsInWindow(
+                $finnhubSets,
+                $windowStart,
+                $windowEnd
+            );
+
+            if ($this->shouldTryMassiveForFinnhubChain($symbol, $finnhubWindowExpiries, $windowStart, $windowEnd)) {
+                [$massiveChain, $massiveMeta] = $this->fetchMassiveChain($symbol, $windowStart, $windowEnd);
+                $massiveWindowExpiries = $massiveChain !== null
+                    ? $this->countChainExpirationsInWindow($massiveChain[1], $windowStart, $windowEnd)
+                    : 0;
+
+                if ($massiveChain !== null && $massiveWindowExpiries > $finnhubWindowExpiries) {
+                    return [$massiveChain[0] ?: $finnhubChain[0], $massiveChain[1], [
+                        'provider' => 'massive',
+                        'provider_status' => 'ok',
+                        'finnhub_status' => 'ok_sparse',
+                        'finnhub_set_count' => count($finnhubSets),
+                        'finnhub_expiries_in_window' => $finnhubWindowExpiries,
+                        'massive_status' => $massiveMeta['status'] ?? 'ok',
+                        'massive_expiries_in_window' => $massiveWindowExpiries,
+                        'massive_pages' => $massiveMeta['pages'] ?? null,
+                        'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
+                        'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
+                        'expiry_backfill_requested' => $massiveMeta['expiry_backfill_requested'] ?? 0,
+                        'expiry_backfill_fetched' => $massiveMeta['expiry_backfill_fetched'] ?? 0,
+                        'expiry_backfill_incomplete_requested' => $massiveMeta['expiry_backfill_incomplete_requested'] ?? 0,
+                        'expiry_backfill_incomplete_fetched' => $massiveMeta['expiry_backfill_incomplete_fetched'] ?? 0,
+                        'expiry_backfill_side_requested' => $massiveMeta['expiry_backfill_side_requested'] ?? 0,
+                        'expiry_backfill_side_fetched' => $massiveMeta['expiry_backfill_side_fetched'] ?? 0,
+                    ]];
+                }
+
+                return [$finnhubChain[0], $finnhubSets, [
+                    'provider' => 'finnhub',
+                    'provider_status' => 'ok_sparse_kept_finnhub',
+                    'finnhub_status' => 'ok_sparse',
+                    'finnhub_set_count' => count($finnhubSets),
+                    'finnhub_expiries_in_window' => $finnhubWindowExpiries,
+                    'massive_status' => $massiveMeta['status'] ?? 'not_attempted',
+                    'massive_http_status' => $massiveMeta['http_status'] ?? null,
+                    'massive_expiries_in_window' => $massiveWindowExpiries,
+                    'massive_pages' => $massiveMeta['pages'] ?? null,
+                    'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
+                    'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
+                ]];
+            }
+
             return [$finnhubChain[0], $finnhubChain[1], [
                 'provider' => 'finnhub',
                 'provider_status' => 'ok',
+                'finnhub_status' => $finnhubMeta['status'] ?? 'ok',
+                'finnhub_set_count' => count($finnhubSets),
+                'finnhub_expiries_in_window' => $finnhubWindowExpiries,
             ]];
         }
 
-        [$massiveChain, $massiveMeta] = $this->fetchMassiveChain($symbol);
+        [$massiveChain, $massiveMeta] = $this->fetchMassiveChain($symbol, $windowStart, $windowEnd);
         if ($massiveChain !== null) {
             return [$massiveChain[0], $massiveChain[1], [
                 'provider' => 'massive',
@@ -375,6 +427,87 @@ class FetchOptionChainDataJob implements ShouldQueue
             'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
             'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
         ]];
+    }
+
+    /**
+     * Finnhub can return a valid-but-sparse chain for liquid daily-expiry names.
+     * In that case, try Massive and keep whichever provider gives better expiry
+     * coverage inside the requested EOD window.
+     */
+    protected function shouldTryMassiveForFinnhubChain(
+        string $symbol,
+        int $finnhubWindowExpiries,
+        ?Carbon $windowStart,
+        ?Carbon $windowEnd
+    ): bool {
+        if (empty(config('services.massive.key'))) {
+            return false;
+        }
+
+        if ($windowStart && $windowEnd) {
+            return true;
+        }
+
+        return $finnhubWindowExpiries < $this->minimumExpectedWindowExpirations($symbol, $windowStart, $windowEnd);
+    }
+
+    protected function minimumExpectedWindowExpirations(string $symbol, ?Carbon $windowStart, ?Carbon $windowEnd): int
+    {
+        $days = $this->days ?? 90;
+        if ($windowStart && $windowEnd) {
+            $days = max(1, $windowStart->copy()->startOfDay()->diffInDays($windowEnd->copy()->startOfDay()));
+        }
+
+        if (in_array($symbol, ['SPY', 'QQQ', 'IWM'], true) && $windowStart && $windowEnd) {
+            return $this->weekdayCount($windowStart, $windowEnd);
+        }
+
+        return $days >= 30 ? 2 : 1;
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $sets
+     */
+    protected function countChainExpirationsInWindow(array $sets, ?Carbon $windowStart, ?Carbon $windowEnd): int
+    {
+        $startDate = $windowStart?->toDateString();
+        $endDate = $windowEnd?->toDateString();
+        $expirations = [];
+
+        foreach ($sets as $set) {
+            $expirationDate = substr((string) ($set['expirationDate'] ?? ''), 0, 10);
+            if ($expirationDate === '') {
+                continue;
+            }
+
+            if ($startDate && $expirationDate < $startDate) {
+                continue;
+            }
+
+            if ($endDate && $expirationDate > $endDate) {
+                continue;
+            }
+
+            $expirations[$expirationDate] = true;
+        }
+
+        return count($expirations);
+    }
+
+    protected function weekdayCount(Carbon $windowStart, Carbon $windowEnd): int
+    {
+        $count = 0;
+        $cursor = $windowStart->copy()->startOfDay();
+        $end = $windowEnd->copy()->startOfDay();
+
+        while ($cursor->lte($end)) {
+            if (!$cursor->isWeekend()) {
+                $count++;
+            }
+            $cursor->addDay();
+        }
+
+        return $count;
     }
 
     /**
@@ -424,7 +557,7 @@ class FetchOptionChainDataJob implements ShouldQueue
      *
      * @return array{0:?array{0:float,1:array},1:array<string,mixed>}
      */
-    protected function fetchMassiveChain(string $symbol): array
+    protected function fetchMassiveChain(string $symbol, ?Carbon $windowStart = null, ?Carbon $windowEnd = null): array
     {
         $base   = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
         $key    = config('services.massive.key');
@@ -445,6 +578,17 @@ class FetchOptionChainDataJob implements ShouldQueue
             $client = $client->withHeaders([$header => $key]);
         }
 
+        [$referenceExpiries, $referenceMeta] = $this->fetchMassiveReferenceExpirations(
+            $client,
+            $base,
+            $symbol,
+            $mode,
+            $qparam,
+            (string) $key,
+            $windowStart,
+            $windowEnd
+        );
+
         $maxPages = max(50, (int) config('services.massive.eod_chain_max_pages', 120));
         $pageLimit = max(1, min(250, (int) config('services.massive.eod_chain_page_limit', 250)));
 
@@ -464,20 +608,30 @@ class FetchOptionChainDataJob implements ShouldQueue
         $lastStatus = $bulk['meta']['http_status'] ?? null;
         $paginationCapped = (bool) ($bulk['meta']['pagination_capped'] ?? false);
 
-        if (empty($contracts)) {
+        if (empty($contracts) && empty($referenceExpiries)) {
             return [null, [
                 'status' => $lastStatus ? 'http_error' : 'empty_payload',
                 'http_status' => $lastStatus,
                 'pages' => $pages,
                 'page_limit' => $pageLimit,
                 'pagination_capped' => $paginationCapped,
+                'reference_status' => $referenceMeta['status'] ?? null,
+                'reference_pages' => $referenceMeta['pages'] ?? null,
+                'reference_http_status' => $referenceMeta['http_status'] ?? null,
+                'reference_expiries_found' => count($referenceExpiries),
             ]];
         }
 
-        $byExp = $this->normalizeMassiveContracts($contracts);
+        $byExp = $contracts ? $this->normalizeMassiveContracts($contracts) : [];
         $incompleteExpiries = $this->massiveIncompleteExpiries($byExp);
-        $knownExpiries = $this->massiveExpiryHints($symbol, array_keys($byExp));
+        $knownExpiries = $this->massiveExpiryHints(
+            $symbol,
+            array_values(array_unique(array_merge(array_keys($byExp), $referenceExpiries))),
+            $windowStart,
+            $windowEnd
+        );
         $forceExpiryRebuild = $paginationCapped;
+        $missingExpiries = array_values(array_diff($knownExpiries, array_keys($byExp)));
 
         // If broad pagination is capped, backfill missing known expiries one by one.
         $expiryBackfillRequested = 0;
@@ -486,8 +640,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         $expiryBackfillIncompleteFetched = 0;
         $expiryBackfillSideRequested = 0;
         $expiryBackfillSideFetched = 0;
-        if ($forceExpiryRebuild || ($this->repairPartialExpiries && $incompleteExpiries)) {
-            $missingExpiries = array_values(array_diff($knownExpiries, array_keys($byExp)));
+        if ($forceExpiryRebuild || $missingExpiries || ($this->repairPartialExpiries && $incompleteExpiries)) {
             $repairExpiries = $forceExpiryRebuild ? $knownExpiries : $missingExpiries;
             if ($this->repairPartialExpiries && $incompleteExpiries) {
                 $repairExpiries = array_merge($repairExpiries, $incompleteExpiries);
@@ -602,12 +755,118 @@ class FetchOptionChainDataJob implements ShouldQueue
             'pages' => $pages,
             'page_limit' => $pageLimit,
             'pagination_capped' => $paginationCapped,
+            'reference_status' => $referenceMeta['status'] ?? null,
+            'reference_pages' => $referenceMeta['pages'] ?? null,
+            'reference_http_status' => $referenceMeta['http_status'] ?? null,
+            'reference_expiries_found' => count($referenceExpiries),
             'expiry_backfill_requested' => $expiryBackfillRequested,
             'expiry_backfill_fetched' => $expiryBackfillFetched,
             'expiry_backfill_incomplete_requested' => $expiryBackfillIncompleteRequested,
             'expiry_backfill_incomplete_fetched' => $expiryBackfillIncompleteFetched,
             'expiry_backfill_side_requested' => $expiryBackfillSideRequested,
             'expiry_backfill_side_fetched' => $expiryBackfillSideFetched,
+        ]];
+    }
+
+    /**
+     * Ask the contracts reference endpoint for the actual expiration dates in the requested window.
+     *
+     * @return array{0:array<int,string>,1:array<string,mixed>}
+     */
+    protected function fetchMassiveReferenceExpirations(
+        \Illuminate\Http\Client\PendingRequest $client,
+        string $base,
+        string $symbol,
+        string $mode,
+        string $qparam,
+        string $key,
+        ?Carbon $windowStart,
+        ?Carbon $windowEnd
+    ): array {
+        if (!$windowStart || !$windowEnd) {
+            return [[], ['status' => 'missing_window']];
+        }
+
+        $url = "{$base}/v3/reference/options/contracts";
+        $cursor = null;
+        $expiries = [];
+        $lastStatus = null;
+        $pages = 0;
+        $maxPages = max(1, (int) config('services.massive.eod_chain_reference_max_pages', 40));
+        $startDate = $windowStart->copy()->startOfDay()->toDateString();
+        $endDate = $windowEnd->copy()->startOfDay()->toDateString();
+
+        for ($page = 0; $page < $maxPages; $page++) {
+            $pages++;
+            $reqUrl = $cursor ?: $url;
+            $params = [];
+
+            if (!$cursor) {
+                $params = [
+                    'underlying_ticker' => $symbol,
+                    'expiration_date.gte' => $startDate,
+                    'expiration_date.lte' => $endDate,
+                    'as_of' => $startDate,
+                    'order' => 'asc',
+                    'sort' => 'expiration_date',
+                    'limit' => 1000,
+                ];
+
+                if ($mode === 'query') {
+                    $params[$qparam] = $key;
+                }
+            }
+
+            $resp = $client->get($reqUrl, $params);
+            if ($resp->status() === 401) {
+                return [[], [
+                    'status' => 'unauthorized',
+                    'http_status' => 401,
+                    'pages' => $pages,
+                    'pagination_capped' => false,
+                ]];
+            }
+
+            if ($resp->failed()) {
+                $lastStatus = $resp->status();
+                break;
+            }
+
+            $json = $resp->json() ?: [];
+            $batch = $json['results'] ?? [];
+            if (!is_array($batch) || !$batch) {
+                break;
+            }
+
+            foreach ($batch as $contract) {
+                $expiry = substr((string) ($contract['expiration_date'] ?? ''), 0, 10);
+                if ($expiry === '' || $expiry < $startDate || $expiry > $endDate) {
+                    continue;
+                }
+                $expiries[$expiry] = true;
+            }
+
+            $cursor = $json['next_url'] ?? null;
+            if ($cursor && !str_starts_with($cursor, 'http')) {
+                $cursor = $base . $cursor;
+            }
+            if ($cursor && $mode === 'query' && !str_contains($cursor, urlencode($qparam).'=')) {
+                $cursor .= (str_contains($cursor, '?') ? '&' : '?')
+                    . urlencode($qparam) . '=' . urlencode($key);
+            }
+            if (!$cursor) {
+                break;
+            }
+        }
+
+        $dates = array_keys($expiries);
+        sort($dates);
+
+        return [$dates, [
+            'status' => $lastStatus ? 'http_error' : ($dates ? 'ok' : 'empty_payload'),
+            'http_status' => $lastStatus,
+            'pages' => $pages,
+            'pagination_capped' => (bool) $cursor,
         ]];
     }
 
@@ -923,19 +1182,23 @@ class FetchOptionChainDataJob implements ShouldQueue
      * @param array<int|string,string> $existingExpiries
      * @return array<int,string>
      */
-    protected function massiveExpiryHints(string $symbol, array $existingExpiries): array
+    protected function massiveExpiryHints(
+        string $symbol,
+        array $existingExpiries,
+        ?Carbon $windowStart = null,
+        ?Carbon $windowEnd = null
+    ): array
     {
         $nowNy = now('America/New_York');
-        $windowStart = $nowNy->copy()->startOfDay()->toDateString();
-        $windowEnd = ($this->days ? $nowNy->copy()->addDays($this->days) : $nowNy->copy()->addDays(90))
-            ->endOfDay()
+        $startDate = ($windowStart ?: $nowNy->copy()->startOfDay())->toDateString();
+        $endDate = ($windowEnd ?: ($this->days ? $nowNy->copy()->addDays($this->days) : $nowNy->copy()->addDays(90))->endOfDay())
             ->toDateString();
-        $maxHints = max(5, (int) config('services.massive.eod_chain_max_hint_expiries', 40));
+        $maxHints = max(5, (int) config('services.massive.eod_chain_max_hint_expiries', 90));
 
         $knownExpiries = OptionExpiration::query()
             ->where('symbol', $symbol)
-            ->whereDate('expiration_date', '>=', $windowStart)
-            ->whereDate('expiration_date', '<=', $windowEnd)
+            ->whereDate('expiration_date', '>=', $startDate)
+            ->whereDate('expiration_date', '<=', $endDate)
             ->orderBy('expiration_date')
             ->limit($maxHints)
             ->pluck('expiration_date')

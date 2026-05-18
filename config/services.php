@@ -48,7 +48,8 @@ return [
         'eod_chain_max_pages' => (int) env('EOD_CHAIN_MAX_PAGES', 120),
         'eod_chain_page_limit' => (int) env('EOD_CHAIN_PAGE_LIMIT', 250),
         'eod_chain_max_pages_per_expiry' => (int) env('EOD_CHAIN_MAX_PAGES_PER_EXPIRY', 80),
-        'eod_chain_max_hint_expiries' => (int) env('EOD_CHAIN_MAX_HINT_EXPIRIES', 40),
+        'eod_chain_max_hint_expiries' => (int) env('EOD_CHAIN_MAX_HINT_EXPIRIES', 90),
+        'eod_chain_reference_max_pages' => (int) env('EOD_CHAIN_REFERENCE_MAX_PAGES', 40),
         'eod_chain_repair_partial_expiries' =>
             filter_var(env('EOD_CHAIN_REPAIR_PARTIAL_EXPIRIES', true), FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true,
         'eod_min_side_strike_ratio' => (float) env('EOD_MIN_SIDE_STRIKE_RATIO', 0.35),
