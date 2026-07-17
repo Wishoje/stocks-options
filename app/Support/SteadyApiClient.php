@@ -37,6 +37,9 @@ class SteadyApiClient
                     'Authorization' => 'Bearer '.$this->token,
                     'Accept'        => 'application/json',
                 ])
+                ->connectTimeout(5)
+                ->timeout(15)
+                ->retry(2, 500, throw: false)
                 ->get($this->baseUri.'/v1/markets/options/most-active', [
                     'type' => $type,
                     'page' => $page,
@@ -44,7 +47,7 @@ class SteadyApiClient
 
             if ($response->failed()) {
                 throw new \RuntimeException(
-                    'SteadyAPI most-active request failed: '.$response->body()
+                    'SteadyAPI most-active request failed with HTTP '.$response->status().'.'
                 );
             }
 

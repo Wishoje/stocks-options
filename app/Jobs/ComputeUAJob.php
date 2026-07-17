@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 
-class ComputeUAJob implements ShouldQueue
+class ComputeUAJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
@@ -25,12 +25,15 @@ class ComputeUAJob implements ShouldQueue
         public int   $VOL_MIN      = 50,
         public int   $MIN_SAMPLES  = 1,
         public int   $MIN_Z_SAMPLES = 3,
-    ) {}
+        public ?string $anchorDate = null,
+    ) {
+        $this->anchorDate = app(EodSnapshotSelector::class)->resolvedAnchorDate($anchorDate);
+    }
 
     public function handle(): void
     {
         $selector = app(EodSnapshotSelector::class);
-        $anchorDate = $selector->resolvedAnchorDate();
+        $anchorDate = (string) $this->anchorDate;
 
         // cache schema probes once per run (avoid per-query cost)
         $hasMid   = Schema::hasColumn('option_chain_data', 'mid_price');
@@ -52,15 +55,12 @@ class ComputeUAJob implements ShouldQueue
                 ->join('option_expirations as e','e.id','=','o.expiration_id')
                 ->where('e.symbol', $symbol)
                 ->whereDate('o.data_date', $latest)
+                ->distinct()
                 ->pluck('e.expiration_date');
 
             if ($expiries->isEmpty()) continue;
 
-            DB::table('unusual_activity')
-                ->where('symbol', $symbol)
-                ->where('data_date', $latest)
-                ->delete();
-
+            $payload = [];
             foreach ($expiries as $exp) {
                 // build column list safely
                 $cols = ['o.strike','o.option_type','o.volume','o.open_interest'];
@@ -131,7 +131,6 @@ class ComputeUAJob implements ShouldQueue
                     $series[$k][] = (int)$h->total_vol;
                 }
 
-                $payload = [];
                 foreach ($aggToday as $k => $v) {
                     $histArr = $series[$k] ?? [];
                     $historySamples = count($histArr);
@@ -182,32 +181,25 @@ class ComputeUAJob implements ShouldQueue
                         ];
                     }
                 }
-
-
-               if ($payload) {
-                    // 1) sort deterministically to keep lock order stable across workers
-                    usort($payload, function ($a, $b) {
-                        return ($a['symbol']     <=> $b['symbol'])
-                            ?: ($a['data_date']  <=> $b['data_date'])
-                            ?: ($a['exp_date']   <=> $b['exp_date'])
-                            ?: ($a['strike']     <=> $b['strike']);
-                    });
-
-                    // 2) optional: serialize per-symbol writes to avoid overlap entirely
-                    //    (uncomment if you still see deadlocks even after sorting+chunking)
-                    // $lock = \Cache::lock("ua:{$symbol}:{$latest}", 10);
-                    // try { $lock->block(3);
-
-                        // 3) chunk and upsert with retry/backoff on 1213/1205
-                        foreach (array_chunk($payload, 200) as $chunk) {
-                            $this->upsertUaWithRetry($chunk);
-                        }
-
-                    // } finally { optional lock release
-                    //     optional($lock)->release();
-                    // }
-                }
             }
+
+            usort($payload, function ($a, $b) {
+                return ($a['symbol'] <=> $b['symbol'])
+                    ?: ($a['data_date'] <=> $b['data_date'])
+                    ?: ($a['exp_date'] <=> $b['exp_date'])
+                    ?: ($a['strike'] <=> $b['strike']);
+            });
+
+            DB::transaction(function () use ($symbol, $latest, $payload): void {
+                DB::table('unusual_activity')
+                    ->where('symbol', $symbol)
+                    ->where('data_date', $latest)
+                    ->delete();
+
+                foreach (array_chunk($payload, 200) as $chunk) {
+                    $this->upsertUa($chunk);
+                }
+            }, 3);
         }
     }
 
@@ -230,26 +222,12 @@ class ComputeUAJob implements ShouldQueue
         return $ny->toDateString();
     }
 
-    protected function upsertUaWithRetry(array $rows, int $maxRetries = 3): void
+    protected function upsertUa(array $rows): void
     {
-        $attempt = 0;
-        retry:
-        try {
-            DB::table('unusual_activity')->upsert(
-                $rows,
-                ['symbol','data_date','exp_date','strike'], // unique
-                ['z_score','vol_oi','meta','updated_at']    // update columns
-            );
-        } catch (\Illuminate\Database\QueryException $e) {
-            $code = (int)($e->errorInfo[1] ?? 0); // MySQL error code
-            // 1213 = deadlock, 1205 = lock wait timeout
-            if (($code === 1213 || $code === 1205) && $attempt < $maxRetries) {
-                $attempt++;
-                // decorrelated jitter backoff: 80–200ms * attempt
-                usleep(random_int(80_000, 200_000) * $attempt);
-                goto retry;
-            }
-            throw $e; // bubble up anything else
-        }
+        DB::table('unusual_activity')->upsert(
+            $rows,
+            ['symbol', 'data_date', 'exp_date', 'strike'],
+            ['z_score', 'vol_oi', 'meta', 'updated_at']
+        );
     }
 }

@@ -11,7 +11,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
-class Seasonality5DJob implements ShouldQueue
+class Seasonality5DJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
@@ -23,12 +23,17 @@ class Seasonality5DJob implements ShouldQueue
     public function __construct(
         public array $symbols,
         public int   $lookbackYears = 15,
-        public int   $calWindowDays = 2
-    ) {}
+        public int   $calWindowDays = 2,
+        public ?string $asOfDate = null,
+    ) {
+        $this->asOfDate = $asOfDate
+            ? substr($asOfDate, 0, 10)
+            : $this->tradingDate(now());
+    }
 
     public function handle(): void
     {
-        $asOf = $this->tradingDate(now());
+        $asOf = (string) $this->asOfDate;
         $minCalendarSamples = 5;
         $rollingLookbackDays = 252;
 

@@ -10,9 +10,11 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 
-class SendLifecycleEmailJob implements ShouldQueue
+class SendLifecycleEmailJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public int $timeout = 60;
 
     public function __construct(
         public int $userId,

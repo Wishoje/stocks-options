@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "rollout_lease_seconds": 1080,
+  "required_supervisor_stopwaitsecs": 1200,
+  "baseline_process_count": 25,
+  "proposed_process_count": 26,
+  "requires_market_hours_capacity_check": true,
+  "workers": [
+    {"queue": "bootstrap", "connection": "redis", "processes": 1, "worker_timeout": 300, "job_timeout_ceiling": 270},
+    {"queue": "prime", "connection": "redis", "processes": 2, "worker_timeout": 120, "job_timeout_ceiling": 110},
+    {"queue": "intraday-heavy", "connection": "redis", "processes": 2, "worker_timeout": 600, "job_timeout_ceiling": 540},
+    {"queue": "default", "connection": "redis", "processes": 6, "worker_timeout": 600, "job_timeout_ceiling": 540},
+    {"queue": "calculator", "connection": "redis", "processes": 4, "worker_timeout": 300, "job_timeout_ceiling": 270},
+    {"queue": "quotes", "connection": "redis", "processes": 2, "worker_timeout": 120, "job_timeout_ceiling": 90},
+    {"queue": "intraday", "connection": "redis", "processes": 8, "worker_timeout": 120, "job_timeout_ceiling": 105},
+    {"queue": "exports", "connection": "redis-long", "processes": 1, "worker_timeout": 960, "job_timeout_ceiling": 900}
+  ]
+}

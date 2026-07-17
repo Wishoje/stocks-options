@@ -27,10 +27,14 @@ Schedule::command('chain:snapshot')
 
 // 3) Compute vol metrics nightly
 Schedule::job(new ComputeVolMetricsJob(['SPY','QQQ','IWM']))
+    ->weekdays()
     ->timezone('America/New_York')
-    ->dailyAt('17:45');
+    ->dailyAt('17:45')
+    ->withoutOverlapping(30)
+    ->onOneServer()
+    ->name('vol-metrics:core:eod');
 
-// 4) Seed prices then compute VRP/term after close (order matters)
+// 4) Seed prices after close. Vol metrics run once after the EOD snapshot.
 Schedule::command('prices:seed SPY QQQ IWM')
     ->weekdays()
     ->timezone('America/New_York')
@@ -44,11 +48,6 @@ Schedule::command('walls:compute --timeframe=all --limit=400 --source=both')
     ->withoutOverlapping(30)
     ->onOneServer()
     ->at('17:40'); // after your chain snapshot finishes
-
-Schedule::command('vol:compute SPY QQQ IWM')
-    ->weekdays()
-    ->timezone('America/New_York')
-    ->at('17:05');
 
 // 5) Seasonality data
 Schedule::command('seasonality:5d SPY QQQ IWM MSFT AAPL')
@@ -95,7 +94,10 @@ Schedule::command('preload:hot-options --limit=200 --days=10')
 Schedule::command('intraday:warmup --limit=200')
     ->weekdays()
     ->timezone('America/New_York')
-    ->at('16:15');
+    ->at('16:15')
+    ->withoutOverlapping(120)
+    ->onOneServer()
+    ->name('intraday:warmup:eod');
 
 // Prewarm EOD cache for heavy symbols near open.
 Schedule::command('gex:warm-cache --symbols=SPY,QQQ,IWM --timeframes=7d,14d,30d,90d')
@@ -118,7 +120,10 @@ Schedule::command('gex:warm-cache --symbols=SPY,QQQ,IWM --timeframes=7d,14d,30d,
 
 Schedule::command('intraday:prune-counters --days=7')
     ->timezone('America/New_York')
-    ->dailyAt('03:00');
+    ->dailyAt('03:00')
+    ->withoutOverlapping(15)
+    ->onOneServer()
+    ->name('intraday:prune-counters');
 
 Schedule::command('intraday:prune-option-volumes --hours=24 --batch=100000 --sleep-ms=25')
     ->timezone('America/New_York')
@@ -178,15 +183,17 @@ Schedule::call(function () {
     }
 
     foreach (array_chunk($symbols, 15) as $chunk) {
-        // Split heavy symbols (SPY, QQQ) to their own queue so they don't block others
-        $heavy = array_filter($chunk, fn($s) => in_array($s, ['SPY','QQQ'], true));
-        $rest  = array_diff($chunk, $heavy);
+        $heavy = array_values(array_filter(
+            $chunk,
+            fn ($symbol) => in_array($symbol, ['SPY', 'QQQ'], true)
+        ));
+        $normal = array_values(array_diff($chunk, $heavy));
 
-        if (!empty($heavy)) {
-            FetchPolygonIntradayOptionsJob::dispatch(array_values($heavy))->onQueue('intraday-heavy');
+        if ($heavy !== []) {
+            FetchPolygonIntradayOptionsJob::dispatch($heavy);
         }
-        if (!empty($rest)) {
-            FetchPolygonIntradayOptionsJob::dispatch(array_values($rest))->onQueue('intraday');
+        if ($normal !== []) {
+            FetchPolygonIntradayOptionsJob::dispatch($normal);
         }
     }
 })
@@ -200,6 +207,7 @@ Schedule::call(function () {
 
 Schedule::command('prices:refresh --source=both --limit=400')
     ->everyFiveMinutes()
+    ->weekdays()
     ->timezone('America/New_York')
     ->between('09:35', '15:55')
     ->withoutOverlapping(2)
@@ -210,7 +218,9 @@ Schedule::command('hot-options:fetch --limit=200 --type=STOCKS')
     ->weekdays()
     ->timezone('America/New_York')
     ->onOneServer()
-    ->dailyAt('17:00');
+    ->dailyAt('17:00')
+    ->withoutOverlapping(30)
+    ->name('hot-options:fetch:eod');
 
 Schedule::call(function () {
     $nowEt = now('America/New_York');
@@ -264,12 +274,14 @@ Schedule::command('emails:lifecycle-run')
 $monitorEnabled = (bool) config('queue.monitor.enabled');
 $monitorConnection = (string) config('queue.monitor.connection', config('queue.default'));
 $monitorQueues = config('queue.monitor.queues', []);
+$monitorTargets = config('queue.monitor.targets', []);
 $monitorMaxSize = (int) config('queue.monitor.max_size', 250);
 
 if ($monitorEnabled && is_array($monitorQueues)) {
-    $queueTargets = collect($monitorQueues)
+    $queueTargets = collect(is_array($monitorTargets) && $monitorTargets !== [] ? $monitorTargets : $monitorQueues)
         ->filter()
-        ->map(fn (string $queue) => "{$monitorConnection}:{$queue}")
+        ->map(fn (string $target) => str_contains($target, ':') ? $target : "{$monitorConnection}:{$target}")
+        ->unique()
         ->implode(',');
 
     if ($queueTargets !== '') {

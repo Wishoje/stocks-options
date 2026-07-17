@@ -71,10 +71,7 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(ScheduledTaskFailed::class, function (ScheduledTaskFailed $event): void {
             Log::channel('scheduler')->error('scheduler.task.failed', array_merge(
                 $this->scheduledTaskContext($event->task),
-                [
-                    'exception' => $event->exception::class,
-                    'message' => $event->exception->getMessage(),
-                ]
+                $this->safeQueueExceptionContext($event->exception)
             ));
         });
     }
@@ -92,20 +89,14 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(JobExceptionOccurred::class, function (JobExceptionOccurred $event): void {
             Log::channel('queue_monitor')->warning('queue.job.exception', array_merge(
                 $this->queueJobContext($event->job, $event->connectionName),
-                [
-                    'exception' => $event->exception::class,
-                    'message' => $event->exception->getMessage(),
-                ]
+                $this->safeQueueExceptionContext($event->exception)
             ));
         });
 
         Event::listen(JobFailed::class, function (JobFailed $event): void {
             Log::channel('queue_monitor')->error('queue.job.failed', array_merge(
                 $this->queueJobContext($event->job, $event->connectionName),
-                [
-                    'exception' => $event->exception::class,
-                    'message' => $event->exception->getMessage(),
-                ]
+                $this->safeQueueExceptionContext($event->exception)
             ));
         });
     }
@@ -133,8 +124,28 @@ class AppServiceProvider extends ServiceProvider
 
         if (method_exists($job, 'uuid')) {
             $context['uuid'] = $job->uuid();
+            $context['run_id'] = $job->uuid();
+            $context['replay_command'] = 'php artisan queue:retry '.$job->uuid();
         }
 
         return array_filter($context, fn ($value) => ! is_null($value));
+    }
+
+    protected function safeQueueExceptionContext(\Throwable $exception): array
+    {
+        $haystack = strtolower($exception::class.' '.$exception->getMessage());
+        $category = match (true) {
+            str_contains($haystack, 'timeout'), str_contains($haystack, 'timed out') => 'timeout',
+            str_contains($haystack, '429'), str_contains($haystack, 'rate limit') => 'provider_rate_limited',
+            str_contains($haystack, '401'), str_contains($haystack, '403'), str_contains($haystack, 'unauthorized') => 'provider_authentication',
+            str_contains($haystack, 'deadlock'), str_contains($haystack, 'sqlstate') => 'database',
+            str_contains($haystack, 'connection'), str_contains($haystack, 'network') => 'network',
+            default => 'unexpected',
+        };
+
+        return [
+            'error_category' => $category,
+            'exception' => $exception::class,
+        ];
     }
 }

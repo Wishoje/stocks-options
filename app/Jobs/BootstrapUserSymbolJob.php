@@ -12,11 +12,13 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 
-class BootstrapUserSymbolJob implements ShouldQueue
+class BootstrapUserSymbolJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public const QUEUE = 'bootstrap';
+
+    public int $timeout = 60;
 
     public function __construct(public string $symbol, public ?string $source = null)
     {
@@ -31,11 +33,17 @@ class BootstrapUserSymbolJob implements ShouldQueue
         }
 
         $lockKey = "symbol-bootstrap:dispatch:{$sym}";
-        if (!Cache::add($lockKey, $source ?? 'unknown', now()->addSeconds($ttlSeconds))) {
+        $dispatchLock = Cache::lock($lockKey, $ttlSeconds);
+        if (! $dispatchLock->get()) {
             return false;
         }
 
-        self::dispatch($sym, $source)->onQueue(self::QUEUE);
+        try {
+            Bus::dispatch((new self($sym, $source))->onQueue(self::QUEUE));
+        } catch (\Throwable $exception) {
+            $dispatchLock->release();
+            throw $exception;
+        }
 
         return true;
     }
@@ -48,20 +56,26 @@ class BootstrapUserSymbolJob implements ShouldQueue
         }
 
         $chainKey = "symbol-bootstrap:chain:{$symbol}";
-        if (!Cache::add($chainKey, $this->source ?? 'unknown', now()->addMinutes(3))) {
+        $chainLock = Cache::lock($chainKey, 180);
+        if (! $chainLock->get()) {
             return;
         }
 
         $tradeDate = $this->tradeDate(now('America/New_York'));
 
-        Bus::chain([
-            (new PricesDailyJob([$symbol]))->onQueue(self::QUEUE),
-            (new FetchOptionChainDataJob([$symbol], 90))->onQueue(self::QUEUE),
-            (new ComputeExpiryPressureJob([$symbol], 3, $tradeDate))->onQueue(self::QUEUE),
-            (new ComputePositioningJob([$symbol], $tradeDate))->onQueue(self::QUEUE),
-            (new FetchPolygonIntradayOptionsJob([$symbol]))->onQueue(self::QUEUE),
-            (new QueueSymbolEnrichmentJob($symbol, $this->source))->onQueue(self::QUEUE),
-        ])->dispatch();
+        try {
+            Bus::chain([
+                (new PricesDailyJob([$symbol]))->withJobTimeout(270)->onQueue(self::QUEUE),
+                (new FetchOptionChainDataJob([$symbol], 90, null, 270))->onQueue(self::QUEUE),
+                (new ComputeExpiryPressureJob([$symbol], 3, $tradeDate))->withJobTimeout(270)->onQueue(self::QUEUE),
+                (new ComputePositioningJob([$symbol], $tradeDate))->withJobTimeout(270)->onQueue(self::QUEUE),
+                (new FetchPolygonIntradayOptionsJob([$symbol], 270))->onQueue(self::QUEUE),
+                (new QueueSymbolEnrichmentJob($symbol, $this->source))->onQueue(self::QUEUE),
+            ])->dispatch();
+        } catch (\Throwable $exception) {
+            $chainLock->release();
+            throw $exception;
+        }
     }
 
     private function tradeDate(Carbon $now): string

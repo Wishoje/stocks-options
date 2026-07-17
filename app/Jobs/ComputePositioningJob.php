@@ -14,19 +14,22 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
-class ComputePositioningJob implements ShouldQueue
+class ComputePositioningJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
     protected const DEX_HISTORY_DAYS = 30;
     protected const DEX_FORWARD_DAYS = 90;
 
-    public function __construct(public array $symbols, public ?string $anchorDate = null) {}
+    public function __construct(public array $symbols, public ?string $anchorDate = null)
+    {
+        $this->anchorDate = app(EodSnapshotSelector::class)->resolvedAnchorDate($anchorDate);
+    }
 
     public function handle(): void
     {
         $selector = app(EodSnapshotSelector::class);
-        $date = $this->anchorDate ?: $selector->resolvedAnchorDate();
+        $date = (string) $this->anchorDate;
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);
@@ -41,12 +44,7 @@ class ComputePositioningJob implements ShouldQueue
                 continue;
             }
 
-            DB::table('dex_by_expiry')
-                ->where('symbol', $symbol)
-                ->where('data_date', $date)
-                ->delete();
-
-            $dexTotalAll = 0.0;
+            $dexRowsToInsert = [];
 
             foreach ($dexExpMap as $expDate => $expId) {
                 $slice = $dexRows->where('expiration_id', $expId);
@@ -69,8 +67,7 @@ class ComputePositioningJob implements ShouldQueue
                     continue;
                 }
 
-                $dexTotalAll += $dex;
-                DB::table('dex_by_expiry')->insert([
+                $dexRowsToInsert[] = [
                     'symbol' => $symbol,
                     'data_date' => $date,
                     'exp_date' => $expDate,
@@ -78,8 +75,19 @@ class ComputePositioningJob implements ShouldQueue
                     'source_chain_date' => $dexSelectedDates[$expId]->max_date ?? null,
                     'created_at' => now(),
                     'updated_at' => now(),
-                ]);
+                ];
             }
+
+            DB::transaction(function () use ($symbol, $date, $dexRowsToInsert): void {
+                DB::table('dex_by_expiry')
+                    ->where('symbol', $symbol)
+                    ->where('data_date', $date)
+                    ->delete();
+
+                if ($dexRowsToInsert !== []) {
+                    DB::table('dex_by_expiry')->insert($dexRowsToInsert);
+                }
+            }, 3);
 
             $spot = (float) round($gammaRows->avg('underlying_price') ?? 0, 6);
             $netGamma = 0.0;

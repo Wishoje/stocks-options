@@ -11,11 +11,13 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\DB;
 
-class PrimeSymbolJob implements ShouldQueue
+class PrimeSymbolJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public const QUEUE = 'prime';
+
+    public int $timeout = 60;
 
     public function __construct(public string $symbol)
     {
@@ -78,7 +80,7 @@ class PrimeSymbolJob implements ShouldQueue
             $jobs[] = new \App\Jobs\PricesDailyJob([$s]);
         }
         if (!$hasChainsForTradeDate) {
-            $jobs[] = new \App\Jobs\FetchOptionChainDataJob([$s], 90);
+            $jobs[] = new \App\Jobs\FetchOptionChainDataJob([$s], 90, null, 110);
         }
         if (!$hasVolMetricsForAnchorDate) {
             $jobs[] = new \App\Jobs\ComputeVolMetricsJob([$s]);
@@ -101,6 +103,7 @@ class PrimeSymbolJob implements ShouldQueue
         }
 
         foreach ($jobs as $job) {
+            $job->withJobTimeout(min($job->timeout, 110));
             $job->onQueue(self::QUEUE);
         }
 

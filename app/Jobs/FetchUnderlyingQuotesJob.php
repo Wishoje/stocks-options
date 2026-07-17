@@ -12,12 +12,16 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Carbon\CarbonImmutable;
+use RuntimeException;
 
-class FetchUnderlyingQuotesJob implements ShouldQueue
+class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
+
+    public int $timeout = 90;
 
     public function __construct(public array $symbols)
     {
@@ -36,6 +40,8 @@ class FetchUnderlyingQuotesJob implements ShouldQueue
         /** @var PolygonClient $client */
         $client = app(PolygonClient::class);
 
+        $failed = 0;
+
        foreach ($this->symbols as $raw) {
             $symbol = Symbols::canon($raw);
             if (!$symbol) {
@@ -49,27 +55,65 @@ class FetchUnderlyingQuotesJob implements ShouldQueue
 
                 if (!$quote || empty($quote['last_price']) || $quote['last_price'] <= 0) {
                     Log::warning('FetchUnderlyingQuotesJob.noQuote', ['symbol' => $symbol]);
+                    $failed++;
                     continue;
                 }
 
                 $asofRaw = $quote['asof'] ?? null;
                 $asofUtc = $this->normalizeAsof($asofRaw);
 
-                UnderlyingQuote::updateOrCreate(
-                    ['symbol' => $symbol],
-                    [
-                        'source'     => $quote['source']     ?? 'massive',
-                        'last_price' => $quote['last_price'],
-                        'prev_close' => $quote['prev_close'] ?? null,
-                        'asof'       => $asofUtc,
-                    ]
-                );
+                DB::transaction(function () use ($symbol, $quote, $asofUtc): void {
+                    $current = UnderlyingQuote::query()
+                        ->where('symbol', $symbol)
+                        ->lockForUpdate()
+                        ->first();
+                    $currentUsesIngestionTime = str_ends_with(
+                        (string) ($current?->source ?? ''),
+                        ':ingested-at'
+                    );
+
+                    // A provider response without source time cannot supersede
+                    // an already timestamped quote. Keep the last verifiable row.
+                    if ($asofUtc === null && $current?->asof && ! $currentUsesIngestionTime) {
+                        return;
+                    }
+
+                    if (
+                        $asofUtc !== null
+                        && $current?->asof
+                        && ! $currentUsesIngestionTime
+                        && $current->asof->gt($asofUtc)
+                    ) {
+                        return;
+                    }
+
+                    $source = (string) ($quote['source'] ?? 'massive');
+                    $effectiveAsof = $asofUtc;
+                    if ($effectiveAsof === null) {
+                        $effectiveAsof = CarbonImmutable::now('UTC');
+                        $source .= ':ingested-at';
+                    }
+
+                    ($current ?? new UnderlyingQuote(['symbol' => $symbol]))
+                        ->fill([
+                            'source' => $source,
+                            'last_price' => $quote['last_price'],
+                            'prev_close' => $quote['prev_close'] ?? null,
+                            'asof' => $effectiveAsof,
+                        ])
+                        ->save();
+                }, 3);
             } catch (\Throwable $e) {
+                $failed++;
                 Log::warning('FetchUnderlyingQuotesJob.error', [
                     'symbol' => $symbol,
-                    'err'    => $e->getMessage(),
+                    'exception' => $e::class,
                 ]);
             }
+        }
+
+        if ($failed > 0) {
+            throw new RuntimeException("Quote refresh incomplete for {$failed} symbol(s).");
         }
     }
 
@@ -78,11 +122,10 @@ class FetchUnderlyingQuotesJob implements ShouldQueue
      *
      * Massive v2 uses epoch nanoseconds (e.g. 1765328400000000000).
      */
-    private function normalizeAsof(mixed $asofRaw): CarbonImmutable
+    private function normalizeAsof(mixed $asofRaw): ?CarbonImmutable
     {
-        // Default if nothing provided
         if ($asofRaw === null || $asofRaw === '') {
-            return CarbonImmutable::now('UTC');
+            return null;
         }
 
         // Numeric epoch (seconds/ms/us/ns)

@@ -11,23 +11,42 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 
-class FetchPolygonIntradayOptionsJob implements ShouldQueue
+class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
     // ❌ REMOVE this line:
     // public string $queue = 'intraday';
 
-    public function __construct(public array $symbols)
+    public int $timeout = 105;
+
+    public function __construct(
+        public array $symbols,
+        ?int $timeoutSeconds = null,
+        public ?string $tradeDate = null
+    )
     {
-        // Set default queue for this job
-        $this->onQueue('intraday');
+        $canonicalSymbols = collect($symbols)
+            ->map(fn ($symbol) => \App\Support\Symbols::canon($symbol))
+            ->filter()
+            ->unique()
+            ->values();
+        $requiresLongLane = $canonicalSymbols->count() > 1
+            || $canonicalSymbols->contains(fn ($symbol) => in_array($symbol, ['SPY', 'QQQ'], true));
+        $this->timeout = max(30, min(540, $timeoutSeconds ?? ($requiresLongLane ? 540 : 105)));
+        $this->tradeDate = $tradeDate
+            ? substr($tradeDate, 0, 10)
+            : $this->tradingDate(now());
+
+        $this->onQueue($requiresLongLane ? 'intraday-heavy' : 'intraday');
     }
 
     public function handle(): void
     {
-        $tradeDate = $this->tradingDate(now());
+        $tradeDate = (string) $this->tradeDate;
+        $failedSymbols = 0;
 
         // Log::debug('FetchPolygonIntradayOptionsJob.start', [
         //     'symbols'    => $this->symbols,
@@ -80,20 +99,27 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
             $lastCapturedAt = null;
             $requestId = null;
             $intradayTableFull = false;
+            $symbolIncomplete = false;
 
             foreach ($expiries as $expiry) {
                 $snap = app(\App\Support\PolygonClient::class)->intradayOptionVolumes($symbol, $expiry);
 
-                // Log::debug('FetchPolygonIntradayOptionsJob.afterIntraday', [...]);
-                if (!$snap) {
-                    Log::warning('FetchPolygonIntradayOptionsJob.noSnap', [
+                if (
+                    ! $snap
+                    || ! ($snap['complete'] ?? false)
+                    || empty($snap['asof'])
+                    || empty($snap['contracts'])
+                    || ! isset($snap['totals'], $snap['by_strike'])
+                ) {
+                    $symbolIncomplete = true;
+                    Log::warning('FetchPolygonIntradayOptionsJob.incompleteExpiry', [
                         'symbol' => $symbol,
                         'expiry' => $expiry,
                     ]);
-                    continue;
+                    break;
                 }
 
-                DB::transaction(function () use ($symbol, $tradeDate, $snap, $expiry, &$totCallAll, &$totPutAll, &$totPremAll, &$rowsAll, &$lastCapturedAt, &$requestId, &$intradayTableFull) {
+                DB::transaction(function () use ($symbol, $tradeDate, $snap, $expiry, &$totCallAll, &$totPutAll, &$totPremAll, &$rowsAll, &$lastCapturedAt, &$requestId, &$intradayTableFull, &$symbolIncomplete) {
                     $now = now();
                     $capturedAt = \Carbon\Carbon::parse($snap['asof'] ?? now('America/New_York'))->setTimezone('UTC');
                     $lastCapturedAt = $capturedAt;
@@ -115,18 +141,20 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                                 if ($isTableFull) {
                                     // Stop noisy per-contract failures once storage is full.
                                     $intradayTableFull = true;
+                                    $symbolIncomplete = true;
                                     Log::error('FetchPolygonIntradayOptionsJob.intradayTableFull', [
                                         'symbol' => $symbol,
                                         'expiry' => $expiry,
-                                        'err'    => $err,
+                                        'exception' => $e::class,
                                     ]);
                                     break;
                                 }
 
+                                $symbolIncomplete = true;
                                 Log::warning('FetchPolygonIntradayOptionsJob.ingestError', [
                                     'symbol' => $symbol,
                                     'expiry' => $expiry,
-                                    'err'    => $err,
+                                    'exception' => $e::class,
                                 ]);
                             }
                         }
@@ -182,6 +210,19 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
                         }
                     }
                 });
+
+                if ($symbolIncomplete) {
+                    break;
+                }
+            }
+
+            if ($symbolIncomplete) {
+                $failedSymbols++;
+                Log::warning('FetchPolygonIntradayOptionsJob.publicationWithheld', [
+                    'symbol' => $symbol,
+                    'trade_date' => $tradeDate,
+                ]);
+                continue;
             }
 
             // Write aggregated totals and strikes after all chunks
@@ -216,7 +257,9 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
             continue;
         }
 
-        // Log::debug('FetchPolygonIntradayOptionsJob.done');
+        if ($failedSymbols > 0) {
+            throw new RuntimeException("Intraday refresh incomplete for {$failedSymbols} symbol(s).");
+        }
     }
 
     protected function tradingDate(\Carbon\Carbon $now): string
@@ -233,18 +276,18 @@ class FetchPolygonIntradayOptionsJob implements ShouldQueue
     {
         // Prime EOD chain scaffolding once per short window.
         $primeKey = "intraday:noexp:prime:{$symbol}";
-        if (Cache::add($primeKey, 1, now()->addMinutes(5))) {
+        if (Cache::lock($primeKey, 300)->get()) {
             BootstrapUserSymbolJob::dispatchIfNeeded($symbol, 'intraday_no_expiries', 300);
         }
 
         // Re-try intraday pull once after priming; preserve current queue (heavy vs normal).
         $retryKey = "intraday:noexp:retry:{$symbol}:{$tradeDate}";
-        if (!Cache::add($retryKey, 1, now()->addMinutes(3))) {
+        if (! Cache::lock($retryKey, 180)->get()) {
             return;
         }
 
         $targetQueue = $this->queue ?: 'intraday';
-        self::dispatch([$symbol])
+        self::dispatch([$symbol], $this->timeout, $this->tradeDate)
             ->delay(now()->addSeconds(45))
             ->onQueue($targetQueue);
     }

@@ -47,7 +47,17 @@ class IntradayWarmupCommand extends Command
             return self::SUCCESS;
         }
 
-        foreach (array_chunk($symbols, 25) as $chunk) {
+        $heavy = array_values(array_filter(
+            $symbols,
+            fn (string $symbol): bool => in_array($symbol, ['SPY', 'QQQ'], true)
+        ));
+        $normal = array_values(array_diff($symbols, $heavy));
+
+        foreach ($heavy as $symbol) {
+            FetchPolygonIntradayOptionsJob::dispatch([$symbol]);
+        }
+
+        foreach (array_chunk($normal, 25) as $chunk) {
             FetchPolygonIntradayOptionsJob::dispatch($chunk);
         }
 

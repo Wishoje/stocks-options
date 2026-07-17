@@ -7,15 +7,14 @@ use Illuminate\Support\Facades\Log;
 
 class PolygonClient
 {
-    /** Max chars of any HTTP body we log (to avoid noisy logs) */
-    private const LOG_BODY_MAX = 600;
-
-    /** Helper: shorten any string for logs */
-    private static function clip(?string $s, int $max = self::LOG_BODY_MAX): string
+    private static function endpointForLog(string $url): string
     {
-        if ($s === null) return '<null>';
-        $s = trim($s);
-        return strlen($s) > $max ? substr($s, 0, $max) . '…<clipped>' : $s;
+        $parts = parse_url($url);
+        if (! is_array($parts)) {
+            return '<invalid-url>';
+        }
+
+        return ($parts['host'] ?? '<relative>').($parts['path'] ?? '');
     }
 
     /** Build a preconfigured HTTP client (auth, UA, sane timeouts/retries). */
@@ -35,6 +34,7 @@ class PolygonClient
                 'Accept'     => 'application/json',
                 'User-Agent' => 'Acceptd-Options/1.0 (+massive-snapshot)',
             ])
+            ->connectTimeout(3)
             ->timeout(10)
             // Don’t aggressively retry auth failures; keep general retry for others
             ->retry(2, fn () => random_int(250, 600), throw: false);
@@ -54,15 +54,18 @@ class PolygonClient
 
         $snap = $this->snapshotChainFromMassive($uSym, $expiration);
 
-        if (!$snap || empty($snap['results'])) {
+        if (!$snap || empty($snap['results']) || !($snap['complete'] ?? false)) {
             Log::warning('PolygonClient.noData', [
                 'symbol'   => $uSym,
                 'has_snap' => (bool) $snap,
                 'keys'     => $snap ? array_keys($snap) : [],
+                'failure_category' => $snap['failure_category'] ?? 'empty_provider_response',
             ]);
             $blank = $this->blankPayload();
             $blank['contracts']  = [];
             $blank['request_id'] = $snap['request_id'] ?? null;
+            $blank['complete'] = false;
+            $blank['failure_category'] = $snap['failure_category'] ?? 'empty_provider_response';
             return $blank;
         }
 
@@ -71,6 +74,8 @@ class PolygonClient
         // carry through raw results for per-contract ingestion
         $agg['contracts']  = $snap['results'];
         $agg['request_id'] = $snap['request_id'] ?? null;
+        $agg['complete'] = true;
+        $agg['failure_category'] = null;
 
         // Log::debug('PolygonClient.intraday.done', [
         //     'symbol'     => $uSym,
@@ -241,7 +246,13 @@ class PolygonClient
         $path .= '?' . http_build_query($query);
         $cursor  = null;
 
-        $all = ['results' => [], 'status' => null, 'request_id' => null];
+        $all = [
+            'results' => [],
+            'status' => null,
+            'request_id' => null,
+            'complete' => true,
+            'failure_category' => null,
+        ];
 
         // Keep following next_url until exhausted; cap varies by symbol to avoid infinite loops.
         $hops = 0;
@@ -258,6 +269,8 @@ class PolygonClient
                     'pages'      => $hops,
                     'max_pages'  => $maxHops,
                 ]);
+                $all['complete'] = false;
+                $all['failure_category'] = 'pagination_cap';
                 break;
             }
             $hops++;
@@ -275,24 +288,33 @@ class PolygonClient
             // If unauthorized, don’t keep retrying needlessly
             if ($resp->status() === 401) {
                 Log::warning('PolygonClient.auth.unauthorized', [
-                    'url' => $url,
+                    'endpoint' => self::endpointForLog($url),
+                    'symbol' => $symbol,
+                    'expiration' => $expiration,
                     'hint' => 'Check MASSIVE_AUTH_MODE / header / query param and key value',
                 ]);
                 return null;
             }
 
             if ($resp->status() === 429) {
-                $retryAfter = (int)($resp->header('Retry-After') ?? 1);
-                usleep(max(1, $retryAfter) * 1_000_000);
-                $resp = $this->http()->get($url);
+                Log::warning('PolygonClient.rateLimited', [
+                    'endpoint' => self::endpointForLog($url),
+                    'symbol' => $symbol,
+                    'expiration' => $expiration,
+                    'retry_after_seconds' => max(1, (int) ($resp->header('Retry-After') ?? 1)),
+                ]);
+                return null;
             }
 
             if (!$resp->ok()) {
                 Log::warning('PolygonClient.httpError', [
-                    'url'  => $url,
+                    'endpoint' => self::endpointForLog($url),
+                    'symbol' => $symbol,
+                    'expiration' => $expiration,
                     'code' => $resp->status(),
-                    'body' => self::clip($resp->body()),
                 ]);
+                $all['complete'] = false;
+                $all['failure_category'] = 'provider_http_error';
                 break;
             }
 
@@ -340,21 +362,27 @@ class PolygonClient
         $resp = $this->http()->get($url);
 
         if ($resp->status() === 401) {
-            Log::warning('PolygonClient.underlying.unauthorized', ['url' => $url]);
+            Log::warning('PolygonClient.underlying.unauthorized', [
+                'endpoint' => self::endpointForLog($url),
+                'symbol' => $uSym,
+            ]);
             return null;
         }
 
         if ($resp->status() === 429) {
-            $retryAfter = (int)($resp->header('Retry-After') ?? 1);
-            usleep(max(1, $retryAfter) * 1_000_000);
-            $resp = $this->http()->get($url);
+            Log::warning('PolygonClient.underlying.rateLimited', [
+                'endpoint' => self::endpointForLog($url),
+                'symbol' => $uSym,
+                'retry_after_seconds' => max(1, (int) ($resp->header('Retry-After') ?? 1)),
+            ]);
+            return null;
         }
 
         if (!$resp->ok()) {
             Log::warning('PolygonClient.underlying.httpError', [
-                'url'  => $url,
+                'endpoint' => self::endpointForLog($url),
+                'symbol' => $uSym,
                 'code' => $resp->status(),
-                'body' => self::clip($resp->body()),
             ]);
             return null;
         }
@@ -390,7 +418,7 @@ class PolygonClient
         if ($lastPrice === null || $lastPrice <= 0) {
             Log::warning('PolygonClient.underlying.noPrice', [
                 'symbol' => $uSym,
-                'body'   => self::clip($resp->body(), 200),
+                'response_bytes' => strlen($resp->body()),
             ]);
             return null;
         }

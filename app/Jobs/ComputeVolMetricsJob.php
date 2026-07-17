@@ -14,48 +14,64 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
-class ComputeVolMetricsJob implements ShouldQueue
+class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
-    public function __construct(public array $symbols) {}
+    public function __construct(public array $symbols, public ?string $anchorDate = null)
+    {
+        $this->anchorDate = app(EodSnapshotSelector::class)->resolvedAnchorDate($anchorDate);
+    }
 
     public function handle(): void
     {
         $selector = app(EodSnapshotSelector::class);
-        $date = $selector->resolvedAnchorDate();
+        $date = (string) $this->anchorDate;
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);
             [$expMap, $selectedDates, $rows] = $this->selectedChainContext($symbol, $date, $selector);
 
             $termRows = $this->computeTermStructure($symbol, $date, $expMap, $selectedDates, $rows);
-
-            DB::table('iv_term')->where('symbol', $symbol)->where('data_date', $date)->delete();
-            if (!empty($termRows)) {
-                DB::table('iv_term')->insert($termRows);
-            }
-
             [$iv1m, $vrpMeta] = $this->pick1MIV($termRows, $date);
             $rv20 = $this->realizedVol20($symbol, $date);
             $vrp = (is_null($iv1m) || is_null($rv20)) ? null : ($iv1m - $rv20);
             $z = $this->zscoreVRP($symbol, $date, $vrp);
 
-            DB::table('vrp_daily')->updateOrInsert(
-                ['symbol' => $symbol, 'data_date' => $date],
-                [
-                    'iv1m' => $iv1m,
-                    'rv20' => $rv20,
-                    'vrp' => $vrp,
-                    'z' => $z,
-                    'source_meta_json' => json_encode($vrpMeta, JSON_THROW_ON_ERROR),
-                    'updated_at' => now(),
-                    'created_at' => now(),
-                ]
-            );
+            DB::transaction(function () use (
+                $symbol,
+                $date,
+                $termRows,
+                $iv1m,
+                $rv20,
+                $vrp,
+                $z,
+                $vrpMeta,
+                $expMap,
+                $selectedDates,
+                $rows
+            ): void {
+                DB::table('iv_term')->where('symbol', $symbol)->where('data_date', $date)->delete();
+                if (! empty($termRows)) {
+                    DB::table('iv_term')->insert($termRows);
+                }
 
-            DB::table('iv_skew')->where('symbol', $symbol)->where('data_date', $date)->delete();
-            $this->computeSkewCurvature($symbol, $date, $expMap, $selectedDates, $rows);
+                DB::table('vrp_daily')->updateOrInsert(
+                    ['symbol' => $symbol, 'data_date' => $date],
+                    [
+                        'iv1m' => $iv1m,
+                        'rv20' => $rv20,
+                        'vrp' => $vrp,
+                        'z' => $z,
+                        'source_meta_json' => json_encode($vrpMeta, JSON_THROW_ON_ERROR),
+                        'updated_at' => now(),
+                        'created_at' => now(),
+                    ]
+                );
+
+                DB::table('iv_skew')->where('symbol', $symbol)->where('data_date', $date)->delete();
+                $this->computeSkewCurvature($symbol, $date, $expMap, $selectedDates, $rows);
+            }, 3);
 
             Cache::forget("iv_term:{$symbol}");
             Cache::forget("vrp:{$symbol}");

@@ -49,6 +49,7 @@ class Prices
         }
 
         $client = Http::acceptJson()
+            ->connectTimeout(3)
             ->timeout(10)
             ->retry(2, 250, throw: false);
 
@@ -67,7 +68,11 @@ class Prices
 
         $resp = $client->get($url, $params);
         if ($resp->failed()) {
-            Log::warning("Massive open-close fail {$symbol} {$date}: {$resp->status()} ".$resp->body());
+            Log::warning('Prices.massiveDailyFailed', [
+                'symbol' => $symbol,
+                'date' => $date,
+                'status' => $resp->status(),
+            ]);
             return null;
         }
 
@@ -105,11 +110,17 @@ class Prices
         if ($resp->status() === 403) {
             // Cache the deny for 24h to avoid repeated 403 spam.
             Cache::put($denyKey, 1, now()->addDay());
-            Log::warning("Finnhub candle deny {$symbol}: 403 ".$resp->body());
+            Log::warning('Prices.finnhubDailyDenied', [
+                'symbol' => $symbol,
+                'status' => 403,
+            ]);
             return null;
         }
         if ($resp->failed()) {
-            Log::warning("Finnhub candle fail {$symbol}: {$resp->status()} ".$resp->body());
+            Log::warning('Prices.finnhubDailyFailed', [
+                'symbol' => $symbol,
+                'status' => $resp->status(),
+            ]);
             return null;
         }
 

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    php-mysql:
+        name: PHP 8.3 / MySQL 8
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+
+        services:
+            mysql:
+                image: mysql:8.0
+                env:
+                    MYSQL_DATABASE: gex_test
+                    MYSQL_USER: gex_test
+                    MYSQL_PASSWORD: gex_test
+                    MYSQL_ROOT_PASSWORD: gex_root_test
+                ports:
+                    - 3306:3306
+                options: >-
+                    --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=gex_root_test --silent"
+                    --health-interval=10s
+                    --health-timeout=5s
+                    --health-retries=10
+
+        env:
+            APP_ENV: testing
+            APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+            APP_DEBUG: 'false'
+            APP_TIMEZONE: UTC
+            DB_CONNECTION: mysql
+            DB_HOST: 127.0.0.1
+            DB_PORT: '3306'
+            DB_DATABASE: gex_test
+            DB_USERNAME: gex_test
+            DB_PASSWORD: gex_test
+            BCRYPT_ROUNDS: '4'
+            CACHE_STORE: array
+            MAIL_MAILER: array
+            QUEUE_CONNECTION: sync
+            QUEUE_MONITOR_ENABLED: 'false'
+            SESSION_DRIVER: array
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+
+            - name: Set up PHP
+              uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.3'
+                  extensions: bcmath, curl, mbstring, pdo_mysql
+                  coverage: none
+
+            - name: Validate Composer metadata
+              run: composer validate --strict --no-check-publish
+
+            - name: Install PHP dependencies
+              run: composer install --no-interaction --no-progress --prefer-dist
+
+            - name: Verify MySQL migrations
+              run: php artisan migrate:fresh --force --no-interaction
+
+            - name: Run PHP tests
+              run: composer test:ci
+
+    frontend:
+        name: Node 20 / frontend
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version-file: .nvmrc
+                  cache: npm
+
+            - name: Install frontend dependencies
+              run: npm ci --no-audit --no-fund
+
+            - name: Run JavaScript tests
+              run: npm run test:ci
+
+            - name: Build production frontend
+              run: npm run build

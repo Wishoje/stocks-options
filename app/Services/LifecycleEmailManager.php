@@ -33,7 +33,7 @@ class LifecycleEmailManager
                 $user->notify(new LifecycleEmailNotification($template, $context));
 
                 return true;
-            }, 3);
+            });
         } catch (QueryException $e) {
             // Unique violation race: another worker already sent it.
             if (in_array((string) $e->getCode(), ['23000', '23505'], true)) {
@@ -44,4 +44,3 @@ class LifecycleEmailManager
         }
     }
 }
-

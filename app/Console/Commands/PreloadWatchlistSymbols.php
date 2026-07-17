@@ -19,7 +19,8 @@ class PreloadWatchlistSymbols extends Command
 
     public function handle(): int
     {
-        // Clear app caches so fresh data is returned right after this run
+        // Targeted, versioned invalidation is implemented by GEX-014. Keep the
+        // existing behavior until that card can replace it without stale reads.
         Cache::flush();
         $this->info('Cache flushed.');
 

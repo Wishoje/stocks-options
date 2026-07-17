@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use App\Models\Watchlist;
@@ -56,9 +57,17 @@ class WatchlistController extends Controller
             ->exists();
 
         if (($marketOpen || !$hasIntraday) && $hasExpiries) {
-            if (Cache::add("watchlist:intraday:{$symbol}", 1, now()->addSeconds(45))) {
-                dispatch(new FetchPolygonIntradayOptionsJob([$symbol]))
-                    ->onQueue($this->intradayQueueForSymbol($symbol));
+            $dispatchLock = Cache::lock("watchlist:intraday:{$symbol}", 45);
+            if ($dispatchLock->get()) {
+                try {
+                    Bus::dispatch(
+                        (new FetchPolygonIntradayOptionsJob([$symbol]))
+                            ->onQueue($this->intradayQueueForSymbol($symbol))
+                    );
+                } catch (\Throwable $exception) {
+                    $dispatchLock->release();
+                    throw $exception;
+                }
             }
         }
 

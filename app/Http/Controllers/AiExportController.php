@@ -83,7 +83,7 @@ class AiExportController extends Controller
             ],
         ]);
 
-        BuildAiExportJob::dispatch($export->id)->onQueue('default');
+        BuildAiExportJob::dispatch($export->id);
 
         return response()->json([
             'item' => $this->serializeExport($export->fresh()),

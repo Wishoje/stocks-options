@@ -8,11 +8,14 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 
-class QueueSymbolEnrichmentJob implements ShouldQueue
+class QueueSymbolEnrichmentJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public int $timeout = 30;
 
     public function __construct(public string $symbol, public ?string $source = null)
     {
@@ -26,10 +29,16 @@ class QueueSymbolEnrichmentJob implements ShouldQueue
         }
 
         $lockKey = "symbol-enrichment:{$symbol}";
-        if (!Cache::add($lockKey, $this->source ?? 'bootstrap', now()->addMinutes(10))) {
+        $dispatchLock = Cache::lock($lockKey, 600);
+        if (! $dispatchLock->get()) {
             return;
         }
 
-        PrimeSymbolJob::dispatch($symbol)->onQueue(PrimeSymbolJob::QUEUE);
+        try {
+            Bus::dispatch((new PrimeSymbolJob($symbol))->onQueue(PrimeSymbolJob::QUEUE));
+        } catch (\Throwable $exception) {
+            $dispatchLock->release();
+            throw $exception;
+        }
     }
 }

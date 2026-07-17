@@ -55,6 +55,10 @@ class FetchOptionChainDataJobTest extends TestCase
                 ]);
             }
 
+            if (str_contains($url, '/v3/snapshot/options/SPY') && str_contains($url, 'expiration_date=')) {
+                return Http::response(['results' => []]);
+            }
+
             if (str_contains($url, '/v3/snapshot/options/SPY')) {
                 return Http::response([
                     'results' => $this->massiveContracts('2026-05-18'),

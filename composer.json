@@ -55,6 +55,14 @@
             "@php -r \"file_exists('database/database.sqlite') || touch('database/database.sqlite');\"",
             "@php artisan migrate --graceful --ansi"
         ],
+        "test": "@php vendor/bin/phpunit",
+        "test:unit": "@php vendor/bin/phpunit --testsuite=Unit",
+        "test:feature": "@php vendor/bin/phpunit --testsuite=Feature",
+        "test:mysql": [
+            "@php -r \"if (! is_file('.env.testing')) { fwrite(STDERR, 'Create .env.testing from .env.testing.example first.'.PHP_EOL); exit(1); } if (! str_ends_with((string) (parse_ini_file('.env.testing', false, INI_SCANNER_RAW)['DB_DATABASE'] ?? ''), '_test')) { fwrite(STDERR, 'Refusing to run: DB_DATABASE must end with _test.'.PHP_EOL); exit(1); }\"",
+            "@php vendor/bin/phpunit -c phpunit.mysql.xml"
+        ],
+        "test:ci": "@php vendor/bin/phpunit -c phpunit.mysql.xml --do-not-cache-result",
         "dev": "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74\" \"php artisan serve\" \"php artisan queue:listen --tries=1\" \"npm run dev\" --names='server,queue,vite'"
     },
     "extra": {

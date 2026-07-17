@@ -2,113 +2,205 @@
 
 namespace App\Jobs;
 
-use Illuminate\Bus\Queueable;
+use Carbon\Carbon;
 use Illuminate\Bus\Batchable;
+use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Arr;
-use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
+use RuntimeException;
 
-class PricesBackfillJob implements ShouldQueue
+class PricesBackfillJob extends QueueJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels,Batchable;
+    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public function __construct(public array $symbols, public int $days = 90) {}
+    public function __construct(
+        public array $symbols,
+        public int $days = 90,
+        public ?string $endDate = null
+    ) {
+        $this->endDate = $endDate
+            ? substr($endDate, 0, 10)
+            : Carbon::now('America/New_York')->toDateString();
+    }
 
-   public function handle(): void
+    public function handle(): void
     {
         $apiKey = env('FINNHUB_API_KEY');
-        $to   = Carbon::now('America/New_York')->endOfDay()->timestamp;
-        $from = Carbon::now('America/New_York')->subDays($this->days)->startOfDay()->timestamp;
+        $end = Carbon::parse((string) $this->endDate, 'America/New_York');
+        $to = $end->copy()->endOfDay()->timestamp;
+        $from = $end->copy()->subDays($this->days)->startOfDay()->timestamp;
+        $failed = 0;
 
-        foreach ($this->symbols as $sym) {
-            $symbol = \App\Support\Symbols::canon($sym);
+        foreach ($this->symbols as $rawSymbol) {
+            $symbol = \App\Support\Symbols::canon($rawSymbol);
+            if (! $symbol) {
+                continue;
+            }
 
-            // Try Finnhub first (keeps consistency if your plan allows it)
-            $resp = Http::retry(3, 300, throw: false)->get(
-                'https://finnhub.io/api/v1/stock/candle',
-                ['symbol'=>$symbol, 'resolution'=>'D', 'from'=>$from, 'to'=>$to, 'token'=>$apiKey]
+            try {
+                // Try Finnhub first to preserve the existing preferred source.
+                $response = Http::retry(3, 300, throw: false)
+                    ->connectTimeout(3)
+                    ->timeout(10)
+                    ->get(
+                        'https://finnhub.io/api/v1/stock/candle',
+                        [
+                            'symbol' => $symbol,
+                            'resolution' => 'D',
+                            'from' => $from,
+                            'to' => $to,
+                            'token' => $apiKey,
+                        ]
+                    );
+
+                $useYahoo = false;
+                if ($response->failed()) {
+                    Log::warning('PricesBackfillJob.finnhubFailed', [
+                        'symbol' => $symbol,
+                        'status' => $response->status(),
+                    ]);
+                    // Transient 5xx responses are eligible for the same safe
+                    // provider fallback as auth and rate-limit responses.
+                    $useYahoo = true;
+                } else {
+                    $json = $response->json(); // { s, t[], o[], h[], l[], c[] }
+                    if (($json['s'] ?? '') === 'ok' && ! empty($json['t'])) {
+                        $rows = [];
+                        $now = now();
+
+                        foreach ($json['t'] as $index => $timestamp) {
+                            $close = (float) ($json['c'][$index] ?? 0);
+                            if ($close <= 0) {
+                                continue;
+                            }
+
+                            $rows[] = [
+                                'symbol' => $symbol,
+                                'trade_date' => Carbon::createFromTimestamp($timestamp, 'America/New_York')->toDateString(),
+                                'open' => ((float) ($json['o'][$index] ?? 0)) ?: null,
+                                'high' => ((float) ($json['h'][$index] ?? 0)) ?: null,
+                                'low' => ((float) ($json['l'][$index] ?? 0)) ?: null,
+                                'close' => $close,
+                                'updated_at' => $now,
+                                'created_at' => $now,
+                            ];
+                        }
+
+                        if ($rows !== []) {
+                            $this->upsertDailyRows($rows);
+                        } else {
+                            $useYahoo = true;
+                        }
+                    } else {
+                        $useYahoo = true;
+                    }
+                }
+
+                // Yahoo is required when Finnhub fails or for a range where
+                // Finnhub may not provide all requested history.
+                if (($useYahoo || $this->days > 185) && ! $this->fetchYahooRange($symbol, $from, $to)) {
+                    $failed++;
+                    Log::warning('PricesBackfillJob.yahooFallbackFailed', [
+                        'symbol' => $symbol,
+                        'days' => $this->days,
+                    ]);
+                }
+            } catch (\Throwable $exception) {
+                $failed++;
+                Log::warning('PricesBackfillJob.providerException', [
+                    'symbol' => $symbol,
+                    'exception' => $exception::class,
+                ]);
+            }
+        }
+
+        if ($failed > 0) {
+            throw new RuntimeException("Price backfill incomplete for {$failed} symbol(s).");
+        }
+    }
+
+    protected function upsertYahooDaily(string $symbol, array $timestamps, array $quote): int
+    {
+        $opens = Arr::get($quote, 'open', []);
+        $highs = Arr::get($quote, 'high', []);
+        $lows = Arr::get($quote, 'low', []);
+        $closes = Arr::get($quote, 'close', []);
+        $rows = [];
+        $now = now();
+
+        foreach ($timestamps as $index => $timestamp) {
+            $close = isset($closes[$index]) ? (float) $closes[$index] : null;
+            if ($close === null || $close <= 0) {
+                continue;
+            }
+
+            $rows[] = [
+                'symbol' => $symbol,
+                'trade_date' => Carbon::createFromTimestamp($timestamp, 'America/New_York')->toDateString(),
+                'open' => isset($opens[$index]) ? (float) $opens[$index] : null,
+                'high' => isset($highs[$index]) ? (float) $highs[$index] : null,
+                'low' => isset($lows[$index]) ? (float) $lows[$index] : null,
+                'close' => $close,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ];
+        }
+
+        if ($rows !== []) {
+            $this->upsertDailyRows($rows);
+        }
+
+        return count($rows);
+    }
+
+    protected function fetchYahooRange(
+        string $symbol,
+        int $period1,
+        int $period2,
+        string $interval = '1d'
+    ): bool {
+        $response = Http::retry(2, 250, throw: false)
+            ->connectTimeout(3)
+            ->timeout(10)
+            ->get(
+                "https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}",
+                ['period1' => $period1, 'period2' => $period2, 'interval' => $interval]
             );
 
-            $useYahoo = false;
-            if ($resp->failed()) {
-                \Log::warning("Finnhub candle fail {$symbol}: {$resp->status()} body=".$resp->body());
-                if (in_array($resp->status(), [401,403,429])) $useYahoo = true;
-            } else {
-                $j = $resp->json(); // { s, t[], o[], h[], l[], c[] }
-                if (($j['s'] ?? '') === 'ok' && !empty($j['t'])) {
-                    foreach ($j['t'] as $i => $ts) {
-                        $date = Carbon::createFromTimestamp($ts, 'America/New_York')->toDateString();
-                        $o = (float)($j['o'][$i] ?? null);
-                        $h = (float)($j['h'][$i] ?? null);
-                        $l = (float)($j['l'][$i] ?? null);
-                        $c = (float)($j['c'][$i] ?? null);
-                        if ($c > 0) {
-                            DB::table('prices_daily')->updateOrInsert(
-                                ['symbol'=>$symbol, 'trade_date'=>$date],
-                                ['open'=>$o ?: null,'high'=>$h ?: null,'low'=>$l ?: null,'close'=>$c,
-                                'updated_at'=>now(),'created_at'=>now()]
-                            );
-                        }
-                    }
-                } else {
-                    $useYahoo = true; // Finnhub responded but with no data—fallback
-                }
-            }
+        if (! $response->ok()) {
+            Log::warning('PricesBackfillJob.yahooFailed', [
+                'symbol' => $symbol,
+                'status' => $response->status(),
+            ]);
 
-            // Also fallback if user asked for > ~6 months; Yahoo handles long ranges better
-            if ($useYahoo || $this->days > 185) {
-                $ok = $this->fetchYahooRange($symbol, $from, $to, '1d');
-                if (!$ok) {
-                    \Log::warning("Yahoo fallback failed {$symbol} [{$this->days}d]");
-                }
-            }
-        }
-    }
-
-    protected function upsertYahooDaily(string $symbol, array $timestamps, array $quote): void
-    {
-        $o = Arr::get($quote, 'open', []);
-        $h = Arr::get($quote, 'high', []);
-        $l = Arr::get($quote, 'low',  []);
-        $c = Arr::get($quote, 'close',[]);
-        foreach ($timestamps as $i => $ts) {
-            $date  = Carbon::createFromTimestamp($ts, 'America/New_York')->toDateString();
-            $open  = isset($o[$i]) ? (float)$o[$i] : null;
-            $high  = isset($h[$i]) ? (float)$h[$i] : null;
-            $low   = isset($l[$i]) ? (float)$l[$i] : null;
-            $close = isset($c[$i]) ? (float)$c[$i] : null;
-            if ($close > 0) {
-                DB::table('prices_daily')->updateOrInsert(
-                    ['symbol'=>$symbol, 'trade_date'=>$date],
-                    ['open'=>$open,'high'=>$high,'low'=>$low,'close'=>$close,
-                    'updated_at'=>now(),'created_at'=>now()]
-                );
-            }
-        }
-    }
-
-    protected function fetchYahooRange(string $symbol, int $period1, int $period2, string $interval = '1d'): bool
-    {
-        $y = Http::retry(2, 250)->get(
-            "https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}",
-            ['period1'=>$period1, 'period2'=>$period2, 'interval'=>$interval]
-        );
-        if (!$y->ok()) {
-            \Log::warning("Yahoo range fetch failed {$symbol}: {$y->status()} body=".$y->body());
             return false;
         }
-        $root = $y->json();
-        $res  = $root['chart']['result'][0] ?? null;
-        $t    = $res['timestamp'] ?? [];
-        $q    = $res['indicators']['quote'][0] ?? [];
-        if (!is_array($t) || empty($t) || empty($q)) return false;
 
-        $this->upsertYahooDaily($symbol, $t, $q);
-        return true;
+        $result = $response->json('chart.result.0');
+        $timestamps = $result['timestamp'] ?? [];
+        $quote = $result['indicators']['quote'][0] ?? [];
+        if (! is_array($timestamps) || $timestamps === [] || ! is_array($quote) || $quote === []) {
+            return false;
+        }
+
+        return $this->upsertYahooDaily($symbol, $timestamps, $quote) > 0;
+    }
+
+    /** @param array<int,array<string,mixed>> $rows */
+    protected function upsertDailyRows(array $rows): void
+    {
+        foreach (array_chunk($rows, 500) as $chunk) {
+            DB::table('prices_daily')->upsert(
+                $chunk,
+                ['symbol', 'trade_date'],
+                ['open', 'high', 'low', 'close', 'updated_at', 'created_at']
+            );
+        }
     }
 }

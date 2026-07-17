@@ -13,16 +13,19 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
-class ComputeExpiryPressureJob implements ShouldQueue
+class ComputeExpiryPressureJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
-    public function __construct(public array $symbols, public int $days = 3, public ?string $anchorDate = null) {}
+    public function __construct(public array $symbols, public int $days = 3, public ?string $anchorDate = null)
+    {
+        $this->anchorDate = app(EodSnapshotSelector::class)->resolvedAnchorDate($anchorDate);
+    }
 
     public function handle(): void
     {
         $selector = app(EodSnapshotSelector::class);
-        $date = $this->anchorDate ?: $selector->completedSessionDate(now());
+        $date = (string) $this->anchorDate;
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);

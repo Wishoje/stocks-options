@@ -41,7 +41,7 @@ class ComputeUAJobTest extends TestCase
         $this->assertTrue($meta['baseline_excludes_today']);
         $this->assertEquals(10.0, $meta['mu']);
         $this->assertNotNull($row->z_score);
-        $this->assertGreaterThan(100, (float) $row->z_score);
+        $this->assertEquals(75.0, (float) $row->z_score);
     }
 
     public function test_it_marks_low_confidence_rows_when_history_is_short_but_signal_is_strong(): void
@@ -131,6 +131,9 @@ class ComputeUAJobTest extends TestCase
 
     protected function insertUaRows(int $expirationId, string $dataDate, float $strike, int $volume, int $openInterest): void
     {
+        $callVolume = intdiv($volume, 2);
+        $putVolume = $volume - $callVolume;
+
         foreach (['call', 'put'] as $optionType) {
             DB::table('option_chain_data')->insert([
                 'expiration_id' => $expirationId,
@@ -138,7 +141,7 @@ class ComputeUAJobTest extends TestCase
                 'option_type' => $optionType,
                 'strike' => $strike,
                 'open_interest' => $openInterest,
-                'volume' => intdiv($volume, 2),
+                'volume' => $optionType === 'call' ? $callVolume : $putVolume,
                 'gamma' => 0.01,
                 'delta' => $optionType === 'call' ? 0.5 : -0.5,
                 'iv' => 0.25,

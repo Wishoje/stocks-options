@@ -12,16 +12,23 @@ use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 
-class PricesDailyJob implements ShouldQueue
+class PricesDailyJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
-    public function __construct(public array $symbols = []) {}
+    public function __construct(public array $symbols = [], public ?string $targetDate = null)
+    {
+        $this->targetDate = $targetDate
+            ? substr($targetDate, 0, 10)
+            : $this->tradingDate(now());
+    }
 
     public function handle(): void
     {
-        $date = $this->tradingDate(now());
+        $date = (string) $this->targetDate;
+        $failed = 0;
 
         foreach ($this->symbols as $symbol) {
             $symbol = \App\Support\Symbols::canon($symbol);
@@ -41,10 +48,20 @@ class PricesDailyJob implements ShouldQueue
                     );
                 } else {
                     \Log::warning("PricesDailyJob: no EOD for {$symbol} {$date}");
+                    $failed++;
                 }
             } catch (\Throwable $e) {
-                \Log::error("PricesDailyJob error {$symbol} {$date}: ".$e->getMessage());
+                $failed++;
+                \Log::error('PricesDailyJob.error', [
+                    'symbol' => $symbol,
+                    'date' => $date,
+                    'exception' => $e::class,
+                ]);
             }
+        }
+
+        if ($failed > 0) {
+            throw new RuntimeException("Daily price refresh incomplete for {$failed} symbol(s).");
         }
     }
 
@@ -78,7 +95,11 @@ class PricesDailyJob implements ShouldQueue
             ->get($url, ['adjusted' => true, 'sort' => 'asc', 'apiKey' => $apiKey]);
 
         if ($resp->failed()) {
-            Log::warning("Polygon daily fail {$symbol} {$date}: {$resp->status()} ".$resp->body());
+            Log::warning('PricesDailyJob.polygonDailyFailed', [
+                'symbol' => $symbol,
+                'date' => $date,
+                'status' => $resp->status(),
+            ]);
             return null;
         }
 

@@ -37,6 +37,7 @@ class SymbolSearchController extends Controller
     protected function searchWithFinnhub(string $q, string $token): array
     {
         $resp = Http::timeout(6)
+            ->connectTimeout(3)
             ->retry(2, 250, throw: false)
             ->get('https://finnhub.io/api/v1/search', [
                 'q'     => $q,
@@ -81,6 +82,7 @@ class SymbolSearchController extends Controller
         }
 
         $client = Http::acceptJson()
+            ->connectTimeout(3)
             ->timeout(10)
             ->retry(2, 250, throw: false);
 

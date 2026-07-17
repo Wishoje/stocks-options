@@ -1,5 +1,7 @@
 <?php
 
+$defaultConnection = env('QUEUE_CONNECTION', 'database');
+
 return [
 
     /*
@@ -13,7 +15,20 @@ return [
     |
     */
 
-    'default' => env('QUEUE_CONNECTION', 'database'),
+    'default' => $defaultConnection,
+
+    // Long-running work must reserve through a distinct connection so its
+    // lease can remain compatible with a longer worker timeout.
+    'long_connection' => env(
+        'QUEUE_LONG_CONNECTION',
+        match ($defaultConnection) {
+            'redis' => 'redis-long',
+            'database' => 'database-long',
+            default => $defaultConnection,
+        }
+    ),
+
+    'long_queue' => env('QUEUE_LONG_QUEUE', 'exports'),
 
     /*
     |--------------------------------------------------------------------------
@@ -39,7 +54,16 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 1080),
+            'after_commit' => false,
+        ],
+
+        'database-long' => [
+            'driver' => 'database',
+            'connection' => env('DB_QUEUE_CONNECTION'),
+            'table' => env('DB_QUEUE_TABLE', 'jobs'),
+            'queue' => env('QUEUE_LONG_QUEUE', 'exports'),
+            'retry_after' => (int) env('DB_LONG_QUEUE_RETRY_AFTER', 1080),
             'after_commit' => false,
         ],
 
@@ -67,7 +91,16 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 1080),
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+
+        'redis-long' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
+            'queue' => env('QUEUE_LONG_QUEUE', 'exports'),
+            'retry_after' => (int) env('REDIS_LONG_QUEUE_RETRY_AFTER', 1080),
             'block_for' => null,
             'after_commit' => false,
         ],
@@ -89,7 +122,11 @@ return [
         'connection' => env('QUEUE_MONITOR_CONNECTION', env('QUEUE_CONNECTION', 'database')),
         'queues' => array_values(array_filter(array_map(
             static fn (string $queue): string => trim($queue),
-            explode(',', (string) env('QUEUE_MONITOR_QUEUES', 'bootstrap,prime,default,intraday,intraday-heavy,calculator,quotes'))
+            explode(',', (string) env('QUEUE_MONITOR_QUEUES', 'bootstrap,prime,default,intraday,intraday-heavy,calculator,quotes,exports'))
+        ))),
+        'targets' => array_values(array_filter(array_map(
+            static fn (string $target): string => trim($target),
+            explode(',', (string) env('QUEUE_MONITOR_TARGETS', ''))
         ))),
         'max_size' => (int) env('QUEUE_MONITOR_MAX_SIZE', 250),
     ],

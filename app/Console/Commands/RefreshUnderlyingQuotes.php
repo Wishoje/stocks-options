@@ -66,7 +66,9 @@ class RefreshUnderlyingQuotes extends Command
             return self::SUCCESS;
         }
 
-        foreach ($symbols->chunk(50) as $chunk) {
+        // Four bounded requests fit under the 90-second job ceiling even when
+        // each provider call consumes its full retry/request allowance.
+        foreach ($symbols->chunk(4) as $chunk) {
             FetchUnderlyingQuotesJob::dispatch($chunk->all());
         }
 

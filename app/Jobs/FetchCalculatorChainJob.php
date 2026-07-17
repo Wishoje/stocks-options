@@ -12,23 +12,14 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
-class FetchCalculatorChainJob implements ShouldQueue
+class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 90;
+    public int $timeout = 270;
     public int $tries   = 3;
 
     public function __construct(public string $symbol, public ?string $expiry = null) {}
-
-    private static function clip(?string $s, int $max = 600): string
-    {
-        if ($s === null) {
-            return '<null>';
-        }
-        $s = trim($s);
-        return strlen($s) > $max ? substr($s, 0, $max) . '…<clipped>' : $s;
-    }
 
     public function handle(): void
     {
@@ -42,6 +33,7 @@ class FetchCalculatorChainJob implements ShouldQueue
 
         $makeRequest = function (int $timeout = 30) use ($mode, $header, $apiKey) {
             $req = Http::timeout($timeout)
+                ->connectTimeout(min(5, max(1, $timeout - 1)))
                 ->acceptJson()
                 ->withHeaders(['Accept' => 'application/json']);
 
@@ -103,7 +95,6 @@ class FetchCalculatorChainJob implements ShouldQueue
         // Log::debug('CalculatorChain.underlying.response', [
         //     'status' => $uResp->status(),
         //     'ok'     => $uResp->ok(),
-        //     'body'   => self::clip($uResp->body()),
         // ]);
 
         $uJson = $uResp->json();
@@ -182,7 +173,7 @@ class FetchCalculatorChainJob implements ShouldQueue
             ) {
                 Log::warning('CalculatorChain.limitRejected', [
                     'attempted_limit' => $perPage,
-                    'body'            => self::clip($resp->body()),
+                    'status' => $resp->status(),
                 ]);
 
                 $perPage = 100;
@@ -206,7 +197,6 @@ class FetchCalculatorChainJob implements ShouldQueue
             //     'page'        => $page,
             //     'status'      => $resp->status(),
             //     'ok'          => $resp->ok(),
-            //     'bodySnippet' => self::clip($resp->body()),
             // ]);
 
             if (!$resp->ok()) {
@@ -215,7 +205,6 @@ class FetchCalculatorChainJob implements ShouldQueue
                     'symbol' => $symbol,
                     'page'   => $page,
                     'status' => $resp->status(),
-                    'body'   => self::clip($resp->body()),
                 ]);
                 break;
             }

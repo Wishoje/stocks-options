@@ -24,7 +24,10 @@ return new class extends Migration
                 $t->timestamp('asof')->nullable();          // last update from Polygon (delayed)
                 $t->timestamps();
 
-                $t->unique(['symbol','trade_date','exp_date','strike','option_type']);
+                $t->unique(
+                    ['symbol', 'trade_date', 'exp_date', 'strike', 'option_type'],
+                    'olc_symbol_trade_exp_strike_type_uq'
+                );
             });
         }
     }

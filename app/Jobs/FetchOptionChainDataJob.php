@@ -16,8 +16,9 @@ use App\Models\OptionExpiration;
 use App\Support\EodSnapshotSelector;
 use App\Support\EodHealth;
 use Carbon\Carbon;
+use RuntimeException;
 
-class FetchOptionChainDataJob implements ShouldQueue
+class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
@@ -47,14 +48,21 @@ class FetchOptionChainDataJob implements ShouldQueue
     /** Cache guard to prevent duplicate pulls per symbol/day */
     protected int $guardMinutes = 10;
 
-    public function __construct(array $symbols, ?int $days = null, ?string $targetDate = null)
+    public int $timeout = 540;
+
+    public function __construct(array $symbols, ?int $days = null, ?string $targetDate = null, ?int $timeoutSeconds = null)
     {
         $this->symbols = array_values(array_unique(array_map(
             static fn($s) => \App\Support\Symbols::canon($s),
             $symbols
         )));
         $this->days = $days;
-        $this->targetDate = $targetDate ? substr((string) $targetDate, 0, 10) : null;
+        $this->targetDate = $targetDate
+            ? substr((string) $targetDate, 0, 10)
+            : $this->tradingDate(now());
+        if ($timeoutSeconds !== null) {
+            $this->timeout = max(30, min(540, $timeoutSeconds));
+        }
     }
 
     public function handle(): void
@@ -71,6 +79,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         }
         $windowStart = $anchorNy->copy()->startOfDay();
         $windowEnd = ($this->days ? $anchorNy->copy()->addDays($this->days) : $anchorNy->copy()->addDays(90))->endOfDay();
+        $incompleteSymbols = 0;
 
         foreach ($this->symbols as $symbol) {
             $context = [
@@ -81,20 +90,45 @@ class FetchOptionChainDataJob implements ShouldQueue
 
             // Duplicate-work guard per symbol/date.
             $guardKey = "optchain:pulling:{$symbol}:{$date}";
-            if (!Cache::add($guardKey, 1, now()->addMinutes($this->guardMinutes))) {
+            $guardSeconds = max(($this->timeout + 60), ($this->guardMinutes * 60));
+            $guard = Cache::lock($guardKey, $guardSeconds);
+            if (! $guard->get()) {
                 $meta = array_merge($context, [
                     'status' => 'skipped_duplicate_guard',
                     'guard_key' => $guardKey,
                 ]);
                 Log::channel('eod_repair')->warning('eod.fetch.symbol.skipped', $meta);
                 $this->storeFetchMeta($symbol, $date, $meta);
+
+                // A legitimate owner may run much longer than the normal
+                // exception backoff. Re-release the queued job beyond the lock
+                // lease so a chain does not fail or advance while its EOD input
+                // is still being built.
+                if ($this->job !== null) {
+                    $this->release($guardSeconds);
+
+                    return;
+                }
+
+                $incompleteSymbols++;
                 continue;
             }
 
-            // Finnhub -> Massive fallback with normalized chain.
-            [$spot, $sets, $providerMeta] = $this->fetchChain($symbol, $windowStart, $windowEnd);
+            try {
+                // Finnhub -> Massive fallback with normalized chain.
+                [$spot, $sets, $providerMeta] = $this->fetchChain($symbol, $windowStart, $windowEnd);
             $providerSpot = (float) $spot;
             [$spot, $spotSource] = $this->resolveSpot($symbol, $date, $providerSpot);
+
+            if (! ($providerMeta['provider_complete'] ?? false)) {
+                $meta = array_merge($context, [
+                    'status' => 'provider_incomplete',
+                ], $providerMeta);
+                Log::channel('eod_repair')->warning('eod.fetch.symbol.provider_incomplete', $meta);
+                $this->storeFetchMeta($symbol, $date, $meta);
+                $incompleteSymbols++;
+                continue;
+            }
 
             if (!$sets || !is_array($sets)) {
                 $meta = array_merge($context, [
@@ -105,6 +139,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 ], $providerMeta);
                 Log::channel('eod_repair')->warning('eod.fetch.symbol.no_provider_data', $meta);
                 $this->storeFetchMeta($symbol, $date, $meta);
+                $incompleteSymbols++;
                 continue;
             }
 
@@ -149,6 +184,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                 ], $providerMeta);
                 Log::channel('eod_repair')->warning('eod.fetch.symbol.no_expiries_in_window', $meta);
                 $this->storeFetchMeta($symbol, $date, $meta);
+                $incompleteSymbols++;
                 continue;
             }
 
@@ -305,6 +341,13 @@ class FetchOptionChainDataJob implements ShouldQueue
             ], $providerMeta);
             Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
             $this->storeFetchMeta($symbol, $date, $meta);
+            } finally {
+                $guard->release();
+            }
+        }
+
+        if ($incompleteSymbols > 0) {
+            throw new RuntimeException("EOD option-chain refresh incomplete for {$incompleteSymbols} symbol(s).");
         }
     }
 
@@ -351,11 +394,13 @@ class FetchOptionChainDataJob implements ShouldQueue
                 $massiveWindowExpiries = $massiveChain !== null
                     ? $this->countChainExpirationsInWindow($massiveChain[1], $windowStart, $windowEnd)
                     : 0;
+                $massiveComplete = (bool) ($massiveMeta['complete'] ?? false);
 
-                if ($massiveChain !== null && $massiveWindowExpiries > $finnhubWindowExpiries) {
+                if ($massiveChain !== null && $massiveComplete && $massiveWindowExpiries > $finnhubWindowExpiries) {
                     return [$massiveChain[0] ?: $finnhubChain[0], $massiveChain[1], [
                         'provider' => 'massive',
                         'provider_status' => 'ok',
+                        'provider_complete' => true,
                         'finnhub_status' => 'ok_sparse',
                         'finnhub_set_count' => count($finnhubSets),
                         'finnhub_expiries_in_window' => $finnhubWindowExpiries,
@@ -376,7 +421,10 @@ class FetchOptionChainDataJob implements ShouldQueue
 
                 return [$finnhubChain[0], $finnhubSets, [
                     'provider' => 'finnhub',
-                    'provider_status' => 'ok_sparse_kept_finnhub',
+                    'provider_status' => $massiveComplete
+                        ? 'ok_sparse_confirmed'
+                        : 'incomplete_sparse_fallback',
+                    'provider_complete' => $massiveComplete,
                     'finnhub_status' => 'ok_sparse',
                     'finnhub_set_count' => count($finnhubSets),
                     'finnhub_expiries_in_window' => $finnhubWindowExpiries,
@@ -393,6 +441,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             return [$finnhubChain[0], $finnhubChain[1], [
                 'provider' => 'finnhub',
                 'provider_status' => 'ok',
+                'provider_complete' => true,
                 'finnhub_status' => $finnhubMeta['status'] ?? 'ok',
                 'finnhub_set_count' => count($finnhubSets),
                 'finnhub_expiries_in_window' => $finnhubWindowExpiries,
@@ -403,7 +452,8 @@ class FetchOptionChainDataJob implements ShouldQueue
         if ($massiveChain !== null) {
             return [$massiveChain[0], $massiveChain[1], [
                 'provider' => 'massive',
-                'provider_status' => 'ok',
+                'provider_status' => ($massiveMeta['complete'] ?? false) ? 'ok' : 'incomplete',
+                'provider_complete' => (bool) ($massiveMeta['complete'] ?? false),
                 'finnhub_status' => $finnhubMeta['status'] ?? 'not_attempted',
                 'massive_status' => $massiveMeta['status'] ?? 'ok',
                 'massive_pages' => $massiveMeta['pages'] ?? null,
@@ -422,6 +472,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         return [0.0, [], [
             'provider' => 'none',
             'provider_status' => 'failed',
+            'provider_complete' => false,
             'finnhub_status' => $finnhubMeta['status'] ?? 'not_attempted',
             'finnhub_http_status' => $finnhubMeta['http_status'] ?? null,
             'massive_status' => $massiveMeta['status'] ?? 'not_attempted',
@@ -528,6 +579,7 @@ class FetchOptionChainDataJob implements ShouldQueue
 
         $url = 'https://finnhub.io/api/v1/stock/option-chain';
         $resp = Http::retry(3, 250, throw: false)
+            ->connectTimeout(5)
             ->timeout(15)
             ->acceptJson()
             ->get($url, [
@@ -574,6 +626,7 @@ class FetchOptionChainDataJob implements ShouldQueue
         }
 
         $client = Http::acceptJson()
+            ->connectTimeout(5)
             ->timeout(20)
             ->retry(2, 300, throw: false);
         if ($mode === 'bearer') {
@@ -612,10 +665,12 @@ class FetchOptionChainDataJob implements ShouldQueue
         $pages = (int) ($bulk['meta']['pages'] ?? 0);
         $lastStatus = $bulk['meta']['http_status'] ?? null;
         $paginationCapped = (bool) ($bulk['meta']['pagination_capped'] ?? false);
+        $bulkComplete = (bool) ($bulk['meta']['complete'] ?? false);
 
         if (empty($contracts) && empty($referenceExpiries)) {
             return [null, [
                 'status' => $lastStatus ? 'http_error' : 'empty_payload',
+                'complete' => false,
                 'http_status' => $lastStatus,
                 'pages' => $pages,
                 'page_limit' => $pageLimit,
@@ -645,6 +700,9 @@ class FetchOptionChainDataJob implements ShouldQueue
         $expiryBackfillIncompleteFetched = 0;
         $expiryBackfillSideRequested = 0;
         $expiryBackfillSideFetched = 0;
+        $expiryBackfillResolved = 0;
+        $repairTransportFailure = false;
+        $repairSemanticFailure = false;
         if ($forceExpiryRebuild || $missingExpiries || ($this->repairPartialExpiries && $incompleteExpiries)) {
             $repairExpiries = $forceExpiryRebuild ? $knownExpiries : $missingExpiries;
             if ($this->repairPartialExpiries && $incompleteExpiries) {
@@ -672,9 +730,18 @@ class FetchOptionChainDataJob implements ShouldQueue
                 $pages += (int) ($res['meta']['pages'] ?? 0);
                 $lastStatus = $res['meta']['http_status'] ?? $lastStatus;
                 $paginationCapped = $paginationCapped || (bool) ($res['meta']['pagination_capped'] ?? false);
+                if (! ($res['meta']['complete'] ?? false)) {
+                    $repairTransportFailure = true;
+                    continue;
+                }
 
                 $contractsForExpiry = $res['contracts'];
                 if (!$contractsForExpiry) {
+                    // A complete empty response is authoritative for this
+                    // expiry. Never retain a one-sided page from the failed
+                    // broad request underneath it.
+                    unset($byExp[$expiry]);
+                    $expiryBackfillResolved++;
                     continue;
                 }
 
@@ -683,10 +750,14 @@ class FetchOptionChainDataJob implements ShouldQueue
                 }
 
                 $expSet = $this->normalizeMassiveContracts($contractsForExpiry);
-                if (isset($expSet[$expiry])) {
-                    $byExp[$expiry] = $expSet[$expiry];
-                    $expiryBackfillFetched++;
-                    if ($this->repairPartialExpiries && $this->massiveExpiryNeedsRepair($byExp[$expiry])) {
+                if (! isset($expSet[$expiry])) {
+                    $repairSemanticFailure = true;
+                    continue;
+                }
+
+                $byExp[$expiry] = $expSet[$expiry];
+                $expiryBackfillFetched++;
+                if ($this->repairPartialExpiries && $this->massiveExpiryNeedsRepair($byExp[$expiry])) {
                         $repairSides = $forceExpiryRebuild
                             ? ['call', 'put']
                             : $this->massiveRepairSides($byExp[$expiry]);
@@ -710,6 +781,10 @@ class FetchOptionChainDataJob implements ShouldQueue
                             $pages += (int) ($sideRes['meta']['pages'] ?? 0);
                             $lastStatus = $sideRes['meta']['http_status'] ?? $lastStatus;
                             $paginationCapped = $paginationCapped || (bool) ($sideRes['meta']['pagination_capped'] ?? false);
+                            if (! ($sideRes['meta']['complete'] ?? false)) {
+                                $repairTransportFailure = true;
+                                continue;
+                            }
 
                             $sideContracts = $sideRes['contracts'] ?? [];
                             if (!$sideContracts) {
@@ -734,11 +809,15 @@ class FetchOptionChainDataJob implements ShouldQueue
                             );
                             $expiryBackfillSideFetched++;
                         }
-                    }
+                }
 
-                    if (($wasIncomplete || $forceExpiryRebuild) && !$this->massiveExpiryNeedsRepair($byExp[$expiry])) {
+                if (! $this->massiveExpiryNeedsRepair($byExp[$expiry])) {
+                    $expiryBackfillResolved++;
+                    if ($wasIncomplete || $forceExpiryRebuild) {
                         $expiryBackfillIncompleteFetched++;
                     }
+                } else {
+                    $repairSemanticFailure = true;
                 }
             }
         }
@@ -748,14 +827,25 @@ class FetchOptionChainDataJob implements ShouldQueue
         if (!$sets) {
             return [null, [
                 'status' => 'normalized_empty',
+                'complete' => false,
                 'pages' => $pages,
                 'page_limit' => $pageLimit,
                 'pagination_capped' => $paginationCapped,
             ]];
         }
 
+        $repairRecoveredBulk = $forceExpiryRebuild
+            && $expiryBackfillRequested > 0
+            && $expiryBackfillResolved === $expiryBackfillRequested
+            && ! $repairTransportFailure
+            && ! $repairSemanticFailure;
+        $complete = ($bulkComplete || $repairRecoveredBulk)
+            && ! $repairTransportFailure
+            && ! $repairSemanticFailure;
+
         return [[$spot, $sets], [
-            'status' => 'ok',
+            'status' => $complete ? 'ok' : 'incomplete',
+            'complete' => $complete,
             'set_count' => count($sets),
             'pages' => $pages,
             'page_limit' => $pageLimit,
@@ -771,6 +861,7 @@ class FetchOptionChainDataJob implements ShouldQueue
             'expiry_backfill_incomplete_fetched' => $expiryBackfillIncompleteFetched,
             'expiry_backfill_side_requested' => $expiryBackfillSideRequested,
             'expiry_backfill_side_fetched' => $expiryBackfillSideFetched,
+            'expiry_backfill_resolved' => $expiryBackfillResolved,
         ]];
     }
 
@@ -962,6 +1053,7 @@ class FetchOptionChainDataJob implements ShouldQueue
                     'spot' => 0.0,
                     'meta' => [
                         'status' => 'unauthorized',
+                        'complete' => false,
                         'http_status' => 401,
                         'pages' => $pages,
                         'page_limit' => $pageLimit,
@@ -1003,15 +1095,21 @@ class FetchOptionChainDataJob implements ShouldQueue
             }
         }
 
+        $paginationCapped = (bool) $cursor;
+        $complete = $lastStatus === null && ! $paginationCapped;
+
         return [
             'contracts' => $contracts,
             'spot' => (float) ($spot ?? 0.0),
             'meta' => [
-                'status' => empty($contracts) ? ($lastStatus ? 'http_error' : 'empty_payload') : 'ok',
+                'status' => $lastStatus
+                    ? 'http_error'
+                    : ($paginationCapped ? 'pagination_capped' : (empty($contracts) ? 'empty_payload' : 'ok')),
+                'complete' => $complete,
                 'http_status' => $lastStatus,
                 'pages' => $pages,
                 'page_limit' => $pageLimit,
-                'pagination_capped' => (bool) $cursor,
+                'pagination_capped' => $paginationCapped,
                 'expiry' => $expiry,
                 'contract_type' => $contractType,
             ],
