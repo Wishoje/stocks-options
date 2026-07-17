@@ -15,6 +15,9 @@ const gexTimeframe = ref('30d')
 const selectedSymbols = ref([])
 const selectedIndicators = ref([])
 const exports = ref([])
+const exportsLoading = ref(false)
+const exportsLoaded = ref(false)
+const exportsError = ref('')
 const activeExportId = ref(null)
 let pollTimer = null
 
@@ -105,14 +108,35 @@ async function loadWatchlist() {
 }
 
 async function loadExports() {
+  exportsLoading.value = true
+  exportsError.value = ''
+
   try {
     const { data } = await axios.get('/api/watchlist/eod-exports')
-    exports.value = Array.isArray(data?.items) ? data.items : []
+    if (!Array.isArray(data?.items)) {
+      throw new Error('Export history returned an invalid response.')
+    }
 
-    if (!hasPendingExports()) {
+    exports.value = data.items
+    exportsLoaded.value = true
+
+    const activeExport = exports.value.find((item) => item.id === activeExportId.value)
+    if (activeExport && (activeExport.status === 'completed' || activeExport.status === 'failed')) {
+      activeExportId.value = null
+    }
+
+    if (hasPendingExports()) {
+      ensurePolling()
+    } else {
       stopPolling()
     }
-  } catch {}
+  } catch (error) {
+    exportsError.value = error?.response?.data?.message
+      || error?.message
+      || 'Failed to load recent exports.'
+  } finally {
+    exportsLoading.value = false
+  }
 }
 
 function toggleSymbol(symbol) {
@@ -175,18 +199,28 @@ function stopPolling() {
 }
 
 async function refreshExport(exportId) {
-  const { data } = await axios.get(`/api/watchlist/eod-export/${exportId}`)
-  const item = data?.item
-  if (!item) return
+  exportsError.value = ''
 
-  const next = exports.value.filter((row) => row.id !== item.id)
-  next.unshift(item)
-  exports.value = next.sort((a, b) => Number(b.id) - Number(a.id))
-
-  if (item.status === 'completed' || item.status === 'failed') {
-    if (activeExportId.value === item.id) {
-      activeExportId.value = null
+  try {
+    const { data } = await axios.get(`/api/watchlist/eod-export/${exportId}`)
+    const item = data?.item
+    if (!item) {
+      throw new Error('Export status returned an invalid response.')
     }
+
+    const next = exports.value.filter((row) => row.id !== item.id)
+    next.unshift(item)
+    exports.value = next.sort((a, b) => Number(b.id) - Number(a.id))
+
+    if (item.status === 'completed' || item.status === 'failed') {
+      if (activeExportId.value === item.id) {
+        activeExportId.value = null
+      }
+    }
+  } catch (error) {
+    exportsError.value = error?.response?.data?.message
+      || error?.message
+      || 'Failed to refresh export status.'
   }
 }
 
@@ -514,17 +548,34 @@ onUnmounted(() => {
                   <button
                     type="button"
                     class="rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-700"
+                    :disabled="exportsLoading"
                     @click="loadExports"
                   >
-                    Refresh
+                    {{ exportsLoading ? 'Refreshing...' : 'Refresh' }}
                   </button>
                 </div>
 
-                <div v-if="!exports.length" class="mt-4 rounded-xl border border-dashed border-gray-700 bg-gray-950/60 p-4 text-sm text-gray-400">
+                <div v-if="exportsError" class="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+                  <div>{{ exportsError }}</div>
+                  <button
+                    type="button"
+                    class="mt-3 rounded-lg border border-rose-300/30 px-3 py-1.5 text-xs font-semibold transition hover:bg-rose-400/10"
+                    :disabled="exportsLoading"
+                    @click="loadExports"
+                  >
+                    Try again
+                  </button>
+                </div>
+
+                <div v-if="exportsLoading && !exportsLoaded" class="mt-4 rounded-xl border border-dashed border-gray-700 bg-gray-950/60 p-4 text-sm text-gray-400">
+                  Loading recent exports...
+                </div>
+
+                <div v-else-if="exportsLoaded && !exports.length && !exportsError" class="mt-4 rounded-xl border border-dashed border-gray-700 bg-gray-950/60 p-4 text-sm text-gray-400">
                   No exports yet.
                 </div>
 
-                <div v-else class="mt-4 space-y-2">
+                <div v-if="exports.length" class="mt-4 space-y-2">
                   <div
                     v-for="item in exports"
                     :key="item.id"

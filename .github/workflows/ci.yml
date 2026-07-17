@@ -85,6 +85,16 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v4
 
+            - name: Set up PHP for frontend assets
+              uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.3'
+                  extensions: bcmath, curl, mbstring
+                  coverage: none
+
+            - name: Install PHP runtime dependencies
+              run: composer install --no-dev --no-interaction --no-progress --prefer-dist --no-scripts
+
             - name: Set up Node.js
               uses: actions/setup-node@v4
               with:

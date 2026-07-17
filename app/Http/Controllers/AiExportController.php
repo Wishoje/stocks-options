@@ -15,13 +15,39 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AiExportController extends Controller
 {
+    private const METADATA_COLUMNS = [
+        'id',
+        'user_id',
+        'status',
+        'symbols',
+        'indicators',
+        'options',
+        'file_name',
+        'error_message',
+        'created_at',
+        'started_at',
+        'generated_at',
+        'completed_at',
+    ];
+
+    private const DOWNLOAD_COLUMNS = [
+        'id',
+        'user_id',
+        'status',
+        'file_disk',
+        'file_path',
+        'file_name',
+        'error_message',
+        'completed_at',
+    ];
+
     public function index(): JsonResponse
     {
         $items = AiExport::query()
             ->where('user_id', Auth::id())
             ->latest('id')
             ->limit(20)
-            ->get()
+            ->get(self::METADATA_COLUMNS)
             ->map(fn (AiExport $export) => $this->serializeExport($export))
             ->values();
 
@@ -90,46 +116,58 @@ class AiExportController extends Controller
         ], 202);
     }
 
-    public function show(AiExport $export): JsonResponse
+    public function show(string $export): JsonResponse
     {
-        $this->authorizeExport($export);
+        $item = AiExport::query()
+            ->select(self::METADATA_COLUMNS)
+            ->findOrFail($export);
+
+        $this->authorizeExport($item);
 
         return response()->json([
-            'item' => $this->serializeExport($export),
+            'item' => $this->serializeExport($item),
         ]);
     }
 
-    public function download(AiExport $export): StreamedResponse|JsonResponse
+    public function download(string $export): StreamedResponse|JsonResponse
     {
-        $this->authorizeExport($export);
+        $item = AiExport::query()
+            ->select(self::DOWNLOAD_COLUMNS)
+            ->findOrFail($export);
 
-        if ($export->status !== 'completed') {
+        $this->authorizeExport($item);
+
+        if ($item->status !== 'completed') {
             return response()->json(['message' => 'Export is not ready yet.'], 409);
         }
 
-        if (is_string($export->payload_json) && $export->payload_json !== '') {
+        $payloadJson = AiExport::query()
+            ->whereKey($item->id)
+            ->value('payload_json');
+
+        if (is_string($payloadJson) && $payloadJson !== '') {
             return response()->streamDownload(
-                function () use ($export) {
-                    echo $export->payload_json;
+                function () use ($payloadJson) {
+                    echo $payloadJson;
                 },
-                $export->file_name ?: "watchlist-eod-ai-export-{$export->id}.json",
+                $item->file_name ?: "watchlist-eod-ai-export-{$item->id}.json",
                 ['Content-Type' => 'application/json']
             );
         }
 
-        if (!$export->file_disk || !$export->file_path || !Storage::disk($export->file_disk)->exists($export->file_path)) {
-            $export->forceFill([
+        if (!$item->file_disk || !$item->file_path || !Storage::disk($item->file_disk)->exists($item->file_path)) {
+            $item->forceFill([
                 'status' => 'failed',
                 'error_message' => 'Export payload missing from database and storage.',
-                'completed_at' => $export->completed_at ?? now(),
+                'completed_at' => $item->completed_at ?? now(),
             ])->save();
 
             return response()->json(['message' => 'Export file is missing.'], 404);
         }
 
-        return Storage::disk($export->file_disk)->download(
-            $export->file_path,
-            $export->file_name ?: basename($export->file_path),
+        return Storage::disk($item->file_disk)->download(
+            $item->file_path,
+            $item->file_name ?: basename($item->file_path),
             ['Content-Type' => 'application/json']
         );
     }
@@ -141,14 +179,18 @@ class AiExportController extends Controller
 
     private function serializeExport(AiExport $export): array
     {
+        $symbols = is_array($export->symbols) ? array_values($export->symbols) : [];
+        $indicators = is_array($export->indicators) ? array_values($export->indicators) : [];
+        $options = is_array($export->options) ? $export->options : [];
+
         return [
             'id' => $export->id,
             'status' => $export->status,
-            'symbols' => $export->symbols ?? [],
-            'symbol_count' => count($export->symbols ?? []),
-            'indicators' => $export->indicators ?? [],
-            'indicator_count' => count($export->indicators ?? []),
-            'options' => $export->options ?? [],
+            'symbols' => $symbols,
+            'symbol_count' => count($symbols),
+            'indicators' => $indicators,
+            'indicator_count' => count($indicators),
+            'options' => $options,
             'file_name' => $export->file_name,
             'error_message' => $export->error_message,
             'created_at' => optional($export->created_at)?->toIso8601String(),
