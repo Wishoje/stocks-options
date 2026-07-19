@@ -48,7 +48,9 @@ Before enabling the first canary:
 - Keep queue-lane isolation and the Massive concurrency gate at their separately approved rollout values. Do not combine those changes with this canary.
 - Confirm the `default` and `bootstrap` queues have no option-chain work ready, reserved, or delayed.
 - Record the release SHA and current EOD coverage.
-- Run after market close, after scheduled EOD repair work has drained, and before the next trading session begins.
+- Run after the provider's 15-minute delay following market close, after
+  scheduled EOD work has drained, and before expired same-day contracts leave
+  the current snapshot.
 - Use only the current completed New York trading session. Do not pass `--allow-nonhistorical-chain-repair`.
 
 Check the completed session:
@@ -249,7 +251,10 @@ The Massive option-chain snapshot endpoint provides a current or plan-delayed sn
 For that reason:
 
 - Use this rollout only for the current completed trading session.
-- A weekend repair may target the preceding Friday while it remains the application's completed session.
+- A weekend repair may still identify Friday as the application's completed
+  session, but the current snapshot may already omit Friday-expired contracts.
+  In that case the strict fetch must fail and preserve the prior snapshot; it
+  cannot reconstruct Friday completely on the Starter plan.
 - Do not use `--allow-nonhistorical-chain-repair` to label a current snapshot as an older date.
 - Historical reconstruction requires a separate licensed historical source or previously captured snapshots.
 
