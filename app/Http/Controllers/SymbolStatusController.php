@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\BootstrapUserSymbolJob;
 use App\Support\EodSnapshotSelector;
+use App\Support\QueueLanes;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -141,6 +142,6 @@ class SymbolStatusController extends Controller
 
     private function intradayQueueForSymbol(string $symbol): string
     {
-        return in_array($symbol, ['SPY', 'QQQ'], true) ? 'intraday-heavy' : 'intraday';
+        return QueueLanes::intraday($symbol, interactive: true);
     }
 }

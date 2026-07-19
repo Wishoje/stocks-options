@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Schema;
 use App\Models\Watchlist;
 use App\Support\Market;
 use App\Support\Symbols;
+use App\Support\QueueLanes;
 
 class IntradayController extends Controller
 {
@@ -109,8 +110,10 @@ class IntradayController extends Controller
         $watchlistEmpty = !Watchlist::query()->exists();
         // (equivalent) $watchlistEmpty = !DB::table('watchlists')->exists();
 
-        if ($watchlistEmpty) {
-            Bus::dispatchSync(new FetchPolygonIntradayOptionsJob($symbols));
+        if ($watchlistEmpty && ! QueueLanes::isolated()) {
+            foreach (QueueLanes::scheduledIntradayBatches($symbols, count($symbols)) as $batch) {
+                Bus::dispatchSync(new FetchPolygonIntradayOptionsJob($batch));
+            }
             return response()->json([
                 'ok' => true,
                 'dispatch' => 'sync',
@@ -119,7 +122,12 @@ class IntradayController extends Controller
             ]);
         }
 
-        Bus::dispatch(new FetchPolygonIntradayOptionsJob($symbols));
+        foreach (QueueLanes::scheduledIntradayBatches($symbols, count($symbols)) as $batch) {
+            Bus::dispatch(
+                (new FetchPolygonIntradayOptionsJob($batch))
+                    ->onQueue(QueueLanes::intradayBatch($batch, interactive: true))
+            );
+        }
         return response()->json([
             'ok' => true,
             'dispatch' => 'async',

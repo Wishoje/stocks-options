@@ -2,10 +2,13 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\ProviderConcurrencyUnavailable;
 use App\Models\UnderlyingQuote;
 use App\Support\Symbols;
 use App\Support\Market;
 use App\Support\PolygonClient;
+use App\Support\QueueLanes;
+use App\Support\ProviderConcurrencyLimiter;
 use Illuminate\Bus\Queueable;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -26,10 +29,20 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
     public function __construct(public array $symbols)
     {
         // Separate, lightweight queue for prices
-        $this->onQueue('quotes');
+        $this->onQueue(QueueLanes::quotes());
     }
 
     public function handle(): void
+    {
+        $limiter = app(ProviderConcurrencyLimiter::class);
+        $limiter->withPriority(
+            QueueLanes::providerPriority($this->queue),
+            fn () => $this->fetchAndPersist(),
+            1
+        );
+    }
+
+    private function fetchAndPersist(): void
     {
         // $nowEt = now('America/New_York');
         // if ($nowEt->isWeekend() || !Market::isRthOpen($nowEt)) {
@@ -103,6 +116,11 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
                         ])
                         ->save();
                 }, 3);
+            } catch (ProviderConcurrencyUnavailable $exception) {
+                // Capacity pressure must retry the job immediately. Continuing
+                // through a batch could spend the whole 90-second job timeout
+                // waiting once per symbol without making a provider request.
+                throw $exception;
             } catch (\Throwable $e) {
                 $failed++;
                 Log::warning('FetchUnderlyingQuotesJob.error', [

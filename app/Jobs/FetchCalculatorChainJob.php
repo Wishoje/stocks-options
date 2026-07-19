@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Support\QueueLanes;
+use App\Support\ProviderConcurrencyLimiter;
 
 class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
 {
@@ -19,9 +21,22 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
     public int $timeout = 270;
     public int $tries   = 3;
 
-    public function __construct(public string $symbol, public ?string $expiry = null) {}
+    public function __construct(public string $symbol, public ?string $expiry = null)
+    {
+        $this->onQueue(QueueLanes::calculator($symbol));
+    }
 
     public function handle(): void
+    {
+        $limiter = app(ProviderConcurrencyLimiter::class);
+        $limiter->withPriority(
+            QueueLanes::providerPriority($this->queue),
+            fn () => $this->fetch(),
+            10
+        );
+    }
+
+    private function fetch(): void
     {
         $symbol = strtoupper($this->symbol);
         $targetExpiry = $this->expiry ? substr((string) $this->expiry, 0, 10) : null;
@@ -84,12 +99,14 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
         // -----------------------------
         // Step 1: Underlying price
         // -----------------------------
-        $uResp = $makeRequest(10)->get(
-            "{$base}/v3/snapshot",
-            $authParams([
-                'ticker.any_of' => $symbol,
-                'limit'         => 1,
-            ])
+        $uResp = app(ProviderConcurrencyLimiter::class)->massive(
+            fn () => $makeRequest(10)->get(
+                "{$base}/v3/snapshot",
+                $authParams([
+                    'ticker.any_of' => $symbol,
+                    'limit'         => 1,
+                ])
+            )
         );
 
         // Log::debug('CalculatorChain.underlying.response', [
@@ -133,7 +150,7 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
         $perPage   = 250; // first attempt, fallback to 100 if Massive rejects
         $baseMaxPages = max(50, (int) env('CALC_CHAIN_MAX_PAGES', 150));
         $largeMaxPages = max($baseMaxPages, (int) env('CALC_CHAIN_MAX_PAGES_LARGE', 350));
-        $isLargeSymbol = !$targetExpiry && in_array($symbol, ['SPY', 'QQQ', 'IWM'], true);
+        $isLargeSymbol = !$targetExpiry && QueueLanes::isCalculatorHeavy($symbol);
         $maxPages  = $isLargeSymbol ? $largeMaxPages : $baseMaxPages;
         $url       = "{$base}/v3/snapshot/options/{$symbol}";
         $contracts = [];
@@ -163,7 +180,9 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             //     'params' => $params,
             // ]);
 
-            $resp = $request->get($url, $authParams($params));
+            $resp = app(ProviderConcurrencyLimiter::class)->massive(
+                fn () => $request->get($url, $authParams($params))
+            );
 
             // limit fallback for page 1
             if (
@@ -185,7 +204,9 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 if ($targetExpiry) {
                     $params['expiration_date'] = $targetExpiry;
                 }
-                $resp = $request->get($url, $authParams($params));
+                $resp = app(ProviderConcurrencyLimiter::class)->massive(
+                    fn () => $request->get($url, $authParams($params))
+                );
 
                 // Log::debug('CalculatorChain.limitRetry', [
                 //     'new_limit' => $perPage,

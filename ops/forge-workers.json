@@ -2,7 +2,7 @@
   "schema_version": 1,
   "rollout_lease_seconds": 1080,
   "required_supervisor_stopwaitsecs": 1200,
-  "baseline_process_count": 25,
+  "baseline_process_count": 26,
   "proposed_process_count": 26,
   "requires_market_hours_capacity_check": true,
   "workers": [

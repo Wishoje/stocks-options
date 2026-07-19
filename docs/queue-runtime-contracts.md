@@ -29,7 +29,7 @@ After legacy exports are drained and the bounded worker lanes are active, reduce
 | intraday-heavy | 540s | 600s | 1080s |
 | exports | 900s | 960s | 1080s |
 
-Supervisor `stopwaitsecs` must be at least 1,200 seconds for these workers. The repository cannot enforce that host setting. Production restart safety remains unverified until the Supervisor configuration is changed and tested.
+Supervisor `stopwaitsecs` must be at least 1,200 seconds for these workers. Production configuration was verified at 1,200 seconds for all eight current programs. A controlled restart during active work remains a GEX-005 proof item.
 
 The machine-readable worker definition is [ops/forge-workers.json](../ops/forge-workers.json). The per-job contract inventory is [config/queue_contracts.php](../config/queue_contracts.php).
 
@@ -51,7 +51,7 @@ Do not deploy the new web release until this consumer is running. Existing seria
 6. Restart the existing workers and verify they use the 1,080-second lease.
 7. Set and reload Supervisor `stopwaitsecs=1200` for every existing queue program. Verify a controlled long-running stop.
 8. Deploy the worker site first, then repeat the effective cached-configuration checks.
-9. Check market-hours resident memory and CPU before adding a process. The current 25 workers have a 12.5 GB theoretical PHP memory ceiling; the export worker raises it to 13 GB on a 16 GB host. Reallocate an existing process temporarily if the capacity check does not leave safe headroom.
+9. Check market-hours resident memory and CPU before changing process counts. The current 26 workers have a 13 GB theoretical PHP memory ceiling on a 16 GB host. GEX-004 reallocates these 26 processes instead of adding more.
 10. Add the `exports` Forge worker. Set and reload `stopwaitsecs=1200` for this new Supervisor program, then verify both its command and effective stop setting.
 11. Deploy the web site. New exports can now route to the verified dedicated consumer.
 12. Run non-mutating effective-config, queue-consumer, and export smoke checks. Confirm the legacy `default` queue contains no old export payloads before considering a shorter standard lease.
@@ -82,7 +82,7 @@ The current jobs are not yet bounded enough to certify every kill/retry case:
 - Multi-symbol work can keep unrelated symbols together. GEX-018 owns singleton intraday dispatch.
 - Cache-based bootstrap claims can expire before the full child graph finishes. GEX-010 owns the durable run manifest.
 - Watchlist preload still performs the legacy global cache flush. Targeted versioned invalidation and proof that unrelated cache entries survive belong to GEX-014.
-- Provider-wide concurrency is not yet known or enforced. GEX-021 owns the shared limiter and adaptive backpressure.
+- GEX-004 adds a minimum Redis-backed provider concurrency gate behind a disabled flag. The provider's numeric allowance and production enablement remain unverified. GEX-021 owns rate windows, `Retry-After` handling, telemetry, and adaptive backpressure.
 - Production worker-kill tests require a disposable MySQL/Redis environment and must not be run against the live databases.
 
 These gaps prohibit claiming that all queue failure modes are fixed. The GEX-002 comparison harness is the gate for each later bounded-work and publication change.

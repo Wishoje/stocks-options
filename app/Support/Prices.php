@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Exceptions\ProviderConcurrencyUnavailable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -66,7 +67,18 @@ class Prices
             $params[$qparam] = $key;
         }
 
-        $resp = $client->get($url, $params);
+        try {
+            $resp = app(ProviderConcurrencyLimiter::class)->massive(
+                fn () => $client->get($url, $params)
+            );
+        } catch (ProviderConcurrencyUnavailable) {
+            Log::warning('Prices.massiveDailyConcurrencyUnavailable', [
+                'symbol' => $symbol,
+                'date' => $date,
+            ]);
+
+            return null;
+        }
         if ($resp->failed()) {
             Log::warning('Prices.massiveDailyFailed', [
                 'symbol' => $symbol,

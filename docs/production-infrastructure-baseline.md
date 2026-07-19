@@ -74,17 +74,17 @@ All reported workers use the Laravel Redis queue connection.
 | calculator | 4 | 300s | 512 MB | 3 | 3s |
 | quotes | 2 | 120s | 512 MB | 3 | 3s |
 | intraday | 8 | 120s | 512 MB | 3 | 3s |
-| Total | 25 | — | 12.5 GB theoretical combined limit | — | — |
+| exports (`redis-long`) | 1 | 960s | 512 MB | 2 | 3s |
+| Total | 26 | — | 13 GB theoretical combined limit | — | — |
 
-The 512 MB value is a per-process recycle limit, not reserved memory. Even so, 25 processes can theoretically reach 12.5 GB on a 16 GB host. That leaves only 3.5 GB for Ubuntu, Supervisor, the worker site, Redis/MySQL if local, scheduler processes, filesystem cache, and safety headroom. Actual resident memory during market hours is required before changing process counts.
+The 512 MB value is a per-process recycle limit, not reserved memory. Even so, 26 processes can theoretically reach 13 GB on a 16 GB host. That leaves only 3 GB for Ubuntu, Supervisor, the worker site, Redis, scheduler processes, filesystem cache, and safety headroom. MySQL runs on the separate web host. Actual resident memory during market hours is required before changing process counts.
 
-Current queues do not reserve separate capacity for:
+Except for the dedicated exports worker, current queues do not reserve separate capacity for:
 
 - New-symbol fast coordination.
 - First-use interactive intraday.
 - Interactive selected-expiration calculator work versus background calculator fill.
 - Heavy calculator fill versus normal calculator fill.
-- Long exports with a different queue lease.
 
 ## Deployment and scheduler
 
@@ -125,9 +125,9 @@ Operational update, 2026-07-17:
 
 - `REDIS_QUEUE_RETRY_AFTER=1080` was added to the worker environment.
 - The active worker release rebuilt its configuration cache and verified `queue.connections.redis.retry_after=1080` through Artisan.
-- A graceful `queue:restart` signal was issued. Prime, heavy intraday, intraday, quotes, calculator, and bootstrap processes returned as running; three of six default processes were still starting in the collected snapshot and require a follow-up status check.
-- `stopwaitsecs=1200` was verified in the collected Supervisor files for bootstrap, prime, intraday-heavy, default, calculator, and intraday. The quotes configuration was not included in that collection and remains to be verified.
-- The `redis-long:exports` worker has not been created. The worker-before-web deployment gate therefore remains closed.
+- A graceful `queue:restart` signal was issued. A later collected status showed every configured process running.
+- `stopwaitsecs=1200` was verified for bootstrap, prime, intraday-heavy, default, calculator, quotes, intraday, and exports.
+- The one-process `redis-long:exports` worker is running with a 960-second worker timeout and a 1,080-second queue lease. A 145-symbol, 10-indicator production export completed in 268 seconds and the queue returned to zero.
 
 ### Redis is already the production queue
 
@@ -142,8 +142,8 @@ Confirmed:
 - MySQL and Redis are shared by both application releases over the Hetzner private network.
 - MySQL is hosted with the web application server.
 - Redis is hosted with the worker server.
-- The web release effectively monitors the Redis queues.
-- The worker environment declares the queue monitor connection as database even though schedule:run executes there. Effective worker configuration must be confirmed, but the scheduler is likely monitoring the wrong backend.
+- The worker/scheduler release effectively monitors the Redis queues with `queue.monitor.connection=redis`.
+- Effective monitor targets were verified for bootstrap, prime, default, intraday, intraday-heavy, calculator, quotes, and `redis-long:exports`.
 
 Still unknown:
 
@@ -155,7 +155,7 @@ Still unknown:
 
 ### Worker host is highly concurrent
 
-There are 25 queue processes on 4 vCPU. This can be reasonable for mostly idle I/O-bound work, but it can also create CPU contention, excessive MySQL connections, provider bursts, and memory pressure. Process count must be judged from market-hours CPU, load, resident memory, database time, and provider rate-limit measurements.
+There are 26 queue processes on 4 vCPU. This can be reasonable for mostly idle I/O-bound work, but it can also create CPU contention, excessive MySQL connections, provider bursts, and memory pressure. Process count must be judged from market-hours CPU, load, resident memory, database time, and provider rate-limit measurements.
 
 ### Web disk needs investigation
 
@@ -168,7 +168,7 @@ The web root filesystem is 82% used with about 14 GiB available. This is not an 
 - SPY and QQQ can be grouped into the same heavy job and execute sequentially.
 - Other normal symbols, currently including IWM, can share a 13–15 symbol job.
 - Quote refreshes use batches up to 50 symbols.
-- The default queue mixes EOD repair/preload, exports, metrics, emails, and other jobs with very different runtimes.
+- The default queue mixes EOD repair/preload, metrics, emails, and other jobs with very different runtimes.
 - New-symbol intraday work is delayed behind the earlier full EOD and derived bootstrap phases.
 
 ### Off-hours queue snapshot is healthy but not representative
@@ -197,9 +197,10 @@ At approximately 02:40 America/New_York, all seven reported Redis queues had siz
 
 ### Supervisor shutdown evidence
 
-- Seven Supervisor configuration files containing `queue:work` definitions were found on the worker host.
-- The collected output did not include `stopwaitsecs`, `stopsignal`, `stopasgroup`, or `killasgroup` values.
-- Graceful-stop duration therefore remains unknown. Do not assume that long-running jobs can survive a deploy or Supervisor restart.
+- Eight Supervisor programs containing `queue:work` definitions are active on the worker host, including the dedicated exports worker.
+- Every program was verified with `stopwaitsecs=1200`.
+- Collected program definitions use `stopasgroup=true` and `killasgroup=true`. The heavy intraday program explicitly uses `stopsignal=SIGTERM`; other programs use Supervisor's default stop signal.
+- A controlled mid-job deployment/stop proof remains part of GEX-005. Configuration evidence alone does not prove completion during a restart.
 
 ## Known evidence gaps carried forward
 
@@ -210,8 +211,7 @@ The owner elected to stop further read-only collection for this card. The items 
    - Verify web, workers, scheduled jobs, payments/webhooks, mail, market-data providers, database, and Redis.
    - Revoke old credentials and record rotation dates without values.
 2. Effective worker monitoring configuration:
-   - Confirm queue.monitor.connection after config caching.
-   - Correct the current database-versus-Redis mismatch under a separate reviewed change.
+   - Redis monitoring and all current targets are verified. Add the GEX-004 lane targets during its controlled rollout.
 3. Redis durability:
    - Redis version.
    - used_memory, maxmemory-policy, and evicted_keys. `maxmemory=0` is confirmed.

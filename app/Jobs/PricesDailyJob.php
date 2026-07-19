@@ -10,9 +10,9 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use App\Support\ProviderConcurrencyLimiter;
+use App\Support\QueueLanes;
 
 class PricesDailyJob extends QueueJob implements ShouldQueue
 {
@@ -26,6 +26,16 @@ class PricesDailyJob extends QueueJob implements ShouldQueue
     }
 
     public function handle(): void
+    {
+        $limiter = app(ProviderConcurrencyLimiter::class);
+        $limiter->withPriority(
+            QueueLanes::providerPriority($this->queue),
+            fn () => $this->fetchAndPersist(),
+            2
+        );
+    }
+
+    private function fetchAndPersist(): void
     {
         $date = (string) $this->targetDate;
         $failed = 0;
@@ -84,39 +94,4 @@ class PricesDailyJob extends QueueJob implements ShouldQueue
         return $ny->toDateString();
     }
 
-    protected static function polygonDaily(string $symbol, string $date): ?array
-    {
-        $apiKey = env('POLYGON_API_KEY');
-        if (!$apiKey) return null;
-
-        $url = "https://api.polygon.io/v2/aggs/ticker/{$symbol}/range/1/day/{$date}/{$date}";
-        $resp = Http::retry(2, 200, throw:false)
-            ->timeout(15)->connectTimeout(10)
-            ->get($url, ['adjusted' => true, 'sort' => 'asc', 'apiKey' => $apiKey]);
-
-        if ($resp->failed()) {
-            Log::warning('PricesDailyJob.polygonDailyFailed', [
-                'symbol' => $symbol,
-                'date' => $date,
-                'status' => $resp->status(),
-            ]);
-            return null;
-        }
-
-        $j = $resp->json();
-        if (($j['resultsCount'] ?? 0) < 1 || empty($j['results'][0])) {
-            Log::info("Polygon daily empty {$symbol} {$date}: status=".( $j['status'] ?? 'n/a' ));
-            return null;
-        }
-
-        $r = $j['results'][0];
-        return [
-            'date'   => $date,
-            'open'   => $r['o'] ?? null,
-            'high'   => $r['h'] ?? null,
-            'low'    => $r['l'] ?? null,
-            'close'  => $r['c'] ?? null,
-            'volume' => $r['v'] ?? null,
-        ];
-    }
 }

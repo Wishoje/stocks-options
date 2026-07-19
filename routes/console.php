@@ -11,6 +11,7 @@ use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Jobs\FetchCalculatorChainJob;
 use App\Support\Market;
 use App\Support\Symbols;
+use App\Support\QueueLanes;
 
 // Example default command
 Artisan::command('inspire', function () {
@@ -182,18 +183,27 @@ Schedule::call(function () {
         $symbols = ['SPY','QQQ','IWM','AAPL','MSFT','NVDA','TSLA','AMZN'];
     }
 
-    foreach (array_chunk($symbols, 15) as $chunk) {
-        $heavy = array_values(array_filter(
-            $chunk,
-            fn ($symbol) => in_array($symbol, ['SPY', 'QQQ'], true)
-        ));
-        $normal = array_values(array_diff($chunk, $heavy));
+    if (! QueueLanes::isolated()) {
+        // Preserve the pre-GEX-004 payload count until both the provider gate
+        // and isolated consumers are active.
+        foreach (array_chunk($symbols, 15) as $chunk) {
+            $heavy = array_values(array_filter(
+                $chunk,
+                fn ($symbol) => in_array($symbol, ['SPY', 'QQQ'], true)
+            ));
+            $normal = array_values(array_diff($chunk, $heavy));
 
-        if ($heavy !== []) {
-            FetchPolygonIntradayOptionsJob::dispatch($heavy);
+            if ($heavy !== []) {
+                FetchPolygonIntradayOptionsJob::dispatch($heavy);
+            }
+            if ($normal !== []) {
+                FetchPolygonIntradayOptionsJob::dispatch($normal);
+            }
         }
-        if ($normal !== []) {
-            FetchPolygonIntradayOptionsJob::dispatch($normal);
+    } else {
+        foreach (QueueLanes::scheduledIntradayBatches($symbols, 15) as $batch) {
+            FetchPolygonIntradayOptionsJob::dispatch($batch)
+                ->onQueue(QueueLanes::intradayBatch($batch));
         }
     }
 })
@@ -253,7 +263,8 @@ Schedule::call(function () {
     foreach (array_chunk($symbols, 15) as $chunk) {
         foreach ($chunk as $sym) {
             Cache::put("calculator:primed:{$sym}", $nowEt->toIso8601String(), $nowEt->copy()->addMinutes(15));
-            FetchCalculatorChainJob::dispatch($sym)->onQueue('calculator');
+            FetchCalculatorChainJob::dispatch($sym)
+                ->onQueue(QueueLanes::calculator($sym));
         }
     }
 })

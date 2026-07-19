@@ -222,6 +222,7 @@ Ticket-specific regression proof:
 Type: Story
 Epic: Queues and infrastructure
 Depends on: GEX-003
+Status: In progress — implemented behind a disabled feature flag; Forge rollout and mixed-load proof remain
 
 Problem and scope:
 
@@ -277,13 +278,14 @@ Ticket-specific regression proof:
 Type: Task
 Epic: New-symbol reliability
 Depends on: GEX-002
+Status: Implementation complete — fixture proof and the production AWS-resource check remain
 
 Problem and scope:
 
 - Keep the existing local bootstrap as the production path until GEX-010 is complete.
 - Remove or disable the uncommitted synchronous Function URL flow, callback endpoints, configuration, generated artifacts, and fallback behavior that can run Lambda and local work at the same time.
 - Preserve unrelated GEX freshness, selector compatibility, dashboard, queue-list, and test-infrastructure changes after reviewing them independently. Do not perform a blanket worktree revert.
-- Record the experiment in an architecture note so useful observations are retained for GEX-036.
+- Record the experiment in [the synchronous Lambda rejection ADR](architecture/rejected-synchronous-lambda-cold-symbol-bootstrap.md) so useful observations are retained for GEX-036.
 
 Acceptance criteria:
 
@@ -295,6 +297,7 @@ Acceptance criteria:
 Ticket-specific regression proof:
 
 - Simulate a slow/failed bootstrap and prove provider requests and writes occur only once per idempotency key.
+- The current local cache claims prove immediate dispatch deduplication and release-on-dispatch-failure. They do not provide durable ownership for the full child graph. Strict provider/write exactly-once proof remains gated by the GEX-010 durable run manifest.
 
 ### GEX-007 — Stop calculator scheduler amplification and use truthful job state
 

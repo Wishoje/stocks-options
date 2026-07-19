@@ -45,6 +45,19 @@ return [
         'mode'   => env('MASSIVE_AUTH_MODE', 'header'), // header|bearer|query
         'header' => env('MASSIVE_API_HEADER', 'X-API-Key'),
         'qparam' => env('MASSIVE_API_QUERY', 'apiKey'),
+        'concurrency' => [
+            'enabled' => filter_var(env('MASSIVE_CONCURRENCY_ENABLED', false), FILTER_VALIDATE_BOOL),
+            'connection' => env('MASSIVE_CONCURRENCY_CONNECTION', 'default'),
+            'key' => env('MASSIVE_CONCURRENCY_KEY', 'provider-concurrency:massive'),
+            // This must be set explicitly from the verified provider plan.
+            // The initial gate partitions it between interactive/background.
+            'limit' => (int) env('MASSIVE_CONCURRENCY_LIMIT', 0),
+            'release_after' => (int) env('MASSIVE_CONCURRENCY_RELEASE_AFTER', 90),
+            'block_for' => (int) env('MASSIVE_CONCURRENCY_BLOCK_FOR', 45),
+            'web_block_for' => (int) env('MASSIVE_CONCURRENCY_WEB_BLOCK_FOR', 2),
+            'sleep_milliseconds' => (int) env('MASSIVE_CONCURRENCY_SLEEP_MS', 100),
+            'metrics_ttl' => (int) env('MASSIVE_CONCURRENCY_METRICS_TTL', 172800),
+        ],
         'eod_chain_max_pages' => (int) env('EOD_CHAIN_MAX_PAGES', 120),
         'eod_chain_page_limit' => (int) env('EOD_CHAIN_PAGE_LIMIT', 250),
         'eod_chain_max_pages_per_expiry' => (int) env('EOD_CHAIN_MAX_PAGES_PER_EXPIRY', 80),

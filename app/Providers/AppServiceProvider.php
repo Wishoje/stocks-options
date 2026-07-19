@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Support\ProviderConcurrencyLimiter;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
@@ -22,7 +23,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // One process-local priority stack supplies context to every Massive
+        // request made beneath a queued or interactive operation.
+        $this->app->singleton(ProviderConcurrencyLimiter::class);
     }
 
     /**

@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\Log;
 use App\Models\OptionExpiration;
 use App\Support\EodSnapshotSelector;
 use App\Support\EodHealth;
+use App\Support\ProviderConcurrencyLimiter;
+use App\Support\QueueLanes;
 use Carbon\Carbon;
 use RuntimeException;
 
@@ -66,6 +68,16 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     }
 
     public function handle(): void
+    {
+        $limiter = app(ProviderConcurrencyLimiter::class);
+        $limiter->withPriority(
+            QueueLanes::providerPriority($this->queue),
+            fn () => $this->fetchAndPersist(),
+            15
+        );
+    }
+
+    private function fetchAndPersist(): void
     {
         $this->loadRuntimeTunables();
 
@@ -946,7 +958,9 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 }
             }
 
-            $resp = $client->get($reqUrl, $params);
+            $resp = app(ProviderConcurrencyLimiter::class)->massive(
+                fn () => $client->get($reqUrl, $params)
+            );
             if ($resp->status() === 401) {
                 return [[], [
                     'status' => 'unauthorized',
@@ -1045,7 +1059,9 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 $params[$qparam] = $key;
             }
 
-            $resp = $client->get($reqUrl, $params);
+            $resp = app(ProviderConcurrencyLimiter::class)->massive(
+                fn () => $client->get($reqUrl, $params)
+            );
 
             if ($resp->status() === 401) {
                 return [

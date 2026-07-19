@@ -283,7 +283,9 @@ class PolygonClient
                 $url .= $join . urlencode($qparam) . '=' . urlencode($apiKey);
             }
 
-            $resp = $this->http()->get($url);
+            $resp = app(ProviderConcurrencyLimiter::class)->massive(
+                fn () => $this->http()->get($url)
+            );
 
             // If unauthorized, don’t keep retrying needlessly
             if ($resp->status() === 401) {
@@ -359,7 +361,9 @@ class PolygonClient
             $url .= $join . urlencode($qparam) . '=' . urlencode($apiKey);
         }
 
-        $resp = $this->http()->get($url);
+        $resp = app(ProviderConcurrencyLimiter::class)->massive(
+            fn () => $this->http()->get($url)
+        );
 
         if ($resp->status() === 401) {
             Log::warning('PolygonClient.underlying.unauthorized', [

@@ -11,6 +11,7 @@ use App\Models\Watchlist;
 use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Support\Market;
+use App\Support\QueueLanes;
 
 class WatchlistController extends Controller
 {
@@ -84,6 +85,6 @@ class WatchlistController extends Controller
 
     private function intradayQueueForSymbol(string $symbol): string
     {
-        return in_array($symbol, ['SPY', 'QQQ'], true) ? 'intraday-heavy' : 'intraday';
+        return QueueLanes::intraday($symbol, interactive: true);
     }
 }

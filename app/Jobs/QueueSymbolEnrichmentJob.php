@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Support\Symbols;
+use App\Support\QueueLanes;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -19,6 +20,7 @@ class QueueSymbolEnrichmentJob extends QueueJob implements ShouldQueue
 
     public function __construct(public string $symbol, public ?string $source = null)
     {
+        $this->onQueue(QueueLanes::bootstrapChild());
     }
 
     public function handle(): void
@@ -35,7 +37,7 @@ class QueueSymbolEnrichmentJob extends QueueJob implements ShouldQueue
         }
 
         try {
-            Bus::dispatch((new PrimeSymbolJob($symbol))->onQueue(PrimeSymbolJob::QUEUE));
+            Bus::dispatch(new PrimeSymbolJob($symbol));
         } catch (\Throwable $exception) {
             $dispatchLock->release();
             throw $exception;

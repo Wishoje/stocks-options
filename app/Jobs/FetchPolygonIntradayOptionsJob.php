@@ -11,6 +11,8 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Support\QueueLanes;
+use App\Support\ProviderConcurrencyLimiter;
 use RuntimeException;
 
 class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
@@ -33,17 +35,27 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             ->filter()
             ->unique()
             ->values();
-        $requiresLongLane = $canonicalSymbols->count() > 1
-            || $canonicalSymbols->contains(fn ($symbol) => in_array($symbol, ['SPY', 'QQQ'], true));
+        $requiresLongLane = QueueLanes::intradayBatch($canonicalSymbols->all())
+            === (string) config('queue_lanes.queues.intraday_heavy', 'intraday-heavy');
         $this->timeout = max(30, min(540, $timeoutSeconds ?? ($requiresLongLane ? 540 : 105)));
         $this->tradeDate = $tradeDate
             ? substr($tradeDate, 0, 10)
             : $this->tradingDate(now());
 
-        $this->onQueue($requiresLongLane ? 'intraday-heavy' : 'intraday');
+        $this->onQueue(QueueLanes::intradayBatch($canonicalSymbols->all()));
     }
 
     public function handle(): void
+    {
+        $limiter = app(ProviderConcurrencyLimiter::class);
+        $limiter->withPriority(
+            QueueLanes::providerPriority($this->queue),
+            fn () => $this->fetchAndPersist(),
+            5
+        );
+    }
+
+    private function fetchAndPersist(): void
     {
         $tradeDate = (string) $this->tradeDate;
         $failedSymbols = 0;

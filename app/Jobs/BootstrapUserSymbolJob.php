@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Support\Symbols;
+use App\Support\QueueLanes;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -22,7 +23,7 @@ class BootstrapUserSymbolJob extends QueueJob implements ShouldQueue
 
     public function __construct(public string $symbol, public ?string $source = null)
     {
-        $this->onQueue(self::QUEUE);
+        $this->onQueue(QueueLanes::bootstrap());
     }
 
     public static function dispatchIfNeeded(string $symbol, ?string $source = null, int $ttlSeconds = 120): bool
@@ -39,7 +40,7 @@ class BootstrapUserSymbolJob extends QueueJob implements ShouldQueue
         }
 
         try {
-            Bus::dispatch((new self($sym, $source))->onQueue(self::QUEUE));
+            Bus::dispatch(new self($sym, $source));
         } catch (\Throwable $exception) {
             $dispatchLock->release();
             throw $exception;
@@ -64,13 +65,14 @@ class BootstrapUserSymbolJob extends QueueJob implements ShouldQueue
         $tradeDate = $this->tradeDate(now('America/New_York'));
 
         try {
+            $queue = QueueLanes::bootstrapChild();
             Bus::chain([
-                (new PricesDailyJob([$symbol]))->withJobTimeout(270)->onQueue(self::QUEUE),
-                (new FetchOptionChainDataJob([$symbol], 90, null, 270))->onQueue(self::QUEUE),
-                (new ComputeExpiryPressureJob([$symbol], 3, $tradeDate))->withJobTimeout(270)->onQueue(self::QUEUE),
-                (new ComputePositioningJob([$symbol], $tradeDate))->withJobTimeout(270)->onQueue(self::QUEUE),
-                (new FetchPolygonIntradayOptionsJob([$symbol], 270))->onQueue(self::QUEUE),
-                (new QueueSymbolEnrichmentJob($symbol, $this->source))->onQueue(self::QUEUE),
+                (new PricesDailyJob([$symbol]))->withJobTimeout(270)->onQueue($queue),
+                (new FetchOptionChainDataJob([$symbol], 90, null, 270))->onQueue($queue),
+                (new ComputeExpiryPressureJob([$symbol], 3, $tradeDate))->withJobTimeout(270)->onQueue($queue),
+                (new ComputePositioningJob([$symbol], $tradeDate))->withJobTimeout(270)->onQueue($queue),
+                (new FetchPolygonIntradayOptionsJob([$symbol], 270))->onQueue($queue),
+                (new QueueSymbolEnrichmentJob($symbol, $this->source))->onQueue($queue),
             ])->dispatch();
         } catch (\Throwable $exception) {
             $chainLock->release();

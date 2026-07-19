@@ -17,6 +17,7 @@ use App\Http\Controllers\AiExportController;
 use App\Http\Controllers\EodHealthController;
 use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\PrimeSymbolJob;
+use App\Support\QueueLanes;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -130,7 +131,8 @@ Route::get('/option-chain', function () {
             return false;
         }
 
-        \App\Jobs\FetchCalculatorChainJob::dispatch($sym, $exp)->onQueue('calculator');
+        \App\Jobs\FetchCalculatorChainJob::dispatch($sym, $exp)
+            ->onQueue(QueueLanes::calculator($sym, interactive: $exp !== null));
         $refreshQueued = true;
         return true;
     };
@@ -365,7 +367,7 @@ Route::post('/prime-calculator', function (Request $req) {
     $sync = $req->boolean('sync', false);
     $force = $req->boolean('force', false);
 
-    if ($sync) {
+    if ($sync && ! QueueLanes::isolated()) {
         dispatch_sync(new \App\Jobs\FetchCalculatorChainJob($sym, $expiry));
         return response()->json([
             'ok' => true,
@@ -376,11 +378,13 @@ Route::post('/prime-calculator', function (Request $req) {
         ]);
     }
 
+    $syncDisabled = $sync && QueueLanes::isolated();
     $ttlSeconds = $force ? 10 : 90;
     $lockKey = 'calculator:prime:' . md5($sym.'|'.($expiry ?? '*').($force ? '|force' : ''));
     $queued = Cache::add($lockKey, 1, now()->addSeconds($ttlSeconds));
     if ($queued) {
-        \App\Jobs\FetchCalculatorChainJob::dispatch($sym, $expiry)->onQueue('calculator');
+        \App\Jobs\FetchCalculatorChainJob::dispatch($sym, $expiry)
+            ->onQueue(QueueLanes::calculator($sym, interactive: $expiry !== null));
     }
 
     return response()->json([
@@ -388,6 +392,7 @@ Route::post('/prime-calculator', function (Request $req) {
         'symbol' => $sym,
         'expiry' => $expiry,
         'mode' => 'queue',
+        'sync_disabled_by_lane_isolation' => $syncDisabled,
         'queued' => $queued,
         'force' => $force,
         'lock_ttl_seconds' => $ttlSeconds,

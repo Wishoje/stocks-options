@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\ProviderConcurrencyUnavailable;
+use App\Support\ProviderConcurrencyLimiter;
+use App\Support\QueueLanes;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
@@ -17,19 +20,27 @@ class SymbolSearchController extends Controller
 
         $cacheKey = "sym_search:" . mb_strtolower($q);
 
-        $items = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($q) {
-            // 1) Try Finnhub first
-            $finnhubKey = config('services.finnhub.api_key');
-            if ($finnhubKey) {
-                $items = $this->searchWithFinnhub($q, $finnhubKey);
-                if (!empty($items)) {
-                    return $items;
+        try {
+            $items = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($q) {
+                // 1) Try Finnhub first
+                $finnhubKey = config('services.finnhub.api_key');
+                if ($finnhubKey) {
+                    $items = $this->searchWithFinnhub($q, $finnhubKey);
+                    if (!empty($items)) {
+                        return $items;
+                    }
                 }
-            }
 
-            // 2) Fallback to Massive if Finnhub missing or empty
-            return $this->searchWithMassive($q);
-        });
+                // 2) Fallback to Massive if Finnhub missing or empty
+                return $this->searchWithMassive($q);
+            });
+        } catch (ProviderConcurrencyUnavailable) {
+            // Do not cache temporary capacity pressure as an empty search.
+            return response()->json([
+                'items' => [],
+                'message' => 'Symbol search is temporarily busy.',
+            ], 503, ['Retry-After' => '2']);
+        }
 
         return response()->json(['items' => $items], 200);
     }
@@ -104,7 +115,14 @@ class SymbolSearchController extends Controller
             $params[$qparam] = $key;
         }
 
-        $resp = $client->get($url, $params);
+        $limiter = app(ProviderConcurrencyLimiter::class);
+        $resp = $limiter->withPriority(
+            QueueLanes::PRIORITY_INTERACTIVE,
+            fn () => $limiter->massive(
+                fn () => $client->get($url, $params),
+                (int) config('services.massive.concurrency.web_block_for', 2)
+            )
+        );
         if (!$resp->ok()) {
             return [];
         }

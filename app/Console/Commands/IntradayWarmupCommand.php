@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Support\Market;
 use Carbon\Carbon;
+use App\Support\QueueLanes;
 
 class IntradayWarmupCommand extends Command
 {
@@ -47,18 +48,24 @@ class IntradayWarmupCommand extends Command
             return self::SUCCESS;
         }
 
-        $heavy = array_values(array_filter(
-            $symbols,
-            fn (string $symbol): bool => in_array($symbol, ['SPY', 'QQQ'], true)
-        ));
-        $normal = array_values(array_diff($symbols, $heavy));
+        if (! QueueLanes::isolated()) {
+            $heavy = array_values(array_filter(
+                $symbols,
+                fn (string $symbol): bool => in_array($symbol, ['SPY', 'QQQ'], true)
+            ));
+            $normal = array_values(array_diff($symbols, $heavy));
 
-        foreach ($heavy as $symbol) {
-            FetchPolygonIntradayOptionsJob::dispatch([$symbol]);
-        }
-
-        foreach (array_chunk($normal, 25) as $chunk) {
-            FetchPolygonIntradayOptionsJob::dispatch($chunk);
+            foreach ($heavy as $symbol) {
+                FetchPolygonIntradayOptionsJob::dispatch([$symbol]);
+            }
+            foreach (array_chunk($normal, 25) as $chunk) {
+                FetchPolygonIntradayOptionsJob::dispatch($chunk);
+            }
+        } else {
+            foreach (QueueLanes::scheduledIntradayBatches($symbols, 25) as $batch) {
+                FetchPolygonIntradayOptionsJob::dispatch($batch)
+                    ->onQueue(QueueLanes::intradayBatch($batch));
+            }
         }
 
         $this->info('Queued intraday snapshot for: '.implode(', ', $symbols));

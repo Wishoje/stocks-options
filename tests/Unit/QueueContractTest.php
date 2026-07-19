@@ -50,22 +50,102 @@ class QueueContractTest extends TestCase
 
     public function test_job_worker_lease_and_supervisor_windows_are_ordered_safely(): void
     {
-        $manifest = json_decode(
+        $legacy = json_decode(
             file_get_contents(base_path('ops/forge-workers.json')),
             true,
             512,
             JSON_THROW_ON_ERROR
         );
-        $workers = collect($manifest['workers'])->keyBy('queue');
+
+        $isolated = json_decode(
+            file_get_contents(base_path('ops/forge-workers-isolated.json')),
+            true,
+            512,
+            JSON_THROW_ON_ERROR
+        );
+
+        $this->assertWorkerProfile($legacy, 'workers', 'queues', 'queue_timeouts');
+        $this->assertWorkerProfile(
+            $isolated,
+            'steady_workers',
+            'isolated_queues',
+            'isolated_queue_timeouts'
+        );
+        $this->assertWorkerProfile(
+            $isolated,
+            'rollout_workers',
+            'queues',
+            'queue_timeouts'
+        );
+        $this->assertWorkerProfile(
+            $isolated,
+            'rollout_workers',
+            'isolated_queues',
+            'isolated_queue_timeouts'
+        );
+
+        $this->assertSame(
+            (int) $legacy['baseline_process_count'],
+            collect($legacy['workers'])->sum('processes')
+        );
+        $this->assertSame(
+            (int) $isolated['rollout_process_count'],
+            collect($isolated['rollout_workers'])->sum('processes')
+        );
+        $this->assertSame(
+            (int) $isolated['steady_process_count'],
+            collect($isolated['steady_workers'])->sum('processes')
+        );
+        $this->assertSame(
+            (int) $legacy['baseline_process_count'],
+            (int) $isolated['current_process_count']
+        );
+        $this->assertSame(
+            (int) $isolated['current_process_count'],
+            (int) $isolated['rollout_process_count']
+        );
+        $this->assertSame(
+            (int) $isolated['current_process_count'],
+            (int) $isolated['steady_process_count']
+        );
+
+        $this->assertManifestJobCeilings($legacy, 'workers', [
+            ['queues', 'queue_timeouts'],
+        ]);
+        $this->assertManifestJobCeilings($isolated, 'rollout_workers', [
+            ['queues', 'queue_timeouts'],
+            ['isolated_queues', 'isolated_queue_timeouts'],
+        ]);
+        $this->assertManifestJobCeilings($isolated, 'steady_workers', [
+            ['isolated_queues', 'isolated_queue_timeouts'],
+        ]);
+    }
+
+    private function assertWorkerProfile(
+        array $manifest,
+        string $workersKey,
+        string $queuesKey,
+        string $timeoutsKey
+    ): void {
+        $workers = collect($manifest[$workersKey])->keyBy('queue');
+
+        $this->assertCount(count($manifest[$workersKey]), $workers, "{$workersKey} repeats a queue.");
 
         foreach (config('queue_contracts') as $class => $contract) {
             $retryAfter = (int) config("queue.connections.{$contract['connection']}.retry_after");
             $this->assertGreaterThan(0, $retryAfter, "{$class} has no retry_after.");
 
-            foreach ($contract['queues'] as $queue) {
+            $queues = $contract[$queuesKey] ?? $contract['queues'];
+            $timeouts = $contract[$timeoutsKey] ?? $contract['queue_timeouts'] ?? [];
+
+            foreach ($queues as $queue) {
                 $worker = $workers->get($queue);
-                $this->assertNotNull($worker, "{$class} queue {$queue} has no worker definition.");
-                $jobTimeout = (int) ($contract['queue_timeouts'][$queue] ?? $contract['max_timeout']);
+                $this->assertNotNull(
+                    $worker,
+                    "{$class} queue {$queue} has no {$workersKey} worker definition."
+                );
+                $this->assertSame($contract['connection'], $worker['connection']);
+                $jobTimeout = (int) ($timeouts[$queue] ?? $contract['max_timeout']);
 
                 $this->assertLessThan(
                     (int) $worker['worker_timeout'],
@@ -83,6 +163,47 @@ class QueueContractTest extends TestCase
                     "{$queue} worker timeout must be below Supervisor stopwaitsecs."
                 );
             }
+        }
+    }
+
+    /**
+     * @param  array<int, array{0:string, 1:string}>  $profiles
+     */
+    private function assertManifestJobCeilings(
+        array $manifest,
+        string $workersKey,
+        array $profiles
+    ): void {
+        $expectedCeilings = [];
+
+        foreach (config('queue_contracts') as $contract) {
+            foreach ($profiles as [$queuesKey, $timeoutsKey]) {
+                $queues = $contract[$queuesKey] ?? [];
+                $timeouts = $contract[$timeoutsKey] ?? [];
+
+                foreach ($queues as $queue) {
+                    $jobTimeout = (int) ($timeouts[$queue] ?? $contract['max_timeout']);
+                    $expectedCeilings[$queue] = max(
+                        $expectedCeilings[$queue] ?? 0,
+                        $jobTimeout
+                    );
+                }
+            }
+        }
+
+        $workers = collect($manifest[$workersKey])->keyBy('queue');
+        $expectedQueues = array_keys($expectedCeilings);
+        $actualQueues = $workers->keys()->all();
+        sort($expectedQueues);
+        sort($actualQueues);
+        $this->assertSame($expectedQueues, $actualQueues, "{$workersKey} contains a missing or stale lane.");
+
+        foreach ($expectedCeilings as $queue => $expectedCeiling) {
+            $this->assertSame(
+                $expectedCeiling,
+                (int) $workers->get($queue)['job_timeout_ceiling'],
+                "{$queue} manifest ceiling differs from its job contracts."
+            );
         }
     }
 

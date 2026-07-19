@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Support\EodSnapshotSelector;
+use App\Support\QueueLanes;
 use Illuminate\Bus\Queueable;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -21,7 +22,7 @@ class PrimeSymbolJob extends QueueJob implements ShouldQueue
 
     public function __construct(public string $symbol)
     {
-        $this->onQueue(self::QUEUE);
+        $this->onQueue(QueueLanes::enrichment());
     }
 
     public function handle(): void
@@ -102,11 +103,12 @@ class PrimeSymbolJob extends QueueJob implements ShouldQueue
             return;
         }
 
+        $queue = QueueLanes::enrichment();
         foreach ($jobs as $job) {
             $job->withJobTimeout(min($job->timeout, 110));
-            $job->onQueue(self::QUEUE);
+            $job->onQueue($queue);
         }
 
-        Bus::chain($jobs)->onQueue(self::QUEUE)->dispatch();
+        Bus::chain($jobs)->onQueue($queue)->dispatch();
     }
 }
