@@ -160,14 +160,18 @@ Key events:
 - `eod.fetch.symbol.no_expiries_in_window`: provider returned data but none within configured horizon.
 - `eod.fetch.symbol.skipped`: duplicate guard prevented a concurrent pull.
 
-If you see `massive_pages=...` plus `pagination_capped=true` repeatedly for large symbols
-(`SPY`, `QQQ`, `IWM`), increase `EOD_CHAIN_MAX_PAGES` (default `120`) and redeploy.
-You can also tune `EOD_CHAIN_PAGE_LIMIT` (default `250`) to reduce page churn.
+If `massive_pages=...` and `pagination_capped=true` repeat for a large symbol,
+do not increase `EOD_CHAIN_MAX_PAGES` or retry the symbol unchanged. A larger
+broad cap increases provider traffic without proving that the chain is complete.
+Use the controlled rollout in
+[Option-Chain Partitioned Fetch Rollout Runbook](option-chain-partitioned-fetch-runbook.md).
+Keep `EOD_CHAIN_PAGE_LIMIT=250`, the provider maximum, unless a provider response
+explicitly rejects that value.
 
 Validation command (cached-config safe):
 
 ```bash
-php artisan tinker --execute='dump(config("services.massive.eod_chain_max_pages"));'
+php artisan tinker --execute='dump(config("services.massive.eod_chain_max_pages"), config("services.massive.eod_chain_page_limit"), config("services.massive.eod_chain_partitioned_fetch_enabled"), config("services.massive.eod_chain_partitioned_canary_symbols"), config("services.massive.eod_chain_max_pages_per_partition"), config("services.massive.eod_chain_reference_probe_max_pages"));'
 ```
 
 ## EOD health dashboard

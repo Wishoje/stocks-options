@@ -61,6 +61,19 @@ return [
         'eod_chain_max_pages' => (int) env('EOD_CHAIN_MAX_PAGES', 120),
         'eod_chain_page_limit' => (int) env('EOD_CHAIN_PAGE_LIMIT', 250),
         'eod_chain_max_pages_per_expiry' => (int) env('EOD_CHAIN_MAX_PAGES_PER_EXPIRY', 80),
+        // The safe path fetches exact expiration/side partitions for every
+        // eligible symbol. Keep it behind a rollout flag so production can be
+        // canaried independently of the legacy path.
+        'eod_chain_partitioned_fetch_enabled' =>
+            filter_var(env('EOD_CHAIN_PARTITIONED_FETCH_ENABLED', false), FILTER_VALIDATE_BOOL),
+        // Empty means every symbol. A comma-separated list is supported only
+        // to narrow a temporary production canary during rollout.
+        'eod_chain_partitioned_canary_symbols' => array_values(array_filter(array_map(
+            static fn (string $symbol): string => strtoupper(trim($symbol)),
+            explode(',', (string) env('EOD_CHAIN_PARTITIONED_CANARY_SYMBOLS', ''))
+        ))),
+        'eod_chain_max_pages_per_partition' => (int) env('EOD_CHAIN_MAX_PAGES_PER_PARTITION', 40),
+        'eod_chain_reference_probe_max_pages' => (int) env('EOD_CHAIN_REFERENCE_PROBE_MAX_PAGES', 4),
         'eod_chain_max_hint_expiries' => (int) env('EOD_CHAIN_MAX_HINT_EXPIRIES', 90),
         'eod_chain_reference_max_pages' => (int) env('EOD_CHAIN_REFERENCE_MAX_PAGES', 40),
         'eod_chain_repair_partial_expiries' =>

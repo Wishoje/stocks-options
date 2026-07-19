@@ -409,7 +409,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 $massiveComplete = (bool) ($massiveMeta['complete'] ?? false);
 
                 if ($massiveChain !== null && $massiveComplete && $massiveWindowExpiries > $finnhubWindowExpiries) {
-                    return [$massiveChain[0] ?: $finnhubChain[0], $massiveChain[1], [
+                    return [$massiveChain[0] ?: $finnhubChain[0], $massiveChain[1], array_merge([
                         'provider' => 'massive',
                         'provider_status' => 'ok',
                         'provider_complete' => true,
@@ -418,20 +418,10 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                         'finnhub_expiries_in_window' => $finnhubWindowExpiries,
                         'massive_status' => $massiveMeta['status'] ?? 'ok',
                         'massive_expiries_in_window' => $massiveWindowExpiries,
-                        'massive_pages' => $massiveMeta['pages'] ?? null,
-                        'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
-                        'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
-                        'candidate_expiries_generated' => $massiveMeta['candidate_expiries_generated'] ?? 0,
-                        'expiry_backfill_requested' => $massiveMeta['expiry_backfill_requested'] ?? 0,
-                        'expiry_backfill_fetched' => $massiveMeta['expiry_backfill_fetched'] ?? 0,
-                        'expiry_backfill_incomplete_requested' => $massiveMeta['expiry_backfill_incomplete_requested'] ?? 0,
-                        'expiry_backfill_incomplete_fetched' => $massiveMeta['expiry_backfill_incomplete_fetched'] ?? 0,
-                        'expiry_backfill_side_requested' => $massiveMeta['expiry_backfill_side_requested'] ?? 0,
-                        'expiry_backfill_side_fetched' => $massiveMeta['expiry_backfill_side_fetched'] ?? 0,
-                    ]];
+                    ], $this->massiveProviderTelemetry($massiveMeta))];
                 }
 
-                return [$finnhubChain[0], $finnhubSets, [
+                return [$finnhubChain[0], $finnhubSets, array_merge([
                     'provider' => 'finnhub',
                     'provider_status' => $massiveComplete
                         ? 'ok_sparse_confirmed'
@@ -443,11 +433,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                     'massive_status' => $massiveMeta['status'] ?? 'not_attempted',
                     'massive_http_status' => $massiveMeta['http_status'] ?? null,
                     'massive_expiries_in_window' => $massiveWindowExpiries,
-                    'massive_pages' => $massiveMeta['pages'] ?? null,
-                    'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
-                    'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
-                    'candidate_expiries_generated' => $massiveMeta['candidate_expiries_generated'] ?? 0,
-                ]];
+                ], $this->massiveProviderTelemetry($massiveMeta))];
             }
 
             return [$finnhubChain[0], $finnhubChain[1], [
@@ -462,26 +448,16 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
         [$massiveChain, $massiveMeta] = $this->fetchMassiveChain($symbol, $windowStart, $windowEnd);
         if ($massiveChain !== null) {
-            return [$massiveChain[0], $massiveChain[1], [
+            return [$massiveChain[0], $massiveChain[1], array_merge([
                 'provider' => 'massive',
                 'provider_status' => ($massiveMeta['complete'] ?? false) ? 'ok' : 'incomplete',
                 'provider_complete' => (bool) ($massiveMeta['complete'] ?? false),
                 'finnhub_status' => $finnhubMeta['status'] ?? 'not_attempted',
                 'massive_status' => $massiveMeta['status'] ?? 'ok',
-                'massive_pages' => $massiveMeta['pages'] ?? null,
-                'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
-                'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
-                'candidate_expiries_generated' => $massiveMeta['candidate_expiries_generated'] ?? 0,
-                'expiry_backfill_requested' => $massiveMeta['expiry_backfill_requested'] ?? 0,
-                'expiry_backfill_fetched' => $massiveMeta['expiry_backfill_fetched'] ?? 0,
-                'expiry_backfill_incomplete_requested' => $massiveMeta['expiry_backfill_incomplete_requested'] ?? 0,
-                'expiry_backfill_incomplete_fetched' => $massiveMeta['expiry_backfill_incomplete_fetched'] ?? 0,
-                'expiry_backfill_side_requested' => $massiveMeta['expiry_backfill_side_requested'] ?? 0,
-                'expiry_backfill_side_fetched' => $massiveMeta['expiry_backfill_side_fetched'] ?? 0,
-            ]];
+            ], $this->massiveProviderTelemetry($massiveMeta))];
         }
 
-        return [0.0, [], [
+        return [0.0, [], array_merge([
             'provider' => 'none',
             'provider_status' => 'failed',
             'provider_complete' => false,
@@ -489,11 +465,62 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             'finnhub_http_status' => $finnhubMeta['http_status'] ?? null,
             'massive_status' => $massiveMeta['status'] ?? 'not_attempted',
             'massive_http_status' => $massiveMeta['http_status'] ?? null,
-            'massive_pages' => $massiveMeta['pages'] ?? null,
-            'massive_page_limit' => $massiveMeta['page_limit'] ?? null,
-            'pagination_capped' => (bool) ($massiveMeta['pagination_capped'] ?? false),
-            'candidate_expiries_generated' => $massiveMeta['candidate_expiries_generated'] ?? 0,
-        ]];
+        ], $this->massiveProviderTelemetry($massiveMeta))];
+    }
+
+    /** @return array<string,mixed> */
+    protected function massiveProviderTelemetry(array $meta): array
+    {
+        $keys = [
+            'chain_fetch_strategy',
+            'bulk_pages',
+            'reference_status',
+            'reference_complete',
+            'reference_pages',
+            'reference_http_status',
+            'reference_expiries_found',
+            'reference_strategy',
+            'reference_probe_status',
+            'reference_probe_pages',
+            'reference_probe_pagination_capped',
+            'partition_dates_scanned',
+            'partitions_expected',
+            'partitions_resolved',
+            'partitions_failed',
+            'partition_pages',
+            'partition_page_limit',
+            'partition_max_pages',
+            'partition_max_depth',
+            'partition_cursor_cycles',
+            'partition_no_progress',
+            'partition_scope_violations',
+            'partition_failure_reason',
+            'partition_failure_expiry',
+            'partition_failure_contract_type',
+            'contracts_seen',
+            'contracts_unique',
+            'candidate_expiries_generated',
+            'expiry_backfill_requested',
+            'expiry_backfill_fetched',
+            'expiry_backfill_incomplete_requested',
+            'expiry_backfill_incomplete_fetched',
+            'expiry_backfill_side_requested',
+            'expiry_backfill_side_fetched',
+            'expiry_backfill_resolved',
+        ];
+
+        $telemetry = [
+            'massive_pages' => $meta['pages'] ?? null,
+            'massive_page_limit' => $meta['page_limit'] ?? null,
+            'pagination_capped' => (bool) ($meta['pagination_capped'] ?? false),
+        ];
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $meta)) {
+                $telemetry[$key] = $meta[$key];
+            }
+        }
+
+        return $telemetry;
     }
 
     /**
@@ -647,6 +674,19 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             $client = $client->withHeaders([$header => $key]);
         }
 
+        if ($this->usesPartitionedMassiveFetch($symbol)) {
+            return $this->fetchMassiveChainByPartitions(
+                $client,
+                $base,
+                $symbol,
+                $mode,
+                $qparam,
+                (string) $key,
+                $windowStart,
+                $windowEnd
+            );
+        }
+
         [$referenceExpiries, $referenceMeta] = $this->fetchMassiveReferenceExpirations(
             $client,
             $base,
@@ -702,7 +742,11 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             $windowStart,
             $windowEnd
         );
-        $forceExpiryRebuild = $paginationCapped;
+        // Any non-terminal broad fetch (cap, HTTP error, cursor loop, or
+        // malformed page) is recoverable only by rebuilding every known
+        // expiration. Never combine a partial broad result with a selective
+        // repair and call the symbol complete.
+        $forceExpiryRebuild = ! $bulkComplete;
         $missingExpiries = array_values(array_diff($knownExpiries, array_keys($byExp)));
 
         // If broad pagination is capped, backfill missing known expiries one by one.
@@ -877,6 +921,413 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         ]];
     }
 
+    protected function usesPartitionedMassiveFetch(string $symbol): bool
+    {
+        if (! (bool) config('services.massive.eod_chain_partitioned_fetch_enabled', false)) {
+            return false;
+        }
+
+        $configured = config('services.massive.eod_chain_partitioned_canary_symbols', []);
+        if (is_string($configured)) {
+            $configured = explode(',', $configured);
+        }
+        if (! is_array($configured)) {
+            return false;
+        }
+
+        $symbols = array_values(array_filter(array_map(
+            static fn ($value): string => strtoupper(trim((string) $value)),
+            $configured
+        )));
+
+        return empty($symbols)
+            || in_array('*', $symbols, true)
+            || in_array(strtoupper($symbol), $symbols, true);
+    }
+
+    /**
+     * Fetch a chain as exact expiration/side partitions.
+     *
+     * A bounded catalog probe keeps ordinary symbols cheap. If contract-dense
+     * catalog pagination does not terminate, exact-date existence checks take
+     * over automatically. Every discovered expiration is then downloaded as
+     * independent call and put partitions. The caller publishes nothing unless
+     * every partition reaches a terminal provider page and passes validation.
+     *
+     * @return array{0:?array{0:float,1:array},1:array<string,mixed>}
+     */
+    protected function fetchMassiveChainByPartitions(
+        \Illuminate\Http\Client\PendingRequest $client,
+        string $base,
+        string $symbol,
+        string $mode,
+        string $qparam,
+        string $key,
+        ?Carbon $windowStart,
+        ?Carbon $windowEnd
+    ): array {
+        $pageLimit = max(1, min(250, (int) config('services.massive.eod_chain_page_limit', 250)));
+        $maxPagesPerPartition = max(
+            1,
+            (int) config('services.massive.eod_chain_max_pages_per_partition', 40)
+        );
+
+        $referenceProbeMaxPages = max(
+            1,
+            (int) config('services.massive.eod_chain_reference_probe_max_pages', 4)
+        );
+        [$expiries, $referenceProbeMeta] = $this->fetchMassiveReferenceExpirations(
+            $client,
+            $base,
+            $symbol,
+            $mode,
+            $qparam,
+            $key,
+            $windowStart,
+            $windowEnd,
+            $referenceProbeMaxPages
+        );
+
+        $referenceProbeComplete = (bool) ($referenceProbeMeta['complete'] ?? false);
+        if ($referenceProbeComplete) {
+            $referenceMeta = array_merge($referenceProbeMeta, [
+                'strategy' => 'bounded_catalog',
+                'dates_scanned' => 0,
+                'probe_status' => $referenceProbeMeta['status'] ?? null,
+                'probe_pages' => (int) ($referenceProbeMeta['pages'] ?? 0),
+            ]);
+        } else {
+            [$expiries, $exactReferenceMeta] = $this->fetchMassivePartitionExpirations(
+                $client,
+                $base,
+                $symbol,
+                $mode,
+                $qparam,
+                $key,
+                $windowStart,
+                $windowEnd
+            );
+            $referenceMeta = array_merge($exactReferenceMeta, [
+                'strategy' => 'exact_date_fallback',
+                'pages' => (int) ($referenceProbeMeta['pages'] ?? 0)
+                    + (int) ($exactReferenceMeta['pages'] ?? 0),
+                'probe_status' => $referenceProbeMeta['status'] ?? null,
+                'probe_pages' => (int) ($referenceProbeMeta['pages'] ?? 0),
+                'probe_pagination_capped' => (bool) ($referenceProbeMeta['pagination_capped'] ?? false),
+            ]);
+        }
+
+        $referenceComplete = (bool) ($referenceMeta['complete'] ?? false);
+        $partitionsExpected = count($expiries) * 2;
+        $baseMeta = [
+            'chain_fetch_strategy' => 'partitioned_expiry_side',
+            'page_limit' => $pageLimit,
+            'bulk_pages' => 0,
+            'reference_status' => $referenceMeta['status'] ?? 'unknown',
+            'reference_complete' => $referenceComplete,
+            'reference_pages' => (int) ($referenceMeta['pages'] ?? 0),
+            'reference_strategy' => $referenceMeta['strategy'] ?? null,
+            'reference_probe_status' => $referenceMeta['probe_status'] ?? null,
+            'reference_probe_pages' => (int) ($referenceMeta['probe_pages'] ?? 0),
+            'reference_probe_pagination_capped' => (bool) ($referenceMeta['probe_pagination_capped'] ?? false),
+            'reference_http_status' => $referenceMeta['http_status'] ?? null,
+            'reference_expiries_found' => count($expiries),
+            'partition_dates_scanned' => (int) ($referenceMeta['dates_scanned'] ?? 0),
+            'candidate_expiries_generated' => (int) ($referenceMeta['dates_scanned'] ?? 0),
+            'partitions_expected' => $partitionsExpected,
+            'partition_page_limit' => $pageLimit,
+            'partition_max_pages' => $maxPagesPerPartition,
+        ];
+
+        if (! $referenceComplete) {
+            return [[0.0, []], array_merge($baseMeta, [
+                'status' => 'reference_incomplete',
+                'complete' => false,
+                'pages' => 0,
+                'pagination_capped' => false,
+                'partitions_resolved' => 0,
+                'partitions_failed' => 0,
+                'partition_pages' => 0,
+                'partition_max_depth' => 0,
+                'partition_cursor_cycles' => 0,
+                'partition_no_progress' => 0,
+                'partition_scope_violations' => (int) ($referenceMeta['scope_violations'] ?? 0),
+                'contracts_seen' => 0,
+                'contracts_unique' => 0,
+                'partition_failure_reason' => $referenceMeta['status'] ?? 'reference_incomplete',
+            ])];
+        }
+
+        if (empty($expiries)) {
+            return [[0.0, []], array_merge($baseMeta, [
+                'status' => 'empty_payload',
+                'complete' => false,
+                'pages' => 0,
+                'pagination_capped' => false,
+                'partitions_resolved' => 0,
+                'partitions_failed' => 0,
+                'partition_pages' => 0,
+                'partition_max_depth' => 0,
+                'partition_cursor_cycles' => 0,
+                'partition_no_progress' => 0,
+                'partition_scope_violations' => 0,
+                'contracts_seen' => 0,
+                'contracts_unique' => 0,
+                'partition_failure_reason' => 'no_reference_expiries',
+            ])];
+        }
+
+        $byExp = [];
+        $spot = 0.0;
+        $pages = 0;
+        $maxDepth = 0;
+        $partitionsResolved = 0;
+        $partitionsFailed = 0;
+        $cursorCycles = 0;
+        $noProgress = 0;
+        $scopeViolations = 0;
+        $contractsSeen = 0;
+        $contractsUnique = 0;
+        $paginationCapped = false;
+        $lastStatus = null;
+        $failureReason = null;
+        $failureExpiry = null;
+        $failureContractType = null;
+
+        foreach ($expiries as $expiry) {
+            $expirySet = [
+                'expirationDate' => $expiry,
+                'options' => ['CALL' => [], 'PUT' => []],
+            ];
+
+            foreach (['call', 'put'] as $contractType) {
+                $partition = $this->fetchMassiveContracts(
+                    $client,
+                    $base,
+                    $symbol,
+                    $mode,
+                    $qparam,
+                    $key,
+                    $pageLimit,
+                    $maxPagesPerPartition,
+                    $expiry,
+                    $contractType
+                );
+
+                $partitionMeta = $partition['meta'] ?? [];
+                $partitionPages = (int) ($partitionMeta['pages'] ?? 0);
+                $pages += $partitionPages;
+                $maxDepth = max($maxDepth, $partitionPages);
+                $lastStatus = $partitionMeta['http_status'] ?? $lastStatus;
+                $paginationCapped = $paginationCapped || (bool) ($partitionMeta['pagination_capped'] ?? false);
+                $cursorCycles += (int) ($partitionMeta['cursor_cycle'] ?? 0);
+                $noProgress += (int) ($partitionMeta['no_progress'] ?? 0);
+                $scopeViolations += (int) ($partitionMeta['scope_violations'] ?? 0);
+                $contractsSeen += (int) ($partitionMeta['contracts_seen'] ?? 0);
+                $contractsUnique += (int) ($partitionMeta['contracts_unique'] ?? 0);
+
+                if (! ($partitionMeta['complete'] ?? false)) {
+                    $partitionsFailed++;
+                    $failureReason = (string) ($partitionMeta['status'] ?? 'partition_incomplete');
+                    $failureExpiry = $expiry;
+                    $failureContractType = $contractType;
+                    break 2;
+                }
+
+                $partitionContracts = $partition['contracts'] ?? [];
+                if (empty($partitionContracts)) {
+                    $partitionsFailed++;
+                    $failureReason = 'empty_required_partition';
+                    $failureExpiry = $expiry;
+                    $failureContractType = $contractType;
+                    break 2;
+                }
+
+                if ($spot <= 0 && (float) ($partition['spot'] ?? 0) > 0) {
+                    $spot = (float) $partition['spot'];
+                }
+
+                $normalized = $this->normalizeMassiveContracts($partitionContracts);
+                $normalizedSide = strtoupper($contractType);
+                if (empty($normalized[$expiry]['options'][$normalizedSide] ?? [])) {
+                    $partitionsFailed++;
+                    $failureReason = 'normalized_partition_empty';
+                    $failureExpiry = $expiry;
+                    $failureContractType = $contractType;
+                    break 2;
+                }
+
+                $expirySet = $this->mergeMassiveExpirySet($expirySet, $normalized[$expiry]);
+                $partitionsResolved++;
+            }
+
+            if ($this->massiveExpiryNeedsRepair($expirySet)) {
+                $partitionsFailed++;
+                $failureReason = 'unhealthy_expiry_side_ratio';
+                $failureExpiry = $expiry;
+                $failureContractType = null;
+                break;
+            }
+
+            $byExp[$expiry] = $expirySet;
+        }
+
+        $complete = $failureReason === null
+            && $partitionsResolved === $partitionsExpected
+            && count($byExp) === count($expiries);
+
+        return [[$spot, array_values($byExp)], array_merge($baseMeta, [
+            'status' => $complete ? 'ok' : 'partition_incomplete',
+            'complete' => $complete,
+            'set_count' => count($byExp),
+            'pages' => $pages,
+            'partition_pages' => $pages,
+            'partition_max_depth' => $maxDepth,
+            'pagination_capped' => $paginationCapped,
+            'http_status' => $lastStatus,
+            'partitions_resolved' => $partitionsResolved,
+            'partitions_failed' => $partitionsFailed,
+            'partition_cursor_cycles' => $cursorCycles,
+            'partition_no_progress' => $noProgress,
+            'partition_scope_violations' => $scopeViolations,
+            'contracts_seen' => $contractsSeen,
+            'contracts_unique' => $contractsUnique,
+            'partition_failure_reason' => $failureReason,
+            'partition_failure_expiry' => $failureExpiry,
+            'partition_failure_contract_type' => $failureContractType,
+            // Preserve the existing observability names during rollout.
+            'expiry_backfill_requested' => count($expiries),
+            'expiry_backfill_fetched' => count($byExp),
+            'expiry_backfill_incomplete_requested' => 0,
+            'expiry_backfill_incomplete_fetched' => 0,
+            'expiry_backfill_side_requested' => $partitionsExpected,
+            'expiry_backfill_side_fetched' => $partitionsResolved,
+            'expiry_backfill_resolved' => count($byExp),
+        ])];
+    }
+
+    /**
+     * Discover expirations without ever paginating through a dense contract
+     * catalog. A one-result exact-date query proves whether that date had a
+     * contract as of the target session.
+     *
+     * @return array{0:array<int,string>,1:array<string,mixed>}
+     */
+    protected function fetchMassivePartitionExpirations(
+        \Illuminate\Http\Client\PendingRequest $client,
+        string $base,
+        string $symbol,
+        string $mode,
+        string $qparam,
+        string $key,
+        ?Carbon $windowStart,
+        ?Carbon $windowEnd
+    ): array {
+        if (! $windowStart || ! $windowEnd) {
+            return [[], [
+                'status' => 'missing_window',
+                'complete' => false,
+                'pages' => 0,
+                'dates_scanned' => 0,
+            ]];
+        }
+
+        $url = "{$base}/v3/reference/options/contracts";
+        $asOf = $windowStart->copy()->startOfDay()->toDateString();
+        $cursor = $windowStart->copy()->startOfDay();
+        $end = $windowEnd->copy()->startOfDay();
+        $expiries = [];
+        $pages = 0;
+        $scopeViolations = 0;
+
+        while ($cursor->lte($end)) {
+            $candidateDate = $cursor->toDateString();
+            $params = [
+                'underlying_ticker' => $symbol,
+                'expiration_date.gte' => $candidateDate,
+                'expiration_date.lte' => $candidateDate,
+                'as_of' => $asOf,
+                'expired' => 'true',
+                'order' => 'asc',
+                'sort' => 'expiration_date',
+                'limit' => 1,
+            ];
+            if ($mode === 'query') {
+                $params[$qparam] = $key;
+            }
+
+            $pages++;
+            $resp = app(ProviderConcurrencyLimiter::class)->massive(
+                fn () => $client->get($url, $params)
+            );
+
+            if ($resp->status() === 401) {
+                return [array_keys($expiries), [
+                    'status' => 'unauthorized',
+                    'complete' => false,
+                    'http_status' => 401,
+                    'pages' => $pages,
+                    'dates_scanned' => $pages,
+                    'scope_violations' => $scopeViolations,
+                ]];
+            }
+
+            if ($resp->failed()) {
+                return [array_keys($expiries), [
+                    'status' => 'http_error',
+                    'complete' => false,
+                    'http_status' => $resp->status(),
+                    'pages' => $pages,
+                    'dates_scanned' => $pages,
+                    'scope_violations' => $scopeViolations,
+                ]];
+            }
+
+            $json = $resp->json();
+            if (! is_array($json) || ! array_key_exists('results', $json) || ! is_array($json['results'])) {
+                return [array_keys($expiries), [
+                    'status' => 'malformed_payload',
+                    'complete' => false,
+                    'http_status' => $resp->status(),
+                    'pages' => $pages,
+                    'dates_scanned' => $pages,
+                    'scope_violations' => $scopeViolations,
+                ]];
+            }
+
+            foreach ($json['results'] as $contract) {
+                $expiry = substr((string) ($contract['expiration_date'] ?? ''), 0, 10);
+                if ($expiry !== $candidateDate) {
+                    $scopeViolations++;
+
+                    return [array_keys($expiries), [
+                        'status' => 'scope_violation',
+                        'complete' => false,
+                        'http_status' => $resp->status(),
+                        'pages' => $pages,
+                        'dates_scanned' => $pages,
+                        'scope_violations' => $scopeViolations,
+                    ]];
+                }
+                $expiries[$candidateDate] = true;
+            }
+
+            $cursor->addDay();
+        }
+
+        $dates = array_keys($expiries);
+        sort($dates);
+
+        return [$dates, [
+            'status' => $dates ? 'ok' : 'empty_payload',
+            'complete' => true,
+            'http_status' => null,
+            'pages' => $pages,
+            'dates_scanned' => $pages,
+            'scope_violations' => $scopeViolations,
+        ]];
+    }
+
     /**
      * Generate likely expiration dates when provider discovery is sparse.
      *
@@ -922,10 +1373,16 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         string $qparam,
         string $key,
         ?Carbon $windowStart,
-        ?Carbon $windowEnd
+        ?Carbon $windowEnd,
+        ?int $maxPagesOverride = null
     ): array {
         if (!$windowStart || !$windowEnd) {
-            return [[], ['status' => 'missing_window']];
+            return [[], [
+                'status' => 'missing_window',
+                'complete' => false,
+                'pages' => 0,
+                'pagination_capped' => false,
+            ]];
         }
 
         $url = "{$base}/v3/reference/options/contracts";
@@ -933,13 +1390,28 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $expiries = [];
         $lastStatus = null;
         $pages = 0;
-        $maxPages = max(1, (int) config('services.massive.eod_chain_reference_max_pages', 40));
+        $terminalPageReached = false;
+        $failureStatus = null;
+        $cursorCycles = 0;
+        $scopeViolations = 0;
+        $requestedUrls = [];
+        $maxPages = max(
+            1,
+            $maxPagesOverride ?? (int) config('services.massive.eod_chain_reference_max_pages', 40)
+        );
         $startDate = $windowStart->copy()->startOfDay()->toDateString();
         $endDate = $windowEnd->copy()->startOfDay()->toDateString();
 
         for ($page = 0; $page < $maxPages; $page++) {
-            $pages++;
             $reqUrl = $cursor ?: $url;
+            $requestFingerprint = hash('sha256', $reqUrl);
+            if (isset($requestedUrls[$requestFingerprint])) {
+                $cursorCycles++;
+                $failureStatus = 'cursor_cycle';
+                break;
+            }
+            $requestedUrls[$requestFingerprint] = true;
+
             $params = [];
 
             if (!$cursor) {
@@ -948,6 +1420,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                     'expiration_date.gte' => $startDate,
                     'expiration_date.lte' => $endDate,
                     'as_of' => $startDate,
+                    'expired' => 'true',
                     'order' => 'asc',
                     'sort' => 'expiration_date',
                     'limit' => 1000,
@@ -958,58 +1431,96 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 }
             }
 
+            $pages++;
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
                 fn () => $client->get($reqUrl, $params)
             );
             if ($resp->status() === 401) {
                 return [[], [
                     'status' => 'unauthorized',
+                    'complete' => false,
                     'http_status' => 401,
                     'pages' => $pages,
                     'pagination_capped' => false,
+                    'cursor_cycles' => $cursorCycles,
+                    'scope_violations' => $scopeViolations,
                 ]];
             }
 
             if ($resp->failed()) {
                 $lastStatus = $resp->status();
+                $failureStatus = 'http_error';
                 break;
             }
 
-            $json = $resp->json() ?: [];
-            $batch = $json['results'] ?? [];
-            if (!is_array($batch) || !$batch) {
+            $json = $resp->json();
+            if (! is_array($json) || ! array_key_exists('results', $json) || ! is_array($json['results'])) {
+                $failureStatus = 'malformed_payload';
+                break;
+            }
+            $batch = $json['results'];
+            $nextCursor = $this->massiveNextUrl(
+                $json['next_url'] ?? null,
+                $base,
+                $mode,
+                $qparam,
+                $key
+            );
+
+            if (empty($batch)) {
+                if ($nextCursor) {
+                    $failureStatus = 'pagination_no_progress';
+                } else {
+                    $terminalPageReached = true;
+                }
                 break;
             }
 
             foreach ($batch as $contract) {
                 $expiry = substr((string) ($contract['expiration_date'] ?? ''), 0, 10);
                 if ($expiry === '' || $expiry < $startDate || $expiry > $endDate) {
-                    continue;
+                    $scopeViolations++;
+                    $failureStatus = 'scope_violation';
+                    break 2;
                 }
                 $expiries[$expiry] = true;
             }
 
-            $cursor = $json['next_url'] ?? null;
-            if ($cursor && !str_starts_with($cursor, 'http')) {
-                $cursor = $base . $cursor;
-            }
-            if ($cursor && $mode === 'query' && !str_contains($cursor, urlencode($qparam).'=')) {
-                $cursor .= (str_contains($cursor, '?') ? '&' : '?')
-                    . urlencode($qparam) . '=' . urlencode($key);
-            }
-            if (!$cursor) {
+            if (! $nextCursor) {
+                $cursor = null;
+                $terminalPageReached = true;
                 break;
             }
+
+            $nextFingerprint = hash('sha256', $nextCursor);
+            if (isset($requestedUrls[$nextFingerprint])) {
+                $cursorCycles++;
+                $failureStatus = 'cursor_cycle';
+                break;
+            }
+
+            $cursor = $nextCursor;
         }
 
         $dates = array_keys($expiries);
         sort($dates);
 
+        $paginationCapped = ! $terminalPageReached
+            && $failureStatus === null
+            && $cursor !== null;
+        if ($paginationCapped) {
+            $failureStatus = 'pagination_capped';
+        }
+        $complete = $terminalPageReached && $failureStatus === null;
+
         return [$dates, [
-            'status' => $lastStatus ? 'http_error' : ($dates ? 'ok' : 'empty_payload'),
+            'status' => $failureStatus ?? ($dates ? 'ok' : 'empty_payload'),
+            'complete' => $complete,
             'http_status' => $lastStatus,
             'pages' => $pages,
-            'pagination_capped' => (bool) $cursor,
+            'pagination_capped' => $paginationCapped,
+            'cursor_cycles' => $cursorCycles,
+            'scope_violations' => $scopeViolations,
         ]];
     }
 
@@ -1032,17 +1543,33 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         ?string $expiry = null,
         ?string $contractType = null
     ): array {
-        $url       = "{$base}/v3/snapshot/options/{$symbol}";
-        $cursor    = null;
-        $contracts = [];
-        $spot      = null;
+        $url = "{$base}/v3/snapshot/options/{$symbol}";
+        $cursor = null;
+        $contractsByKey = [];
+        $spot = null;
         $lastStatus = null;
         $pages = 0;
+        $contractsSeen = 0;
+        $duplicateContracts = 0;
+        $cursorCycle = 0;
+        $noProgress = 0;
+        $scopeViolations = 0;
+        $terminalPageReached = false;
+        $failureStatus = null;
+        $requestedUrls = [];
         $contractType = in_array($contractType, ['call', 'put'], true) ? $contractType : null;
+        $strictScope = $expiry !== null || $contractType !== null;
 
         for ($page = 0; $page < $maxPages; $page++) {
-            $pages++;
             $reqUrl = $cursor ?: $url;
+            $requestFingerprint = hash('sha256', $reqUrl);
+            if (isset($requestedUrls[$requestFingerprint])) {
+                $cursorCycle++;
+                $failureStatus = 'cursor_cycle';
+                break;
+            }
+            $requestedUrls[$requestFingerprint] = true;
+
             $params = [];
 
             if (!$cursor) {
@@ -1059,6 +1586,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 $params[$qparam] = $key;
             }
 
+            $pages++;
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
                 fn () => $client->get($reqUrl, $params)
             );
@@ -1076,51 +1604,111 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                         'pagination_capped' => false,
                         'expiry' => $expiry,
                         'contract_type' => $contractType,
+                        'cursor_cycle' => $cursorCycle,
+                        'no_progress' => $noProgress,
+                        'scope_violations' => $scopeViolations,
+                        'contracts_seen' => $contractsSeen,
+                        'contracts_unique' => count($contractsByKey),
+                        'duplicate_contracts' => $duplicateContracts,
                     ],
                 ];
             }
 
             if ($resp->failed()) {
                 $lastStatus = $resp->status();
+                $failureStatus = 'http_error';
                 break;
             }
 
-            $json  = $resp->json() ?: [];
-            $batch = $json['results'] ?? [];
-            if (!is_array($batch) || !$batch) {
+            $json = $resp->json();
+            if (! is_array($json) || ! array_key_exists('results', $json) || ! is_array($json['results'])) {
+                $failureStatus = 'malformed_payload';
+                break;
+            }
+            $batch = $json['results'];
+            $nextCursor = $this->massiveNextUrl(
+                $json['next_url'] ?? null,
+                $base,
+                $mode,
+                $qparam,
+                $key
+            );
+
+            if (empty($batch)) {
+                if ($nextCursor) {
+                    $noProgress++;
+                    $failureStatus = 'pagination_no_progress';
+                } else {
+                    $terminalPageReached = true;
+                }
                 break;
             }
 
+            $newContracts = 0;
             foreach ($batch as $c) {
-                $contracts[] = $c;
+                $contractsSeen++;
+                $scopeError = $this->massiveContractScopeError($c, $expiry, $contractType, $strictScope);
+                if ($scopeError !== null) {
+                    $scopeViolations++;
+                    $failureStatus = 'scope_violation';
+                    break 2;
+                }
+
+                $identity = $this->massiveContractIdentity($c);
+                if ($identity === null) {
+                    $scopeViolations++;
+                    $failureStatus = 'scope_violation';
+                    break 2;
+                }
+                if (isset($contractsByKey[$identity])) {
+                    $duplicateContracts++;
+                    continue;
+                }
+
+                $contractsByKey[$identity] = $c;
+                $newContracts++;
                 if ($spot === null) {
                     $spot = $c['underlying_asset']['price'] ?? null;
                 }
             }
 
-            $cursor = $json['next_url'] ?? null;
-            if ($cursor && !str_starts_with($cursor, 'http')) {
-                $cursor = $base . $cursor;
-            }
-            if ($cursor && $mode === 'query' && !str_contains($cursor, urlencode($qparam).'=')) {
-                $cursor .= (str_contains($cursor, '?') ? '&' : '?')
-                    . urlencode($qparam) . '=' . urlencode($key);
-            }
-            if (!$cursor) {
+            if (! $nextCursor) {
+                $terminalPageReached = true;
+                $cursor = null;
                 break;
             }
+
+            if ($newContracts === 0) {
+                $noProgress++;
+                $failureStatus = 'pagination_no_progress';
+                break;
+            }
+
+            $nextFingerprint = hash('sha256', $nextCursor);
+            if (isset($requestedUrls[$nextFingerprint])) {
+                $cursorCycle++;
+                $failureStatus = 'cursor_cycle';
+                break;
+            }
+
+            $cursor = $nextCursor;
         }
 
-        $paginationCapped = (bool) $cursor;
-        $complete = $lastStatus === null && ! $paginationCapped;
+        $paginationCapped = ! $terminalPageReached
+            && $failureStatus === null
+            && $cursor !== null;
+        if ($paginationCapped) {
+            $failureStatus = 'pagination_capped';
+        }
+        $complete = $terminalPageReached && $failureStatus === null;
+        $contracts = array_values($contractsByKey);
 
         return [
             'contracts' => $contracts,
             'spot' => (float) ($spot ?? 0.0),
             'meta' => [
-                'status' => $lastStatus
-                    ? 'http_error'
-                    : ($paginationCapped ? 'pagination_capped' : (empty($contracts) ? 'empty_payload' : 'ok')),
+                'status' => $failureStatus
+                    ?? (empty($contracts) ? 'empty_payload' : 'ok'),
                 'complete' => $complete,
                 'http_status' => $lastStatus,
                 'pages' => $pages,
@@ -1128,8 +1716,98 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 'pagination_capped' => $paginationCapped,
                 'expiry' => $expiry,
                 'contract_type' => $contractType,
+                'cursor_cycle' => $cursorCycle,
+                'no_progress' => $noProgress,
+                'scope_violations' => $scopeViolations,
+                'contracts_seen' => $contractsSeen,
+                'contracts_unique' => count($contracts),
+                'duplicate_contracts' => $duplicateContracts,
             ],
         ];
+    }
+
+    protected function massiveNextUrl(
+        mixed $nextUrl,
+        string $base,
+        string $mode,
+        string $qparam,
+        string $key
+    ): ?string {
+        $nextUrl = trim((string) $nextUrl);
+        if ($nextUrl === '') {
+            return null;
+        }
+
+        if (! str_starts_with($nextUrl, 'http')) {
+            $nextUrl = $base . $nextUrl;
+        }
+
+        if ($mode === 'query') {
+            $encodedParam = preg_quote(urlencode($qparam), '/');
+            if (! preg_match('/(?:[?&])'.$encodedParam.'=/', $nextUrl)) {
+                $nextUrl .= (str_contains($nextUrl, '?') ? '&' : '?')
+                    . urlencode($qparam).'='.urlencode($key);
+            }
+        }
+
+        return $nextUrl;
+    }
+
+    protected function massiveContractScopeError(
+        mixed $contract,
+        ?string $expiry,
+        ?string $contractType,
+        bool $strict
+    ): ?string {
+        if (! is_array($contract)) {
+            return $strict ? 'contract_not_array' : null;
+        }
+
+        if (! $strict) {
+            return null;
+        }
+
+        $details = $contract['details'] ?? null;
+        if (! is_array($details)) {
+            return 'missing_details';
+        }
+
+        $actualExpiry = substr((string) ($details['expiration_date'] ?? ''), 0, 10);
+        if ($expiry !== null && $actualExpiry !== $expiry) {
+            return 'wrong_expiry';
+        }
+
+        $actualType = strtolower((string) ($details['contract_type'] ?? ''));
+        if ($contractType !== null && $actualType !== $contractType) {
+            return 'wrong_contract_type';
+        }
+
+        if ((float) ($details['strike_price'] ?? 0) <= 0) {
+            return 'invalid_strike';
+        }
+
+        return null;
+    }
+
+    protected function massiveContractIdentity(mixed $contract): ?string
+    {
+        if (! is_array($contract)) {
+            return null;
+        }
+
+        $ticker = strtoupper(trim((string) ($contract['details']['ticker'] ?? '')));
+        if ($ticker !== '') {
+            return $ticker;
+        }
+
+        $details = $contract['details'] ?? [];
+        $fallback = [
+            substr((string) ($details['expiration_date'] ?? ''), 0, 10),
+            strtolower((string) ($details['contract_type'] ?? '')),
+            (string) ($details['strike_price'] ?? ''),
+        ];
+
+        return hash('sha256', implode('|', $fallback));
     }
 
     /**
