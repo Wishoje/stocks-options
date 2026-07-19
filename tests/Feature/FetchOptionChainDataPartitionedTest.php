@@ -145,6 +145,7 @@ class FetchOptionChainDataPartitionedTest extends TestCase
         $this->assertSame(self::TARGET_DATE, $referenceRequests[0]['as_of']);
         $this->assertSame(self::SYMBOL, $referenceRequests[0]['underlying_ticker']);
         $this->assertSame(1000, $referenceRequests[0]['limit']);
+        $this->assertNull($referenceRequests[0]['expired']);
 
         $this->assertCount(8, $snapshotRequests);
         foreach ($snapshotRequests as $request) {
@@ -205,6 +206,7 @@ class FetchOptionChainDataPartitionedTest extends TestCase
             $this->assertSame($request['gte'], $request['lte']);
             $this->assertSame(1, $request['limit']);
             $this->assertSame(self::TARGET_DATE, $request['as_of']);
+            $this->assertNull($request['expired']);
         }
 
         $this->assertCount(4, $snapshotRequests);
@@ -247,18 +249,19 @@ class FetchOptionChainDataPartitionedTest extends TestCase
     }
 
     #[DataProvider('invalidPartitionContractProvider')]
-    public function test_wrong_expiry_or_side_in_partition_fails_without_writing_rows(
+    public function test_wrong_partition_scope_fails_without_writing_rows(
         string $returnedExpiry,
         string $returnedSide,
+        string $returnedUnderlying,
     ): void {
         $referenceRequests = [];
         $snapshotRequests = [];
 
         $this->fakePartitionedProvider(
             [self::TARGET_DATE],
-            function (string $expiry, string $side) use ($returnedExpiry, $returnedSide) {
+            function (string $expiry, string $side) use ($returnedExpiry, $returnedSide, $returnedUnderlying) {
                 $contract = $side === 'call'
-                    ? $this->contract($returnedExpiry, $returnedSide, 500.0)
+                    ? $this->contract($returnedExpiry, $returnedSide, 500.0, $returnedUnderlying)
                     : $this->contract($expiry, $side, 500.0);
 
                 return Http::response(['results' => [$contract]]);
@@ -274,12 +277,13 @@ class FetchOptionChainDataPartitionedTest extends TestCase
         $this->assertDatabaseCount('option_chain_data', 0);
     }
 
-    /** @return array<string,array{0:string,1:string}> */
+    /** @return array<string,array{0:string,1:string,2:string}> */
     public static function invalidPartitionContractProvider(): array
     {
         return [
-            'wrong expiry' => ['2026-05-19', 'call'],
-            'wrong side' => [self::TARGET_DATE, 'put'],
+            'wrong expiry' => ['2026-05-19', 'call', self::SYMBOL],
+            'wrong side' => [self::TARGET_DATE, 'put', self::SYMBOL],
+            'wrong underlying' => [self::TARGET_DATE, 'call', 'QQQ'],
         ];
     }
 
@@ -357,6 +361,7 @@ class FetchOptionChainDataPartitionedTest extends TestCase
                     'gte' => $gte,
                     'lte' => $lte,
                     'as_of' => (string) ($params['as_of'] ?? ''),
+                    'expired' => $params['expired'] ?? null,
                     'limit' => $limit,
                     'cursor' => (string) ($params['cursor'] ?? ''),
                 ];
@@ -446,7 +451,12 @@ class FetchOptionChainDataPartitionedTest extends TestCase
     }
 
     /** @return array<string,mixed> */
-    private function contract(string $expiry, string $side, float $strike): array
+    private function contract(
+        string $expiry,
+        string $side,
+        float $strike,
+        string $underlying = self::SYMBOL,
+    ): array
     {
         return [
             'details' => [
@@ -461,7 +471,10 @@ class FetchOptionChainDataPartitionedTest extends TestCase
                 'strike_price' => $strike,
                 'contract_type' => $side,
             ],
-            'underlying_asset' => ['price' => 501.0],
+            'underlying_asset' => [
+                'price' => 501.0,
+                'ticker' => $underlying,
+            ],
             'open_interest' => (int) $strike,
             'session' => ['volume' => 10],
             'implied_volatility' => 0.2,

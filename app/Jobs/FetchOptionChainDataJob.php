@@ -499,6 +499,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             'partition_failure_contract_type',
             'contracts_seen',
             'contracts_unique',
+            'partition_duration_ms',
             'candidate_expiries_generated',
             'expiry_backfill_requested',
             'expiry_backfill_fetched',
@@ -966,6 +967,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         ?Carbon $windowStart,
         ?Carbon $windowEnd
     ): array {
+        $startedAt = microtime(true);
+        $elapsedMilliseconds = static fn (): int => (int) round((microtime(true) - $startedAt) * 1000);
         $pageLimit = max(1, min(250, (int) config('services.massive.eod_chain_page_limit', 250)));
         $maxPagesPerPartition = max(
             1,
@@ -1054,6 +1057,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 'partition_scope_violations' => (int) ($referenceMeta['scope_violations'] ?? 0),
                 'contracts_seen' => 0,
                 'contracts_unique' => 0,
+                'partition_duration_ms' => $elapsedMilliseconds(),
                 'partition_failure_reason' => $referenceMeta['status'] ?? 'reference_incomplete',
             ])];
         }
@@ -1073,6 +1077,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 'partition_scope_violations' => 0,
                 'contracts_seen' => 0,
                 'contracts_unique' => 0,
+                'partition_duration_ms' => $elapsedMilliseconds(),
                 'partition_failure_reason' => 'no_reference_expiries',
             ])];
         }
@@ -1192,6 +1197,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             'partition_scope_violations' => $scopeViolations,
             'contracts_seen' => $contractsSeen,
             'contracts_unique' => $contractsUnique,
+            'partition_duration_ms' => $elapsedMilliseconds(),
             'partition_failure_reason' => $failureReason,
             'partition_failure_expiry' => $failureExpiry,
             'partition_failure_contract_type' => $failureContractType,
@@ -1296,7 +1302,11 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
             foreach ($json['results'] as $contract) {
                 $expiry = substr((string) ($contract['expiration_date'] ?? ''), 0, 10);
-                if ($expiry !== $candidateDate) {
+                $underlying = trim((string) ($contract['underlying_ticker'] ?? ''));
+                if (
+                    $expiry !== $candidateDate
+                    || ($underlying !== '' && \App\Support\Symbols::canon($underlying) !== $symbol)
+                ) {
                     $scopeViolations++;
 
                     return [array_keys($expiries), [
@@ -1476,7 +1486,13 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
             foreach ($batch as $contract) {
                 $expiry = substr((string) ($contract['expiration_date'] ?? ''), 0, 10);
-                if ($expiry === '' || $expiry < $startDate || $expiry > $endDate) {
+                $underlying = trim((string) ($contract['underlying_ticker'] ?? ''));
+                if (
+                    $expiry === ''
+                    || $expiry < $startDate
+                    || $expiry > $endDate
+                    || ($underlying !== '' && \App\Support\Symbols::canon($underlying) !== $symbol)
+                ) {
                     $scopeViolations++;
                     $failureStatus = 'scope_violation';
                     break 2;
@@ -1645,7 +1661,13 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             $newContracts = 0;
             foreach ($batch as $c) {
                 $contractsSeen++;
-                $scopeError = $this->massiveContractScopeError($c, $expiry, $contractType, $strictScope);
+                $scopeError = $this->massiveContractScopeError(
+                    $c,
+                    $symbol,
+                    $expiry,
+                    $contractType,
+                    $strictScope
+                );
                 if ($scopeError !== null) {
                     $scopeViolations++;
                     $failureStatus = 'scope_violation';
@@ -1753,6 +1775,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
     protected function massiveContractScopeError(
         mixed $contract,
+        string $symbol,
         ?string $expiry,
         ?string $contractType,
         bool $strict
@@ -1778,6 +1801,18 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $actualType = strtolower((string) ($details['contract_type'] ?? ''));
         if ($contractType !== null && $actualType !== $contractType) {
             return 'wrong_contract_type';
+        }
+
+        $actualUnderlying = trim((string) (
+            $contract['underlying_asset']['ticker']
+                ?? $details['underlying_ticker']
+                ?? ''
+        ));
+        if (
+            $actualUnderlying !== ''
+            && \App\Support\Symbols::canon($actualUnderlying) !== \App\Support\Symbols::canon($symbol)
+        ) {
+            return 'wrong_underlying';
         }
 
         if ((float) ($details['strike_price'] ?? 0) <= 0) {
