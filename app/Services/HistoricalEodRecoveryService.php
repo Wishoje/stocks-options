@@ -147,6 +147,7 @@ class HistoricalEodRecoveryService
         foreach ($symbols as $symbol) {
             try {
                 $result = (array) ($manifest['symbol_results'][$symbol] ?? []);
+                $artifactFiles = [];
                 foreach (['reference', 'archive', 'snapshot', 'candidate'] as $artifact) {
                     $fileKey = $artifact.'_file';
                     $shaKey = $artifact.'_file_sha256';
@@ -161,6 +162,7 @@ class HistoricalEodRecoveryService
                     ) {
                         throw new RuntimeException("{$artifact}_file_sha256_mismatch");
                     }
+                    $artifactFiles[$artifact] = $artifactFile;
                 }
 
                 $candidateFile = $this->resolveArtifactPath(
@@ -185,7 +187,12 @@ class HistoricalEodRecoveryService
                     throw new RuntimeException('candidate_file_sha256_mismatch');
                 }
 
-                $report = $this->validateCandidate($candidate, $manifest, $symbol);
+                $report = $this->validateCandidate(
+                    $candidate,
+                    $manifest,
+                    $symbol,
+                    $this->readGzipJson($artifactFiles['archive']),
+                );
                 if (! $report['ok']) {
                     throw new RuntimeException(implode(',', $report['errors']));
                 }
@@ -642,7 +649,12 @@ class HistoricalEodRecoveryService
             throw new RuntimeException('candidate_file_sha256_mismatch');
         }
 
-        $report = $this->validateCandidate($candidate, $manifest, $symbol);
+        $report = $this->validateCandidate(
+            $candidate,
+            $manifest,
+            $symbol,
+            $this->readGzipJson($artifactPaths['archive']),
+        );
         if (! ($report['ok'] ?? false)) {
             throw new RuntimeException(implode(',', (array) ($report['errors'] ?? [])));
         }
@@ -1081,6 +1093,23 @@ class HistoricalEodRecoveryService
                 continue;
             }
 
+            $futureArchiveGroup = (array) ($archiveGroups[$expiry] ?? []);
+            $futureArchiveRows = (array) ($futureArchiveGroup['contracts'] ?? []);
+            $futureArchiveByTicker = [];
+            foreach ($futureArchiveRows as $futureArchiveRow) {
+                $archiveTicker = strtoupper(trim((string) ($futureArchiveRow['contract_symbol'] ?? '')));
+                if ($archiveTicker !== '') {
+                    $futureArchiveByTicker[$archiveTicker] = $futureArchiveRow;
+                }
+            }
+            $futureArchiveRequestId = trim((string) (
+                $futureArchiveGroup['meta']['selected_request_id'] ?? ''
+            ));
+            $futureArchiveCapturedAt = trim((string) (
+                $futureArchiveGroup['meta']['selected_captured_at'] ?? ''
+            ));
+            $futureArchiveGroupValidated = false;
+
             foreach (['call', 'put'] as $side) {
                 $this->assertSafeCaptureWindow($target);
                 $capturedAt = now('UTC')->toIso8601String();
@@ -1146,14 +1175,38 @@ class HistoricalEodRecoveryService
                     'provider_meta' => $partition['meta'] ?? [],
                 ];
                 foreach ($contracts as $contract) {
-                    $rows[] = $this->normalizeSnapshotRow(
+                    $contractTicker = strtoupper(trim((string) ($contract['details']['ticker'] ?? '')));
+                    $archiveFallbackRow = $futureArchiveByTicker[$contractTicker] ?? null;
+                    $normalized = $this->normalizeSnapshotRow(
                         $symbol,
                         $expiry,
                         $side,
                         $closingSpot,
                         $partitionTimestamp,
                         $contract,
+                        is_array($archiveFallbackRow) ? $archiveFallbackRow : null,
+                        $futureArchiveRequestId,
+                        $futureArchiveCapturedAt,
                     );
+                    $fallbackMetrics = (array) ($normalized['metric_fallbacks'] ?? []);
+                    if ($fallbackMetrics !== []) {
+                        if (! is_array($archiveFallbackRow)) {
+                            throw new RuntimeException(
+                                "Recovery metric fallback has no exact archive ticker for {$contractTicker}."
+                            );
+                        }
+                        if (! $futureArchiveGroupValidated) {
+                            $this->assertArchiveGroupIsPostClose($symbol, $target, $futureArchiveGroup);
+                            $futureArchiveGroupValidated = true;
+                        }
+                        $this->assertArchiveDefinitions(
+                            $symbol,
+                            $expiry,
+                            [$archiveFallbackRow],
+                            $catalog['by_ticker'],
+                        );
+                    }
+                    $rows[] = $normalized;
                 }
             }
 
@@ -1183,6 +1236,12 @@ class HistoricalEodRecoveryService
         }
 
         $rows = $this->filterAndSortRows($rows, $closingSpot);
+        $archiveMetricFallbacks = ['gamma' => 0, 'delta' => 0, 'vega' => 0, 'iv' => 0];
+        foreach ($rows as $row) {
+            foreach ((array) ($row['metric_fallbacks'] ?? []) as $fallbackMetric) {
+                $archiveMetricFallbacks[(string) $fallbackMetric]++;
+            }
+        }
         $candidate = [
             'artifact_version' => self::ARTIFACT_VERSION,
             'symbol' => $symbol,
@@ -1199,6 +1258,7 @@ class HistoricalEodRecoveryService
             'archive_future_volume_differences' => $overlapVolumeDifferences,
             'archive_future_current_lower' => $overlapCurrentLower,
             'current_snapshot_missing_volumes' => $snapshotMissingVolumes,
+            'archive_future_metric_fallbacks' => $archiveMetricFallbacks,
             'source_artifacts' => [
                 'reference' => ['file' => $referenceRelative, 'sha256' => $referenceFileSha],
                 'archive' => ['file' => $archiveRelative, 'sha256' => $archiveFileSha],
@@ -1208,11 +1268,16 @@ class HistoricalEodRecoveryService
             'previous_session' => $this->previousSessionStats($symbol, $targetDate),
             'rows' => $rows,
         ];
-        $preflight = $this->validateCandidate($candidate, [
-            'date' => $targetDate,
-            'end_date' => $end->toDateString(),
-            'symbols' => [$symbol],
-        ], $symbol);
+        $preflight = $this->validateCandidate(
+            $candidate,
+            [
+                'date' => $targetDate,
+                'end_date' => $end->toDateString(),
+                'symbols' => [$symbol],
+            ],
+            $symbol,
+            ['symbol' => $symbol, 'groups' => $archiveGroups],
+        );
         if (! ($preflight['ok'] ?? false)) {
             throw new RuntimeException(implode(',', (array) ($preflight['errors'] ?? [])));
         }
@@ -1543,6 +1608,9 @@ class HistoricalEodRecoveryService
         float $providerSpot,
         string $marketTimestamp,
         array $contract,
+        ?array $archiveFallbackRow = null,
+        ?string $archiveFallbackRequestId = null,
+        ?string $archiveFallbackCapturedAt = null,
     ): array {
         $details = (array) ($contract['details'] ?? []);
         $actualSymbol = Symbols::canon((string) (
@@ -1557,7 +1625,34 @@ class HistoricalEodRecoveryService
             throw new RuntimeException("Snapshot row identity is invalid for {$symbol} {$expiry} {$side}.");
         }
 
-        $gamma = $contract['greeks']['gamma'] ?? null;
+        $greeks = (array) ($contract['greeks'] ?? []);
+        $archiveFallbackRow ??= [];
+        $metricFallbacks = [];
+        $gamma = $greeks['gamma'] ?? null;
+        $delta = $greeks['delta'] ?? null;
+        $vega = $greeks['vega'] ?? null;
+        foreach (['gamma', 'delta', 'vega'] as $metric) {
+            if (
+                $this->metricMissing(${$metric})
+                && ! $this->metricMissing($archiveFallbackRow[$metric] ?? null)
+            ) {
+                ${$metric} = $archiveFallbackRow[$metric];
+                $metricFallbacks[] = $metric;
+            }
+        }
+        if ($this->metricMissing($gamma)) {
+            $delta = null;
+            $vega = null;
+            $metricFallbacks = array_values(array_diff($metricFallbacks, ['delta', 'vega']));
+        }
+        $iv = $this->normalizeIv($contract['implied_volatility'] ?? null);
+        if ($iv === null) {
+            $archiveIv = $this->normalizeIv($archiveFallbackRow['implied_volatility'] ?? null);
+            if ($archiveIv !== null) {
+                $iv = $archiveIv;
+                $metricFallbacks[] = 'iv';
+            }
+        }
 
         return $this->normalizedCandidateRow([
             'expiration_date' => $expiry,
@@ -1567,13 +1662,20 @@ class HistoricalEodRecoveryService
             'open_interest' => $contract['open_interest'] ?? 0,
             'volume' => $this->snapshotVolume($contract),
             'gamma' => $gamma,
-            'delta' => $gamma === null ? null : ($contract['greeks']['delta'] ?? null),
-            'vega' => $gamma === null ? null : ($contract['greeks']['vega'] ?? null),
-            'iv' => $this->normalizeIv($contract['implied_volatility'] ?? null),
+            'delta' => $delta,
+            'vega' => $vega,
+            'iv' => $iv,
             'underlying_price' => $providerSpot,
             'data_timestamp' => $marketTimestamp,
             'source' => 'current_snapshot',
             'source_request_id' => null,
+            'metric_fallbacks' => $metricFallbacks,
+            'metric_fallback_request_id' => $metricFallbacks === []
+                ? null
+                : $archiveFallbackRequestId,
+            'metric_fallback_captured_at' => $metricFallbacks === []
+                ? null
+                : $archiveFallbackCapturedAt,
         ]);
     }
 
@@ -1636,7 +1738,19 @@ class HistoricalEodRecoveryService
             'source_request_id' => ($row['source_request_id'] ?? null) === null
                 ? null
                 : (string) $row['source_request_id'],
+            'metric_fallbacks' => array_values((array) ($row['metric_fallbacks'] ?? [])),
+            'metric_fallback_request_id' => ($row['metric_fallback_request_id'] ?? null) === null
+                ? null
+                : (string) $row['metric_fallback_request_id'],
+            'metric_fallback_captured_at' => ($row['metric_fallback_captured_at'] ?? null) === null
+                ? null
+                : $this->normalizeUtcTimestamp($row['metric_fallback_captured_at']),
         ];
+    }
+
+    private function metricMissing(mixed $value): bool
+    {
+        return $value === null || $value === '';
     }
 
     private function normalizeIv(mixed $value): ?float
@@ -1874,7 +1988,7 @@ class HistoricalEodRecoveryService
             'min_keep_oi' => max(0, (int) config('services.massive.eod_min_keep_oi', 1)),
             'min_keep_vol' => max(0, (int) config('services.massive.eod_min_keep_vol', 1)),
             'iv_rule' => 'numeric_gt_1_divide_100_nonpositive_null',
-            'greek_rule' => 'provider_only_gamma_gates_delta_and_vega_no_historical_recompute',
+            'greek_rule' => 'target_session_provider_with_exact_archive_fallback_gamma_gates_delta_and_vega',
         ];
     }
 
@@ -1935,8 +2049,12 @@ class HistoricalEodRecoveryService
     }
 
     /** @param array<string,mixed> $candidate @param array<string,mixed> $manifest @return array<string,mixed> */
-    private function validateCandidate(array $candidate, array $manifest, ?string $expectedSymbol = null): array
-    {
+    private function validateCandidate(
+        array $candidate,
+        array $manifest,
+        ?string $expectedSymbol = null,
+        ?array $archiveEvidence = null,
+    ): array {
         $errors = [];
         $symbol = Symbols::canon((string) ($candidate['symbol'] ?? ''));
         $date = (string) ($candidate['date'] ?? '');
@@ -1999,6 +2117,38 @@ class HistoricalEodRecoveryService
                 || (int) ($coverage['expected'] ?? 0) !== (int) ($coverage['recovered'] ?? -1)
             ) {
                 $errors[] = "raw_ticker_coverage_{$expiry}";
+            }
+        }
+
+        $fallbackMetrics = ['gamma', 'delta', 'vega', 'iv'];
+        $declaredFallbacks = (array) ($candidate['archive_future_metric_fallbacks'] ?? []);
+        $observedFallbacks = array_fill_keys($fallbackMetrics, 0);
+        if (
+            array_diff(array_keys($declaredFallbacks), $fallbackMetrics) !== []
+            || array_diff($fallbackMetrics, array_keys($declaredFallbacks)) !== []
+        ) {
+            $errors[] = 'invalid_archive_metric_fallback_counters';
+        }
+        $archiveFallbackEvidence = [];
+        if ($archiveEvidence !== null) {
+            if (Symbols::canon((string) ($archiveEvidence['symbol'] ?? '')) !== $symbol) {
+                $errors[] = 'archive_fallback_evidence_symbol_mismatch';
+            }
+            foreach ((array) ($archiveEvidence['groups'] ?? []) as $archiveExpiry => $archiveGroup) {
+                $archiveExpiry = (string) $archiveExpiry;
+                $archiveGroup = (array) $archiveGroup;
+                foreach ((array) ($archiveGroup['contracts'] ?? []) as $archiveRow) {
+                    $archiveRow = (array) $archiveRow;
+                    $archiveTicker = strtoupper(trim((string) ($archiveRow['contract_symbol'] ?? '')));
+                    if ($archiveTicker === '') {
+                        continue;
+                    }
+                    if (isset($archiveFallbackEvidence[$archiveExpiry]['rows'][$archiveTicker])) {
+                        $errors[] = 'duplicate_archive_fallback_evidence_ticker';
+                    }
+                    $archiveFallbackEvidence[$archiveExpiry]['group'] = $archiveGroup;
+                    $archiveFallbackEvidence[$archiveExpiry]['rows'][$archiveTicker] = $archiveRow;
+                }
             }
         }
 
@@ -2074,6 +2224,100 @@ class HistoricalEodRecoveryService
             }
             if ($iv !== null && (float) $iv <= 0) {
                 $errors[] = "row_{$index}_invalid_metrics";
+            }
+            $metricFallbacks = array_values((array) ($row['metric_fallbacks'] ?? []));
+            if ($metricFallbacks !== []) {
+                if (
+                    $source !== 'current_snapshot'
+                    || trim((string) ($row['metric_fallback_request_id'] ?? '')) === ''
+                    || trim((string) ($row['metric_fallback_captured_at'] ?? '')) === ''
+                    || count($metricFallbacks) !== count(array_unique($metricFallbacks))
+                ) {
+                    $errors[] = "row_{$index}_invalid_metric_fallback_provenance";
+                }
+                foreach ($metricFallbacks as $fallbackMetric) {
+                    if (
+                        ! in_array($fallbackMetric, $fallbackMetrics, true)
+                        || ($row[$fallbackMetric] ?? null) === null
+                    ) {
+                        $errors[] = "row_{$index}_invalid_metric_fallback";
+
+                        continue;
+                    }
+                    $observedFallbacks[$fallbackMetric]++;
+                }
+                $archiveGroup = (array) (
+                    $archiveFallbackEvidence[$expiry]['group'] ?? []
+                );
+                $archiveRow = (array) (
+                    $archiveFallbackEvidence[$expiry]['rows'][$ticker] ?? []
+                );
+                $archiveRequestId = trim((string) (
+                    $archiveGroup['meta']['selected_request_id'] ?? ''
+                ));
+                $archiveCapturedAt = trim((string) (
+                    $archiveGroup['meta']['selected_captured_at'] ?? ''
+                ));
+                if ($archiveGroup === [] || $archiveRow === []) {
+                    $errors[] = "row_{$index}_missing_metric_fallback_evidence";
+                } else {
+                    try {
+                        $this->assertArchiveGroupIsPostClose($symbol, $target, $archiveGroup);
+                    } catch (\Throwable) {
+                        $errors[] = "row_{$index}_invalid_metric_fallback_window";
+                    }
+                    if (
+                        $archiveRequestId === ''
+                        || (string) ($row['metric_fallback_request_id'] ?? '') !== $archiveRequestId
+                        || (string) ($row['metric_fallback_captured_at'] ?? '')
+                            !== $this->normalizeUtcTimestamp($archiveCapturedAt)
+                        || Symbols::canon((string) ($archiveRow['symbol'] ?? '')) !== $symbol
+                        || substr((string) ($archiveRow['expiration_date'] ?? ''), 0, 10) !== $expiry
+                        || strtoupper(trim((string) ($archiveRow['contract_symbol'] ?? ''))) !== $ticker
+                        || strtolower((string) ($archiveRow['contract_type'] ?? '')) !== $side
+                        || abs((float) ($archiveRow['strike_price'] ?? 0) - (float) $strike) > 0.000001
+                        || trim((string) ($archiveRow['request_id'] ?? '')) !== $archiveRequestId
+                    ) {
+                        $errors[] = "row_{$index}_metric_fallback_identity_mismatch";
+                    }
+                    foreach ($metricFallbacks as $fallbackMetric) {
+                        if (! in_array($fallbackMetric, $fallbackMetrics, true)) {
+                            continue;
+                        }
+                        try {
+                            $archiveMetric = $fallbackMetric === 'iv'
+                                ? $this->normalizeIv($archiveRow['implied_volatility'] ?? null)
+                                : $this->nullableFiniteNumber(
+                                    $archiveRow[$fallbackMetric] ?? null,
+                                    $fallbackMetric,
+                                );
+                            if (
+                                $archiveMetric === null
+                                || (string) ($row[$fallbackMetric] ?? '')
+                                    !== (string) $this->fixedDecimal($archiveMetric, 8)
+                            ) {
+                                $errors[] = "row_{$index}_metric_fallback_value_mismatch";
+                            }
+                        } catch (\Throwable) {
+                            $errors[] = "row_{$index}_invalid_metric_fallback_value";
+                        }
+                    }
+                }
+            } elseif (($row['metric_fallback_request_id'] ?? null) !== null) {
+                $errors[] = "row_{$index}_unexpected_metric_fallback_request";
+            } elseif (($row['metric_fallback_captured_at'] ?? null) !== null) {
+                $errors[] = "row_{$index}_unexpected_metric_fallback_timestamp";
+            }
+        }
+
+        foreach ($fallbackMetrics as $fallbackMetric) {
+            $declared = $declaredFallbacks[$fallbackMetric] ?? null;
+            if (
+                ! is_int($declared)
+                || $declared < 0
+                || $declared !== $observedFallbacks[$fallbackMetric]
+            ) {
+                $errors[] = "archive_metric_fallback_count_mismatch_{$fallbackMetric}";
             }
         }
 

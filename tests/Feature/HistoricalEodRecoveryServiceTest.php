@@ -1057,6 +1057,132 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         $this->assertSame(0, (int) $volume);
     }
 
+    public function test_recovery_fills_only_missing_future_metrics_from_the_exact_post_close_archive_ticker(): void
+    {
+        $requests = [];
+        $this->fakeProvider($requests, failureMode: 'missing_snapshot_metrics');
+        $futureRows = array_map(function (array $row): array {
+            $side = (string) $row['contract_type'];
+            $row['expiration_date'] = self::FUTURE_EXPIRY;
+            $row['contract_symbol'] = $this->optionTicker(
+                self::SYMBOL,
+                self::FUTURE_EXPIRY,
+                $side,
+                500.0,
+            );
+            $row['request_id'] = 'archive-request-future-expiry';
+            if ($side === 'call') {
+                $row['gamma'] = 0.023;
+                $row['delta'] = 0.44;
+                $row['vega'] = 0.31;
+                $row['implied_volatility'] = 0.29;
+            }
+
+            return $row;
+        }, $this->validArchiveRows());
+        [$archivePath, $archiveSha] = $this->writeArchive([
+            ...$this->validArchiveRows(),
+            ...$futureRows,
+        ]);
+        $runDirectory = $this->runDirectory();
+
+        $capture = $this->service()->capture(
+            self::TARGET_DATE,
+            [self::SYMBOL],
+            $archivePath,
+            $archiveSha,
+            $runDirectory,
+        );
+        $this->assertTrue((bool) ($capture['ok'] ?? false), json_encode($capture));
+        $manifest = $this->readJsonArtifact($runDirectory.DIRECTORY_SEPARATOR.'manifest.json');
+        $candidateFile = (string) ($manifest['symbol_results'][self::SYMBOL]['candidate_file'] ?? '');
+        $candidateJson = gzdecode(File::get($runDirectory.DIRECTORY_SEPARATOR.$candidateFile));
+        $this->assertIsString($candidateJson);
+        $candidate = json_decode($candidateJson, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame(
+            ['delta' => 1, 'gamma' => 1, 'iv' => 1, 'vega' => 1],
+            $candidate['archive_future_metric_fallbacks'] ?? null,
+        );
+        $futureCall = collect($candidate['rows'])->first(fn (array $row): bool => $row['expiration_date'] === self::FUTURE_EXPIRY && $row['option_type'] === 'call'
+        );
+        $this->assertSame(['gamma', 'delta', 'vega', 'iv'], $futureCall['metric_fallbacks'] ?? null);
+        $this->assertSame('archive-request-future-expiry', $futureCall['metric_fallback_request_id'] ?? null);
+
+        $validation = $this->service()->validate($runDirectory);
+        $this->assertTrue((bool) ($validation['ok'] ?? false), json_encode($validation));
+        $published = $this->service()->publish(
+            $runDirectory,
+            (string) $validation['candidate_sha256'],
+        );
+        $this->assertTrue((bool) ($published['ok'] ?? false), json_encode($published));
+
+        $persisted = DB::table('option_chain_data as o')
+            ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+            ->where('e.symbol', self::SYMBOL)
+            ->whereDate('e.expiration_date', self::FUTURE_EXPIRY)
+            ->where('o.option_type', 'call')
+            ->whereDate('o.data_date', self::TARGET_DATE)
+            ->first(['o.open_interest', 'o.volume', 'o.gamma', 'o.delta', 'o.vega', 'o.iv']);
+        $this->assertSame(3333, (int) $persisted->open_interest);
+        $this->assertSame(333, (int) $persisted->volume);
+        $this->assertEqualsWithDelta(0.023, (float) $persisted->gamma, 0.00000001);
+        $this->assertEqualsWithDelta(0.44, (float) $persisted->delta, 0.00000001);
+        $this->assertEqualsWithDelta(0.31, (float) $persisted->vega, 0.00000001);
+        $this->assertEqualsWithDelta(0.29, (float) $persisted->iv, 0.00000001);
+    }
+
+    public function test_recovery_does_not_replace_present_snapshot_greeks_when_gamma_alone_uses_archive_fallback(): void
+    {
+        $requests = [];
+        $this->fakeProvider($requests, failureMode: 'missing_snapshot_gamma_only');
+        $futureRows = array_map(function (array $row): array {
+            $side = (string) $row['contract_type'];
+            $row['expiration_date'] = self::FUTURE_EXPIRY;
+            $row['contract_symbol'] = $this->optionTicker(
+                self::SYMBOL,
+                self::FUTURE_EXPIRY,
+                $side,
+                500.0,
+            );
+            $row['request_id'] = 'archive-request-future-expiry';
+            if ($side === 'call') {
+                $row['gamma'] = 0.023;
+                $row['delta'] = 0.44;
+                $row['vega'] = 0.31;
+            }
+
+            return $row;
+        }, $this->validArchiveRows());
+        [$archivePath, $archiveSha] = $this->writeArchive([
+            ...$this->validArchiveRows(),
+            ...$futureRows,
+        ]);
+        $runDirectory = $this->runDirectory();
+
+        $capture = $this->service()->capture(
+            self::TARGET_DATE,
+            [self::SYMBOL],
+            $archivePath,
+            $archiveSha,
+            $runDirectory,
+        );
+        $this->assertTrue((bool) ($capture['ok'] ?? false), json_encode($capture));
+        $manifest = $this->readJsonArtifact($runDirectory.DIRECTORY_SEPARATOR.'manifest.json');
+        $candidateFile = (string) ($manifest['symbol_results'][self::SYMBOL]['candidate_file'] ?? '');
+        $candidateJson = gzdecode(File::get($runDirectory.DIRECTORY_SEPARATOR.$candidateFile));
+        $this->assertIsString($candidateJson);
+        $candidate = json_decode($candidateJson, true, 512, JSON_THROW_ON_ERROR);
+        $futureCall = collect($candidate['rows'])->first(
+            fn (array $row): bool => $row['expiration_date'] === self::FUTURE_EXPIRY
+                && $row['option_type'] === 'call'
+        );
+
+        $this->assertSame(['gamma'], $futureCall['metric_fallbacks'] ?? null);
+        $this->assertEqualsWithDelta(0.023, (float) $futureCall['gamma'], 0.00000001);
+        $this->assertEqualsWithDelta(0.52, (float) $futureCall['delta'], 0.00000001);
+        $this->assertEqualsWithDelta(0.2, (float) $futureCall['vega'], 0.00000001);
+    }
+
     #[DataProvider('invalidGreekAndIvProvider')]
     public function test_recovery_rejects_nonfinite_out_of_range_metrics_and_invalid_iv(
         string $field,
@@ -1451,6 +1577,12 @@ class HistoricalEodRecoveryServiceTest extends TestCase
                 }
                 if ($failureMode === 'missing_snapshot_volume' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
                     unset($contract['session']['volume'], $contract['day']['volume']);
+                }
+                if ($failureMode === 'missing_snapshot_metrics' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
+                    unset($contract['greeks'], $contract['implied_volatility']);
+                }
+                if ($failureMode === 'missing_snapshot_gamma_only' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
+                    unset($contract['greeks']['gamma']);
                 }
                 if ($failureMode === 'future_source_timestamp' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
                     $contract['underlying_asset']['last_updated'] =
