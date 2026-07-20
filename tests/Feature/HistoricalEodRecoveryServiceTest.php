@@ -1015,17 +1015,46 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         $this->assertSame(['call' => 333, 'put' => 444], $volumes);
     }
 
-    public function test_recovery_rejects_a_snapshot_with_no_numeric_volume(): void
+    public function test_recovery_records_an_omitted_snapshot_volume_separately_and_uses_zero(): void
     {
         $requests = [];
         $this->fakeProvider($requests, failureMode: 'missing_snapshot_volume');
         [$archivePath, $archiveSha] = $this->writeArchive($this->validArchiveRows());
+        $runDirectory = $this->runDirectory();
 
-        $result = $this->captureThenValidate($archivePath, $archiveSha, $this->runDirectory());
+        $capture = $this->service()->capture(
+            self::TARGET_DATE,
+            [self::SYMBOL],
+            $archivePath,
+            $archiveSha,
+            $runDirectory,
+        );
+        $this->assertTrue((bool) ($capture['ok'] ?? false), json_encode($capture));
 
-        $this->assertRejected($result);
-        $this->assertStringContainsString('volume is missing', json_encode($result));
-        $this->assertDatabaseCount('option_chain_data', 0);
+        $manifest = $this->readJsonArtifact($runDirectory.DIRECTORY_SEPARATOR.'manifest.json');
+        $candidateFile = (string) ($manifest['symbol_results'][self::SYMBOL]['candidate_file'] ?? '');
+        $candidateJson = gzdecode(File::get($runDirectory.DIRECTORY_SEPARATOR.$candidateFile));
+        $this->assertIsString($candidateJson);
+        $candidate = json_decode($candidateJson, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame(1, (int) ($candidate['current_snapshot_missing_volumes'] ?? -1));
+
+        $validation = $this->service()->validate($runDirectory);
+        $this->assertTrue((bool) ($validation['ok'] ?? false), json_encode($validation));
+        $published = $this->service()->publish(
+            $runDirectory,
+            (string) $validation['candidate_sha256'],
+        );
+        $this->assertTrue((bool) ($published['ok'] ?? false), json_encode($published));
+
+        $volume = DB::table('option_chain_data as o')
+            ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+            ->where('e.symbol', self::SYMBOL)
+            ->whereDate('e.expiration_date', self::FUTURE_EXPIRY)
+            ->where('o.option_type', 'call')
+            ->whereDate('o.data_date', self::TARGET_DATE)
+            ->value('o.volume');
+
+        $this->assertSame(0, (int) $volume);
     }
 
     #[DataProvider('invalidGreekAndIvProvider')]

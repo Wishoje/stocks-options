@@ -1074,6 +1074,7 @@ class HistoricalEodRecoveryService
         $overlapChecks = 0;
         $overlapVolumeDifferences = 0;
         $overlapCurrentLower = 0;
+        $snapshotMissingVolumes = 0;
         $snapshotSpot = null;
         foreach ($catalog['expiries'] as $expiry) {
             if ($expiry === $targetDate) {
@@ -1134,6 +1135,7 @@ class HistoricalEodRecoveryService
                     $overlapChecks,
                     $overlapVolumeDifferences,
                     $overlapCurrentLower,
+                    $snapshotMissingVolumes,
                 );
 
                 $snapshotPartitions[$expiry][$side] = [
@@ -1196,6 +1198,7 @@ class HistoricalEodRecoveryService
             'archive_future_overlap_checks' => $overlapChecks,
             'archive_future_volume_differences' => $overlapVolumeDifferences,
             'archive_future_current_lower' => $overlapCurrentLower,
+            'current_snapshot_missing_volumes' => $snapshotMissingVolumes,
             'source_artifacts' => [
                 'reference' => ['file' => $referenceRelative, 'sha256' => $referenceFileSha],
                 'archive' => ['file' => $archiveRelative, 'sha256' => $archiveFileSha],
@@ -1753,16 +1756,28 @@ class HistoricalEodRecoveryService
         int &$checks,
         int &$differences,
         int &$currentLower,
+        int &$missing,
     ): void {
         $currentByTicker = [];
         foreach ($snapshotRows as $row) {
             $ticker = strtoupper(trim((string) ($row['details']['ticker'] ?? '')));
             $day = (array) ($row['day'] ?? []);
-            $currentByTicker[$ticker] = array_key_exists('volume', $day)
+            $session = (array) ($row['session'] ?? []);
+            $hasDayVolume = array_key_exists('volume', $day)
                 && $day['volume'] !== null
-                && $day['volume'] !== ''
-                    ? $this->nonNegativeInteger($day['volume'], 'volume')
-                    : $this->snapshotVolume($row);
+                && $day['volume'] !== '';
+            $hasSessionVolume = array_key_exists('volume', $session)
+                && $session['volume'] !== null
+                && $session['volume'] !== '';
+            if (! $hasDayVolume && ! $hasSessionVolume) {
+                $missing++;
+                $currentByTicker[$ticker] = null;
+
+                continue;
+            }
+            $currentByTicker[$ticker] = $hasDayVolume
+                ? $this->nonNegativeInteger($day['volume'], 'volume')
+                : $this->nonNegativeInteger($session['volume'], 'volume');
         }
 
         foreach ($archiveRows as $archiveRow) {
@@ -1770,7 +1785,11 @@ class HistoricalEodRecoveryService
                 continue;
             }
             $ticker = strtoupper(trim((string) ($archiveRow['contract_symbol'] ?? '')));
-            if ($ticker === '' || ! array_key_exists($ticker, $currentByTicker)) {
+            if (
+                $ticker === ''
+                || ! array_key_exists($ticker, $currentByTicker)
+                || $currentByTicker[$ticker] === null
+            ) {
                 continue;
             }
             $archiveVolume = $this->nonNegativeInteger($archiveRow['volume'] ?? 0, 'volume');
@@ -1798,7 +1817,7 @@ class HistoricalEodRecoveryService
             }
         }
 
-        throw new RuntimeException('Current snapshot volume is missing.');
+        return 0;
     }
 
     /** @param array<int,array<string,mixed>> $rows @return array<int,array<string,mixed>> */
