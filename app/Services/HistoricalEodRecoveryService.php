@@ -1072,6 +1072,8 @@ class HistoricalEodRecoveryService
 
         $snapshotPartitions = [];
         $overlapChecks = 0;
+        $overlapVolumeDifferences = 0;
+        $overlapCurrentLower = 0;
         $snapshotSpot = null;
         foreach ($catalog['expiries'] as $expiry) {
             if ($expiry === $targetDate) {
@@ -1123,13 +1125,15 @@ class HistoricalEodRecoveryService
                     }
                     $snapshotSpot ??= $providerSpot;
                 }
-                $this->assertArchiveVolumeOverlap(
+                $this->recordArchiveVolumeOverlap(
                     $symbol,
                     $expiry,
                     $side,
                     $contracts,
                     (array) (($archiveGroups[$expiry]['contracts'] ?? [])),
                     $overlapChecks,
+                    $overlapVolumeDifferences,
+                    $overlapCurrentLower,
                 );
 
                 $snapshotPartitions[$expiry][$side] = [
@@ -1190,6 +1194,8 @@ class HistoricalEodRecoveryService
             'raw_ticker_coverage' => $rawCoverage,
             'reference_contracts' => count($catalog['by_ticker']),
             'archive_future_overlap_checks' => $overlapChecks,
+            'archive_future_volume_differences' => $overlapVolumeDifferences,
+            'archive_future_current_lower' => $overlapCurrentLower,
             'source_artifacts' => [
                 'reference' => ['file' => $referenceRelative, 'sha256' => $referenceFileSha],
                 'archive' => ['file' => $archiveRelative, 'sha256' => $archiveFileSha],
@@ -1556,7 +1562,7 @@ class HistoricalEodRecoveryService
             'option_type' => $side,
             'strike' => $details['strike_price'] ?? null,
             'open_interest' => $contract['open_interest'] ?? 0,
-            'volume' => $contract['session']['volume'] ?? $contract['day']['volume'] ?? 0,
+            'volume' => $this->snapshotVolume($contract),
             'gamma' => $gamma,
             'delta' => $gamma === null ? null : ($contract['greeks']['delta'] ?? null),
             'vega' => $gamma === null ? null : ($contract['greeks']['vega'] ?? null),
@@ -1590,8 +1596,8 @@ class HistoricalEodRecoveryService
         if ($delta !== null && ($delta < -1.00000001 || $delta > 1.00000001)) {
             throw new RuntimeException('Recovery row delta is outside [-1,1].');
         }
-        if (($gamma !== null && $gamma < 0) || ($vega !== null && $vega < 0) || ($iv !== null && $iv <= 0)) {
-            throw new RuntimeException('Recovery row contains an invalid gamma, vega, or IV.');
+        if ($iv !== null && $iv <= 0) {
+            throw new RuntimeException('Recovery row contains an invalid IV.');
         }
         if (
             ($gamma !== null && abs($gamma) >= 10000)
@@ -1738,21 +1744,25 @@ class HistoricalEodRecoveryService
      * @param  array<int,array<string,mixed>>  $snapshotRows
      * @param  array<int,array<string,mixed>>  $archiveRows
      */
-    private function assertArchiveVolumeOverlap(
+    private function recordArchiveVolumeOverlap(
         string $symbol,
         string $expiry,
         string $side,
         array $snapshotRows,
         array $archiveRows,
         int &$checks,
+        int &$differences,
+        int &$currentLower,
     ): void {
         $currentByTicker = [];
         foreach ($snapshotRows as $row) {
             $ticker = strtoupper(trim((string) ($row['details']['ticker'] ?? '')));
-            $currentByTicker[$ticker] = $this->nonNegativeInteger(
-                $row['session']['volume'] ?? $row['day']['volume'] ?? 0,
-                'volume',
-            );
+            $day = (array) ($row['day'] ?? []);
+            $currentByTicker[$ticker] = array_key_exists('volume', $day)
+                && $day['volume'] !== null
+                && $day['volume'] !== ''
+                    ? $this->nonNegativeInteger($day['volume'], 'volume')
+                    : $this->snapshotVolume($row);
         }
 
         foreach ($archiveRows as $archiveRow) {
@@ -1765,12 +1775,30 @@ class HistoricalEodRecoveryService
             }
             $archiveVolume = $this->nonNegativeInteger($archiveRow['volume'] ?? 0, 'volume');
             if ($currentByTicker[$ticker] < $archiveVolume) {
-                throw new RuntimeException(
-                    "Current volume is lower than archived cumulative volume for {$symbol} {$expiry} {$ticker}."
-                );
+                $currentLower++;
+            }
+            if ($currentByTicker[$ticker] !== $archiveVolume) {
+                $differences++;
             }
             $checks++;
         }
+    }
+
+    /** @param array<string,mixed> $contract */
+    private function snapshotVolume(array $contract): int
+    {
+        foreach (['session', 'day'] as $period) {
+            $aggregate = (array) ($contract[$period] ?? []);
+            if (
+                array_key_exists('volume', $aggregate)
+                && $aggregate['volume'] !== null
+                && $aggregate['volume'] !== ''
+            ) {
+                return $this->nonNegativeInteger($aggregate['volume'], 'volume');
+            }
+        }
+
+        throw new RuntimeException('Current snapshot volume is missing.');
     }
 
     /** @param array<int,array<string,mixed>> $rows @return array<int,array<string,mixed>> */
@@ -2025,7 +2053,7 @@ class HistoricalEodRecoveryService
             if ($delta !== null && ((float) $delta < -1.00000001 || (float) $delta > 1.00000001)) {
                 $errors[] = "row_{$index}_invalid_delta";
             }
-            if (($gamma !== null && (float) $gamma < 0) || ($vega !== null && (float) $vega < 0) || ($iv !== null && (float) $iv <= 0)) {
+            if ($iv !== null && (float) $iv <= 0) {
                 $errors[] = "row_{$index}_invalid_metrics";
             }
         }

@@ -910,6 +910,156 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         $this->assertFileDoesNotExist($runDirectory.DIRECTORY_SEPARATOR.'publish-receipt.json');
     }
 
+    public function test_recovery_preserves_finite_negative_provider_gamma_and_vega(): void
+    {
+        $requests = [];
+        $this->fakeProvider($requests, failureMode: 'negative_snapshot_greeks');
+        $archiveRows = $this->validArchiveRows();
+        $archiveRows[0]['gamma'] = -0.0000004497;
+        $archiveRows[0]['vega'] = -0.125;
+        [$archivePath, $archiveSha] = $this->writeArchive($archiveRows);
+        $runDirectory = $this->runDirectory();
+
+        $capture = $this->service()->capture(
+            self::TARGET_DATE,
+            [self::SYMBOL],
+            $archivePath,
+            $archiveSha,
+            $runDirectory,
+        );
+        $this->assertTrue((bool) ($capture['ok'] ?? false), json_encode($capture));
+        $validation = $this->service()->validate($runDirectory);
+        $this->assertTrue((bool) ($validation['ok'] ?? false), json_encode($validation));
+        $published = $this->service()->publish(
+            $runDirectory,
+            (string) $validation['candidate_sha256'],
+        );
+        $this->assertTrue((bool) ($published['ok'] ?? false), json_encode($published));
+
+        $rows = DB::table('option_chain_data as o')
+            ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+            ->where('e.symbol', self::SYMBOL)
+            ->where('o.option_type', 'call')
+            ->whereDate('o.data_date', self::TARGET_DATE)
+            ->orderBy('e.expiration_date')
+            ->get(['e.expiration_date', 'o.gamma', 'o.vega']);
+
+        $this->assertCount(2, $rows);
+        $this->assertSame(self::TARGET_DATE, (string) $rows[0]->expiration_date);
+        $this->assertEqualsWithDelta(-0.00000045, (float) $rows[0]->gamma, 0.000000001);
+        $this->assertEqualsWithDelta(-0.125, (float) $rows[0]->vega, 0.00000001);
+        $this->assertSame(self::FUTURE_EXPIRY, (string) $rows[1]->expiration_date);
+        $this->assertEqualsWithDelta(-0.00000056, (float) $rows[1]->gamma, 0.000000001);
+        $this->assertEqualsWithDelta(-0.25, (float) $rows[1]->vega, 0.00000001);
+    }
+
+    public function test_recovery_accepts_a_lower_corrected_final_volume_and_records_the_difference(): void
+    {
+        $requests = [];
+        $this->fakeProvider($requests);
+        $futureRows = array_map(function (array $row): array {
+            $side = (string) $row['contract_type'];
+            $row['expiration_date'] = self::FUTURE_EXPIRY;
+            $row['contract_symbol'] = $this->optionTicker(
+                self::SYMBOL,
+                self::FUTURE_EXPIRY,
+                $side,
+                500.0,
+            );
+            $row['request_id'] = 'archive-request-future-expiry';
+            $row['volume'] = $side === 'call' ? 600 : 400;
+
+            return $row;
+        }, $this->validArchiveRows());
+        [$archivePath, $archiveSha] = $this->writeArchive([
+            ...$this->validArchiveRows(),
+            ...$futureRows,
+        ]);
+        $runDirectory = $this->runDirectory();
+
+        $capture = $this->service()->capture(
+            self::TARGET_DATE,
+            [self::SYMBOL],
+            $archivePath,
+            $archiveSha,
+            $runDirectory,
+        );
+        $this->assertTrue((bool) ($capture['ok'] ?? false), json_encode($capture));
+
+        $manifest = $this->readJsonArtifact($runDirectory.DIRECTORY_SEPARATOR.'manifest.json');
+        $candidateFile = (string) ($manifest['symbol_results'][self::SYMBOL]['candidate_file'] ?? '');
+        $candidateJson = gzdecode(File::get($runDirectory.DIRECTORY_SEPARATOR.$candidateFile));
+        $this->assertIsString($candidateJson);
+        $candidate = json_decode($candidateJson, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame(2, (int) ($candidate['archive_future_overlap_checks'] ?? -1));
+        $this->assertSame(2, (int) ($candidate['archive_future_volume_differences'] ?? -1));
+        $this->assertSame(1, (int) ($candidate['archive_future_current_lower'] ?? -1));
+
+        $validation = $this->service()->validate($runDirectory);
+        $this->assertTrue((bool) ($validation['ok'] ?? false), json_encode($validation));
+        $published = $this->service()->publish(
+            $runDirectory,
+            (string) $validation['candidate_sha256'],
+        );
+        $this->assertTrue((bool) ($published['ok'] ?? false), json_encode($published));
+
+        $volumes = DB::table('option_chain_data as o')
+            ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+            ->where('e.symbol', self::SYMBOL)
+            ->whereDate('e.expiration_date', self::FUTURE_EXPIRY)
+            ->whereDate('o.data_date', self::TARGET_DATE)
+            ->pluck('o.volume', 'o.option_type')
+            ->map(fn ($volume): int => (int) $volume)
+            ->all();
+
+        $this->assertSame(['call' => 333, 'put' => 444], $volumes);
+    }
+
+    public function test_recovery_rejects_a_snapshot_with_no_numeric_volume(): void
+    {
+        $requests = [];
+        $this->fakeProvider($requests, failureMode: 'missing_snapshot_volume');
+        [$archivePath, $archiveSha] = $this->writeArchive($this->validArchiveRows());
+
+        $result = $this->captureThenValidate($archivePath, $archiveSha, $this->runDirectory());
+
+        $this->assertRejected($result);
+        $this->assertStringContainsString('volume is missing', json_encode($result));
+        $this->assertDatabaseCount('option_chain_data', 0);
+    }
+
+    #[DataProvider('invalidGreekAndIvProvider')]
+    public function test_recovery_rejects_nonfinite_out_of_range_metrics_and_invalid_iv(
+        string $field,
+        mixed $value,
+    ): void {
+        $requests = [];
+        $this->fakeProvider($requests);
+        $archiveRows = $this->validArchiveRows();
+        $archiveRows[0][$field] = $value;
+        [$archivePath, $archiveSha] = $this->writeArchive($archiveRows);
+
+        $result = $this->captureThenValidate($archivePath, $archiveSha, $this->runDirectory());
+
+        $this->assertRejected($result);
+        $this->assertDatabaseCount('option_chain_data', 0);
+    }
+
+    /** @return array<string,array{0:string,1:mixed}> */
+    public static function invalidGreekAndIvProvider(): array
+    {
+        return [
+            'nonfinite gamma' => ['gamma', '1e309'],
+            'nonfinite vega' => ['vega', '-1e309'],
+            'positive gamma overflow' => ['gamma', 10000.0],
+            'negative gamma overflow' => ['gamma', -10000.0],
+            'positive vega overflow' => ['vega', 1.0e30],
+            'negative vega overflow' => ['vega', -1.0e30],
+            'nonfinite IV' => ['implied_volatility', '1e309'],
+            'normalized IV overflow' => ['implied_volatility', 1000000.0],
+        ];
+    }
+
     public function test_archive_normalization_matches_eod_null_zero_and_percent_iv_rules(): void
     {
         $archiveRows = $this->validArchiveRows();
@@ -1265,6 +1415,13 @@ class HistoricalEodRecoveryServiceTest extends TestCase
                 if ($failureMode === 'missing_underlying' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
                     unset($contract['underlying_asset']['ticker']);
                     unset($contract['details']['underlying_ticker']);
+                }
+                if ($failureMode === 'negative_snapshot_greeks' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
+                    $contract['greeks']['gamma'] = -0.0000005597;
+                    $contract['greeks']['vega'] = -0.25;
+                }
+                if ($failureMode === 'missing_snapshot_volume' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
+                    unset($contract['session']['volume'], $contract['day']['volume']);
                 }
                 if ($failureMode === 'future_source_timestamp' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
                     $contract['underlying_asset']['last_updated'] =
