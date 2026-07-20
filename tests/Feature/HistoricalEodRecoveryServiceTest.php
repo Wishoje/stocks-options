@@ -326,6 +326,272 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         $this->assertDatabaseCount('option_chain_data', 0);
     }
 
+    public function test_reference_cursor_pages_retain_the_original_symbol_date_and_catalog_scope(): void
+    {
+        $requests = [];
+        Http::fake(function (Request $request) use (&$requests) {
+            $params = $this->requestParameters($request);
+            $requests[] = $params;
+            $cursor = (string) ($params['cursor'] ?? '');
+            $expired = $cursor !== ''
+                ? $cursor === 'expired-next'
+                : $this->booleanParameter($params['expired'] ?? false);
+            $expiry = $expired ? self::TARGET_DATE : self::FUTURE_EXPIRY;
+            $contracts = $this->referenceContracts([$expiry]);
+
+            return Http::response([
+                'status' => 'OK',
+                'results' => [$contracts[$cursor === '' ? 0 : 1]],
+                ...($cursor === '' ? [
+                    'next_url' => self::BASE.'/v3/reference/options/contracts?cursor='.
+                        ($expired ? 'expired-next' : 'active-next'),
+                ] : []),
+            ]);
+        });
+
+        $result = app(HistoricalEodRecoveryProvider::class)->referenceContracts(
+            self::SYMBOL,
+            self::TARGET_DATE,
+            '2026-10-15',
+        );
+
+        $this->assertCount(4, $result['contracts']);
+        $this->assertCount(4, $requests);
+        foreach ($requests as $index => $params) {
+            $expectedExpired = $index < 2;
+            $this->assertSame(self::SYMBOL, (string) ($params['underlying_ticker'] ?? ''));
+            $this->assertSame(self::TARGET_DATE, (string) ($params['expiration_date.gte'] ?? ''));
+            $this->assertSame('2026-10-15', (string) ($params['expiration_date.lte'] ?? ''));
+            $this->assertSame(self::TARGET_DATE, (string) ($params['as_of'] ?? ''));
+            $this->assertSame('asc', (string) ($params['order'] ?? ''));
+            $this->assertSame('ticker', (string) ($params['sort'] ?? ''));
+            $this->assertSame(1000, (int) ($params['limit'] ?? 0));
+            $this->assertSame(
+                $expectedExpired,
+                $this->booleanParameter($params['expired'] ?? null),
+            );
+            if ($index % 2 === 1) {
+                $this->assertSame(
+                    $expectedExpired ? 'expired-next' : 'active-next',
+                    (string) ($params['cursor'] ?? ''),
+                );
+            }
+        }
+    }
+
+    public function test_snapshot_cursor_pages_retain_the_original_expiry_and_side_scope(): void
+    {
+        $requests = [];
+        Http::fake(function (Request $request) use (&$requests) {
+            $params = $this->requestParameters($request);
+            $requests[] = $params;
+            $contract = $this->currentContract(self::FUTURE_EXPIRY, 'call');
+            $cursor = (string) ($params['cursor'] ?? '');
+            if ($cursor !== '') {
+                $contract['details']['strike_price'] = 501.0;
+                $contract['details']['ticker'] = $this->optionTicker(
+                    self::SYMBOL,
+                    self::FUTURE_EXPIRY,
+                    'call',
+                    501.0,
+                );
+            }
+
+            return Http::response([
+                'status' => 'OK',
+                'results' => [$contract],
+                ...($cursor === '' ? [
+                    'next_url' => self::BASE.'/v3/snapshot/options/'.self::SYMBOL.'?cursor=snapshot-next',
+                ] : []),
+            ]);
+        });
+
+        $result = app(HistoricalEodRecoveryProvider::class)->snapshotPartition(
+            self::SYMBOL,
+            self::FUTURE_EXPIRY,
+            'call',
+        );
+
+        $this->assertCount(2, $result['contracts']);
+        $this->assertCount(2, $requests);
+        foreach ($requests as $params) {
+            $this->assertSame(self::FUTURE_EXPIRY, (string) ($params['expiration_date'] ?? ''));
+            $this->assertSame('call', (string) ($params['contract_type'] ?? ''));
+            $this->assertSame(250, (int) ($params['limit'] ?? 0));
+        }
+        $this->assertSame('snapshot-next', (string) ($requests[1]['cursor'] ?? ''));
+    }
+
+    public function test_snapshot_partition_allows_an_explicit_identity_without_a_provider_spot(): void
+    {
+        $requests = [];
+        $this->fakeProvider($requests, failureMode: 'priceless_day_marker');
+
+        $partition = app(HistoricalEodRecoveryProvider::class)->snapshotPartition(
+            self::SYMBOL,
+            self::FUTURE_EXPIRY,
+            'call',
+        );
+
+        $this->assertCount(1, $partition['contracts']);
+        $this->assertArrayHasKey('spot', $partition);
+        $this->assertNull($partition['spot']);
+        $this->assertSame(self::SYMBOL, $partition['contracts'][0]['underlying_asset']['ticker'] ?? null);
+        $this->assertArrayNotHasKey('price', $partition['contracts'][0]['underlying_asset'] ?? []);
+    }
+
+    #[DataProvider('pricelessSnapshotMarkerProvider')]
+    public function test_capture_uses_exact_close_and_normalizes_target_day_snapshot_markers(
+        string $markerField,
+    ): void {
+        $requests = [];
+        $this->fakeProvider($requests, failureMode: "priceless_{$markerField}_marker");
+        $archiveRows = array_map(function (array $row): array {
+            $row['underlying_price'] = 499.0;
+
+            return $row;
+        }, $this->validArchiveRows());
+        [$archivePath, $archiveSha] = $this->writeArchive($archiveRows);
+        $runDirectory = $this->runDirectory();
+
+        $capture = $this->service()->capture(
+            self::TARGET_DATE,
+            [self::SYMBOL],
+            $archivePath,
+            $archiveSha,
+            $runDirectory,
+        );
+        $this->assertTrue((bool) ($capture['ok'] ?? false), json_encode($capture));
+
+        $validation = $this->service()->validate($runDirectory);
+        $this->assertTrue((bool) ($validation['ok'] ?? false), json_encode($validation));
+        $published = $this->service()->publish(
+            $runDirectory,
+            (string) $validation['candidate_sha256'],
+        );
+        $this->assertTrue((bool) ($published['ok'] ?? false), json_encode($published));
+
+        $rows = DB::table('option_chain_data as o')
+            ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+            ->where('e.symbol', self::SYMBOL)
+            ->whereDate('e.expiration_date', self::FUTURE_EXPIRY)
+            ->whereDate('o.data_date', self::TARGET_DATE)
+            ->orderBy('o.option_type')
+            ->get(['o.option_type', 'o.underlying_price', 'o.data_timestamp']);
+
+        $this->assertCount(2, $rows);
+        foreach ($rows as $row) {
+            $this->assertSame(
+                500.0,
+                (float) $row->underlying_price,
+                'A missing live provider spot must use the exact target-session close.',
+            );
+            $this->assertSame(
+                '2026-07-17 20:00:00',
+                Carbon::parse((string) $row->data_timestamp, 'UTC')->utc()->format('Y-m-d H:i:s'),
+                'A target-day daily/session marker must normalize to the 16:00 ET close.',
+            );
+        }
+    }
+
+    /** @return array<string,array{0:string}> */
+    public static function pricelessSnapshotMarkerProvider(): array
+    {
+        return [
+            'daily bar marker' => ['day'],
+            'session marker' => ['session'],
+        ];
+    }
+
+    public function test_reference_cursor_page_with_an_explicit_wrong_underlying_still_rejects(): void
+    {
+        $page = 0;
+        Http::fake(function () use (&$page) {
+            $page++;
+            $symbol = $page === 1 ? self::SYMBOL : 'A';
+            $contracts = $this->referenceContracts([self::TARGET_DATE], $symbol);
+
+            return Http::response([
+                'status' => 'OK',
+                'results' => [$contracts[$page === 1 ? 0 : 1]],
+                ...($page === 1 ? [
+                    'next_url' => self::BASE.'/v3/reference/options/contracts?cursor=wrong-underlying',
+                ] : []),
+            ]);
+        });
+
+        $result = $this->rejectionResult(
+            fn (): array => app(HistoricalEodRecoveryProvider::class)->referenceContracts(
+                self::SYMBOL,
+                self::TARGET_DATE,
+                '2026-10-15',
+            ),
+        );
+
+        $this->assertRejected($result);
+        $this->assertStringContainsString('wrong_underlying', (string) ($result['error'] ?? ''));
+    }
+
+    #[DataProvider('cursorFailureProvider')]
+    public function test_cursor_only_pagination_still_rejects_cycles_and_no_progress(
+        string $failureMode,
+        string $expectedError,
+    ): void {
+        $page = 0;
+        Http::fake(function () use (&$page, $failureMode) {
+            $page++;
+            if ($page === 1) {
+                return Http::response([
+                    'status' => 'OK',
+                    'results' => [$this->currentContract(self::FUTURE_EXPIRY, 'put')],
+                    'next_url' => self::BASE.'/v3/snapshot/options/'.self::SYMBOL.'?cursor=repeat',
+                ]);
+            }
+            if ($failureMode === 'no_progress') {
+                return Http::response([
+                    'status' => 'OK',
+                    'results' => [],
+                    'next_url' => self::BASE.'/v3/snapshot/options/'.self::SYMBOL.'?cursor=after-empty',
+                ]);
+            }
+
+            $contract = $this->currentContract(self::FUTURE_EXPIRY, 'put');
+            $contract['details']['strike_price'] = 501.0;
+            $contract['details']['ticker'] = $this->optionTicker(
+                self::SYMBOL,
+                self::FUTURE_EXPIRY,
+                'put',
+                501.0,
+            );
+
+            return Http::response([
+                'status' => 'OK',
+                'results' => [$contract],
+                'next_url' => self::BASE.'/v3/snapshot/options/'.self::SYMBOL.'?cursor=repeat',
+            ]);
+        });
+
+        $result = $this->rejectionResult(
+            fn (): array => app(HistoricalEodRecoveryProvider::class)->snapshotPartition(
+                self::SYMBOL,
+                self::FUTURE_EXPIRY,
+                'put',
+            ),
+        );
+
+        $this->assertRejected($result);
+        $this->assertStringContainsString($expectedError, (string) ($result['error'] ?? ''));
+    }
+
+    /** @return array<string,array{0:string,1:string}> */
+    public static function cursorFailureProvider(): array
+    {
+        return [
+            'cursor cycle' => ['cycle', 'cursor cycle'],
+            'empty page with next cursor' => ['no_progress', 'made no progress'],
+        ];
+    }
+
     public function test_stage_requires_the_exact_target_daily_close(): void
     {
         DB::table('prices_daily')
@@ -389,6 +655,8 @@ class HistoricalEodRecoveryServiceTest extends TestCase
             'adjusted contract has additional underlyings' => ['additional_underlying'],
             'contract multiplier is not one hundred' => ['wrong_multiplier'],
             'source timestamp is after the target session' => ['future_source_timestamp'],
+            'daily marker is from the following Monday' => ['future_daily_marker'],
+            'snapshot has no usable provider timestamp' => ['missing_source_timestamp'],
             'current call and put spots disagree' => ['side_spot_mismatch'],
             'hybrid spot differs by more than three percent' => ['hybrid_spot_difference'],
         ];
@@ -490,8 +758,8 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         $this->assertSame([
             ['expiry' => self::TARGET_DATE, 'side' => 'call', 'oi' => 1111, 'spot' => 500.0],
             ['expiry' => self::TARGET_DATE, 'side' => 'put', 'oi' => 2222, 'spot' => 500.0],
-            ['expiry' => self::FUTURE_EXPIRY, 'side' => 'call', 'oi' => 3333, 'spot' => 501.0],
-            ['expiry' => self::FUTURE_EXPIRY, 'side' => 'put', 'oi' => 4444, 'spot' => 501.0],
+            ['expiry' => self::FUTURE_EXPIRY, 'side' => 'call', 'oi' => 3333, 'spot' => 500.0],
+            ['expiry' => self::FUTURE_EXPIRY, 'side' => 'put', 'oi' => 4444, 'spot' => 500.0],
         ], $rows);
 
         $receipt = json_decode(
@@ -1001,6 +1269,32 @@ class HistoricalEodRecoveryServiceTest extends TestCase
                 if ($failureMode === 'future_source_timestamp' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
                     $contract['underlying_asset']['last_updated'] =
                         Carbon::parse('2026-07-20 14:00:00', 'UTC')->timestamp * 1_000_000_000;
+                }
+                if (
+                    in_array($failureMode, ['priceless_day_marker', 'priceless_session_marker'], true)
+                    && $expiry === self::FUTURE_EXPIRY
+                ) {
+                    unset(
+                        $contract['underlying_asset']['price'],
+                        $contract['underlying_asset']['last_updated']
+                    );
+                    $markerField = $failureMode === 'priceless_day_marker' ? 'day' : 'session';
+                    $contract[$markerField]['last_updated'] =
+                        Carbon::parse('2026-07-17 00:00:00', 'America/New_York')
+                            ->utc()->timestamp * 1_000_000_000;
+                }
+                if ($failureMode === 'future_daily_marker' && $expiry === self::FUTURE_EXPIRY) {
+                    unset($contract['underlying_asset']['last_updated']);
+                    $contract['day']['last_updated'] =
+                        Carbon::parse('2026-07-20 00:00:00', 'America/New_York')
+                            ->utc()->timestamp * 1_000_000_000;
+                }
+                if ($failureMode === 'missing_source_timestamp' && $expiry === self::FUTURE_EXPIRY) {
+                    unset(
+                        $contract['underlying_asset']['last_updated'],
+                        $contract['day']['last_updated'],
+                        $contract['session']['last_updated']
+                    );
                 }
                 if ($failureMode === 'side_spot_mismatch' && $expiry === self::FUTURE_EXPIRY && $side === 'put') {
                     $contract['underlying_asset']['price'] = 502.0;

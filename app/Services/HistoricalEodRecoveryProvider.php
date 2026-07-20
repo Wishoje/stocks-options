@@ -129,7 +129,7 @@ class HistoricalEodRecoveryProvider
     /**
      * Fetch one exact future expiration/side from the current weekend snapshot.
      *
-     * @return array{contracts:array<int,array<string,mixed>>,spot:float,meta:array<string,mixed>}
+     * @return array{contracts:array<int,array<string,mixed>>,spot:?float,meta:array<string,mixed>}
      */
     public function snapshotPartition(string $symbol, string $expiry, string $contractType): array
     {
@@ -206,13 +206,13 @@ class HistoricalEodRecoveryProvider
                 $spots[] = $candidate;
             }
         }
-        if ($spots === []) {
-            throw new RuntimeException("Recovery snapshot has no underlying price for {$symbol} {$expiry} {$contractType}.");
-        }
-        $spot = $spots[0];
-        foreach ($spots as $candidate) {
-            if (abs($candidate - $spot) / $spot > 0.0001) {
-                throw new RuntimeException("Recovery snapshot has inconsistent underlying prices for {$symbol}.");
+        $spot = null;
+        if ($spots !== []) {
+            $spot = $spots[0];
+            foreach ($spots as $candidate) {
+                if (abs($candidate - $spot) / $spot > 0.0001) {
+                    throw new RuntimeException("Recovery snapshot has inconsistent underlying prices for {$symbol}.");
+                }
             }
         }
 
@@ -240,7 +240,8 @@ class HistoricalEodRecoveryProvider
         callable $scopeValidator,
         callable $identityResolver,
     ): array {
-        $url = $firstUrl;
+        $endpointUrl = $this->safeProviderUrl($firstUrl, $base);
+        $url = $endpointUrl;
         $params = $firstParams;
         $contracts = [];
         $seenUrls = [];
@@ -256,19 +257,24 @@ class HistoricalEodRecoveryProvider
             }
 
             $url = $this->safeProviderUrl($url, $base);
-            $fingerprint = hash('sha256', $url);
+
+            $requestParams = $params;
+            if ($mode === 'query') {
+                $requestParams[$qparam] = $key;
+            }
+
+            $fingerprint = hash(
+                'sha256',
+                $url."\n".$this->stablePayload($params),
+            );
             if (isset($seenUrls[$fingerprint])) {
                 throw new RuntimeException('Recovery provider returned a cursor cycle.');
             }
             $seenUrls[$fingerprint] = true;
 
-            if ($mode === 'query' && $pages === 0) {
-                $params[$qparam] = $key;
-            }
-
             $pages++;
             $response = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $client->get($url, $params)
+                fn () => $client->get($url, $requestParams)
             );
             $lastHttpStatus = $response->status();
 
@@ -328,11 +334,15 @@ class HistoricalEodRecoveryProvider
                 throw new RuntimeException('Recovery provider pagination made no progress.');
             }
 
-            $url = $next;
-            $params = [];
-            if ($mode === 'query') {
-                $url = $this->appendQueryCredential($url, $qparam, $key);
-            }
+            $cursor = $this->trustedCursor(
+                $next,
+                $base,
+                $endpointUrl,
+                $firstParams,
+                $qparam,
+            );
+            $url = $endpointUrl;
+            $params = array_merge($firstParams, ['cursor' => $cursor]);
         }
 
         return [
@@ -346,6 +356,68 @@ class HistoricalEodRecoveryProvider
                 'request_ids' => array_keys($requestIds),
             ],
         ];
+    }
+
+    /** @param array<string,mixed> $scopeParams */
+    private function trustedCursor(
+        string $nextUrl,
+        string $base,
+        string $endpointUrl,
+        array $scopeParams,
+        string $queryCredential,
+    ): string {
+        if (str_starts_with($nextUrl, '?')) {
+            $nextUrl = $endpointUrl.$nextUrl;
+        }
+        $nextUrl = $this->safeProviderUrl($nextUrl, $base);
+        $parts = parse_url($nextUrl);
+        if (
+            ! is_array($parts)
+            || isset($parts['user'])
+            || isset($parts['pass'])
+            || isset($parts['fragment'])
+        ) {
+            throw new RuntimeException('Recovery provider returned an unsafe cursor URL.');
+        }
+
+        $expectedPath = (string) parse_url($endpointUrl, PHP_URL_PATH);
+        $actualPath = (string) ($parts['path'] ?? '');
+        if ($expectedPath === '' || $actualPath !== $expectedPath) {
+            throw new RuntimeException('Recovery provider returned a cursor for an unexpected endpoint.');
+        }
+
+        $cursor = null;
+        $seen = [];
+        $allowed = array_fill_keys(array_keys($scopeParams), true);
+        $allowed[$queryCredential] = true;
+        $allowed['cursor'] = true;
+        foreach (explode('&', (string) ($parts['query'] ?? '')) as $pair) {
+            if ($pair === '') {
+                continue;
+            }
+            [$encodedKey, $encodedValue] = array_pad(explode('=', $pair, 2), 2, '');
+            $name = rawurldecode($encodedKey);
+            $value = rawurldecode($encodedValue);
+            if ($name === '' || isset($seen[$name]) || ! isset($allowed[$name])) {
+                throw new RuntimeException('Recovery provider returned an invalid cursor query.');
+            }
+            $seen[$name] = true;
+
+            if ($name === 'cursor') {
+                $cursor = $value;
+
+                continue;
+            }
+            if ($name !== $queryCredential && (string) $scopeParams[$name] !== $value) {
+                throw new RuntimeException('Recovery provider cursor changed the requested scope.');
+            }
+        }
+
+        if (! is_string($cursor) || trim($cursor) === '') {
+            throw new RuntimeException('Recovery provider returned a malformed cursor.');
+        }
+
+        return $cursor;
     }
 
     /** @return array{0:PendingRequest,1:string,2:string,3:string,4:string} */
@@ -397,17 +469,6 @@ class HistoricalEodRecoveryProvider
         }
 
         return $url;
-    }
-
-    private function appendQueryCredential(string $url, string $qparam, string $key): string
-    {
-        $encoded = preg_quote(urlencode($qparam), '/');
-        if (preg_match('/(?:[?&])'.$encoded.'=/', $url) === 1) {
-            return $url;
-        }
-
-        return $url.(str_contains($url, '?') ? '&' : '?')
-            .urlencode($qparam).'='.urlencode($key);
     }
 
     private function stablePayload(array $payload): string

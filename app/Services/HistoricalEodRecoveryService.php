@@ -1112,15 +1112,17 @@ class HistoricalEodRecoveryService
                     $target,
                     $contracts,
                 );
-                $providerSpot = (float) ($partition['spot'] ?? 0);
-                $this->assertSpotAgreement($symbol, $closingSpot, $providerSpot);
-                if (
-                    $snapshotSpot !== null
-                    && abs($providerSpot - $snapshotSpot) / $snapshotSpot > 0.0001
-                ) {
-                    throw new RuntimeException("Current snapshot partitions disagree on spot for {$symbol}.");
+                $providerSpot = $this->positiveNumberOrNull($partition['spot'] ?? null);
+                if ($providerSpot !== null) {
+                    $this->assertSpotAgreement($symbol, $closingSpot, $providerSpot);
+                    if (
+                        $snapshotSpot !== null
+                        && abs($providerSpot - $snapshotSpot) / $snapshotSpot > 0.0001
+                    ) {
+                        throw new RuntimeException("Current snapshot partitions disagree on spot for {$symbol}.");
+                    }
+                    $snapshotSpot ??= $providerSpot;
                 }
-                $snapshotSpot ??= $providerSpot;
                 $this->assertArchiveVolumeOverlap(
                     $symbol,
                     $expiry,
@@ -1142,7 +1144,7 @@ class HistoricalEodRecoveryService
                         $symbol,
                         $expiry,
                         $side,
-                        $providerSpot,
+                        $closingSpot,
                         $partitionTimestamp,
                         $contract,
                     );
@@ -1182,7 +1184,7 @@ class HistoricalEodRecoveryService
             'end_date' => $end->toDateString(),
             'captured_at' => now('UTC')->toIso8601String(),
             'underlying_price' => $closingSpot,
-            'underlying_price_source' => 'archive_group_or_exact_close_for_target_current_provider_for_future',
+            'underlying_price_source' => 'archive_group_for_target_exact_prices_daily_close_for_future',
             'expected_expiries' => $catalog['expiries'],
             'expiry_sources' => $expirySources,
             'raw_ticker_coverage' => $rawCoverage,
@@ -1675,17 +1677,19 @@ class HistoricalEodRecoveryService
             static fn (CarbonImmutable $left, CarbonImmutable $right): int => $left->getTimestamp() <=> $right->getTimestamp(),
         );
         $latest = end($timestamps);
-        $sessionOpen = $target->setTimezone('America/New_York')->setTime(16, 0)->utc();
-        $sessionEnd = $target->setTimezone('America/New_York')->endOfDay()->utc();
+        $targetNy = $target->setTimezone('America/New_York');
         if (
             ! $latest instanceof CarbonImmutable
-            || $latest->lt($sessionOpen)
-            || $latest->gt($sessionEnd)
+            || $latest->setTimezone('America/New_York')->toDateString() !== $targetNy->toDateString()
         ) {
-            throw new RuntimeException("Snapshot market timestamp is outside the target close for {$symbol} {$expiry} {$side}.");
+            throw new RuntimeException("Snapshot market timestamp is outside the target session for {$symbol} {$expiry} {$side}.");
         }
 
-        return $latest->utc()->format('Y-m-d H:i:s');
+        // Massive daily/session `last_updated` values are session-date markers
+        // at midnight rather than closing instants. Once the target session is
+        // proven and capture is still before the next open, persist the EOD
+        // boundary used by the canonical chain.
+        return $targetNy->setTime(16, 0)->utc()->format('Y-m-d H:i:s');
     }
 
     private function providerTimestamp(mixed $value): ?CarbonImmutable
