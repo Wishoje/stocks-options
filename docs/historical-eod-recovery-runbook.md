@@ -1,14 +1,48 @@
 # Historical EOD session recovery
 
-This runbook restores a missing EOD option-chain session without publishing a partial chain. It is intended for the July 17, 2026 recovery. The capture source combines:
+This runbook restores a missing EOD option-chain session without publishing a
+partial chain. The recovery records
+`source_policy=archive_exact_target_else_current_snapshot_v1` and selects
+sources from the immutable reference catalog:
 
-- the frozen post-close intraday archive for the expired July 17 expiration;
-- the Massive historical reference catalog as of July 17;
-- the current weekend snapshot for every later expiration in the 90-day window.
+- If the catalog contains an expiration on the target date, that expiration
+  comes only from the frozen post-close intraday archive. Later expirations
+  come from exact current snapshot partitions.
+- If the catalog has no target-date expiration, every catalog expiration comes
+  from exact current snapshot partitions. The archive is validation evidence,
+  not a row source. At least one overlapping catalog expiration must provide a
+  complete post-close archive witness.
+
+The archive and catalog must agree on whether a target-date expiration exists.
+A contradiction fails capture.
 
 The capture and validation modes do not write `option_chain_data` or `option_expirations`. Publication requires the exact validated SHA-256 and refuses to overwrite any existing symbol/date slice.
 
-## Fixed recovery inputs
+## Safety gates
+
+Capture fails unless all applicable checks pass:
+
+- The command is still inside the safe window before the next options session.
+- `prices_daily` contains the exact target-date closing price.
+- The historical reference catalog matches the symbol and recovery window.
+- Every current snapshot partition has exact reference ticker coverage for one
+  expiration and side, valid contract definitions, an acceptable market
+  timestamp, and a spot price consistent with the target close.
+- An archive target group or witness is post-close, has exact reference ticker
+  coverage, has valid definitions, and agrees with the target close.
+- Any archive metric fallback matches the exact snapshot ticker and comes from
+  validated post-close evidence.
+
+Capture writes and hashes the reference, archive, snapshot, and candidate
+artifacts. Offline validation verifies those hashes and rebuilds the expected
+expiration catalog from the reference artifact. It does not trust the
+candidate's declared expiration or source sets.
+
+## July 17 example inputs
+
+The commands below retain the July 17, 2026 recovery inputs. For another
+session, replace the date, symbol list, archive path and SHA-256, and run
+directory consistently.
 
 Target date:
 
@@ -108,8 +142,12 @@ Success requires:
 - 23 symbol reports;
 - no validation errors;
 - an exact `candidate_sha256`;
-- July 17 sourced from `archive` for every symbol;
-- every later expiration sourced from `current_snapshot`.
+- for a symbol with a July 17 expiration, July 17 sourced from `archive` and
+  every later expiration sourced from `current_snapshot`;
+- for a symbol without a July 17 expiration, every expected expiration sourced
+  from `current_snapshot` and a nonempty `archive_witness_expiries` set;
+- the candidate expiration and source sets exactly matching the catalog rebuilt
+  from the hashed reference artifact.
 
 Keep the returned `candidate_sha256`. Review `manifest.json` and `validation.json` before publication.
 

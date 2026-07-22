@@ -19,7 +19,9 @@ class FetchOptionChainDataPartitionedTest extends TestCase
     use RefreshDatabase;
 
     private const BASE = 'https://api.massive.test';
+
     private const SYMBOL = 'SPY';
+
     private const TARGET_DATE = '2026-05-18';
 
     protected function setUp(): void
@@ -55,6 +57,86 @@ class FetchOptionChainDataPartitionedTest extends TestCase
         $this->assertTrue($job->usesPartitionedMassiveFetchForTest(self::SYMBOL));
     }
 
+    public function test_capped_legacy_fetch_for_an_arbitrary_non_canary_symbol_escalates_to_partitions(): void
+    {
+        $symbol = 'MSTR';
+        $legacyBulkRequests = 0;
+        $legacyExpiryRepairRequests = 0;
+        $partitionRequests = [];
+
+        config()->set([
+            'services.massive.eod_chain_partitioned_canary_symbols' => ['CVX'],
+            'services.massive.eod_chain_max_pages' => 50,
+        ]);
+
+        Http::fake(function (Request $request) use (
+            $symbol,
+            &$legacyBulkRequests,
+            &$legacyExpiryRepairRequests,
+            &$partitionRequests
+        ) {
+            $url = (string) $request->url();
+            $params = $this->requestParameters($request);
+
+            if (str_contains($url, '/v3/reference/options/contracts')) {
+                return Http::response([
+                    'results' => [[
+                        'underlying_ticker' => $symbol,
+                        'expiration_date' => self::TARGET_DATE,
+                    ]],
+                ]);
+            }
+
+            if (! str_contains($url, '/v3/snapshot/options/'.$symbol)) {
+                return Http::response([], 404);
+            }
+
+            $expiry = (string) ($params['expiration_date'] ?? '');
+            $side = strtolower((string) ($params['contract_type'] ?? ''));
+            if ($expiry !== '' && in_array($side, ['call', 'put'], true)) {
+                $partitionRequests[] = compact('expiry', 'side');
+
+                return Http::response([
+                    'results' => [$this->contract($expiry, $side, 500.0, $symbol)],
+                ]);
+            }
+
+            // The old expiry-only repair path is not enough for a contract-dense
+            // symbol. It must be replaced by exact expiration/side partitions.
+            if ($expiry !== '') {
+                $legacyExpiryRepairRequests++;
+
+                return Http::response(['error' => 'expiry-only repair is still too broad'], 422);
+            }
+
+            $legacyBulkRequests++;
+            $page = max(1, (int) ($params['cursor'] ?? 1));
+
+            return Http::response([
+                'results' => [$this->contract(self::TARGET_DATE, 'call', 400.0 + $page, $symbol)],
+                'next_url' => self::BASE.'/v3/snapshot/options/'.$symbol.'?cursor='.($page + 1),
+            ]);
+        });
+
+        $job = new PartitionedFetchOptionChainDataJob([$symbol], 1, self::TARGET_DATE);
+        $job->handle();
+
+        $this->assertSame(50, $legacyBulkRequests);
+        $this->assertSame(0, $legacyExpiryRepairRequests);
+        $this->assertEqualsCanonicalizing([
+            ['expiry' => self::TARGET_DATE, 'side' => 'call'],
+            ['expiry' => self::TARGET_DATE, 'side' => 'put'],
+        ], $partitionRequests);
+        $this->assertDatabaseCount('option_chain_data', 2);
+
+        $meta = Cache::get('eod:fetch-meta:'.$symbol.':'.self::TARGET_DATE);
+        $this->assertSame('ok', $meta['status'] ?? null);
+        $this->assertSame('partitioned_expiry_side', $meta['chain_fetch_strategy'] ?? null);
+        $this->assertSame('legacy_bulk_pagination_capped', $meta['partition_trigger'] ?? null);
+        $this->assertSame(54, $meta['provider_pages_total'] ?? null);
+        $this->assertTrue((bool) ($meta['provider_complete'] ?? false));
+    }
+
     public function test_partitioned_fetch_persists_complete_multipage_union_without_unfiltered_snapshot_request(): void
     {
         $expiries = ['2026-05-18', '2026-05-20'];
@@ -70,7 +152,7 @@ class FetchOptionChainDataPartitionedTest extends TestCase
                             $this->contract($expiry, $side, 490.0),
                             $this->contract($expiry, $side, 500.0),
                         ],
-                        'next_url' => $this->snapshotUrl($expiry, $side, 'page-2'),
+                        'next_url' => $this->snapshotUrl('page-2'),
                     ]);
                 }
 
@@ -198,6 +280,15 @@ class FetchOptionChainDataPartitionedTest extends TestCase
 
         $this->assertCount(4, $catalogRequests);
         $this->assertCount(3, $exactDateRequests);
+        foreach ($catalogRequests as $request) {
+            $this->assertSame(self::SYMBOL, $request['underlying_ticker']);
+            $this->assertSame(self::TARGET_DATE, $request['gte']);
+            $this->assertSame('2026-05-20', $request['lte']);
+            $this->assertSame(self::TARGET_DATE, $request['as_of']);
+            $this->assertSame('asc', $request['order']);
+            $this->assertSame('expiration_date', $request['sort']);
+            $this->assertSame(1000, $request['limit']);
+        }
         $this->assertSame(
             ['2026-05-18', '2026-05-19', '2026-05-20'],
             array_column($exactDateRequests, 'gte'),
@@ -229,7 +320,7 @@ class FetchOptionChainDataPartitionedTest extends TestCase
 
                 return Http::response([
                     'results' => [$this->contract($expiry, $side, $cursor === '' ? 490.0 : 500.0)],
-                    'next_url' => $this->snapshotUrl($expiry, $side, 'repeat'),
+                    'next_url' => $this->snapshotUrl('repeat'),
                 ]);
             },
             $referenceRequests,
@@ -309,7 +400,7 @@ class FetchOptionChainDataPartitionedTest extends TestCase
 
                 return Http::response([
                     'results' => [$this->contract($expiry, $side, 510.0 + $page)],
-                    'next_url' => $this->snapshotUrl($expiry, $side, (string) $page),
+                    'next_url' => $this->snapshotUrl((string) $page),
                 ]);
             },
             $referenceRequests,
@@ -329,9 +420,9 @@ class FetchOptionChainDataPartitionedTest extends TestCase
     }
 
     /**
-     * @param string[] $discoveredExpiries
-     * @param array<int,array<string,mixed>> $referenceRequests
-     * @param array<int,array<string,mixed>> $snapshotRequests
+     * @param  string[]  $discoveredExpiries
+     * @param  array<int,array<string,mixed>>  $referenceRequests
+     * @param  array<int,array<string,mixed>>  $snapshotRequests
      */
     private function fakePartitionedProvider(
         array $discoveredExpiries,
@@ -361,6 +452,8 @@ class FetchOptionChainDataPartitionedTest extends TestCase
                     'gte' => $gte,
                     'lte' => $lte,
                     'as_of' => (string) ($params['as_of'] ?? ''),
+                    'order' => (string) ($params['order'] ?? ''),
+                    'sort' => (string) ($params['sort'] ?? ''),
                     'expired' => $params['expired'] ?? null,
                     'limit' => $limit,
                     'cursor' => (string) ($params['cursor'] ?? ''),
@@ -380,11 +473,7 @@ class FetchOptionChainDataPartitionedTest extends TestCase
 
                         return Http::response([
                             'results' => $results,
-                            'next_url' => $this->referenceCatalogUrl(
-                                $gte,
-                                $lte,
-                                (string) ($cursorPage + 1),
-                            ),
+                            'next_url' => $this->referenceCatalogUrl((string) ($cursorPage + 1)),
                         ]);
                     }
 
@@ -412,7 +501,7 @@ class FetchOptionChainDataPartitionedTest extends TestCase
                     'url' => $url,
                 ];
 
-                if ($expiry === '' || !in_array($side, ['call', 'put'], true)) {
+                if ($expiry === '' || ! in_array($side, ['call', 'put'], true)) {
                     return Http::response(['error' => 'unpartitioned snapshot request'], 422);
                 }
 
@@ -456,13 +545,12 @@ class FetchOptionChainDataPartitionedTest extends TestCase
         string $side,
         float $strike,
         string $underlying = self::SYMBOL,
-    ): array
-    {
+    ): array {
         return [
             'details' => [
                 'ticker' => sprintf(
                     'O:%s%s%s%08d',
-                    self::SYMBOL,
+                    $underlying,
                     str_replace('-', '', $expiry),
                     $side === 'call' ? 'C' : 'P',
                     (int) round($strike * 1000),
@@ -486,23 +574,16 @@ class FetchOptionChainDataPartitionedTest extends TestCase
         ];
     }
 
-    private function snapshotUrl(string $expiry, string $side, string $cursor): string
+    private function snapshotUrl(string $cursor): string
     {
         return self::BASE.'/v3/snapshot/options/'.self::SYMBOL.'?'.http_build_query([
-            'expiration_date' => $expiry,
-            'contract_type' => $side,
             'cursor' => $cursor,
         ]);
     }
 
-    private function referenceCatalogUrl(string $startDate, string $endDate, string $cursor): string
+    private function referenceCatalogUrl(string $cursor): string
     {
         return self::BASE.'/v3/reference/options/contracts?'.http_build_query([
-            'underlying_ticker' => self::SYMBOL,
-            'expiration_date.gte' => $startDate,
-            'expiration_date.lte' => $endDate,
-            'as_of' => self::TARGET_DATE,
-            'limit' => 1000,
             'cursor' => $cursor,
         ]);
     }

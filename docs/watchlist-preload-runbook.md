@@ -5,7 +5,8 @@ This runbook covers how to run and verify `watchlist:preload` so all watchlist s
 ## What `watchlist:preload` does
 
 - Loads all distinct symbols from `watchlists`.
-- Dispatches batched/chained jobs for each symbol chunk:
+- Creates one independent chain per symbol and adds each chain head to the
+  `Watchlist EOD Preload` batch:
   - `PricesBackfillJob`
   - `PricesDailyJob`
   - `FetchOptionChainDataJob`
@@ -15,16 +16,26 @@ This runbook covers how to run and verify `watchlist:preload` so all watchlist s
   - `ComputePositioningJob`
   - `ComputeUAJob`
 
+The chain order is unchanged. A provider timeout or incomplete chain stops
+downstream calculations for that symbol only. It cannot replay or block other
+symbols in the preload batch.
+
 ## Schedule and workers
 
 Scheduled in `routes/console.php`:
 
 - Weekdays at `16:15` America/New_York.
 - Uses `withoutOverlapping(120)` and `onOneServer()`.
-- Core liquid repair pass every 30 minutes from `18:15` to `20:15` America/New_York:
-  - `watchlist:repair-missing --check-incomplete --profile=core --symbols=SPY,QQQ,IWM,AAPL,MSFT,NVDA --chunk=6 --days=90`
+- Core liquid repair pass at `18:15`, `18:45`, `19:15`, `19:45`, and `20:15`
+  America/New_York:
+  - `watchlist:repair-missing --check-incomplete --profile=core --symbols=SPY,QQQ,IWM,AAPL,MSFT,NVDA --chunk=1 --days=90`
 - Broad watchlist repair pass every 30 minutes from `18:30` to `20:30` America/New_York:
-  - `watchlist:repair-missing --check-incomplete --profile=broad --chunk=10 --days=90`
+  - `watchlist:repair-missing --check-incomplete --profile=broad --chunk=1 --days=90`
+
+The core and broad passes are staggered by 15 minutes so they do not scan and
+dispatch the same symbols at the same minute. `--chunk=1` preserves the same
+job sequence while isolating retries, timeouts, and downstream calculations by
+symbol.
 
 Required at runtime:
 
@@ -46,13 +57,13 @@ php artisan watchlist:repair-missing --dry-run
 Manual missing-symbol repair run:
 
 ```bash
-php artisan watchlist:repair-missing --check-incomplete --profile=broad --chunk=10 --days=90
+php artisan watchlist:repair-missing --check-incomplete --profile=broad --chunk=1 --days=90
 ```
 
 Manual repair including backfill (heavier):
 
 ```bash
-php artisan watchlist:repair-missing --with-backfill --chunk=10 --days=90
+php artisan watchlist:repair-missing --with-backfill --chunk=1 --days=90
 ```
 
 Useful incomplete-data thresholds:
@@ -100,6 +111,9 @@ Healthy result:
 - `cancelled_et=null`
 - `finished_et` has a timestamp
 
+The batch contains one job chain per symbol. A nonzero `failed_jobs` identifies
+failed symbol chains; other symbols can still finish successfully.
+
 ## Check symbol coverage for latest EOD chain date
 
 This verifies which watchlist symbols have chain data on the latest `option_chain_data.data_date`.
@@ -123,13 +137,21 @@ Notes:
 
 ## Rerun only missing symbols
 
-Replace symbol list with the `missing` output from the coverage check.
+Replace the symbol list and date with the coverage-check output and the current
+completed trading session.
 
 ```bash
-php artisan tinker --execute='(new \App\Jobs\FetchOptionChainDataJob(["META","MSFT","PSLV","QQQ","TLT","UCG.MI"],90))->handle(); echo "done".PHP_EOL;'
+php artisan watchlist:repair-missing \
+  --date=YYYY-MM-DD \
+  --symbols=META,MSFT,PSLV,QQQ,TLT,UCG.MI \
+  --chunk=1 \
+  --days=90
 ```
 
-Then rerun the coverage check.
+Wait for the repair batch to finish, then rerun the coverage check. The command
+refuses a past-date chain repair unless an operator explicitly enables the
+unsafe nonhistorical mode. Use `eod:recover-session` for a defensible historical
+recovery.
 
 ## Optional queue health checks
 

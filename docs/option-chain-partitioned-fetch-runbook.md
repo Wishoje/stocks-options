@@ -1,9 +1,10 @@
 # Option-Chain Partitioned Fetch Rollout Runbook
 
-This runbook covers the controlled production rollout of partitioned EOD
-option-chain fetches in `FetchOptionChainDataJob` on the worker and scheduler
-site. The algorithm is the normal fetch path for every eligible symbol once the
-temporary canary restriction is cleared.
+This runbook covers the production behavior and controlled rollout of
+partitioned EOD option-chain fetches in `FetchOptionChainDataJob` on the worker
+and scheduler site. A configured canary uses partitions immediately. Any other
+symbol starts on the legacy path and switches to partitions when the legacy
+reference, bulk, or repair path reports a structural pagination failure.
 
 ## Why this path exists
 
@@ -17,10 +18,28 @@ window, option sides, strikes, data fields, validation, and database upsert
 behavior. An incomplete partition must keep the symbol incomplete. It must not
 publish a partial chain as successful.
 
-This is automatic behavior. `CVX`, `IWM`, `QQQ`, `SPY`, and `TSLA` are rollout
-canaries, not a permanent classification of special symbols.
-Here, eligible means a symbol whose EOD chain fetch reaches Massive with a
-valid expiration window and provider configuration.
+This behavior does not require a permanent list of dense symbols. `CVX`, `IWM`,
+`QQQ`, `SPY`, and `TSLA` are rollout examples, not a classification of special
+symbols. Here, eligible means a symbol whose EOD chain fetch reaches Massive
+with a valid expiration window and provider configuration.
+
+The paginator keeps the original endpoint and immutable symbol, expiration,
+side, and window filters on every request. It accepts only an opaque cursor
+from `next_url`. A cursor that changes endpoint scope, introduces an unknown or
+duplicate query parameter, cycles, or makes no progress fails closed.
+
+Adaptive fallback is allowed for these structural statuses:
+
+- `pagination_capped`
+- `cursor_cycle`
+- `pagination_no_progress`
+- `scope_violation`
+- `cursor_scope_violation`
+
+The incomplete legacy contracts are discarded before the partitioned retry.
+They are never merged into the partition result. HTTP, authentication, empty,
+and malformed-response failures do not trigger extra partition fanout. If any
+partition remains incomplete, the symbol is not published.
 
 ## Configuration
 
@@ -33,8 +52,12 @@ EOD_CHAIN_MAX_PAGES_PER_PARTITION=40
 EOD_CHAIN_REFERENCE_PROBE_MAX_PAGES=4
 ```
 
-- `EOD_CHAIN_PARTITIONED_FETCH_ENABLED` is the rollback switch.
-- `EOD_CHAIN_PARTITIONED_CANARY_SYMBOLS` is only a temporary rollout limiter. A comma-separated value restricts the new path to those canaries. An empty value enables it for every eligible symbol when the global switch is `true`.
+- `EOD_CHAIN_PARTITIONED_FETCH_ENABLED` enables both eager partitioned fetches
+  and adaptive structural fallback. It is also the rollback switch.
+- `EOD_CHAIN_PARTITIONED_CANARY_SYMBOLS` selects symbols that use partitions
+  eagerly. A populated list does not disable adaptive fallback for other
+  symbols. An empty value makes every eligible symbol use partitions eagerly
+  when the global switch is `true`.
 - `EOD_CHAIN_MAX_PAGES_PER_PARTITION` limits one bounded provider partition. Keep this fixed during the canary rollout. A cap is a safety boundary, not a completeness target.
 - `EOD_CHAIN_REFERENCE_PROBE_MAX_PAGES` limits the first catalog probe. Dense or capped catalogs automatically use exact-date discovery.
 
@@ -87,11 +110,11 @@ php8.3 artisan tinker --execute='foreach(["services.massive.eod_chain_partitione
 Do not add, remove, or resize Forge workers before the canary. Existing
 processes are sufficient to begin validation, but universal rollout still
 requires the runtime gates below in the actual `prime`, `bootstrap`, and
-scheduled multi-symbol queue contexts.
+scheduled per-symbol queue contexts.
 
 ## Canary order
 
-Expand the temporary canary restriction one symbol at a time, then remove it:
+Expand the eager canary list one symbol at a time, then remove it:
 
 1. `CVX`
 2. `CVX,IWM`
@@ -100,7 +123,7 @@ Expand the temporary canary restriction one symbol at a time, then remove it:
 5. `CVX,IWM,QQQ,SPY,TSLA`
 6. Empty value: every eligible symbol
 
-For canary steps 1 through 4:
+For each canary step:
 
 1. Change `EOD_CHAIN_PARTITIONED_CANARY_SYMBOLS` to the next cumulative value.
 2. Clear and rebuild the configuration cache.
@@ -119,7 +142,7 @@ EOD_CHAIN_MAX_PAGES_PER_PARTITION=40
 EOD_CHAIN_REFERENCE_PROBE_MAX_PAGES=4
 ```
 
-After all five canaries and the queue-context runtime gates pass, clear the temporary restriction and repeat the
+After all five canaries and the queue-context runtime gates pass, clear the eager list and repeat the
 effective-configuration, queue, failure, and EOD coverage checks:
 
 ```dotenv
@@ -127,9 +150,9 @@ EOD_CHAIN_PARTITIONED_CANARY_SYMBOLS=
 ```
 
 Do not dispatch the entire watchlist manually at this point. First observe one
-scheduled cycle while the canary restriction is still populated and verify
-that its multi-symbol jobs drain inside their existing timeout. Then clear the
-restriction, observe the next scheduled cycle, and sample both ordinary and
+scheduled cycle while the eager canary list is still populated and verify
+that its per-symbol jobs drain inside their existing timeout. Then clear the
+list, observe the next scheduled cycle, and sample both ordinary and
 dense symbols.
 
 ## Dispatch one canary
@@ -153,7 +176,7 @@ same 110-second job limit as `PrimeSymbolJob`:
 php8.3 artisan tinker --execute='$symbol="SPY"; $date=app(\App\Support\EodSnapshotSelector::class)->completedSessionDate(now("America/New_York")); $job=(new \App\Jobs\FetchOptionChainDataJob([$symbol],90,$date,110))->onQueue(\App\Support\QueueLanes::enrichment()); dispatch($job); echo "queued symbol={$symbol} date={$date} queue=".\App\Support\QueueLanes::enrichment().PHP_EOL;'
 ```
 
-Do not clear the canary restriction unless both jobs finish without timeout and
+Do not clear the eager canary list unless both jobs finish without timeout and
 their `partition_duration_ms` is below 80000, leaving at least 30 seconds for
 queue startup, persistence, and the rest of the job lifecycle. A prime-lane
 pass also fits the longer 270-second bootstrap child contract.
@@ -169,7 +192,7 @@ A canary passes only when all the following checks pass.
 Read the metadata for the completed-session date:
 
 ```bash
-php8.3 artisan tinker --execute='$symbol="CVX"; $date=app(\App\Support\EodSnapshotSelector::class)->completedSessionDate(now("America/New_York")); $m=\Illuminate\Support\Facades\Cache::get("eod:fetch-meta:{$symbol}:{$date}",[]); $keys=["status","provider","provider_status","provider_complete","massive_status","chain_fetch_strategy","pagination_capped","reference_status","reference_complete","reference_pages","reference_expiries_found","reference_strategy","reference_probe_status","reference_probe_pages","reference_probe_pagination_capped","partition_dates_scanned","partitions_expected","partitions_resolved","partitions_failed","partition_pages","partition_page_limit","partition_max_pages","partition_cursor_cycles","partition_no_progress","partition_scope_violations","contracts_seen","contracts_unique","partition_duration_ms","partition_failure_reason","partition_failure_expiry","partition_failure_contract_type","expiries_in_window","rows_kept","recorded_at"]; $out=["symbol"=>$symbol,"date"=>$date]; foreach($keys as $key){$out[$key]=$m[$key]??null;} echo json_encode($out).PHP_EOL;'
+php8.3 artisan tinker --execute='$symbol="CVX"; $date=app(\App\Support\EodSnapshotSelector::class)->completedSessionDate(now("America/New_York")); $m=\Illuminate\Support\Facades\Cache::get("eod:fetch-meta:{$symbol}:{$date}",[]); $keys=["status","provider","provider_status","provider_complete","massive_status","chain_fetch_strategy","partition_trigger","provider_pages_total","legacy_pages","legacy_reference_status","legacy_reference_pages","legacy_reference_pagination_capped","legacy_bulk_status","legacy_bulk_pages","legacy_bulk_pagination_capped","legacy_repair_failure_statuses","pagination_capped","reference_status","reference_complete","reference_pages","reference_expiries_found","reference_strategy","reference_probe_status","reference_probe_pages","reference_probe_pagination_capped","partition_dates_scanned","partitions_expected","partitions_resolved","partitions_failed","partition_pages","partition_page_limit","partition_max_pages","partition_cursor_cycles","partition_no_progress","partition_scope_violations","contracts_seen","contracts_unique","partition_duration_ms","partition_failure_reason","partition_failure_expiry","partition_failure_contract_type","expiries_in_window","rows_kept","recorded_at"]; $out=["symbol"=>$symbol,"date"=>$date]; foreach($keys as $key){$out[$key]=$m[$key]??null;} echo json_encode($out).PHP_EOL;'
 ```
 
 Replace the symbol for each canary. The exact metadata gates are:
@@ -180,6 +203,9 @@ Replace the symbol for each canary. The exact metadata gates are:
 - `provider_complete=true`
 - `massive_status=ok`
 - `chain_fetch_strategy=partitioned_expiry_side`
+- `partition_trigger=configured_eager` for a configured canary, or a
+  `legacy_reference_*`, `legacy_bulk_*`, or `legacy_repair_*` trigger for an
+  adaptive fallback
 - `pagination_capped=false`
 - `reference_status=ok`
 - `reference_complete=true`
@@ -201,6 +227,11 @@ Replace the symbol for each canary. The exact metadata gates are:
 - `recorded_at` is from the canary invocation
 - `expiries_in_window >= 2` for `CVX`
 - `expiries_in_window >= 8` for `IWM`, `QQQ`, and `SPY`
+
+For an adaptive fallback, preserve the `legacy_*` fields and
+`provider_pages_total` with the validation record. They identify the structural
+legacy failure and include both legacy and partition request counts. A fallback
+pass is valid only when the final partition metadata meets every gate above.
 
 Reference-strategy gates:
 
@@ -244,7 +275,7 @@ The EOD health page must show the symbol as covered for the same target date. Ex
 - The EOD repair log contains `eod.fetch.symbol.ok` for the symbol.
 - The log does not contain a later `eod.fetch.symbol.provider_incomplete` for the same symbol and date.
 
-Do not expand the canary set or clear the temporary restriction if any gate
+Do not expand the eager canary set or clear it if any gate
 fails. Preserve the metadata and log context for diagnosis.
 
 ## Rollback
@@ -264,9 +295,10 @@ php8.3 artisan queue:restart
 ```
 
 Wait for active canary work to finish before rolling back. Confirm the effective
-switch is `false`. Do not clear Redis queues, retry all failed jobs, or delete
-successful EOD rows. Clear the temporary canary restriction after rollback so
-it cannot be mistaken for permanent symbol routing.
+switch is `false`. This disables eager routing and adaptive fallback. Do not
+clear Redis queues, retry all failed jobs, or delete successful EOD rows. Clear
+the eager canary list after rollback so it cannot be mistaken for permanent
+symbol routing.
 
 ## Massive Starter historical limitation
 

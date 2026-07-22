@@ -23,7 +23,7 @@ class RepairMissingWatchlistSymbols extends Command
     protected $signature = 'watchlist:repair-missing
                             {--date= : Target data_date (YYYY-MM-DD), defaults to current NY trading date}
                             {--symbols= : Optional comma-separated symbol override}
-                            {--chunk=10 : Symbols per queued chunk}
+                            {--chunk=1 : Symbols per queued chunk}
                             {--days=90 : Expiration lookahead for option chain fetch}
                             {--profile=broad : Incomplete-data profile: broad|core}
                             {--check-incomplete : Also treat low-quality symbol snapshots as repair candidates}
@@ -42,18 +42,20 @@ class RepairMissingWatchlistSymbols extends Command
         $targetDate = $this->resolveTargetDate((string) $this->option('date'));
         if ($targetDate === null) {
             $this->error('Invalid --date. Use YYYY-MM-DD.');
+
             return self::FAILURE;
         }
 
         $currentTradingDate = $this->tradingDate(now('America/New_York'));
         $allowNonHistoricalChainRepair = (bool) $this->option('allow-nonhistorical-chain-repair');
-        if (!$allowNonHistoricalChainRepair && $targetDate !== $currentTradingDate) {
+        if (! $allowNonHistoricalChainRepair && $targetDate !== $currentTradingDate) {
             $this->error(sprintf(
                 'Refusing past-date option-chain repair for %s. FetchOptionChainDataJob stores target_date=%s but fetches the current chain, so this would not produce historically accurate option_chain_data. Use only the current trading date (%s), or pass --allow-nonhistorical-chain-repair if you explicitly want that behavior.',
                 $targetDate,
                 $targetDate,
                 $currentTradingDate
             ));
+
             return self::FAILURE;
         }
 
@@ -79,6 +81,7 @@ class RepairMissingWatchlistSymbols extends Command
         $symbols = $this->resolveSymbolUniverse((string) $this->option('symbols'));
         if (empty($symbols)) {
             $this->info('No symbols to evaluate.');
+
             return self::SUCCESS;
         }
 
@@ -102,6 +105,7 @@ class RepairMissingWatchlistSymbols extends Command
                 if ($sym === null || $sym === '') {
                     return [];
                 }
+
                 return [$sym => [
                     'rows_n' => (int) $row->rows_n,
                     'option_types_n' => (int) $row->option_types_n,
@@ -139,7 +143,7 @@ class RepairMissingWatchlistSymbols extends Command
                 ->map(function ($rows) use ($minSideRatio) {
                     $gaps = collect($rows)->filter(function ($row) use ($minSideRatio) {
                         return (int) $row->option_types_n < 2
-                            || !EodHealth::sideRatioMeetsThreshold(
+                            || ! EodHealth::sideRatioMeetsThreshold(
                                 (int) ($row->call_strikes_n ?? 0),
                                 (int) ($row->put_strikes_n ?? 0),
                                 $minSideRatio
@@ -186,6 +190,7 @@ class RepairMissingWatchlistSymbols extends Command
                     if ($sym === null || $sym === '') {
                         return [];
                     }
+
                     return [$sym => (int) $row->prev_strikes_n];
                 });
 
@@ -205,7 +210,7 @@ class RepairMissingWatchlistSymbols extends Command
                         static fn (array $row) => sprintf('%s=%.3f', $row['expiration_date'] ?? 'n/a', (float) ($row['side_ratio'] ?? 0)),
                         array_slice($sideGapRatios, 0, 6)
                     );
-                    if (!empty($ratioLabels)) {
+                    if (! empty($ratioLabels)) {
                         $reasons[] = sprintf(
                             'expiry_side_ratio(<%.2f):%s',
                             $minSideRatio,
@@ -214,7 +219,7 @@ class RepairMissingWatchlistSymbols extends Command
                     }
                 }
 
-                if (!empty($reasons)) {
+                if (! empty($reasons)) {
                     $incompleteReasons[$sym] = $reasons;
                 }
             }
@@ -281,6 +286,7 @@ class RepairMissingWatchlistSymbols extends Command
                     'incomplete_reasons' => $incompleteReasons,
                 ]);
             }
+
             return self::SUCCESS;
         }
 

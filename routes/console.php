@@ -1,17 +1,17 @@
 <?php
 
+use App\Jobs\ComputeVolMetricsJob;
+use App\Jobs\FetchCalculatorChainJob;
+use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Support\Market;
+use App\Support\QueueLanes;
+use App\Support\Symbols;
+use Carbon\Carbon;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Schedule;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
-use Carbon\Carbon;
-use App\Jobs\ComputeVolMetricsJob;
-use App\Jobs\FetchPolygonIntradayOptionsJob;
-use App\Jobs\FetchCalculatorChainJob;
-use App\Support\Market;
-use App\Support\Symbols;
-use App\Support\QueueLanes;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schedule;
 
 // Example default command
 Artisan::command('inspire', function () {
@@ -27,7 +27,7 @@ Schedule::command('chain:snapshot')
     ->at('17:30');
 
 // 3) Compute vol metrics nightly
-Schedule::job(new ComputeVolMetricsJob(['SPY','QQQ','IWM']))
+Schedule::job(new ComputeVolMetricsJob(['SPY', 'QQQ', 'IWM']))
     ->weekdays()
     ->timezone('America/New_York')
     ->dailyAt('17:45')
@@ -66,17 +66,16 @@ Schedule::command('watchlist:preload')
     ->at('16:15');
 
 // Strict repair for core liquid names.
-Schedule::command('watchlist:repair-missing --check-incomplete --profile=core --symbols=SPY,QQQ,IWM,AAPL,MSFT,NVDA --chunk=6 --days=90')
-    ->weekdays()
+Schedule::command('watchlist:repair-missing --check-incomplete --profile=core --symbols=SPY,QQQ,IWM,AAPL,MSFT,NVDA --chunk=1 --days=90')
+    ->cron('15,45 18-20 * * 1-5')
     ->timezone('America/New_York')
     ->withoutOverlapping(30)
     ->onOneServer()
-    ->everyThirtyMinutes()
     ->between('18:15', '20:15')
     ->name('watchlist:repair-missing:eod:core');
 
 // Broad repair for full watchlist universe with tolerant thresholds.
-Schedule::command('watchlist:repair-missing --check-incomplete --profile=broad --chunk=10 --days=90')
+Schedule::command('watchlist:repair-missing --check-incomplete --profile=broad --chunk=1 --days=90')
     ->weekdays()
     ->timezone('America/New_York')
     ->withoutOverlapping(30)
@@ -167,7 +166,7 @@ Schedule::command('walls:compute --timeframe=all --limit=400 --source=both')
 // Intraday polygon pull
 Schedule::call(function () {
     $nowEt = now('America/New_York');
-    if ($nowEt->isWeekend() || !Market::isRthOpen($nowEt)) {
+    if ($nowEt->isWeekend() || ! Market::isRthOpen($nowEt)) {
         return;
     }
 
@@ -179,8 +178,8 @@ Schedule::call(function () {
         ->values()
         ->all();
 
-    if (!$symbols) {
-        $symbols = ['SPY','QQQ','IWM','AAPL','MSFT','NVDA','TSLA','AMZN'];
+    if (! $symbols) {
+        $symbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN'];
     }
 
     if (! QueueLanes::isolated()) {
@@ -207,13 +206,13 @@ Schedule::call(function () {
         }
     }
 })
-->everyFiveMinutes()
-->weekdays()
-->between('09:35', '15:55')
-->name('intraday:polygon:pull')
-->withoutOverlapping(2)
-->onOneServer()
-->timezone('America/New_York');
+    ->everyFiveMinutes()
+    ->weekdays()
+    ->between('09:35', '15:55')
+    ->name('intraday:polygon:pull')
+    ->withoutOverlapping(2)
+    ->onOneServer()
+    ->timezone('America/New_York');
 
 Schedule::command('prices:refresh --source=both --limit=400')
     ->everyFiveMinutes()
@@ -236,12 +235,12 @@ Schedule::call(function () {
     $nowEt = now('America/New_York');
 
     // guard trading hours + weekdays
-    if ($nowEt->isWeekend() || !Market::isRthOpen($nowEt)) {
+    if ($nowEt->isWeekend() || ! Market::isRthOpen($nowEt)) {
         return;
     }
 
-    $maxSymbols   = 75;                // cap per run
-    $freshCutoff  = $nowEt->copy()->subMinutes(10); // skip if primed in last 10m
+    $maxSymbols = 75;                // cap per run
+    $freshCutoff = $nowEt->copy()->subMinutes(10); // skip if primed in last 10m
 
     $symbols = DB::table('watchlists')
         ->pluck('symbol')
@@ -250,14 +249,15 @@ Schedule::call(function () {
         ->unique()
         ->filter(function ($sym) use ($freshCutoff) {
             $cached = Cache::get("calculator:primed:{$sym}");
-            return !$cached || Carbon::parse($cached)->lt($freshCutoff);
+
+            return ! $cached || Carbon::parse($cached)->lt($freshCutoff);
         })
         ->take($maxSymbols)
         ->values()
         ->all();
 
-    if (!$symbols) {
-        $symbols = ['SPY','QQQ','IWM']; // minimal fallback
+    if (! $symbols) {
+        $symbols = ['SPY', 'QQQ', 'IWM']; // minimal fallback
     }
 
     foreach (array_chunk($symbols, 15) as $chunk) {
@@ -268,13 +268,13 @@ Schedule::call(function () {
         }
     }
 })
-->name('calculator:prime:watchlist')
-->timezone('America/New_York')
-->weekdays()
-->everyFiveMinutes()
-->between('09:35', '15:55')
-->withoutOverlapping(10)
-->onOneServer();
+    ->name('calculator:prime:watchlist')
+    ->timezone('America/New_York')
+    ->weekdays()
+    ->everyFiveMinutes()
+    ->between('09:35', '15:55')
+    ->withoutOverlapping(10)
+    ->onOneServer();
 
 Schedule::command('emails:lifecycle-run')
     ->timezone('America/New_York')

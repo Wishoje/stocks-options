@@ -2,19 +2,23 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\ComputeExpiryPressureJob;
+use App\Jobs\ComputePositioningJob;
+use App\Jobs\ComputeUAJob;
+use App\Jobs\ComputeVolMetricsJob;
+use App\Jobs\FetchOptionChainDataJob;
+use App\Jobs\PricesBackfillJob;
+use App\Jobs\PricesDailyJob;
+use App\Jobs\Seasonality5DJob;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
-use App\Jobs\{
-    PricesBackfillJob, PricesDailyJob, FetchOptionChainDataJob,
-    ComputeVolMetricsJob, Seasonality5DJob, ComputeExpiryPressureJob,
-    ComputeUAJob, ComputePositioningJob,
-};
+use Illuminate\Support\Facades\DB;
 
 class PreloadWatchlistSymbols extends Command
 {
     protected $signature = 'watchlist:preload';
+
     protected $description = 'Preload EOD datasets for all unique watchlisted symbols.';
 
     public function handle(): int
@@ -25,8 +29,9 @@ class PreloadWatchlistSymbols extends Command
         $this->info('Cache flushed.');
 
         $symbols = DB::table('watchlists')->select('symbol')->distinct()->pluck('symbol')->all();
-        if (!$symbols) {
+        if (! $symbols) {
             $this->info('No symbols to preload.');
+
             return self::SUCCESS;
         }
 
@@ -34,7 +39,11 @@ class PreloadWatchlistSymbols extends Command
             ->name('Watchlist EOD Preload')
             ->dispatch();
 
-        foreach (array_chunk($symbols, 10) as $chunk) {
+        foreach ($symbols as $symbol) {
+            // Keep the provider request, timeout, retries, and downstream chain
+            // isolated to one symbol. A dense chain must not replay or block
+            // unrelated symbols in the same queue payload.
+            $chunk = [$symbol];
 
             // First job in the chain (this is what goes into the batch)
             $first = new PricesBackfillJob($chunk, 400);
@@ -56,6 +65,7 @@ class PreloadWatchlistSymbols extends Command
         }
 
         $this->info("Queued preload batch: {$batch->id}");
+
         return self::SUCCESS;
     }
 }

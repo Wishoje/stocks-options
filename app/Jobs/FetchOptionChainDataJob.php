@@ -2,8 +2,14 @@
 
 namespace App\Jobs;
 
-use Illuminate\Bus\Queueable;
+use App\Models\OptionExpiration;
+use App\Support\EodHealth;
+use App\Support\EodSnapshotSelector;
+use App\Support\ProviderConcurrencyLimiter;
+use App\Support\QueueLanes;
+use Carbon\Carbon;
 use Illuminate\Bus\Batchable;
+use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -12,23 +18,18 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use App\Models\OptionExpiration;
-use App\Support\EodSnapshotSelector;
-use App\Support\EodHealth;
-use App\Support\ProviderConcurrencyLimiter;
-use App\Support\QueueLanes;
-use Carbon\Carbon;
 use RuntimeException;
 
 class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
+    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     /** @var string[] */
     protected array $symbols;
 
     /** @var int|null Max days out to keep expirations (client-side filter) */
     protected ?int $days;
+
     /** @var string|null Forced data_date (YYYY-MM-DD) for backfills/repairs */
     protected ?string $targetDate;
 
@@ -37,7 +38,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     protected float $strikeBandPct = 2.00;
 
     /** Minimal activity to keep a row (drop dead contracts quickly). */
-    protected int $minKeepOI  = 1;
+    protected int $minKeepOI = 1;
+
     protected int $minKeepVol = 1;
 
     /** Compute Greeks within ±X% of spot (precision default widened). */
@@ -45,6 +47,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
     /** Refetch expiry slices that are missing either call or put side. */
     protected bool $repairPartialExpiries = true;
+
     protected float $minSideStrikeRatio = 0.35;
 
     /** Cache guard to prevent duplicate pulls per symbol/day */
@@ -55,7 +58,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     public function __construct(array $symbols, ?int $days = null, ?string $targetDate = null, ?int $timeoutSeconds = null)
     {
         $this->symbols = array_values(array_unique(array_map(
-            static fn($s) => \App\Support\Symbols::canon($s),
+            static fn ($s) => \App\Support\Symbols::canon($s),
             $symbols
         )));
         $this->days = $days;
@@ -123,236 +126,240 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 }
 
                 $incompleteSymbols++;
+
                 continue;
             }
 
             try {
                 // Finnhub -> Massive fallback with normalized chain.
                 [$spot, $sets, $providerMeta] = $this->fetchChain($symbol, $windowStart, $windowEnd);
-            $providerSpot = (float) $spot;
-            [$spot, $spotSource] = $this->resolveSpot($symbol, $date, $providerSpot);
+                $providerSpot = (float) $spot;
+                [$spot, $spotSource] = $this->resolveSpot($symbol, $date, $providerSpot);
 
-            if (! ($providerMeta['provider_complete'] ?? false)) {
-                $meta = array_merge($context, [
-                    'status' => 'provider_incomplete',
-                ], $providerMeta);
-                Log::channel('eod_repair')->warning('eod.fetch.symbol.provider_incomplete', $meta);
-                $this->storeFetchMeta($symbol, $date, $meta);
-                $incompleteSymbols++;
-                continue;
-            }
+                if (! ($providerMeta['provider_complete'] ?? false)) {
+                    $meta = array_merge($context, [
+                        'status' => 'provider_incomplete',
+                    ], $providerMeta);
+                    Log::channel('eod_repair')->warning('eod.fetch.symbol.provider_incomplete', $meta);
+                    $this->storeFetchMeta($symbol, $date, $meta);
+                    $incompleteSymbols++;
 
-            if (!$sets || !is_array($sets)) {
-                $meta = array_merge($context, [
-                    'status' => 'no_provider_data',
-                    'spot' => $spot,
-                    'spot_source' => $spotSource,
-                    'provider_spot' => $providerSpot,
-                ], $providerMeta);
-                Log::channel('eod_repair')->warning('eod.fetch.symbol.no_provider_data', $meta);
-                $this->storeFetchMeta($symbol, $date, $meta);
-                $incompleteSymbols++;
-                continue;
-            }
-
-            if ($spot <= 0) {
-                Log::warning("No/invalid spot for {$symbol}, skipping greeks and most filtering.");
-            }
-
-            // Filter expirations to our configured window.
-            $expWindowSets = [];
-            foreach ($sets as $set) {
-                $expDate = $set['expirationDate'] ?? null;
-                if (!$expDate) {
                     continue;
                 }
 
-                try {
-                    // Treat expiration as end-of-day in ET so same-day expiries are included.
-                    $expAtNy = Carbon::createFromFormat('Y-m-d', substr((string) $expDate, 0, 10), 'America/New_York')->endOfDay();
-                } catch (\Throwable $e) {
+                if (! $sets || ! is_array($sets)) {
+                    $meta = array_merge($context, [
+                        'status' => 'no_provider_data',
+                        'spot' => $spot,
+                        'spot_source' => $spotSource,
+                        'provider_spot' => $providerSpot,
+                    ], $providerMeta);
+                    Log::channel('eod_repair')->warning('eod.fetch.symbol.no_provider_data', $meta);
+                    $this->storeFetchMeta($symbol, $date, $meta);
+                    $incompleteSymbols++;
+
                     continue;
                 }
 
-                if ($expAtNy->lt($windowStart) || $expAtNy->gt($windowEnd)) {
-                    continue;
+                if ($spot <= 0) {
+                    Log::warning("No/invalid spot for {$symbol}, skipping greeks and most filtering.");
                 }
 
-                $expWindowSets[] = [
-                    'date' => $expDate,
-                    'ts' => $expAtNy->timestamp,
-                    'opts' => $set['options'] ?? [],
-                ];
-            }
+                // Filter expirations to our configured window.
+                $expWindowSets = [];
+                foreach ($sets as $set) {
+                    $expDate = $set['expirationDate'] ?? null;
+                    if (! $expDate) {
+                        continue;
+                    }
 
-            if (!$expWindowSets) {
-                $meta = array_merge($context, [
-                    'status' => 'no_expiries_in_window',
-                    'expiries_total' => count($sets),
-                    'expiries_in_window' => 0,
-                    'spot' => $spot,
-                    'spot_source' => $spotSource,
-                    'provider_spot' => $providerSpot,
-                ], $providerMeta);
-                Log::channel('eod_repair')->warning('eod.fetch.symbol.no_expiries_in_window', $meta);
-                $this->storeFetchMeta($symbol, $date, $meta);
-                $incompleteSymbols++;
-                continue;
-            }
+                    try {
+                        // Treat expiration as end-of-day in ET so same-day expiries are included.
+                        $expAtNy = Carbon::createFromFormat('Y-m-d', substr((string) $expDate, 0, 10), 'America/New_York')->endOfDay();
+                    } catch (\Throwable $e) {
+                        continue;
+                    }
 
-            // Preload/create expiration ids in bulk.
-            $expDates = collect($expWindowSets)->pluck('date')->unique()->values();
-            $expMap = OptionExpiration::query()
-                ->where('symbol', $symbol)
-                ->whereIn('expiration_date', $expDates)
-                ->pluck('id', 'expiration_date');
+                    if ($expAtNy->lt($windowStart) || $expAtNy->gt($windowEnd)) {
+                        continue;
+                    }
 
-            $toInsert = [];
-            foreach ($expDates as $d) {
-                if (!isset($expMap[$d])) {
-                    $toInsert[] = [
-                        'symbol' => $symbol,
-                        'expiration_date' => $d,
+                    $expWindowSets[] = [
+                        'date' => $expDate,
+                        'ts' => $expAtNy->timestamp,
+                        'opts' => $set['options'] ?? [],
                     ];
                 }
-            }
 
-            if ($toInsert) {
-                DB::table('option_expirations')->insert($toInsert);
+                if (! $expWindowSets) {
+                    $meta = array_merge($context, [
+                        'status' => 'no_expiries_in_window',
+                        'expiries_total' => count($sets),
+                        'expiries_in_window' => 0,
+                        'spot' => $spot,
+                        'spot_source' => $spotSource,
+                        'provider_spot' => $providerSpot,
+                    ], $providerMeta);
+                    Log::channel('eod_repair')->warning('eod.fetch.symbol.no_expiries_in_window', $meta);
+                    $this->storeFetchMeta($symbol, $date, $meta);
+                    $incompleteSymbols++;
+
+                    continue;
+                }
+
+                // Preload/create expiration ids in bulk.
+                $expDates = collect($expWindowSets)->pluck('date')->unique()->values();
                 $expMap = OptionExpiration::query()
                     ->where('symbol', $symbol)
                     ->whereIn('expiration_date', $expDates)
                     ->pluck('id', 'expiration_date');
-            }
 
-            // Strike filters.
-            $useStrikeBand = $spot > 0 && $this->strikeBandPct > 0;
-            $minStrike = $useStrikeBand ? $spot * (1 - $this->strikeBandPct) : 0;
-            $maxStrike = $useStrikeBand ? $spot * (1 + $this->strikeBandPct) : INF;
-
-            // Greeks near-ATM band.
-            $useGreeksBand = $spot > 0 && $this->greeksNearPct > 0;
-            $nearMin = $useGreeksBand ? $spot * (1 - $this->greeksNearPct) : 0;
-            $nearMax = $useGreeksBand ? $spot * (1 + $this->greeksNearPct) : INF;
-
-            $totalKept = 0;
-
-            foreach ($expWindowSets as $set) {
-                $expDate = $set['date'];
-                $expTs = $set['ts'];
-                $expId = (int) $expMap[$expDate];
-                $rows = [];
-
-                foreach (['CALL' => 'call', 'PUT' => 'put'] as $apiSide => $side) {
-                    $list = $set['opts'][$apiSide] ?? [];
-                    if (!$list) {
-                        continue;
-                    }
-
-                    foreach ($list as $opt) {
-                        $strike = (float) ($opt['strike'] ?? 0);
-                        if ($strike <= 0 || ($useStrikeBand && ($strike < $minStrike || $strike > $maxStrike))) {
-                            continue;
-                        }
-
-                        $oi = (int) ($opt['openInterest'] ?? 0);
-                        $vol = (int) ($opt['volume'] ?? 0);
-                        if ($oi < $this->minKeepOI && $vol < $this->minKeepVol) {
-                            continue;
-                        }
-
-                        $ivRaw = $opt['impliedVolatility'] ?? null;
-                        $iv = null;
-                        if ($ivRaw !== null) {
-                            $iv = (float) $ivRaw;
-                            if ($iv > 1.0) {
-                                $iv = $iv / 100.0;
-                            }
-                            if ($iv <= 0) {
-                                $iv = null;
-                            }
-                        }
-
-                        $T = $this->timeToExpirationYears($expTs);
-
-                        // Prefer pre-computed Greeks from the API (Polygon provides them).
-                        // Fall back to our IV-based computation only when not available.
-                        $apiGamma = isset($opt['apiGamma']) && is_numeric($opt['apiGamma']) ? (float) $opt['apiGamma'] : null;
-                        $apiDelta = isset($opt['apiDelta']) && is_numeric($opt['apiDelta']) ? (float) $opt['apiDelta'] : null;
-                        $apiVega  = isset($opt['apiVega'])  && is_numeric($opt['apiVega'])  ? (float) $opt['apiVega']  : null;
-
-                        $gamma = $delta = $vega = null;
-                        if ($apiGamma !== null) {
-                            // Use API-provided Greeks — accurate for all strikes including far OTM.
-                            $gamma = $apiGamma;
-                            $delta = $apiDelta;
-                            $vega  = $apiVega;
-                        } elseif (
-                            $iv !== null
-                            && $T > 0
-                            && $spot > 0
-                            && (!$useGreeksBand || ($strike >= $nearMin && $strike <= $nearMax))
-                        ) {
-                            $gamma = $this->computeGamma($spot, $strike, $T, $iv, 0.0);
-                            $delta = $this->computeDelta($side, $spot, $strike, $T, $iv, 0.0);
-                            $vega  = $this->computeVega($spot, $strike, $T, $iv, 0.0);
-                        }
-
-                        $rows[] = [
-                            'expiration_id' => $expId,
-                            'data_date' => $date,
-                            'option_type' => $side,
-                            'strike' => $strike,
-                            'open_interest' => $oi,
-                            'volume' => $vol,
-                            'gamma' => $gamma,
-                            'delta' => $delta,
-                            'vega' => $vega,
-                            'iv' => $iv,
-                            'underlying_price' => $spot ?: null,
-                            'data_timestamp' => now(),
+                $toInsert = [];
+                foreach ($expDates as $d) {
+                    if (! isset($expMap[$d])) {
+                        $toInsert[] = [
+                            'symbol' => $symbol,
+                            'expiration_date' => $d,
                         ];
                     }
                 }
 
-                if ($rows) {
-                    DB::transaction(function () use ($rows) {
-                        DB::table('option_chain_data')->upsert(
-                            $rows,
-                            ['expiration_id', 'data_date', 'option_type', 'strike'],
-                            [
-                                'open_interest',
-                                'volume',
-                                'gamma',
-                                'delta',
-                                'vega',
-                                'iv',
-                                'underlying_price',
-                                'data_timestamp',
-                            ]
-                        );
-                    });
-                    $totalKept += count($rows);
+                if ($toInsert) {
+                    DB::table('option_expirations')->insert($toInsert);
+                    $expMap = OptionExpiration::query()
+                        ->where('symbol', $symbol)
+                        ->whereIn('expiration_date', $expDates)
+                        ->pluck('id', 'expiration_date');
                 }
-            }
 
-            $meta = array_merge($context, [
-                'status' => 'ok',
-                'expiries_total' => count($sets),
-                'expiries_in_window' => count($expWindowSets),
-                'rows_kept' => $totalKept,
-                'spot' => $spot,
-                'spot_source' => $spotSource,
-                'provider_spot' => $providerSpot,
-                'strike_band_pct' => $this->strikeBandPct,
-                'greeks_near_pct' => $this->greeksNearPct,
-                'min_keep_oi' => $this->minKeepOI,
-                'min_keep_vol' => $this->minKeepVol,
-                'min_side_strike_ratio' => $this->minSideStrikeRatio,
-                'repair_partial_expiries' => $this->repairPartialExpiries,
-            ], $providerMeta);
-            Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
-            $this->storeFetchMeta($symbol, $date, $meta);
+                // Strike filters.
+                $useStrikeBand = $spot > 0 && $this->strikeBandPct > 0;
+                $minStrike = $useStrikeBand ? $spot * (1 - $this->strikeBandPct) : 0;
+                $maxStrike = $useStrikeBand ? $spot * (1 + $this->strikeBandPct) : INF;
+
+                // Greeks near-ATM band.
+                $useGreeksBand = $spot > 0 && $this->greeksNearPct > 0;
+                $nearMin = $useGreeksBand ? $spot * (1 - $this->greeksNearPct) : 0;
+                $nearMax = $useGreeksBand ? $spot * (1 + $this->greeksNearPct) : INF;
+
+                $totalKept = 0;
+
+                foreach ($expWindowSets as $set) {
+                    $expDate = $set['date'];
+                    $expTs = $set['ts'];
+                    $expId = (int) $expMap[$expDate];
+                    $rows = [];
+
+                    foreach (['CALL' => 'call', 'PUT' => 'put'] as $apiSide => $side) {
+                        $list = $set['opts'][$apiSide] ?? [];
+                        if (! $list) {
+                            continue;
+                        }
+
+                        foreach ($list as $opt) {
+                            $strike = (float) ($opt['strike'] ?? 0);
+                            if ($strike <= 0 || ($useStrikeBand && ($strike < $minStrike || $strike > $maxStrike))) {
+                                continue;
+                            }
+
+                            $oi = (int) ($opt['openInterest'] ?? 0);
+                            $vol = (int) ($opt['volume'] ?? 0);
+                            if ($oi < $this->minKeepOI && $vol < $this->minKeepVol) {
+                                continue;
+                            }
+
+                            $ivRaw = $opt['impliedVolatility'] ?? null;
+                            $iv = null;
+                            if ($ivRaw !== null) {
+                                $iv = (float) $ivRaw;
+                                if ($iv > 1.0) {
+                                    $iv = $iv / 100.0;
+                                }
+                                if ($iv <= 0) {
+                                    $iv = null;
+                                }
+                            }
+
+                            $T = $this->timeToExpirationYears($expTs);
+
+                            // Prefer pre-computed Greeks from the API (Polygon provides them).
+                            // Fall back to our IV-based computation only when not available.
+                            $apiGamma = isset($opt['apiGamma']) && is_numeric($opt['apiGamma']) ? (float) $opt['apiGamma'] : null;
+                            $apiDelta = isset($opt['apiDelta']) && is_numeric($opt['apiDelta']) ? (float) $opt['apiDelta'] : null;
+                            $apiVega = isset($opt['apiVega']) && is_numeric($opt['apiVega']) ? (float) $opt['apiVega'] : null;
+
+                            $gamma = $delta = $vega = null;
+                            if ($apiGamma !== null) {
+                                // Use API-provided Greeks — accurate for all strikes including far OTM.
+                                $gamma = $apiGamma;
+                                $delta = $apiDelta;
+                                $vega = $apiVega;
+                            } elseif (
+                                $iv !== null
+                                && $T > 0
+                                && $spot > 0
+                                && (! $useGreeksBand || ($strike >= $nearMin && $strike <= $nearMax))
+                            ) {
+                                $gamma = $this->computeGamma($spot, $strike, $T, $iv, 0.0);
+                                $delta = $this->computeDelta($side, $spot, $strike, $T, $iv, 0.0);
+                                $vega = $this->computeVega($spot, $strike, $T, $iv, 0.0);
+                            }
+
+                            $rows[] = [
+                                'expiration_id' => $expId,
+                                'data_date' => $date,
+                                'option_type' => $side,
+                                'strike' => $strike,
+                                'open_interest' => $oi,
+                                'volume' => $vol,
+                                'gamma' => $gamma,
+                                'delta' => $delta,
+                                'vega' => $vega,
+                                'iv' => $iv,
+                                'underlying_price' => $spot ?: null,
+                                'data_timestamp' => now(),
+                            ];
+                        }
+                    }
+
+                    if ($rows) {
+                        DB::transaction(function () use ($rows) {
+                            DB::table('option_chain_data')->upsert(
+                                $rows,
+                                ['expiration_id', 'data_date', 'option_type', 'strike'],
+                                [
+                                    'open_interest',
+                                    'volume',
+                                    'gamma',
+                                    'delta',
+                                    'vega',
+                                    'iv',
+                                    'underlying_price',
+                                    'data_timestamp',
+                                ]
+                            );
+                        });
+                        $totalKept += count($rows);
+                    }
+                }
+
+                $meta = array_merge($context, [
+                    'status' => 'ok',
+                    'expiries_total' => count($sets),
+                    'expiries_in_window' => count($expWindowSets),
+                    'rows_kept' => $totalKept,
+                    'spot' => $spot,
+                    'spot_source' => $spotSource,
+                    'provider_spot' => $providerSpot,
+                    'strike_band_pct' => $this->strikeBandPct,
+                    'greeks_near_pct' => $this->greeksNearPct,
+                    'min_keep_oi' => $this->minKeepOI,
+                    'min_keep_vol' => $this->minKeepVol,
+                    'min_side_strike_ratio' => $this->minSideStrikeRatio,
+                    'repair_partial_expiries' => $this->repairPartialExpiries,
+                ], $providerMeta);
+                Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
+                $this->storeFetchMeta($symbol, $date, $meta);
             } finally {
                 $guard->release();
             }
@@ -473,6 +480,16 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     {
         $keys = [
             'chain_fetch_strategy',
+            'partition_trigger',
+            'provider_pages_total',
+            'legacy_pages',
+            'legacy_bulk_status',
+            'legacy_bulk_pages',
+            'legacy_bulk_pagination_capped',
+            'legacy_reference_status',
+            'legacy_reference_pages',
+            'legacy_reference_pagination_capped',
+            'legacy_repair_failure_statuses',
             'bulk_pages',
             'reference_status',
             'reference_complete',
@@ -561,7 +578,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     }
 
     /**
-     * @param array<int,array<string,mixed>> $sets
+     * @param  array<int,array<string,mixed>>  $sets
      */
     protected function countChainExpirationsInWindow(array $sets, ?Carbon $windowStart, ?Carbon $windowEnd): int
     {
@@ -596,7 +613,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $end = $windowEnd->copy()->startOfDay();
 
         while ($cursor->lte($end)) {
-            if (!$cursor->isWeekend()) {
+            if (! $cursor->isWeekend()) {
                 $count++;
             }
             $cursor->addDay();
@@ -613,7 +630,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     protected function fetchFinnhubChain(string $symbol): array
     {
         $apiKey = env('FINNHUB_API_KEY') ?: config('services.finnhub.api_key');
-        if (!$apiKey) {
+        if (! $apiKey) {
             return [null, ['status' => 'missing_api_key']];
         }
 
@@ -624,7 +641,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             ->acceptJson()
             ->get($url, [
                 'symbol' => $symbol,
-                'token'  => $apiKey,
+                'token' => $apiKey,
             ]);
 
         if ($resp->failed()) {
@@ -636,7 +653,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
         $json = $resp->json() ?? [];
         $sets = $json['data'] ?? [];
-        if (!is_array($sets) || !$sets) {
+        if (! is_array($sets) || ! $sets) {
             return [null, ['status' => 'empty_payload']];
         }
 
@@ -655,9 +672,9 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
      */
     protected function fetchMassiveChain(string $symbol, ?Carbon $windowStart = null, ?Carbon $windowEnd = null): array
     {
-        $base   = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
-        $key    = config('services.massive.key');
-        $mode   = config('services.massive.mode', 'header'); // header|bearer|query
+        $base = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
+        $key = config('services.massive.key');
+        $mode = config('services.massive.mode', 'header'); // header|bearer|query
         $header = config('services.massive.header', 'X-API-Key');
         $qparam = config('services.massive.qparam', 'apiKey');
 
@@ -676,7 +693,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         }
 
         if ($this->usesPartitionedMassiveFetch($symbol)) {
-            return $this->fetchMassiveChainByPartitions(
+            [$chain, $meta] = $this->fetchMassiveChainByPartitions(
                 $client,
                 $base,
                 $symbol,
@@ -686,6 +703,10 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 $windowStart,
                 $windowEnd
             );
+
+            return [$chain, array_merge($meta, [
+                'partition_trigger' => 'configured_eager',
+            ])];
         }
 
         [$referenceExpiries, $referenceMeta] = $this->fetchMassiveReferenceExpirations(
@@ -698,6 +719,27 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             $windowStart,
             $windowEnd
         );
+
+        $referenceStatus = (string) ($referenceMeta['status'] ?? 'unknown');
+        if ($this->shouldRetryMassiveWithPartitions($referenceStatus)) {
+            return $this->retryMassiveChainWithPartitions(
+                $client,
+                $base,
+                $symbol,
+                $mode,
+                $qparam,
+                (string) $key,
+                $windowStart,
+                $windowEnd,
+                'legacy_reference_'.$referenceStatus,
+                [
+                    'legacy_reference_status' => $referenceStatus,
+                    'legacy_reference_pages' => (int) ($referenceMeta['pages'] ?? 0),
+                    'legacy_reference_pagination_capped' => (bool) ($referenceMeta['pagination_capped'] ?? false),
+                    'legacy_pages' => (int) ($referenceMeta['pages'] ?? 0),
+                ]
+            );
+        }
         $candidateExpiries = $this->massiveCandidateExpirations($symbol, $windowStart, $windowEnd);
 
         $maxPages = max(50, (int) config('services.massive.eod_chain_max_pages', 120));
@@ -719,6 +761,29 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $lastStatus = $bulk['meta']['http_status'] ?? null;
         $paginationCapped = (bool) ($bulk['meta']['pagination_capped'] ?? false);
         $bulkComplete = (bool) ($bulk['meta']['complete'] ?? false);
+
+        $bulkStatus = (string) ($bulk['meta']['status'] ?? 'unknown');
+        if (! $bulkComplete && $this->shouldRetryMassiveWithPartitions($bulkStatus)) {
+            return $this->retryMassiveChainWithPartitions(
+                $client,
+                $base,
+                $symbol,
+                $mode,
+                $qparam,
+                (string) $key,
+                $windowStart,
+                $windowEnd,
+                'legacy_bulk_'.$bulkStatus,
+                [
+                    'legacy_bulk_status' => $bulkStatus,
+                    'legacy_bulk_pages' => $pages,
+                    'legacy_bulk_pagination_capped' => $paginationCapped,
+                    'legacy_reference_status' => $referenceStatus,
+                    'legacy_reference_pages' => (int) ($referenceMeta['pages'] ?? 0),
+                    'legacy_pages' => $pages + (int) ($referenceMeta['pages'] ?? 0),
+                ]
+            );
+        }
 
         if (empty($contracts) && empty($referenceExpiries)) {
             return [null, [
@@ -760,6 +825,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $expiryBackfillResolved = 0;
         $repairTransportFailure = false;
         $repairSemanticFailure = false;
+        $repairFailureStatuses = [];
         if ($forceExpiryRebuild || $missingExpiries || ($this->repairPartialExpiries && $incompleteExpiries)) {
             $repairExpiries = $forceExpiryRebuild ? $knownExpiries : $missingExpiries;
             if ($this->repairPartialExpiries && $incompleteExpiries) {
@@ -789,16 +855,19 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 $paginationCapped = $paginationCapped || (bool) ($res['meta']['pagination_capped'] ?? false);
                 if (! ($res['meta']['complete'] ?? false)) {
                     $repairTransportFailure = true;
+                    $repairFailureStatuses[] = (string) ($res['meta']['status'] ?? 'unknown');
+
                     continue;
                 }
 
                 $contractsForExpiry = $res['contracts'];
-                if (!$contractsForExpiry) {
+                if (! $contractsForExpiry) {
                     // A complete empty response is authoritative for this
                     // expiry. Never retain a one-sided page from the failed
                     // broad request underneath it.
                     unset($byExp[$expiry]);
                     $expiryBackfillResolved++;
+
                     continue;
                 }
 
@@ -809,63 +878,66 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 $expSet = $this->normalizeMassiveContracts($contractsForExpiry);
                 if (! isset($expSet[$expiry])) {
                     $repairSemanticFailure = true;
+
                     continue;
                 }
 
                 $byExp[$expiry] = $expSet[$expiry];
                 $expiryBackfillFetched++;
                 if ($this->repairPartialExpiries && $this->massiveExpiryNeedsRepair($byExp[$expiry])) {
-                        $repairSides = $forceExpiryRebuild
-                            ? ['call', 'put']
-                            : $this->massiveRepairSides($byExp[$expiry]);
-                        $repairSides = array_values(array_unique($repairSides));
-                        $expiryBackfillSideRequested += count($repairSides);
+                    $repairSides = $forceExpiryRebuild
+                        ? ['call', 'put']
+                        : $this->massiveRepairSides($byExp[$expiry]);
+                    $repairSides = array_values(array_unique($repairSides));
+                    $expiryBackfillSideRequested += count($repairSides);
 
-                        foreach ($repairSides as $repairSide) {
-                            $sideRes = $this->fetchMassiveContracts(
-                                $client,
-                                $base,
-                                $symbol,
-                                $mode,
-                                $qparam,
-                                (string) $key,
-                                $pageLimit,
-                                $maxPagesPerExpiry,
-                                $expiry,
-                                $repairSide
-                            );
+                    foreach ($repairSides as $repairSide) {
+                        $sideRes = $this->fetchMassiveContracts(
+                            $client,
+                            $base,
+                            $symbol,
+                            $mode,
+                            $qparam,
+                            (string) $key,
+                            $pageLimit,
+                            $maxPagesPerExpiry,
+                            $expiry,
+                            $repairSide
+                        );
 
-                            $pages += (int) ($sideRes['meta']['pages'] ?? 0);
-                            $lastStatus = $sideRes['meta']['http_status'] ?? $lastStatus;
-                            $paginationCapped = $paginationCapped || (bool) ($sideRes['meta']['pagination_capped'] ?? false);
-                            if (! ($sideRes['meta']['complete'] ?? false)) {
-                                $repairTransportFailure = true;
-                                continue;
-                            }
+                        $pages += (int) ($sideRes['meta']['pages'] ?? 0);
+                        $lastStatus = $sideRes['meta']['http_status'] ?? $lastStatus;
+                        $paginationCapped = $paginationCapped || (bool) ($sideRes['meta']['pagination_capped'] ?? false);
+                        if (! ($sideRes['meta']['complete'] ?? false)) {
+                            $repairTransportFailure = true;
+                            $repairFailureStatuses[] = (string) ($sideRes['meta']['status'] ?? 'unknown');
 
-                            $sideContracts = $sideRes['contracts'] ?? [];
-                            if (!$sideContracts) {
-                                continue;
-                            }
-
-                            if ($spot <= 0 && (float) ($sideRes['spot'] ?? 0) > 0) {
-                                $spot = (float) $sideRes['spot'];
-                            }
-
-                            $sideSet = $this->normalizeMassiveContracts($sideContracts);
-                            if (!isset($sideSet[$expiry])) {
-                                continue;
-                            }
-
-                            $byExp[$expiry] = $this->mergeMassiveExpirySet(
-                                $byExp[$expiry] ?? [
-                                    'expirationDate' => $expiry,
-                                    'options' => ['CALL' => [], 'PUT' => []],
-                                ],
-                                $sideSet[$expiry]
-                            );
-                            $expiryBackfillSideFetched++;
+                            continue;
                         }
+
+                        $sideContracts = $sideRes['contracts'] ?? [];
+                        if (! $sideContracts) {
+                            continue;
+                        }
+
+                        if ($spot <= 0 && (float) ($sideRes['spot'] ?? 0) > 0) {
+                            $spot = (float) $sideRes['spot'];
+                        }
+
+                        $sideSet = $this->normalizeMassiveContracts($sideContracts);
+                        if (! isset($sideSet[$expiry])) {
+                            continue;
+                        }
+
+                        $byExp[$expiry] = $this->mergeMassiveExpirySet(
+                            $byExp[$expiry] ?? [
+                                'expirationDate' => $expiry,
+                                'options' => ['CALL' => [], 'PUT' => []],
+                            ],
+                            $sideSet[$expiry]
+                        );
+                        $expiryBackfillSideFetched++;
+                    }
                 }
 
                 if (! $this->massiveExpiryNeedsRepair($byExp[$expiry])) {
@@ -881,7 +953,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
         $sets = array_values($byExp);
 
-        if (!$sets) {
+        if (! $sets) {
             return [null, [
                 'status' => 'normalized_empty',
                 'complete' => false,
@@ -900,7 +972,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             && ! $repairTransportFailure
             && ! $repairSemanticFailure;
 
-        return [[$spot, $sets], [
+        $meta = [
             'status' => $complete ? 'ok' : 'incomplete',
             'complete' => $complete,
             'set_count' => count($sets),
@@ -919,12 +991,44 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             'expiry_backfill_side_requested' => $expiryBackfillSideRequested,
             'expiry_backfill_side_fetched' => $expiryBackfillSideFetched,
             'expiry_backfill_resolved' => $expiryBackfillResolved,
-        ]];
+        ];
+
+        $retryableRepairFailure = collect($repairFailureStatuses)
+            ->contains(fn (string $status): bool => $this->isPartitionFallbackStatus($status));
+        if (! $complete
+            && $this->partitionedMassiveFetchEnabled()
+            && ($repairSemanticFailure || $retryableRepairFailure)
+        ) {
+            return $this->retryMassiveChainWithPartitions(
+                $client,
+                $base,
+                $symbol,
+                $mode,
+                $qparam,
+                (string) $key,
+                $windowStart,
+                $windowEnd,
+                $repairSemanticFailure
+                    ? 'legacy_repair_semantic_incomplete'
+                    : 'legacy_repair_'.($repairFailureStatuses[0] ?? 'incomplete'),
+                [
+                    'legacy_bulk_status' => $bulkStatus,
+                    'legacy_bulk_pages' => (int) ($bulk['meta']['pages'] ?? 0),
+                    'legacy_bulk_pagination_capped' => (bool) ($bulk['meta']['pagination_capped'] ?? false),
+                    'legacy_reference_status' => $referenceStatus,
+                    'legacy_reference_pages' => (int) ($referenceMeta['pages'] ?? 0),
+                    'legacy_repair_failure_statuses' => array_values(array_unique($repairFailureStatuses)),
+                    'legacy_pages' => $pages + (int) ($referenceMeta['pages'] ?? 0),
+                ]
+            );
+        }
+
+        return [[$spot, $sets], $meta];
     }
 
     protected function usesPartitionedMassiveFetch(string $symbol): bool
     {
-        if (! (bool) config('services.massive.eod_chain_partitioned_fetch_enabled', false)) {
+        if (! $this->partitionedMassiveFetchEnabled()) {
             return false;
         }
 
@@ -944,6 +1048,69 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         return empty($symbols)
             || in_array('*', $symbols, true)
             || in_array(strtoupper($symbol), $symbols, true);
+    }
+
+    protected function partitionedMassiveFetchEnabled(): bool
+    {
+        return (bool) config('services.massive.eod_chain_partitioned_fetch_enabled', false);
+    }
+
+    protected function shouldRetryMassiveWithPartitions(string $status): bool
+    {
+        return $this->partitionedMassiveFetchEnabled()
+            && $this->isPartitionFallbackStatus($status);
+    }
+
+    protected function isPartitionFallbackStatus(string $status): bool
+    {
+        return in_array($status, [
+            'pagination_capped',
+            'cursor_cycle',
+            'pagination_no_progress',
+            'scope_violation',
+            'cursor_scope_violation',
+        ], true);
+    }
+
+    /**
+     * Discard a non-terminal legacy result and retry with exact expiry/side
+     * partitions. Partial contracts from the legacy path are never merged into
+     * the partition result.
+     *
+     * @param  array<string,mixed>  $legacyMeta
+     * @return array{0:?array{0:float,1:array},1:array<string,mixed>}
+     */
+    protected function retryMassiveChainWithPartitions(
+        \Illuminate\Http\Client\PendingRequest $client,
+        string $base,
+        string $symbol,
+        string $mode,
+        string $qparam,
+        string $key,
+        ?Carbon $windowStart,
+        ?Carbon $windowEnd,
+        string $trigger,
+        array $legacyMeta
+    ): array {
+        [$chain, $partitionMeta] = $this->fetchMassiveChainByPartitions(
+            $client,
+            $base,
+            $symbol,
+            $mode,
+            $qparam,
+            $key,
+            $windowStart,
+            $windowEnd
+        );
+
+        $legacyPages = (int) ($legacyMeta['legacy_pages'] ?? 0);
+        $partitionPages = (int) ($partitionMeta['pages'] ?? 0)
+            + (int) ($partitionMeta['reference_pages'] ?? 0);
+
+        return [$chain, array_merge($partitionMeta, $legacyMeta, [
+            'partition_trigger' => $trigger,
+            'provider_pages_total' => $legacyPages + $partitionPages,
+        ])];
     }
 
     /**
@@ -1349,7 +1516,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
      */
     protected function massiveCandidateExpirations(string $symbol, ?Carbon $windowStart, ?Carbon $windowEnd): array
     {
-        if (!$windowStart || !$windowEnd) {
+        if (! $windowStart || ! $windowEnd) {
             return [];
         }
 
@@ -1360,7 +1527,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $end = $windowEnd->copy()->startOfDay();
 
         while ($cursor->lte($end)) {
-            if (!$cursor->isWeekend() && ($includeWeekdays || $cursor->isFriday())) {
+            if (! $cursor->isWeekend() && ($includeWeekdays || $cursor->isFriday())) {
                 $candidates[] = $cursor->toDateString();
             }
             $cursor->addDay();
@@ -1385,7 +1552,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         ?Carbon $windowEnd,
         ?int $maxPagesOverride = null
     ): array {
-        if (!$windowStart || !$windowEnd) {
+        if (! $windowStart || ! $windowEnd) {
             return [[], [
                 'status' => 'missing_window',
                 'complete' => false,
@@ -1410,10 +1577,23 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         );
         $startDate = $windowStart->copy()->startOfDay()->toDateString();
         $endDate = $windowEnd->copy()->startOfDay()->toDateString();
+        $scopeParams = [
+            'underlying_ticker' => $symbol,
+            'expiration_date.gte' => $startDate,
+            'expiration_date.lte' => $endDate,
+            'as_of' => $startDate,
+            'order' => 'asc',
+            'sort' => 'expiration_date',
+            'limit' => 1000,
+        ];
 
         for ($page = 0; $page < $maxPages; $page++) {
-            $reqUrl = $cursor ?: $url;
-            $requestFingerprint = hash('sha256', $reqUrl);
+            $params = $scopeParams;
+            if ($cursor !== null) {
+                $params['cursor'] = $cursor;
+            }
+
+            $requestFingerprint = $this->massiveRequestFingerprint($url, $params);
             if (isset($requestedUrls[$requestFingerprint])) {
                 $cursorCycles++;
                 $failureStatus = 'cursor_cycle';
@@ -1421,27 +1601,14 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             }
             $requestedUrls[$requestFingerprint] = true;
 
-            $params = [];
-
-            if (!$cursor) {
-                $params = [
-                    'underlying_ticker' => $symbol,
-                    'expiration_date.gte' => $startDate,
-                    'expiration_date.lte' => $endDate,
-                    'as_of' => $startDate,
-                    'order' => 'asc',
-                    'sort' => 'expiration_date',
-                    'limit' => 1000,
-                ];
-
-                if ($mode === 'query') {
-                    $params[$qparam] = $key;
-                }
+            $requestParams = $params;
+            if ($mode === 'query') {
+                $requestParams[$qparam] = $key;
             }
 
             $pages++;
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $client->get($reqUrl, $params)
+                fn () => $client->get($url, $requestParams)
             );
             if ($resp->status() === 401) {
                 return [[], [
@@ -1467,13 +1634,23 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 break;
             }
             $batch = $json['results'];
-            $nextCursor = $this->massiveNextUrl(
-                $json['next_url'] ?? null,
-                $base,
-                $mode,
-                $qparam,
-                $key
-            );
+            $nextUrl = trim((string) ($json['next_url'] ?? ''));
+            $nextCursor = null;
+            if ($nextUrl !== '') {
+                try {
+                    $nextCursor = $this->massiveTrustedCursor(
+                        $nextUrl,
+                        $base,
+                        $url,
+                        $scopeParams,
+                        $qparam
+                    );
+                } catch (RuntimeException) {
+                    $scopeViolations++;
+                    $failureStatus = 'cursor_scope_violation';
+                    break;
+                }
+            }
 
             if (empty($batch)) {
                 if ($nextCursor) {
@@ -1506,7 +1683,10 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 break;
             }
 
-            $nextFingerprint = hash('sha256', $nextCursor);
+            $nextFingerprint = $this->massiveRequestFingerprint(
+                $url,
+                array_merge($scopeParams, ['cursor' => $nextCursor])
+            );
             if (isset($requestedUrls[$nextFingerprint])) {
                 $cursorCycles++;
                 $failureStatus = 'cursor_cycle';
@@ -1573,10 +1753,21 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $requestedUrls = [];
         $contractType = in_array($contractType, ['call', 'put'], true) ? $contractType : null;
         $strictScope = $expiry !== null || $contractType !== null;
+        $scopeParams = ['limit' => $pageLimit];
+        if ($expiry !== null) {
+            $scopeParams['expiration_date'] = $expiry;
+        }
+        if ($contractType !== null) {
+            $scopeParams['contract_type'] = $contractType;
+        }
 
         for ($page = 0; $page < $maxPages; $page++) {
-            $reqUrl = $cursor ?: $url;
-            $requestFingerprint = hash('sha256', $reqUrl);
+            $params = $scopeParams;
+            if ($cursor !== null) {
+                $params['cursor'] = $cursor;
+            }
+
+            $requestFingerprint = $this->massiveRequestFingerprint($url, $params);
             if (isset($requestedUrls[$requestFingerprint])) {
                 $cursorCycle++;
                 $failureStatus = 'cursor_cycle';
@@ -1584,25 +1775,14 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             }
             $requestedUrls[$requestFingerprint] = true;
 
-            $params = [];
-
-            if (!$cursor) {
-                $params['limit'] = $pageLimit;
-                if ($expiry) {
-                    $params['expiration_date'] = $expiry;
-                }
-                if ($contractType) {
-                    $params['contract_type'] = $contractType;
-                }
-            }
-
-            if (!$cursor && $mode === 'query') {
-                $params[$qparam] = $key;
+            $requestParams = $params;
+            if ($mode === 'query') {
+                $requestParams[$qparam] = $key;
             }
 
             $pages++;
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $client->get($reqUrl, $params)
+                fn () => $client->get($url, $requestParams)
             );
 
             if ($resp->status() === 401) {
@@ -1640,13 +1820,23 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 break;
             }
             $batch = $json['results'];
-            $nextCursor = $this->massiveNextUrl(
-                $json['next_url'] ?? null,
-                $base,
-                $mode,
-                $qparam,
-                $key
-            );
+            $nextUrl = trim((string) ($json['next_url'] ?? ''));
+            $nextCursor = null;
+            if ($nextUrl !== '') {
+                try {
+                    $nextCursor = $this->massiveTrustedCursor(
+                        $nextUrl,
+                        $base,
+                        $url,
+                        $scopeParams,
+                        $qparam
+                    );
+                } catch (RuntimeException) {
+                    $scopeViolations++;
+                    $failureStatus = 'cursor_scope_violation';
+                    break;
+                }
+            }
 
             if (empty($batch)) {
                 if ($nextCursor) {
@@ -1682,6 +1872,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 }
                 if (isset($contractsByKey[$identity])) {
                     $duplicateContracts++;
+
                     continue;
                 }
 
@@ -1704,7 +1895,10 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 break;
             }
 
-            $nextFingerprint = hash('sha256', $nextCursor);
+            $nextFingerprint = $this->massiveRequestFingerprint(
+                $url,
+                array_merge($scopeParams, ['cursor' => $nextCursor])
+            );
             if (isset($requestedUrls[$nextFingerprint])) {
                 $cursorCycle++;
                 $failureStatus = 'cursor_cycle';
@@ -1746,31 +1940,91 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         ];
     }
 
-    protected function massiveNextUrl(
-        mixed $nextUrl,
+    /**
+     * Accept only the opaque cursor from a provider continuation URL. The
+     * endpoint and immutable request scope are supplied locally on every page.
+     *
+     * @param  array<string,mixed>  $scopeParams
+     */
+    protected function massiveTrustedCursor(
+        string $nextUrl,
         string $base,
-        string $mode,
+        string $endpointUrl,
+        array $scopeParams,
         string $qparam,
-        string $key
-    ): ?string {
-        $nextUrl = trim((string) $nextUrl);
-        if ($nextUrl === '') {
-            return null;
+    ): string {
+        if (str_starts_with($nextUrl, '?')) {
+            $nextUrl = $endpointUrl.$nextUrl;
+        } elseif (! str_starts_with($nextUrl, 'http://') && ! str_starts_with($nextUrl, 'https://')) {
+            $nextUrl = rtrim($base, '/').'/'.ltrim($nextUrl, '/');
         }
 
-        if (! str_starts_with($nextUrl, 'http')) {
-            $nextUrl = $base . $nextUrl;
+        $expectedOrigin = parse_url($base);
+        $actual = parse_url($nextUrl);
+        if (
+            ! is_array($expectedOrigin)
+            || ! is_array($actual)
+            || isset($actual['user'])
+            || isset($actual['pass'])
+            || isset($actual['fragment'])
+            || strtolower((string) ($expectedOrigin['scheme'] ?? '')) !== strtolower((string) ($actual['scheme'] ?? ''))
+            || strtolower((string) ($expectedOrigin['host'] ?? '')) !== strtolower((string) ($actual['host'] ?? ''))
+            || (int) ($expectedOrigin['port'] ?? 0) !== (int) ($actual['port'] ?? 0)
+        ) {
+            throw new RuntimeException('Massive returned an untrusted cursor URL.');
         }
 
-        if ($mode === 'query') {
-            $encodedParam = preg_quote(urlencode($qparam), '/');
-            if (! preg_match('/(?:[?&])'.$encodedParam.'=/', $nextUrl)) {
-                $nextUrl .= (str_contains($nextUrl, '?') ? '&' : '?')
-                    . urlencode($qparam).'='.urlencode($key);
+        $expectedPath = (string) parse_url($endpointUrl, PHP_URL_PATH);
+        $actualPath = (string) ($actual['path'] ?? '');
+        if ($expectedPath === '' || $actualPath !== $expectedPath) {
+            throw new RuntimeException('Massive returned a cursor for an unexpected endpoint.');
+        }
+
+        $cursor = null;
+        $seen = [];
+        $allowed = array_fill_keys(array_keys($scopeParams), true);
+        $allowed[$qparam] = true;
+        $allowed['cursor'] = true;
+        foreach (explode('&', (string) ($actual['query'] ?? '')) as $pair) {
+            if ($pair === '') {
+                continue;
+            }
+
+            [$encodedKey, $encodedValue] = array_pad(explode('=', $pair, 2), 2, '');
+            $name = rawurldecode($encodedKey);
+            $value = rawurldecode($encodedValue);
+            if ($name === '' || isset($seen[$name]) || ! isset($allowed[$name])) {
+                throw new RuntimeException('Massive returned an invalid cursor query.');
+            }
+            $seen[$name] = true;
+
+            if ($name === 'cursor') {
+                $cursor = $value;
+
+                continue;
+            }
+
+            if ($name !== $qparam && (string) $scopeParams[$name] !== $value) {
+                throw new RuntimeException('Massive cursor changed the requested scope.');
             }
         }
 
-        return $nextUrl;
+        if (! is_string($cursor) || trim($cursor) === '') {
+            throw new RuntimeException('Massive returned a malformed cursor.');
+        }
+
+        return $cursor;
+    }
+
+    /** @param array<string,mixed> $params */
+    protected function massiveRequestFingerprint(string $endpointUrl, array $params): string
+    {
+        ksort($params);
+
+        return hash('sha256', $endpointUrl."\n".json_encode(
+            $params,
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION
+        ));
     }
 
     protected function massiveContractScopeError(
@@ -1844,7 +2098,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     }
 
     /**
-     * @param array<int,array<string,mixed>> $contracts
+     * @param  array<int,array<string,mixed>>  $contracts
      * @return array<string,array<string,mixed>>
      */
     protected function normalizeMassiveContracts(array $contracts): array
@@ -1856,25 +2110,25 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             $session = $c['session'] ?? ($c['day'] ?? []);
 
             $expRaw = $details['expiration_date'] ?? null;
-            if (!$expRaw) {
+            if (! $expRaw) {
                 continue;
             }
 
             $expDate = substr((string) $expRaw, 0, 10);
-            $strike  = (float) ($details['strike_price'] ?? 0);
+            $strike = (float) ($details['strike_price'] ?? 0);
             if ($strike <= 0) {
                 continue;
             }
 
             $sideRaw = strtolower((string) ($details['contract_type'] ?? ''));
-            $side    = $sideRaw === 'call'
+            $side = $sideRaw === 'call'
                 ? 'CALL'
                 : ($sideRaw === 'put' ? 'PUT' : null);
-            if (!$side) {
+            if (! $side) {
                 continue;
             }
 
-            $oi  = (int) ($c['open_interest'] ?? 0);
+            $oi = (int) ($c['open_interest'] ?? 0);
             $vol = (int) ($session['volume'] ?? 0);
 
             $iv = $c['implied_volatility'] ?? null;
@@ -1888,7 +2142,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 }
             }
 
-            if (!isset($byExp[$expDate])) {
+            if (! isset($byExp[$expDate])) {
                 $byExp[$expDate] = [
                     'expirationDate' => $expDate,
                     'options' => [
@@ -1903,18 +2157,18 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             // conversion in this normalizer is wrong for Polygon's decimal IV format,
             // which causes near-zero gamma for high-IV far-OTM options.
             $apiGreeks = $c['greeks'] ?? [];
-            $apiGamma  = isset($apiGreeks['gamma'])  ? (float) $apiGreeks['gamma']  : null;
-            $apiDelta  = isset($apiGreeks['delta'])  ? (float) $apiGreeks['delta']  : null;
-            $apiVega   = isset($apiGreeks['vega'])   ? (float) $apiGreeks['vega']   : null;
+            $apiGamma = isset($apiGreeks['gamma']) ? (float) $apiGreeks['gamma'] : null;
+            $apiDelta = isset($apiGreeks['delta']) ? (float) $apiGreeks['delta'] : null;
+            $apiVega = isset($apiGreeks['vega']) ? (float) $apiGreeks['vega'] : null;
 
             $byExp[$expDate]['options'][$side][] = [
-                'strike'           => $strike,
-                'openInterest'     => $oi,
-                'volume'           => $vol,
+                'strike' => $strike,
+                'openInterest' => $oi,
+                'volume' => $vol,
                 'impliedVolatility' => $iv,
-                'apiGamma'         => $apiGamma,
-                'apiDelta'         => $apiDelta,
-                'apiVega'          => $apiVega,
+                'apiGamma' => $apiGamma,
+                'apiDelta' => $apiDelta,
+                'apiVega' => $apiVega,
             ];
         }
 
@@ -1922,7 +2176,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     }
 
     /**
-     * @param array<string,array<string,mixed>> $byExp
+     * @param  array<string,array<string,mixed>>  $byExp
      * @return array<int,string>
      */
     protected function massiveIncompleteExpiries(array $byExp): array
@@ -1934,29 +2188,31 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             }
         }
         sort($incomplete);
+
         return $incomplete;
     }
 
     /**
-     * @param array<string,mixed> $set
+     * @param  array<string,mixed>  $set
      */
     protected function massiveExpiryNeedsRepair(array $set): bool
     {
-        return !$this->massiveExpirySideRatioHealthy($set);
+        return ! $this->massiveExpirySideRatioHealthy($set);
     }
 
     /**
-     * @param array<string,mixed> $set
+     * @param  array<string,mixed>  $set
      */
     protected function massiveExpiryMissingSide(array $set): bool
     {
         $calls = $this->massiveDistinctStrikeCount($set, 'CALL');
         $puts = $this->massiveDistinctStrikeCount($set, 'PUT');
+
         return $calls === 0 || $puts === 0;
     }
 
     /**
-     * @param array<string,mixed> $set
+     * @param  array<string,mixed>  $set
      */
     protected function massiveExpirySideRatioHealthy(array $set): bool
     {
@@ -1967,7 +2223,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     }
 
     /**
-     * @param array<string,mixed> $set
+     * @param  array<string,mixed>  $set
      * @return array<int,string>
      */
     protected function massiveRepairSides(array $set): array
@@ -1981,11 +2237,11 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         if ($puts === 0) {
             $repair[] = 'put';
         }
-        if (!empty($repair)) {
+        if (! empty($repair)) {
             return $repair;
         }
 
-        if (!$this->massiveExpirySideRatioHealthy($set)) {
+        if (! $this->massiveExpirySideRatioHealthy($set)) {
             $repair[] = $calls < $puts ? 'call' : 'put';
         }
 
@@ -1995,12 +2251,12 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     /**
      * Count distinct strikes for a normalized expiry side so repair decisions match DB health checks.
      *
-     * @param array<string,mixed> $set
+     * @param  array<string,mixed>  $set
      */
     protected function massiveDistinctStrikeCount(array $set, string $side): int
     {
         $options = $set['options'][$side] ?? [];
-        if (!is_array($options) || empty($options)) {
+        if (! is_array($options) || empty($options)) {
             return 0;
         }
 
@@ -2020,8 +2276,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     /**
      * Merge one normalized expiry set into another without duplicating sides.
      *
-     * @param array<string,mixed> $base
-     * @param array<string,mixed> $incoming
+     * @param  array<string,mixed>  $base
+     * @param  array<string,mixed>  $incoming
      * @return array<string,mixed>
      */
     protected function mergeMassiveExpirySet(array $base, array $incoming): array
@@ -2029,20 +2285,21 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $out = $base;
         $out['expirationDate'] = $incoming['expirationDate'] ?? ($base['expirationDate'] ?? null);
         $out['options'] = [
-            'CALL' => !empty($incoming['options']['CALL'] ?? null)
+            'CALL' => ! empty($incoming['options']['CALL'] ?? null)
                 ? array_values($incoming['options']['CALL'])
                 : array_values($base['options']['CALL'] ?? []),
-            'PUT' => !empty($incoming['options']['PUT'] ?? null)
+            'PUT' => ! empty($incoming['options']['PUT'] ?? null)
                 ? array_values($incoming['options']['PUT'])
                 : array_values($base['options']['PUT'] ?? []),
         ];
+
         return $out;
     }
 
     /**
      * Build hint expiries from known DB expirations so capped bulk pagination can be filled per expiry.
      *
-     * @param array<int|string,string> $existingExpiries
+     * @param  array<int|string,string>  $existingExpiries
      * @return array<int,string>
      */
     protected function massiveExpiryHints(
@@ -2050,8 +2307,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         array $existingExpiries,
         ?Carbon $windowStart = null,
         ?Carbon $windowEnd = null
-    ): array
-    {
+    ): array {
         $nowNy = now('America/New_York');
         $startDate = ($windowStart ?: $nowNy->copy()->startOfDay())->toDateString();
         $endDate = ($windowEnd ?: ($this->days ? $nowNy->copy()->addDays($this->days) : $nowNy->copy()->addDays(90))->endOfDay())
@@ -2147,9 +2403,10 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
     protected function timeToExpirationYears(int $expirationTimestamp): float
     {
-        $now            = time();
-        $secondsToExp   = max($expirationTimestamp - $now, 0);
-        $yearInSeconds  = 365 * 24 * 3600;
+        $now = time();
+        $secondsToExp = max($expirationTimestamp - $now, 0);
+        $yearInSeconds = 365 * 24 * 3600;
+
         return $secondsToExp / $yearInSeconds;
     }
 
@@ -2161,21 +2418,21 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
     protected function normCdf(float $x): float
     {
         // Abramowitz & Stegun approximation
-        $p  = 0.2316419;
+        $p = 0.2316419;
         $b1 = 0.319381530;
         $b2 = -0.356563782;
         $b3 = 1.781477937;
         $b4 = -1.821255978;
         $b5 = 1.330274429;
 
-        $t    = 1.0 / (1.0 + $p * abs($x));
-        $nd   = $this->normPdf($x);
+        $t = 1.0 / (1.0 + $p * abs($x));
+        $nd = $this->normPdf($x);
         $poly = ($b1 * $t)
             + ($b2 * $t * $t)
             + ($b3 * $t * $t * $t)
             + ($b4 * $t * $t * $t * $t)
             + ($b5 * $t * $t * $t * $t * $t);
-        $cdf  = 1.0 - $nd * $poly;
+        $cdf = 1.0 - $nd * $poly;
 
         return ($x >= 0.0) ? $cdf : 1.0 - $cdf;
     }
@@ -2186,7 +2443,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             return null;
         }
 
-        $d1  = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
+        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
         $nd1 = $this->normPdf($d1);
 
         return $nd1 / ($S * $sigma * sqrt($T));
@@ -2198,7 +2455,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             return null;
         }
 
-        $d1  = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
+        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
         $Nd1 = $this->normCdf($d1);
 
         return $type === 'call'
@@ -2212,7 +2469,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             return null;
         }
 
-        $d1  = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
+        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
         $nd1 = $this->normPdf($d1);
 
         // per 100% vol; multiply by 0.01 if you want per vol point

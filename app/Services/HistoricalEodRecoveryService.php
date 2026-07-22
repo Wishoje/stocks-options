@@ -192,6 +192,7 @@ class HistoricalEodRecoveryService
                     $manifest,
                     $symbol,
                     $this->readGzipJson($artifactFiles['archive']),
+                    $this->readGzipJson($artifactFiles['reference']),
                 );
                 if (! $report['ok']) {
                     throw new RuntimeException(implode(',', $report['errors']));
@@ -654,6 +655,7 @@ class HistoricalEodRecoveryService
             $manifest,
             $symbol,
             $this->readGzipJson($artifactPaths['archive']),
+            $this->readGzipJson($artifactPaths['reference']),
         );
         if (! ($report['ok'] ?? false)) {
             throw new RuntimeException(implode(',', (array) ($report['errors'] ?? [])));
@@ -1041,46 +1043,84 @@ class HistoricalEodRecoveryService
         ]);
 
         $targetDate = $target->toDateString();
-        $targetGroup = $archiveGroups[$targetDate] ?? null;
-        if (! is_array($targetGroup)) {
-            throw new RuntimeException("Recovery archive has no exact {$targetDate} expiration for {$symbol}.");
-        }
-        $this->assertArchiveGroupIsPostClose($symbol, $target, $targetGroup);
-
         $closingSpot = $this->exactClosingSpot($symbol, $targetDate);
         $rows = [];
         $expirySources = [];
         $rawCoverage = [];
 
         $targetExpected = $catalog['by_expiry_side'][$targetDate] ?? null;
-        if (! is_array($targetExpected)) {
+        $targetGroup = $archiveGroups[$targetDate] ?? null;
+        if (is_array($targetExpected) && ! is_array($targetGroup)) {
+            throw new RuntimeException("Recovery archive has no exact {$targetDate} expiration for {$symbol}.");
+        }
+        if (! is_array($targetExpected) && is_array($targetGroup)) {
             throw new RuntimeException("Reference catalog has no exact target expiration for {$symbol}.");
         }
-        $targetArchiveRows = (array) ($targetGroup['contracts'] ?? []);
-        $archiveSpot = $this->archiveGroupSpot($symbol, $targetArchiveRows, $closingSpot);
-        $this->assertSpotAgreement($symbol, $closingSpot, $archiveSpot);
-        $this->assertExactTickerCoverage(
-            $symbol,
-            $targetDate,
-            $this->referenceTickersForExpiry($targetExpected),
-            $this->archiveTickers($targetArchiveRows),
-            'archive',
-        );
-        $this->assertArchiveDefinitions($symbol, $targetDate, $targetArchiveRows, $catalog['by_ticker']);
-        foreach ($targetArchiveRows as $row) {
-            $rows[] = $this->normalizeArchiveRow(
+
+        $archiveWitnessExpiries = [];
+        if (! is_array($targetExpected)) {
+            foreach ($archiveGroups as $archiveExpiry => $archiveGroup) {
+                if (! isset($catalog['by_expiry_side'][$archiveExpiry]) || ! is_array($archiveGroup)) {
+                    continue;
+                }
+
+                $archiveRows = (array) ($archiveGroup['contracts'] ?? []);
+                $this->assertArchiveGroupIsPostClose($symbol, $target, $archiveGroup);
+                $this->assertArchiveDefinitions(
+                    $symbol,
+                    (string) $archiveExpiry,
+                    $archiveRows,
+                    $catalog['by_ticker'],
+                );
+                $this->assertExactTickerCoverage(
+                    $symbol,
+                    (string) $archiveExpiry,
+                    $this->referenceTickersForExpiry($catalog['by_expiry_side'][$archiveExpiry]),
+                    $this->archiveTickers($archiveRows),
+                    'archive_witness',
+                );
+                $this->assertSpotAgreement(
+                    $symbol,
+                    $closingSpot,
+                    $this->archiveGroupSpot($symbol, $archiveRows, $closingSpot),
+                );
+                $archiveWitnessExpiries[] = (string) $archiveExpiry;
+            }
+
+            if ($archiveWitnessExpiries === []) {
+                throw new RuntimeException("Recovery archive has no post-close catalog witness for {$symbol}.");
+            }
+            sort($archiveWitnessExpiries);
+        }
+
+        if (is_array($targetExpected) && is_array($targetGroup)) {
+            $this->assertArchiveGroupIsPostClose($symbol, $target, $targetGroup);
+            $targetArchiveRows = (array) ($targetGroup['contracts'] ?? []);
+            $archiveSpot = $this->archiveGroupSpot($symbol, $targetArchiveRows, $closingSpot);
+            $this->assertSpotAgreement($symbol, $closingSpot, $archiveSpot);
+            $this->assertExactTickerCoverage(
                 $symbol,
                 $targetDate,
-                $archiveSpot,
-                $row,
-                (array) ($targetGroup['meta'] ?? []),
+                $this->referenceTickersForExpiry($targetExpected),
+                $this->archiveTickers($targetArchiveRows),
+                'archive',
             );
+            $this->assertArchiveDefinitions($symbol, $targetDate, $targetArchiveRows, $catalog['by_ticker']);
+            foreach ($targetArchiveRows as $row) {
+                $rows[] = $this->normalizeArchiveRow(
+                    $symbol,
+                    $targetDate,
+                    $archiveSpot,
+                    $row,
+                    (array) ($targetGroup['meta'] ?? []),
+                );
+            }
+            $expirySources[$targetDate] = 'archive';
+            $rawCoverage[$targetDate] = [
+                'expected' => count($this->referenceTickersForExpiry($targetExpected)),
+                'recovered' => count($targetArchiveRows),
+            ];
         }
-        $expirySources[$targetDate] = 'archive';
-        $rawCoverage[$targetDate] = [
-            'expected' => count($this->referenceTickersForExpiry($targetExpected)),
-            'recovered' => count($targetArchiveRows),
-        ];
 
         $snapshotPartitions = [];
         $overlapChecks = 0;
@@ -1249,7 +1289,11 @@ class HistoricalEodRecoveryService
             'end_date' => $end->toDateString(),
             'captured_at' => now('UTC')->toIso8601String(),
             'underlying_price' => $closingSpot,
-            'underlying_price_source' => 'archive_group_for_target_exact_prices_daily_close_for_future',
+            'underlying_price_source' => is_array($targetExpected)
+                ? 'archive_group_for_target_exact_prices_daily_close_for_future'
+                : 'prices_daily_close_for_all_current_snapshot_expiries',
+            'source_policy' => 'archive_exact_target_else_current_snapshot_v1',
+            'archive_witness_expiries' => $archiveWitnessExpiries,
             'expected_expiries' => $catalog['expiries'],
             'expiry_sources' => $expirySources,
             'raw_ticker_coverage' => $rawCoverage,
@@ -1277,6 +1321,13 @@ class HistoricalEodRecoveryService
             ],
             $symbol,
             ['symbol' => $symbol, 'groups' => $archiveGroups],
+            [
+                'symbol' => $symbol,
+                'date' => $targetDate,
+                'end_date' => $end->toDateString(),
+                'contracts' => $reference['contracts'],
+                'provider_meta' => $reference['meta'] ?? [],
+            ],
         );
         if (! ($preflight['ok'] ?? false)) {
             throw new RuntimeException(implode(',', (array) ($preflight['errors'] ?? [])));
@@ -1368,9 +1419,6 @@ class HistoricalEodRecoveryService
             ksort($sides['put']);
         }
         unset($sides);
-        if (! isset($byExpirySide[$targetDate])) {
-            throw new RuntimeException("Reference catalog has no exact target expiration {$targetDate} for {$symbol}.");
-        }
 
         return [
             'by_ticker' => $byTicker,
@@ -2054,6 +2102,7 @@ class HistoricalEodRecoveryService
         array $manifest,
         ?string $expectedSymbol = null,
         ?array $archiveEvidence = null,
+        ?array $referenceEvidence = null,
     ): array {
         $errors = [];
         $symbol = Symbols::canon((string) ($candidate['symbol'] ?? ''));
@@ -2087,27 +2136,77 @@ class HistoricalEodRecoveryService
             $target = CarbonImmutable::now('America/New_York')->startOfDay();
         }
 
-        $expectedExpiries = array_values(array_unique(array_map(
+        $referenceCatalog = null;
+        if ($referenceEvidence !== null && $symbol !== null && $symbol !== '') {
+            if (
+                Symbols::canon((string) ($referenceEvidence['symbol'] ?? '')) !== $symbol
+                || (string) ($referenceEvidence['date'] ?? '') !== $date
+                || (string) ($referenceEvidence['end_date'] ?? '') !== $endDate
+            ) {
+                $errors[] = 'reference_evidence_scope_mismatch';
+            } else {
+                try {
+                    $referenceCatalog = $this->validatedReferenceCatalog(
+                        $symbol,
+                        $date,
+                        $endDate,
+                        (array) ($referenceEvidence['contracts'] ?? []),
+                    );
+                } catch (\Throwable) {
+                    $errors[] = 'invalid_reference_evidence';
+                }
+            }
+        }
+
+        $candidateExpectedExpiries = array_values(array_unique(array_map(
             static fn (mixed $expiry): string => (string) $expiry,
             (array) ($candidate['expected_expiries'] ?? []),
         )));
-        sort($expectedExpiries);
-        foreach ($expectedExpiries as $expiry) {
+        sort($candidateExpectedExpiries);
+        foreach ($candidateExpectedExpiries as $expiry) {
             if (! $this->isStrictDate($expiry)) {
                 $errors[] = 'invalid_expected_expiry';
             }
         }
-        if ($expectedExpiries === [] || ! in_array($date, $expectedExpiries, true)) {
-            $errors[] = 'missing_exact_target_expiry';
+        $expectedExpiries = is_array($referenceCatalog)
+            ? array_values((array) $referenceCatalog['expiries'])
+            : $candidateExpectedExpiries;
+        sort($expectedExpiries);
+        if (is_array($referenceCatalog) && $candidateExpectedExpiries !== $expectedExpiries) {
+            $errors[] = 'candidate_reference_expiry_mismatch';
+        }
+        if ($expectedExpiries === []) {
+            $errors[] = 'expected_expiries_empty';
+        }
+        foreach ($expectedExpiries as $expiry) {
+            if ($expiry < $date || $expiry > $endDate) {
+                $errors[] = 'expected_expiry_outside_window';
+            }
+        }
+        $sourcePolicy = (string) ($candidate['source_policy'] ?? '');
+        if (
+            $sourcePolicy !== ''
+            && $sourcePolicy !== 'archive_exact_target_else_current_snapshot_v1'
+        ) {
+            $errors[] = 'unsupported_source_policy';
+        }
+        $targetExpiryPresent = in_array($date, $expectedExpiries, true);
+        if (! $targetExpiryPresent && $sourcePolicy !== 'archive_exact_target_else_current_snapshot_v1') {
+            $errors[] = 'missing_non_target_source_policy';
+        }
+
+        $expectedSources = [];
+        foreach ($expectedExpiries as $expiry) {
+            $expectedSources[$expiry] = $expiry === $date ? 'archive' : 'current_snapshot';
         }
 
         $expirySources = (array) ($candidate['expiry_sources'] ?? []);
         ksort($expirySources);
-        if (array_keys($expirySources) !== $expectedExpiries) {
+        if ($expirySources !== $expectedSources) {
             $errors[] = 'expiry_source_set_mismatch';
         }
         foreach ($expectedExpiries as $expiry) {
-            $expectedSource = $expiry === $date ? 'archive' : 'current_snapshot';
+            $expectedSource = $expectedSources[$expiry];
             if (($expirySources[$expiry] ?? null) !== $expectedSource) {
                 $errors[] = "wrong_source_{$expiry}";
             }
@@ -2152,6 +2251,63 @@ class HistoricalEodRecoveryService
             }
         }
 
+        if (is_array($referenceCatalog) && $archiveEvidence !== null) {
+            $archiveGroups = (array) ($archiveEvidence['groups'] ?? []);
+            if ($targetExpiryPresent !== isset($archiveGroups[$date])) {
+                $errors[] = 'archive_reference_target_presence_mismatch';
+            }
+
+            if (! $targetExpiryPresent) {
+                $declaredWitnesses = array_values(array_unique(array_map(
+                    static fn (mixed $expiry): string => (string) $expiry,
+                    (array) ($candidate['archive_witness_expiries'] ?? []),
+                )));
+                sort($declaredWitnesses);
+                $derivedWitnesses = array_values(array_intersect(
+                    array_keys($archiveGroups),
+                    $expectedExpiries,
+                ));
+                sort($derivedWitnesses);
+                if ($declaredWitnesses === [] || $declaredWitnesses !== $derivedWitnesses) {
+                    $errors[] = 'archive_witness_set_mismatch';
+                }
+
+                $closingSpot = $this->positiveNumberOrNull($candidate['underlying_price'] ?? null);
+                foreach ($derivedWitnesses as $witnessExpiry) {
+                    try {
+                        $witnessGroup = (array) $archiveGroups[$witnessExpiry];
+                        $witnessRows = (array) ($witnessGroup['contracts'] ?? []);
+                        $this->assertArchiveGroupIsPostClose($symbol, $target, $witnessGroup);
+                        $this->assertArchiveDefinitions(
+                            $symbol,
+                            $witnessExpiry,
+                            $witnessRows,
+                            $referenceCatalog['by_ticker'],
+                        );
+                        $this->assertExactTickerCoverage(
+                            $symbol,
+                            $witnessExpiry,
+                            $this->referenceTickersForExpiry(
+                                $referenceCatalog['by_expiry_side'][$witnessExpiry],
+                            ),
+                            $this->archiveTickers($witnessRows),
+                            'archive_witness',
+                        );
+                        if ($closingSpot === null) {
+                            throw new RuntimeException('Candidate closing spot is missing.');
+                        }
+                        $this->assertSpotAgreement(
+                            $symbol,
+                            $closingSpot,
+                            $this->archiveGroupSpot($symbol, $witnessRows, $closingSpot),
+                        );
+                    } catch (\Throwable) {
+                        $errors[] = "invalid_archive_witness_{$witnessExpiry}";
+                    }
+                }
+            }
+        }
+
         $rows = (array) ($candidate['rows'] ?? []);
         if ($rows === []) {
             $errors[] = 'candidate_rows_empty';
@@ -2180,7 +2336,7 @@ class HistoricalEodRecoveryService
 
                 continue;
             }
-            $expectedSource = $expiry === $date ? 'archive' : 'current_snapshot';
+            $expectedSource = $expectedSources[$expiry] ?? null;
             if ($source !== $expectedSource) {
                 $errors[] = "row_{$index}_wrong_source";
             }

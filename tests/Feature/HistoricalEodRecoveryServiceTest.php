@@ -28,11 +28,22 @@ class HistoricalEodRecoveryServiceTest extends TestCase
 
     private string $temporaryRoot;
 
+    private bool $ownsRecoverySchema = false;
+
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->createRecoverySchema();
+        if (
+            Schema::hasTable('option_chain_data')
+            && Schema::hasTable('option_expirations')
+            && Schema::hasTable('prices_daily')
+        ) {
+            $this->clearRecoveryTables();
+        } else {
+            $this->createRecoverySchema();
+            $this->ownsRecoverySchema = true;
+        }
 
         Carbon::setTestNow(Carbon::parse('2026-07-19 02:00:00', 'America/New_York'));
 
@@ -67,9 +78,13 @@ class HistoricalEodRecoveryServiceTest extends TestCase
     protected function tearDown(): void
     {
         File::deleteDirectory($this->temporaryRoot);
-        Schema::dropIfExists('option_chain_data');
-        Schema::dropIfExists('option_expirations');
-        Schema::dropIfExists('prices_daily');
+        if ($this->ownsRecoverySchema) {
+            Schema::dropIfExists('option_chain_data');
+            Schema::dropIfExists('option_expirations');
+            Schema::dropIfExists('prices_daily');
+        } else {
+            $this->clearRecoveryTables();
+        }
         Carbon::setTestNow();
 
         parent::tearDown();
@@ -103,7 +118,10 @@ class HistoricalEodRecoveryServiceTest extends TestCase
             $table->decimal('iv', 12, 8)->nullable();
             $table->decimal('underlying_price', 12, 4)->nullable();
             $table->timestamps();
-            $table->unique(['expiration_id', 'data_date', 'option_type', 'strike']);
+            $table->unique(
+                ['expiration_id', 'data_date', 'option_type', 'strike'],
+                'ocd_recovery_unique',
+            );
         });
         Schema::create('prices_daily', function (Blueprint $table): void {
             $table->id();
@@ -116,6 +134,13 @@ class HistoricalEodRecoveryServiceTest extends TestCase
             $table->timestamps();
             $table->unique(['symbol', 'trade_date']);
         });
+    }
+
+    private function clearRecoveryTables(): void
+    {
+        DB::table('option_chain_data')->delete();
+        DB::table('option_expirations')->delete();
+        DB::table('prices_daily')->delete();
     }
 
     public function test_capture_and_validate_build_an_immutable_hybrid_candidate_without_canonical_writes(): void
@@ -205,6 +230,80 @@ class HistoricalEodRecoveryServiceTest extends TestCase
             array_column($snapshotRequests, 'expiry'),
             'The expired target-date partition must come only from the archive.',
         );
+    }
+
+    public function test_capture_supports_a_session_with_no_same_day_expiration(): void
+    {
+        config()->set('services.massive.recovery_min_expirations', 1);
+
+        $requests = [];
+        $this->fakeProvider($requests, [self::FUTURE_EXPIRY]);
+        [$archivePath, $archiveSha] = $this->writeArchive(
+            $this->invalidArchiveRows('wrong_expiry')
+        );
+        $runDirectory = $this->runDirectory();
+
+        $capture = $this->service()->capture(
+            self::TARGET_DATE,
+            [self::SYMBOL],
+            $archivePath,
+            $archiveSha,
+            $runDirectory,
+        );
+
+        $this->assertTrue((bool) ($capture['ok'] ?? false), json_encode($capture));
+        $this->assertDatabaseCount('option_chain_data', 0);
+
+        $validation = $this->service()->validate($runDirectory);
+
+        $this->assertTrue((bool) ($validation['ok'] ?? false), json_encode($validation));
+        $this->assertSame(2, $this->candidateRowCount($validation));
+        $this->assertSame(
+            [self::FUTURE_EXPIRY => 'current_snapshot'],
+            $validation['symbols'][self::SYMBOL]['expiry_sources'] ?? null,
+        );
+        $this->assertNotContains(
+            self::TARGET_DATE,
+            $validation['symbols'][self::SYMBOL]['expected_expiries'] ?? [],
+        );
+
+        $published = $this->service()->publish(
+            $runDirectory,
+            (string) $validation['candidate_sha256'],
+        );
+
+        $this->assertTrue((bool) ($published['ok'] ?? false), json_encode($published));
+        $this->assertDatabaseCount('option_chain_data', 2);
+        $this->assertSame(
+            [self::FUTURE_EXPIRY],
+            DB::table('option_chain_data as o')
+                ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+                ->where('e.symbol', self::SYMBOL)
+                ->whereDate('o.data_date', self::TARGET_DATE)
+                ->distinct()
+                ->pluck('e.expiration_date')
+                ->map(static fn ($expiry): string => substr((string) $expiry, 0, 10))
+                ->all(),
+        );
+    }
+
+    public function test_capture_without_a_same_day_expiration_requires_a_post_close_archive_witness(): void
+    {
+        config()->set('services.massive.recovery_min_expirations', 1);
+
+        $requests = [];
+        $this->fakeProvider($requests, [self::FUTURE_EXPIRY]);
+        $archiveRows = array_map(function (array $row): array {
+            $row['captured_at'] = '2026-07-17T19:59:00+00:00';
+
+            return $row;
+        }, $this->invalidArchiveRows('wrong_expiry'));
+        [$archivePath, $archiveSha] = $this->writeArchive($archiveRows);
+
+        $result = $this->captureThenValidate($archivePath, $archiveSha, $this->runDirectory());
+
+        $this->assertRejected($result);
+        $this->assertDatabaseCount('option_chain_data', 0);
     }
 
     public function test_capture_rejects_archive_checksum_mismatch_before_calling_the_provider(): void
