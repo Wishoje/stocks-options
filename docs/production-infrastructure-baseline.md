@@ -163,7 +163,7 @@ The web root filesystem is 82% used with about 14 GiB available. This is not an 
 
 ### Current queue boundaries create head-of-line blocking
 
-- The calculator scheduler can dispatch up to 75 one-symbol jobs every five minutes.
+- The calculator scheduler evaluates the watchlist every five minutes and claims at most 75 one-symbol jobs. It bulk-reads truthful pending, started, completed, and failed catalog state; all-fresh watchlists dispatch nothing, and SPY/QQQ/IWM are used only when no symbols are configured. Eligible work uses successful publication and dispatch age to prevent cap starvation. Pending claims last 12 hours for queue wait, while a started worker refreshes a one-hour execution lease that covers the current calculator timeout and Redis retry cycle.
 - Scheduled intraday work groups up to 15 symbols in one job.
 - SPY and QQQ can be grouped into the same heavy job and execute sequentially.
 - Other normal symbols, currently including IWM, can share a 13–15 symbol job.

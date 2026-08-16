@@ -27,4 +27,15 @@ class ScheduleContractTest extends TestCase
 
         $this->assertCount(1, $events);
     }
+
+    public function test_calculator_watchlist_has_one_five_minute_scheduled_producer(): void
+    {
+        $events = collect(app(Schedule::class)->events())
+            ->filter(fn ($event): bool => $event->description === 'calculator:prime:watchlist');
+
+        $this->assertCount(1, $events);
+        $this->assertSame('*/5 * * * 1-5', $events->first()->expression);
+        $this->assertSame('America/New_York', $events->first()->timezone);
+        $this->assertStringContainsString('calculator:prime-watchlist', $events->first()->command);
+    }
 }

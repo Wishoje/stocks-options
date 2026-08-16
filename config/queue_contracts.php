@@ -73,7 +73,7 @@ return [
     FetchCalculatorChainJob::class => [
         'connection' => 'redis', 'queues' => ['calculator'], 'max_timeout' => 270,
         'isolated_queues' => ['calculator-interactive', 'calculator-fill', 'calculator-fill-heavy'],
-        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'symbol + selected expiration',
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'symbol + selected expiration + optional scheduler generation',
         'write_strategy' => 'natural-key upsert; completeness publication remains GEX-008/GEX-009',
         'provider_timeout' => 30,
     ],

@@ -1,15 +1,12 @@
 <?php
 
 use App\Jobs\ComputeVolMetricsJob;
-use App\Jobs\FetchCalculatorChainJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Support\Market;
 use App\Support\QueueLanes;
 use App\Support\Symbols;
-use Carbon\Carbon;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schedule;
 
@@ -231,43 +228,7 @@ Schedule::command('hot-options:fetch --limit=200 --type=STOCKS')
     ->withoutOverlapping(30)
     ->name('hot-options:fetch:eod');
 
-Schedule::call(function () {
-    $nowEt = now('America/New_York');
-
-    // guard trading hours + weekdays
-    if ($nowEt->isWeekend() || ! Market::isRthOpen($nowEt)) {
-        return;
-    }
-
-    $maxSymbols = 75;                // cap per run
-    $freshCutoff = $nowEt->copy()->subMinutes(10); // skip if primed in last 10m
-
-    $symbols = DB::table('watchlists')
-        ->pluck('symbol')
-        ->map(fn ($s) => Symbols::canon($s))
-        ->filter()
-        ->unique()
-        ->filter(function ($sym) use ($freshCutoff) {
-            $cached = Cache::get("calculator:primed:{$sym}");
-
-            return ! $cached || Carbon::parse($cached)->lt($freshCutoff);
-        })
-        ->take($maxSymbols)
-        ->values()
-        ->all();
-
-    if (! $symbols) {
-        $symbols = ['SPY', 'QQQ', 'IWM']; // minimal fallback
-    }
-
-    foreach (array_chunk($symbols, 15) as $chunk) {
-        foreach ($chunk as $sym) {
-            Cache::put("calculator:primed:{$sym}", $nowEt->toIso8601String(), $nowEt->copy()->addMinutes(15));
-            FetchCalculatorChainJob::dispatch($sym)
-                ->onQueue(QueueLanes::calculator($sym));
-        }
-    }
-})
+Schedule::command('calculator:prime-watchlist')
     ->name('calculator:prime:watchlist')
     ->timezone('America/New_York')
     ->weekdays()

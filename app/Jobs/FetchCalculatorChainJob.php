@@ -2,6 +2,9 @@
 
 namespace App\Jobs;
 
+use App\Support\CalculatorRefreshState;
+use App\Support\ProviderConcurrencyLimiter;
+use App\Support\QueueLanes;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -11,38 +14,142 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use App\Support\QueueLanes;
-use App\Support\ProviderConcurrencyLimiter;
+use InvalidArgumentException;
+use Throwable;
 
 class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $timeout = 270;
-    public int $tries   = 3;
 
-    public function __construct(public string $symbol, public ?string $expiry = null)
-    {
+    public int $tries = 3;
+
+    public string $symbol;
+
+    public ?string $expiry;
+
+    public ?string $schedulerGeneration = null;
+
+    public ?string $schedulerClaimToken = null;
+
+    public function __construct(
+        string $symbol,
+        ?string $expiry = null,
+        ?string $schedulerGeneration = null,
+        ?string $schedulerClaimToken = null
+    ) {
+        if (($schedulerGeneration === null) !== ($schedulerClaimToken === null)) {
+            throw new InvalidArgumentException('Scheduler generation and claim token must be provided together.');
+        }
+        if ($expiry !== null && $schedulerGeneration !== null) {
+            throw new InvalidArgumentException('A selected-expiration fetch cannot own catalog scheduler state.');
+        }
+
+        $this->symbol = $symbol;
+        $this->expiry = $expiry;
+        $this->schedulerGeneration = $schedulerGeneration;
+        $this->schedulerClaimToken = $schedulerClaimToken;
         $this->onQueue(QueueLanes::calculator($symbol));
     }
 
     public function handle(): void
     {
+        $state = $this->scheduledState();
+        if ($state && ! $state->markStarted(
+            $this->symbol,
+            (string) $this->schedulerGeneration,
+            (string) $this->schedulerClaimToken,
+            $this->attempts(),
+            now()
+        )) {
+            Log::info('CalculatorChain.staleScheduledRunSkipped', [
+                'symbol' => $this->symbol,
+                'generation' => $this->schedulerGeneration,
+            ]);
+
+            return;
+        }
+
         $limiter = app(ProviderConcurrencyLimiter::class);
-        $limiter->withPriority(
-            QueueLanes::providerPriority($this->queue),
-            fn () => $this->fetch(),
-            10
+        try {
+            $status = $limiter->withPriority(
+                QueueLanes::providerPriority($this->queue),
+                fn (): string => $this->fetch(),
+                10
+            );
+        } catch (Throwable $exception) {
+            $state?->markAttemptException(
+                $this->symbol,
+                (string) $this->schedulerGeneration,
+                (string) $this->schedulerClaimToken,
+                $this->attempts(),
+                'attempt_exception:'.$exception::class,
+                now()
+            );
+
+            throw $exception;
+        }
+
+        if (! $state) {
+            return;
+        }
+
+        if ($status === 'ok') {
+            $state->markCompleted(
+                $this->symbol,
+                (string) $this->schedulerGeneration,
+                (string) $this->schedulerClaimToken,
+                now()
+            );
+
+            return;
+        }
+
+        $state->markFailed(
+            $this->symbol,
+            (string) $this->schedulerGeneration,
+            (string) $this->schedulerClaimToken,
+            $status,
+            now()
         );
     }
 
-    private function fetch(): void
+    public function failed(Throwable $exception): void
+    {
+        $this->scheduledState()?->markFailed(
+            $this->symbol,
+            (string) $this->schedulerGeneration,
+            (string) $this->schedulerClaimToken,
+            'terminal_exception:'.$exception::class,
+            now()
+        );
+
+        parent::failed($exception);
+    }
+
+    /** @return array<string, mixed> */
+    protected function identityPayload(): array
+    {
+        $payload = [
+            'symbol' => $this->symbol,
+            'expiry' => $this->expiry,
+        ];
+
+        if ($this->schedulerGeneration !== null) {
+            $payload['schedulerGeneration'] = $this->schedulerGeneration;
+        }
+
+        return $payload;
+    }
+
+    private function fetch(): string
     {
         $symbol = strtoupper($this->symbol);
         $targetExpiry = $this->expiry ? substr((string) $this->expiry, 0, 10) : null;
         $apiKey = config('services.massive.key') ?: env('MASSIVE_API_KEY');
-        $base   = rtrim((string) config('services.massive.base', 'https://api.massive.com'), '/');
-        $mode   = (string) config('services.massive.mode', 'header'); // header|bearer|query
+        $base = rtrim((string) config('services.massive.base', 'https://api.massive.com'), '/');
+        $mode = (string) config('services.massive.mode', 'header'); // header|bearer|query
         $header = (string) config('services.massive.header', 'X-API-Key');
         $qparam = (string) config('services.massive.qparam', 'apiKey');
 
@@ -67,9 +174,10 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             if ($mode === 'query') {
                 $params[$qparam] = $apiKey;
             }
+
             return $params;
         };
-        $metaKey = static fn (string $sym, ?string $exp = null): string => 'calculator:fetch-meta:' . md5($sym . '|' . ($exp ?? '*'));
+        $metaKey = static fn (string $sym, ?string $exp = null): string => 'calculator:fetch-meta:'.md5($sym.'|'.($exp ?? '*'));
         $storeMeta = function (array $meta) use ($metaKey, $symbol, $targetExpiry): void {
             Cache::put(
                 $metaKey($symbol, $targetExpiry),
@@ -88,12 +196,13 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
         //     'hasKey' => (bool) $apiKey,
         // ]);
 
-        if (!$apiKey) {
+        if (! $apiKey) {
             Log::error('MassiveClient.missingKey', ['job' => 'CalculatorChain']);
             $storeMeta([
                 'status' => 'failed_missing_api_key',
             ]);
-            return;
+
+            return 'failed_missing_api_key';
         }
 
         // -----------------------------
@@ -104,7 +213,7 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 "{$base}/v3/snapshot",
                 $authParams([
                     'ticker.any_of' => $symbol,
-                    'limit'         => 1,
+                    'limit' => 1,
                 ])
             )
         );
@@ -115,19 +224,19 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
         // ]);
 
         $uJson = $uResp->json();
-        $u0    = $uJson['results'][0] ?? [];
+        $u0 = $uJson['results'][0] ?? [];
 
         // snake + camel for Massive unified snapshot
         $uQuoteSnake = $u0['last_quote'] ?? [];
         $uQuoteCamel = $u0['lastQuote'] ?? [];
-        $uQuote      = $uQuoteSnake ?: $uQuoteCamel;
+        $uQuote = $uQuoteSnake ?: $uQuoteCamel;
 
         $uTradeSnake = $u0['last_trade'] ?? [];
         $uTradeCamel = $u0['lastTrade'] ?? [];
-        $uTrade      = $uTradeSnake ?: $uTradeCamel;
+        $uTrade = $uTradeSnake ?: $uTradeCamel;
 
         $uSession = $u0['session'] ?? [];
-        $uDay     = $u0['day'] ?? [];
+        $uDay = $u0['day'] ?? [];
 
         $rawU = $uQuote['midpoint']
             ?? $uQuote['mid']
@@ -141,20 +250,20 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
 
         Log::info('CalculatorChain.underlying', [
             'symbol' => $symbol,
-            'price'  => $underlying,
+            'price' => $underlying,
         ]);
 
         // -----------------------------
         // Step 2: Option chain (paginated)
         // -----------------------------
-        $perPage   = 250; // first attempt, fallback to 100 if Massive rejects
+        $perPage = 250; // first attempt, fallback to 100 if Massive rejects
         $baseMaxPages = max(50, (int) env('CALC_CHAIN_MAX_PAGES', 150));
         $largeMaxPages = max($baseMaxPages, (int) env('CALC_CHAIN_MAX_PAGES_LARGE', 350));
-        $isLargeSymbol = !$targetExpiry && QueueLanes::isCalculatorHeavy($symbol);
-        $maxPages  = $isLargeSymbol ? $largeMaxPages : $baseMaxPages;
-        $url       = "{$base}/v3/snapshot/options/{$symbol}";
+        $isLargeSymbol = ! $targetExpiry && QueueLanes::isCalculatorHeavy($symbol);
+        $maxPages = $isLargeSymbol ? $largeMaxPages : $baseMaxPages;
+        $url = "{$base}/v3/snapshot/options/{$symbol}";
         $contracts = [];
-        $page      = 0;
+        $page = 0;
         $pageFailedStatus = null;
 
         while ($url && $page < $maxPages) {
@@ -165,7 +274,7 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             $params = ($page === 1)
                 ? [
                     'limit' => $perPage,
-                    'sort'  => 'strike_price',
+                    'sort' => 'strike_price',
                     'order' => 'asc',
                 ]
                 : [];
@@ -196,9 +305,9 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 ]);
 
                 $perPage = 100;
-                $params  = [
+                $params = [
                     'limit' => $perPage,
-                    'sort'  => 'strike_price',
+                    'sort' => 'strike_price',
                     'order' => 'asc',
                 ];
                 if ($targetExpiry) {
@@ -220,17 +329,17 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             //     'ok'          => $resp->ok(),
             // ]);
 
-            if (!$resp->ok()) {
+            if (! $resp->ok()) {
                 $pageFailedStatus = $resp->status();
                 Log::warning('CalculatorChain.pageFailed', [
                     'symbol' => $symbol,
-                    'page'   => $page,
+                    'page' => $page,
                     'status' => $resp->status(),
                 ]);
                 break;
             }
 
-            $json  = $resp->json();
+            $json = $resp->json();
             $batch = $json['results'] ?? [];
             $count = is_array($batch) ? count($batch) : 0;
 
@@ -239,7 +348,7 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             //     'count' => $count,
             // ]);
 
-            if (!$batch || !is_array($batch)) {
+            if (! $batch || ! is_array($batch)) {
                 break;
             }
 
@@ -253,8 +362,8 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             // }
 
             $next = $json['next_url'] ?? null;
-            if ($next && !str_starts_with($next, 'http')) {
-                $next = $base . $next;
+            if ($next && ! str_starts_with($next, 'http')) {
+                $next = $base.$next;
                 // Log::debug('CalculatorChain.nextUrl.normalized', [
                 //     'page' => $page,
                 //     'url'  => $next,
@@ -275,7 +384,7 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
         $paginationCapped = (bool) $url;
 
         Log::info('CalculatorChain.fetchComplete', [
-            'symbol'    => $symbol,
+            'symbol' => $symbol,
             'contracts' => count($contracts),
         ]);
 
@@ -291,16 +400,17 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 'contracts_kept' => 0,
                 'expiries_found' => 0,
             ]);
-            return;
+
+            return 'no_contracts';
         }
 
         // -----------------------------
         // Step 3: Normalize + upsert
         // -----------------------------
         $inserts = [];
-        $now     = now();
-        $seen    = 0;
-        $kept    = 0;
+        $now = now();
+        $seen = 0;
+        $kept = 0;
         $skipped = 0;
 
         foreach ($contracts as $c) {
@@ -309,30 +419,33 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             $details = $c['details'] ?? [];
             if (empty($details['strike_price'])) {
                 $skipped++;
+
                 continue;
             }
 
             $contractType = strtolower((string) ($details['contract_type'] ?? ''));
-            if (!in_array($contractType, ['call', 'put'], true)) {
+            if (! in_array($contractType, ['call', 'put'], true)) {
                 $skipped++;
+
                 continue;
             }
 
             $expiryRaw = (string) ($details['expiration_date'] ?? '');
             $expiry = strlen($expiryRaw) >= 10 ? substr($expiryRaw, 0, 10) : null;
-            if (!$expiry) {
+            if (! $expiry) {
                 $skipped++;
+
                 continue;
             }
 
             // snake + camel for Massive chain
             $quoteSnake = $c['last_quote'] ?? [];
             $quoteCamel = $c['lastQuote'] ?? [];
-            $quote      = $quoteSnake ?: $quoteCamel;
+            $quote = $quoteSnake ?: $quoteCamel;
 
             $tradeSnake = $c['last_trade'] ?? [];
             $tradeCamel = $c['lastTrade'] ?? [];
-            $lastTrade  = $tradeSnake ?: $tradeCamel;
+            $lastTrade = $tradeSnake ?: $tradeCamel;
 
             $day = $c['day'] ?? [];
             $fmv = $c['fmv'] ?? null;
@@ -388,16 +501,16 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
 
             // still useless → skip
             $inserts[] = [
-                'symbol'           => $symbol,
-                'ticker'           => $c['ticker'] ?? '',
-                'type'             => $contractType,
-                'strike'           => $details['strike_price'],
-                'expiry'           => $expiry,
-                'bid'              => round($bid, 2),
-                'ask'              => round($ask, 2),
-                'mid'              => round($mid, 2),
+                'symbol' => $symbol,
+                'ticker' => $c['ticker'] ?? '',
+                'type' => $contractType,
+                'strike' => $details['strike_price'],
+                'expiry' => $expiry,
+                'bid' => round($bid, 2),
+                'ask' => round($ask, 2),
+                'mid' => round($mid, 2),
                 'underlying_price' => round((float) $underlying, 2),
-                'fetched_at'       => $now,
+                'fetched_at' => $now,
             ];
             $kept++;
         }
@@ -420,8 +533,13 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             }
         }
         $expiriesFound = collect($inserts)->pluck('expiry')->unique()->count();
+        $status = match (true) {
+            $paginationCapped => 'partial_pagination_capped',
+            $inserts === [] => 'no_usable_contracts',
+            default => 'ok',
+        };
         $storeMeta([
-            'status' => $paginationCapped ? 'partial_pagination_capped' : 'ok',
+            'status' => $status,
             'pages' => $page,
             'max_pages' => $maxPages,
             'pagination_capped' => $paginationCapped,
@@ -431,15 +549,32 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             'expiries_found' => $expiriesFound,
         ]);
 
-        Log::info('CalculatorChain.SUCCESS', [
-            'symbol'     => $symbol,
-            'contracts'  => count($inserts),
+        $logContext = [
+            'symbol' => $symbol,
+            'status' => $status,
+            'contracts' => count($inserts),
             'underlying' => $underlying,
             'target_expiry' => $targetExpiry,
             'pages' => $page,
             'max_pages' => $maxPages,
             'pagination_capped' => $paginationCapped,
             'expiries_found' => $expiriesFound,
-        ]);
+        ];
+        if ($status === 'ok') {
+            Log::info('CalculatorChain.SUCCESS', $logContext);
+        } else {
+            Log::warning('CalculatorChain.incomplete', $logContext);
+        }
+
+        return $status;
+    }
+
+    private function scheduledState(): ?CalculatorRefreshState
+    {
+        if ($this->schedulerGeneration === null || $this->schedulerClaimToken === null || $this->expiry !== null) {
+            return null;
+        }
+
+        return app(CalculatorRefreshState::class);
     }
 }

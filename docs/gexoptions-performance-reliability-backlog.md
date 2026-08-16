@@ -304,6 +304,7 @@ Ticket-specific regression proof:
 Type: Bug
 Epic: Calculator correctness
 Depends on: GEX-002, GEX-003
+Status: Implementation complete — production Redis and market-hours smoke proof remain
 
 Problem and scope:
 
