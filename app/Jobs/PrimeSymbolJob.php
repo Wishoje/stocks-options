@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\EodCacheVersion;
 use App\Support\EodSnapshotSelector;
 use App\Support\QueueLanes;
 use Illuminate\Bus\Queueable;
@@ -20,14 +21,25 @@ class PrimeSymbolJob extends QueueJob implements ShouldQueue
 
     public int $timeout = 60;
 
-    public function __construct(public string $symbol)
+    /** @var string[] */
+    public array $completedCacheDomains = [];
+
+    public function __construct(public string $symbol, array $completedCacheDomains = [])
     {
+        $this->completedCacheDomains = $completedCacheDomains;
         $this->onQueue(QueueLanes::enrichment());
     }
 
     public function handle(): void
     {
         $jobs = $this->plannedJobs();
+        $domains = array_values(array_unique(array_merge(
+            $this->completedCacheDomains,
+            $this->cacheDomainsForJobs($jobs)
+        )));
+        if ($domains !== []) {
+            $jobs[] = new PublishEodCacheVersionJob([$this->symbol], $domains);
+        }
         if ($jobs === []) {
             return;
         }
@@ -123,5 +135,33 @@ class PrimeSymbolJob extends QueueJob implements ShouldQueue
         }
 
         return $jobs;
+    }
+
+    /**
+     * @param  array<int, object>  $jobs
+     * @return string[]
+     */
+    public function cacheDomainsForJobs(array $jobs): array
+    {
+        $domains = [];
+        foreach ($jobs as $job) {
+            if ($job instanceof FetchOptionChainDataJob || $job instanceof ComputePositioningJob) {
+                $domains[] = EodCacheVersion::DOMAIN_GEX;
+            }
+            if ($job instanceof ComputeVolMetricsJob) {
+                $domains[] = EodCacheVersion::DOMAIN_VOLATILITY;
+            }
+            if ($job instanceof ComputeExpiryPressureJob) {
+                $domains[] = EodCacheVersion::DOMAIN_EXPIRY_PRESSURE;
+            }
+            if ($job instanceof ComputeUAJob) {
+                $domains[] = EodCacheVersion::DOMAIN_ACTIVITY;
+            }
+        }
+
+        $domains = array_values(array_unique($domains));
+        sort($domains);
+
+        return $domains;
     }
 }

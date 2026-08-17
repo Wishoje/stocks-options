@@ -108,10 +108,10 @@ These results do not certify every original symptom as fixed:
 
 - Calculator first-load completeness, truthful run state, fabricated spot fallback, and bounded expiration/page publication remain GEX-007 through GEX-009 and GEX-015.
 - New-symbol fast/fill delivery, dedicated lanes, singleton intraday jobs, and provider-wide backpressure remain GEX-004, GEX-010, GEX-018, and GEX-021.
-- Intraday nullable aggregate uniqueness and atomic EOD/intraday generations remain GEX-012 and GEX-013.
+- GEX-012 provides the uniquely keyed canonical intraday totals rollout. GEX-013 now publishes `daily_chain_snapshot` dates atomically and preserves the prior committed date on failure. Atomic generation fencing for raw intraday per-contract ingestion remains open beyond those two fixes.
 - Historical backfill currently proves provider/fallback failure handling, not full requested-range coverage for every listing age.
 - Lifecycle email still has an accepted-by-provider/before-commit duplicate window. Closing it requires an outbox or a provider idempotency key.
-- Watchlist preload retains the existing global cache flush until GEX-014 adds targeted versioned invalidation with regression proof.
+- Watchlist preload no longer performs a global cache flush. GEX-014 adds monotonic, domain-scoped per-symbol publication with regression proof for unrelated values and locks.
 - Real Redis kill/retry equivalence and hosted Node 20 CI remain unverified.
 
 ## Production acceptance still required

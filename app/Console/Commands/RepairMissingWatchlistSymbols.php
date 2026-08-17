@@ -9,6 +9,7 @@ use App\Jobs\ComputeVolMetricsJob;
 use App\Jobs\FetchOptionChainDataJob;
 use App\Jobs\PricesBackfillJob;
 use App\Jobs\PricesDailyJob;
+use App\Jobs\PublishEodCacheVersionJob;
 use App\Jobs\Seasonality5DJob;
 use App\Support\EodHealth;
 use App\Support\Symbols;
@@ -305,6 +306,7 @@ class RepairMissingWatchlistSymbols extends Command
                     new ComputeExpiryPressureJob($group, 3),
                     new ComputePositioningJob($group),
                     new ComputeUAJob($group),
+                    new PublishEodCacheVersionJob($group),
                 ];
             } else {
                 $first = new PricesDailyJob($group);
@@ -315,6 +317,7 @@ class RepairMissingWatchlistSymbols extends Command
                     new ComputeExpiryPressureJob($group, 3),
                     new ComputePositioningJob($group),
                     new ComputeUAJob($group),
+                    new PublishEodCacheVersionJob($group),
                 ];
             }
 

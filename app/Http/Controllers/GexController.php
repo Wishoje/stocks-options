@@ -2,23 +2,27 @@
 
 namespace App\Http\Controllers;
 
-use App\Support\WorkRunCoordinator;
-use App\Support\Symbols;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
-use App\Models\OptionExpiration;
 use App\Models\OptionChainData;
+use App\Models\OptionExpiration;
+use App\Support\EodCacheVersion;
 use App\Support\EodSnapshotSelector;
+use App\Support\Symbols;
+use App\Support\WorkRunCoordinator;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class GexController extends Controller
 {
     // Keep in sync with the frontend timeframe options
-    protected array $uiTimeframes = ['0d','1d','7d','14d','30d','90d'];
+    protected array $uiTimeframes = ['0d', '1d', '7d', '14d', '30d', '90d'];
+
     protected const CACHE_HOURS = 8;
+
     protected const PERF_SLOW_MS = 1200;
+
     protected const PERF_SAMPLE_PERCENT = 10;
 
     public function getGexLevels(Request $request)
@@ -43,7 +47,7 @@ class GexController extends Controller
                 'error' => "No expirations found for {$symbol}/{$timeframe}",
                 'status' => $activeRun ? 'queued' : 'missing',
                 'run' => $runPayload,
-                'available_timeframes'  => array_keys($timeframeExpirations),
+                'available_timeframes' => array_keys($timeframeExpirations),
                 'timeframe_expirations' => $timeframeExpirations,
             ];
             $this->logPerf($symbol, $timeframe, $startedAt, [
@@ -68,17 +72,17 @@ class GexController extends Controller
             ->whereDate('data_date', '<=', $anchorDate)
             ->max('data_date');
 
-        if (!$latestDate) {
+        if (! $latestDate) {
             $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)->max('data_date');
         }
-        if ($latestDate && !$this->hasUsableGreeks($expirationIds, $latestDate)) {
+        if ($latestDate && ! $this->hasUsableGreeks($expirationIds, $latestDate)) {
             $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)
                 ->whereNotNull('gamma')
                 ->where('gamma', '!=', 0)
                 ->max('data_date')
                 ?: $latestDate;
         }
-        if (!$latestDate) {
+        if (! $latestDate) {
             $payload = [
                 'error' => "No data for {$symbol}/{$timeframe}",
                 'status' => $activeRun ? 'fetching' : 'incomplete',
@@ -95,24 +99,15 @@ class GexController extends Controller
             return response()->json($payload, 404);
         }
 
-        $latestStamp = OptionChainData::whereIn('expiration_id', $expirationIds)
-            ->where('data_date', $latestDate)
-            ->max('data_timestamp');
-
-        $dateSig = substr(sha1(implode(',', $dates)), 0, 12);
-        $version = substr(sha1(implode('|', [
-            $symbol,
-            $timeframe,
-            $latestDate,
-            (string) $latestStamp,
-            count($expirationIds),
-            $dateSig,
-        ])), 0, 20);
-
-        $cacheKey = "gex:levels:v3:{$symbol}:{$timeframe}:{$version}";
-        $cacheHit = !$forceRefresh && Cache::has($cacheKey);
+        // The publication token is advanced by the last job in a successful
+        // EOD chain. In-place writes made by a failed chain must not create a
+        // new readable cache generation.
+        $version = app(EodCacheVersion::class)->current(EodCacheVersion::DOMAIN_GEX, $symbol);
+        $cacheKey = "gex:levels:v4:{$symbol}:{$timeframe}:{$version}";
+        $cacheHit = ! $forceRefresh && Cache::has($cacheKey);
 
         if ($forceRefresh) {
+            $publishedPayloadExists = Cache::has($cacheKey);
             $payload = $this->buildGexPayload(
                 $symbol,
                 $timeframe,
@@ -121,7 +116,10 @@ class GexController extends Controller
                 $expirationIds,
                 $anchorDate
             );
-            if ($payload) {
+            // A diagnostic refresh may read in-progress database writes. It
+            // can seed an empty generation, but it must never replace an
+            // existing last-good payload before the publication fence moves.
+            if ($payload && ! $publishedPayloadExists) {
                 Cache::put($cacheKey, $payload, now()->addHours(self::CACHE_HOURS));
             }
         } else {
@@ -144,7 +142,7 @@ class GexController extends Controller
             });
         }
 
-        if (!$payload) {
+        if (! $payload) {
             $fallback = [
                 'error' => "No data for {$symbol}/{$timeframe}",
                 'status' => $activeRun ? 'fetching' : 'incomplete',
@@ -192,43 +190,43 @@ class GexController extends Controller
         }
 
         // 2) Core metrics
-        $callOI  = $todayData->where('option_type','call')->sum('open_interest');
-        $putOI   = $todayData->where('option_type','put' )->sum('open_interest');
-        $callVol = $todayData->where('option_type','call')->sum('volume');
-        $putVol  = $todayData->where('option_type','put' )->sum('volume');
+        $callOI = $todayData->where('option_type', 'call')->sum('open_interest');
+        $putOI = $todayData->where('option_type', 'put')->sum('open_interest');
+        $callVol = $todayData->where('option_type', 'call')->sum('volume');
+        $putVol = $todayData->where('option_type', 'put')->sum('volume');
         $totalOI = $callOI + $putOI;
 
-        $pct = fn($x) => $totalOI > 0 ? round($x / $totalOI * 100, 2) : 0;
+        $pct = fn ($x) => $totalOI > 0 ? round($x / $totalOI * 100, 2) : 0;
 
         // 3) Net-GEX per strike
         // Formula: gamma × OI × 100 (contract multiplier) × spot²
         // Spot² converts raw gamma to dollar GEX (matches industry-standard scaling).
         $strikesRaw = [];
         foreach ($todayData as $opt) {
-            $s      = $opt->strike;
-            $spot   = (float) ($opt->underlying_price ?? 0);
+            $s = $opt->strike;
+            $spot = (float) ($opt->underlying_price ?? 0);
             $spotSq = $spot > 0 ? $spot * $spot : 1.0;
-            $gex    = ($opt->gamma ?? 0) * $opt->open_interest * 100 * $spotSq;
+            $gex = ($opt->gamma ?? 0) * $opt->open_interest * 100 * $spotSq;
             if ($opt->option_type === 'call') {
                 $strikesRaw[$s]['call_gamma'] = ($strikesRaw[$s]['call_gamma'] ?? 0) + $gex;
             } else {
-                $strikesRaw[$s]['put_gamma']  = ($strikesRaw[$s]['put_gamma']  ?? 0) + $gex;
+                $strikesRaw[$s]['put_gamma'] = ($strikesRaw[$s]['put_gamma'] ?? 0) + $gex;
             }
         }
 
         $strikeList = [];
         foreach ($strikesRaw as $strike => $g) {
             $strikeList[] = [
-                'strike'   => $strike,
-                'net_gex'  => ($g['call_gamma'] ?? 0) - ($g['put_gamma'] ?? 0),
+                'strike' => $strike,
+                'net_gex' => ($g['call_gamma'] ?? 0) - ($g['put_gamma'] ?? 0),
                 'call_gex' => $g['call_gamma'] ?? 0,
-                'put_gex'  => $g['put_gamma']  ?? 0,
+                'put_gex' => $g['put_gamma'] ?? 0,
             ];
         }
-        usort($strikeList, fn($a, $b) => $a['strike'] <=> $b['strike']);
+        usort($strikeList, fn ($a, $b) => $a['strike'] <=> $b['strike']);
 
         // 4) HVL & walls
-        $HVL          = $this->findHVL($strikeList);
+        $HVL = $this->findHVL($strikeList);
         [$c1, $c2, $c3] = $this->getTop3($strikeList, 'call');
         [$p1, $p2, $p3] = $this->getTop3($strikeList, 'put');
 
@@ -252,7 +250,7 @@ class GexController extends Controller
             ->max('data_date');
 
         $fetchPrior = function (?string $date) use ($expirationIds) {
-            if (!$date) {
+            if (! $date) {
                 return collect();
             }
 
@@ -269,12 +267,12 @@ class GexController extends Controller
                 ->groupBy('strike');
         };
 
-        $dayAgo  = $fetchPrior($prevDate);
+        $dayAgo = $fetchPrior($prevDate);
         $weekAgo = $fetchPrior($prevWeekDate);
 
         // for the response payload, keep your previous naming
         $yesterday = $prevDate;
-        $lastWeek  = $prevWeekDate;
+        $lastWeek = $prevWeekDate;
         $prevGapTradingDays = $this->tradingWeekdayGap($latestDate, $prevDate);
         $prevWeekGapTradingDays = $this->tradingWeekdayGap($latestDate, $prevWeekDate);
         $prevIsStale = $prevGapTradingDays !== null && $prevGapTradingDays > 1;
@@ -282,108 +280,108 @@ class GexController extends Controller
         // 6) Assemble full strike data with call/put deltas
         $fullStrike = [];
 
-        $totCallOiDelta   = 0;
-        $totPutOiDelta    = 0;
-        $totCallVolDelta  = 0;
-        $totPutVolDelta   = 0;
+        $totCallOiDelta = 0;
+        $totPutOiDelta = 0;
+        $totCallVolDelta = 0;
+        $totPutVolDelta = 0;
         foreach ($strikeList as $row) {
             $s = $row['strike'];
 
             // current totals
-            $curCallOi  = $todayData->where('strike', $s)->where('option_type', 'call')->sum('open_interest');
-            $curPutOi   = $todayData->where('strike', $s)->where('option_type', 'put' )->sum('open_interest');
+            $curCallOi = $todayData->where('strike', $s)->where('option_type', 'call')->sum('open_interest');
+            $curPutOi = $todayData->where('strike', $s)->where('option_type', 'put')->sum('open_interest');
             $curCallVol = $todayData->where('strike', $s)->where('option_type', 'call')->sum('volume');
-            $curPutVol  = $todayData->where('strike', $s)->where('option_type', 'put' )->sum('volume');
+            $curPutVol = $todayData->where('strike', $s)->where('option_type', 'put')->sum('volume');
 
             // prior day
             $pd = $dayAgo->get($s, collect());
-            $pCall  = $pd->firstWhere('option_type', 'call');
-            $pPut   = $pd->firstWhere('option_type', 'put');
-            $pCallOi  = $pCall?->oi ?? 0;
-            $pPutOi   = $pPut?->oi ?? 0;
+            $pCall = $pd->firstWhere('option_type', 'call');
+            $pPut = $pd->firstWhere('option_type', 'put');
+            $pCallOi = $pCall?->oi ?? 0;
+            $pPutOi = $pPut?->oi ?? 0;
             $pCallVol = $pCall?->vol ?? 0;
-            $pPutVol  = $pPut?->vol ?? 0;
+            $pPutVol = $pPut?->vol ?? 0;
 
             // prior week
             $pw = $weekAgo->get($s, collect());
-            $wCall  = $pw->firstWhere('option_type', 'call');
-            $wPut   = $pw->firstWhere('option_type', 'put');
-            $wCallOi  = $wCall?->oi ?? 0;
-            $wPutOi   = $wPut?->oi ?? 0;
+            $wCall = $pw->firstWhere('option_type', 'call');
+            $wPut = $pw->firstWhere('option_type', 'put');
+            $wCallOi = $wCall?->oi ?? 0;
+            $wPutOi = $wPut?->oi ?? 0;
             $wCallVol = $wCall?->vol ?? 0;
-            $wPutVol  = $wPut?->vol ?? 0;
+            $wPutVol = $wPut?->vol ?? 0;
 
             // deltas
-            $dCallOi  = $curCallOi  - $pCallOi;
-            $dPutOi   = $curPutOi   - $pPutOi;
+            $dCallOi = $curCallOi - $pCallOi;
+            $dPutOi = $curPutOi - $pPutOi;
             $dCallVol = $curCallVol - $pCallVol;
-            $dPutVol  = $curPutVol  - $pPutVol;
+            $dPutVol = $curPutVol - $pPutVol;
 
-            $totCallOiDelta  += $dCallOi;
-            $totPutOiDelta   += $dPutOi;
+            $totCallOiDelta += $dCallOi;
+            $totPutOiDelta += $dPutOi;
             $totCallVolDelta += $dCallVol;
-            $totPutVolDelta  += $dPutVol;
+            $totPutVolDelta += $dPutVol;
 
-            $pctOr0 = fn($n, $d) => $d > 0 ? round($n / $d * 100, 2) : 0;
+            $pctOr0 = fn ($n, $d) => $d > 0 ? round($n / $d * 100, 2) : 0;
 
             $fullStrike[] = [
-                'strike'              => $s,
-                'net_gex'             => $row['net_gex'],
-                'call_gex'            => $row['call_gex'],
-                'put_gex'             => $row['put_gex'],
-                'call_oi_delta'       => $dCallOi,
-                'put_oi_delta'        => $dPutOi,
-                'call_oi_delta_pct'   => $pctOr0($dCallOi, $pCallOi),
-                'put_oi_delta_pct'    => $pctOr0($dPutOi,  $pPutOi),
-                'call_vol_delta'      => $dCallVol,
-                'put_vol_delta'       => $dPutVol,
-                'call_vol_delta_pct'  => $pctOr0($dCallVol, $pCallVol),
-                'put_vol_delta_pct'   => $pctOr0($dPutVol,  $pPutVol),
-                'call_oi_wow'         => $curCallOi  - $wCallOi,
-                'put_oi_wow'          => $curPutOi   - $wPutOi,
-                'call_vol_wow'        => $curCallVol - $wCallVol,
-                'put_vol_wow'         => $curPutVol  - $wPutVol,
+                'strike' => $s,
+                'net_gex' => $row['net_gex'],
+                'call_gex' => $row['call_gex'],
+                'put_gex' => $row['put_gex'],
+                'call_oi_delta' => $dCallOi,
+                'put_oi_delta' => $dPutOi,
+                'call_oi_delta_pct' => $pctOr0($dCallOi, $pCallOi),
+                'put_oi_delta_pct' => $pctOr0($dPutOi, $pPutOi),
+                'call_vol_delta' => $dCallVol,
+                'put_vol_delta' => $dPutVol,
+                'call_vol_delta_pct' => $pctOr0($dCallVol, $pCallVol),
+                'put_vol_delta_pct' => $pctOr0($dPutVol, $pPutVol),
+                'call_oi_wow' => $curCallOi - $wCallOi,
+                'put_oi_wow' => $curPutOi - $wPutOi,
+                'call_vol_wow' => $curCallVol - $wCallVol,
+                'put_vol_wow' => $curPutVol - $wPutVol,
             ];
         }
 
-        $totalOiDelta  = $totCallOiDelta + $totPutOiDelta;
+        $totalOiDelta = $totCallOiDelta + $totPutOiDelta;
         $totalVolDelta = $totCallVolDelta + $totPutVolDelta;
 
         $gs = Cache::get("gamma_strength:{$symbol}:{$latestDate}");
 
         return [
-            'symbol'                   => $symbol,
-            'timeframe'                => $timeframe,
-            'data_date'                => $latestDate,
-            'data_age_days'            => $ageDays,
-            'expiration_dates'         => $dates,
-            'available_timeframes'     => array_keys($timeframeExpirations),
-            'timeframe_expirations'    => $timeframeExpirations,
-            'hvl'                      => $HVL,
-            'call_resistance'          => $c1,
-            'call_wall_2'              => $c2,
-            'call_wall_3'              => $c3,
-            'put_support'              => $p1,
-            'put_wall_2'               => $p2,
-            'put_wall_3'               => $p3,
+            'symbol' => $symbol,
+            'timeframe' => $timeframe,
+            'data_date' => $latestDate,
+            'data_age_days' => $ageDays,
+            'expiration_dates' => $dates,
+            'available_timeframes' => array_keys($timeframeExpirations),
+            'timeframe_expirations' => $timeframeExpirations,
+            'hvl' => $HVL,
+            'call_resistance' => $c1,
+            'call_wall_2' => $c2,
+            'call_wall_3' => $c3,
+            'put_support' => $p1,
+            'put_wall_2' => $p2,
+            'put_wall_3' => $p3,
             'call_open_interest_total' => $callOI,
-            'put_open_interest_total'  => $putOI,
+            'put_open_interest_total' => $putOI,
             'call_interest_percentage' => $pct($callOI),
-            'put_interest_percentage'  => $pct($putOI),
-            'call_volume_total'        => $callVol,
-            'put_volume_total'         => $putVol,
-            'pcr_volume'               => $callVol > 0 ? round($putVol / $callVol, 2) : null,
-            'total_oi_delta'           => $totalOiDelta,
-            'total_volume_delta'       => $totalVolDelta,
-            'date_prev'                => $yesterday,
+            'put_interest_percentage' => $pct($putOI),
+            'call_volume_total' => $callVol,
+            'put_volume_total' => $putVol,
+            'pcr_volume' => $callVol > 0 ? round($putVol / $callVol, 2) : null,
+            'total_oi_delta' => $totalOiDelta,
+            'total_volume_delta' => $totalVolDelta,
+            'date_prev' => $yesterday,
             'date_prev_gap_trading_days' => $prevGapTradingDays,
-            'date_prev_is_stale'       => $prevIsStale,
-            'date_prev_week'           => $lastWeek,
+            'date_prev_is_stale' => $prevIsStale,
+            'date_prev_week' => $lastWeek,
             'date_prev_week_gap_trading_days' => $prevWeekGapTradingDays,
-            'strike_data'              => $fullStrike,
-            'regime_strength'          => $gs['strength'] ?? null,
-            'gamma_sign'               => $gs['sign']     ?? null,
-            'regime_source_meta'       => $gs['source_meta'] ?? null,
+            'strike_data' => $fullStrike,
+            'regime_strength' => $gs['strength'] ?? null,
+            'gamma_sign' => $gs['sign'] ?? null,
+            'regime_source_meta' => $gs['source_meta'] ?? null,
         ];
     }
 
@@ -399,6 +397,7 @@ class GexController extends Controller
 
         if ($durationMs >= self::PERF_SLOW_MS) {
             Log::warning('eod.perf.slow', $payload);
+
             return;
         }
 
@@ -417,7 +416,7 @@ class GexController extends Controller
 
         foreach ($candidates as $tf) {
             $dates = $this->resolveExpirationDates($symbol, $tf);
-            if (!empty($dates)) {
+            if (! empty($dates)) {
                 $availability[$tf] = $dates;
             }
         }
@@ -433,8 +432,8 @@ class GexController extends Controller
         // UI labels are DTE-ish (0DTE, 1DTE, 1W, 2W, 1M, 3M), so use
         // trading-day lookaheads instead of calendar-day lookaheads.
         $map = [
-            '0d'=>0,'1d'=>1,'7d'=>5,'14d'=>10,'21d'=>15,'30d'=>21,
-            '45d'=>32,'60d'=>43,'90d'=>64,
+            '0d' => 0, '1d' => 1, '7d' => 5, '14d' => 10, '21d' => 15, '30d' => 21,
+            '45d' => 32, '60d' => 43, '90d' => 64,
         ];
         if (isset($map[$tf])) {
             return $this->getExpirationsWithinDays($symbol, $map[$tf]);
@@ -445,6 +444,7 @@ class GexController extends Controller
             if ($d->lt(\Carbon\Carbon::now()->startOfDay())) {
                 $d = $this->thirdFriday(\Carbon\Carbon::now()->addMonth());
             }
+
             return \App\Models\OptionExpiration::where('symbol', $symbol)
                 ->whereDate('expiration_date', $d->toDateString())
                 ->orderBy('expiration_date')
@@ -465,6 +465,7 @@ class GexController extends Controller
         if ($first->isFriday()) {
             $firstFriday = $first;
         }
+
         // third Friday = first Friday + 2 weeks
         return $firstFriday->copy()->addWeeks(2);
     }
@@ -478,7 +479,7 @@ class GexController extends Controller
         }
 
         $startDate = $anchorNy->toDateString();
-        $endDate   = $days > 0
+        $endDate = $days > 0
             ? $anchorNy->copy()->addWeekdays($days)->toDateString()
             : $startDate;
 
@@ -516,20 +517,21 @@ class GexController extends Controller
                 break;
             }
         }
-        if (!$HVL && count($strikeData) > 0) {
+        if (! $HVL && count($strikeData) > 0) {
             $HVL = $strikeData[0]['strike'];
         }
+
         return $HVL;
     }
 
     protected function getTop3(array $strikeData, string $type)
     {
         if ($type === 'call') {
-            $filtered = array_filter($strikeData, fn($d) => $d['net_gex'] > 0);
-            usort($filtered, fn($a, $b) => $b['net_gex'] <=> $a['net_gex']);
+            $filtered = array_filter($strikeData, fn ($d) => $d['net_gex'] > 0);
+            usort($filtered, fn ($a, $b) => $b['net_gex'] <=> $a['net_gex']);
         } else {
-            $filtered = array_filter($strikeData, fn($d) => $d['net_gex'] < 0);
-            usort($filtered, fn($a, $b) => abs($b['net_gex']) <=> abs($a['net_gex']));
+            $filtered = array_filter($strikeData, fn ($d) => $d['net_gex'] < 0);
+            usort($filtered, fn ($a, $b) => abs($b['net_gex']) <=> abs($a['net_gex']));
         }
 
         $level1 = $filtered[0]['strike'] ?? null;
@@ -550,7 +552,7 @@ class GexController extends Controller
 
     protected function tradingWeekdayGap(?string $latestDate, ?string $priorDate): ?int
     {
-        if (!$latestDate || !$priorDate) {
+        if (! $latestDate || ! $priorDate) {
             return null;
         }
 
@@ -564,7 +566,7 @@ class GexController extends Controller
         $cursor = $prior->copy();
         while ($cursor->lt($latest)) {
             $cursor->addDay();
-            if (!$cursor->isWeekend()) {
+            if (! $cursor->isWeekend()) {
                 $gap++;
             }
         }

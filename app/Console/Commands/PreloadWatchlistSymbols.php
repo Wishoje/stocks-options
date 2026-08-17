@@ -9,10 +9,10 @@ use App\Jobs\ComputeVolMetricsJob;
 use App\Jobs\FetchOptionChainDataJob;
 use App\Jobs\PricesBackfillJob;
 use App\Jobs\PricesDailyJob;
+use App\Jobs\PublishEodCacheVersionJob;
 use App\Jobs\Seasonality5DJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class PreloadWatchlistSymbols extends Command
@@ -23,11 +23,6 @@ class PreloadWatchlistSymbols extends Command
 
     public function handle(): int
     {
-        // Targeted, versioned invalidation is implemented by GEX-014. Keep the
-        // existing behavior until that card can replace it without stale reads.
-        Cache::flush();
-        $this->info('Cache flushed.');
-
         $symbols = DB::table('watchlists')->select('symbol')->distinct()->pluck('symbol')->all();
         if (! $symbols) {
             $this->info('No symbols to preload.');
@@ -35,9 +30,7 @@ class PreloadWatchlistSymbols extends Command
             return self::SUCCESS;
         }
 
-        $batch = Bus::batch([])
-            ->name('Watchlist EOD Preload')
-            ->dispatch();
+        $jobs = [];
 
         foreach ($symbols as $symbol) {
             // Keep the provider request, timeout, retries, and downstream chain
@@ -59,10 +52,17 @@ class PreloadWatchlistSymbols extends Command
                 new ComputeExpiryPressureJob($chunk, 3),
                 new ComputePositioningJob($chunk),
                 new ComputeUAJob($chunk),
+                // This must remain last. Failed/partial chains keep the
+                // previous per-symbol response generation readable.
+                new PublishEodCacheVersionJob($chunk),
             ]);
 
-            $batch->add($first);
+            $jobs[] = $first;
         }
+
+        $batch = Bus::batch($jobs)
+            ->name('Watchlist EOD Preload')
+            ->dispatch();
 
         $this->info("Queued preload batch: {$batch->id}");
 

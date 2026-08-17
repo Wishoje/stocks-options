@@ -5,9 +5,11 @@ namespace Tests\Feature;
 use App\Services\HistoricalEodArchiveReader;
 use App\Services\HistoricalEodRecoveryProvider;
 use App\Services\HistoricalEodRecoveryService;
+use App\Support\EodCacheVersion;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
@@ -934,6 +936,97 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         );
     }
 
+    public function test_publish_resumes_cache_fencing_without_reinserting_exact_rows(): void
+    {
+        [$runDirectory, $validation] = $this->validatedRun();
+        $candidateSha = (string) $validation['candidate_sha256'];
+        $versions = app(EodCacheVersion::class);
+
+        $service = new class(app(HistoricalEodRecoveryProvider::class), app(HistoricalEodArchiveReader::class)) extends HistoricalEodRecoveryService
+        {
+            private bool $failFence = true;
+
+            protected function publishRecoveryGexVersion(array $intent): void
+            {
+                if ($this->failFence && ($intent['type'] ?? null) === 'publish') {
+                    $this->failFence = false;
+
+                    throw new \RuntimeException('simulated recovery cache failure');
+                }
+
+                parent::publishRecoveryGexVersion($intent);
+            }
+        };
+
+        $failed = $this->rejectionResult(
+            fn (): array => $service->publish($runDirectory, $candidateSha),
+        );
+
+        $this->assertRejected($failed);
+        $this->assertDatabaseCount('option_chain_data', 4);
+        $this->assertFileExists($runDirectory.DIRECTORY_SEPARATOR.'publish-intent.json');
+        $this->assertFileDoesNotExist($runDirectory.DIRECTORY_SEPARATOR.'publish-receipt.json');
+        $this->assertSame('initial', $versions->current(EodCacheVersion::DOMAIN_GEX, self::SYMBOL));
+
+        $rowsBeforeResume = DB::table('option_chain_data')
+            ->orderBy('id')
+            ->get()
+            ->map(fn ($row): array => (array) $row)
+            ->all();
+        $intent = $this->readJsonArtifact(
+            $runDirectory.DIRECTORY_SEPARATOR.'publish-intent.json',
+        );
+
+        $resumed = $service->publish($runDirectory, $candidateSha);
+
+        $this->assertTrue((bool) ($resumed['ok'] ?? false), json_encode($resumed));
+        $this->assertSame(
+            $rowsBeforeResume,
+            DB::table('option_chain_data')
+                ->orderBy('id')
+                ->get()
+                ->map(fn ($row): array => (array) $row)
+                ->all(),
+        );
+        $this->assertSame(
+            $intent['cache_publication']['token'],
+            $versions->current(EodCacheVersion::DOMAIN_GEX, self::SYMBOL),
+        );
+        $this->assertSame(
+            'initial',
+            $versions->current(EodCacheVersion::DOMAIN_ACTIVITY, self::SYMBOL),
+        );
+        $this->assertFileExists($runDirectory.DIRECTORY_SEPARATOR.'publish-receipt.json');
+    }
+
+    public function test_cache_fencing_can_resume_a_legacy_prepared_intent(): void
+    {
+        $unsigned = [
+            'type' => 'publish',
+            'symbols' => [self::SYMBOL],
+            'prepared_at' => '2026-07-19T02:00:00-04:00',
+        ];
+        $intentSha = hash('sha256', $this->canonicalArtifactJson($unsigned));
+        $intent = array_merge($unsigned, ['intent_sha256' => $intentSha]);
+        $versions = app(EodCacheVersion::class);
+        Cache::forget($versions->publicationKey(EodCacheVersion::DOMAIN_GEX, self::SYMBOL));
+
+        $service = new class(app(HistoricalEodRecoveryProvider::class), app(HistoricalEodArchiveReader::class)) extends HistoricalEodRecoveryService
+        {
+            public function publishLegacyCacheFence(array $intent): void
+            {
+                $this->publishRecoveryGexVersion($intent);
+            }
+        };
+
+        $service->publishLegacyCacheFence($intent);
+
+        $this->assertSame(
+            'recovery-publish-'.$intentSha,
+            $versions->current(EodCacheVersion::DOMAIN_GEX, self::SYMBOL),
+        );
+    }
+
     public function test_publish_rebinds_the_loaded_candidate_hash_before_any_insert(): void
     {
         [$runDirectory, $validation] = $this->validatedRun();
@@ -1502,6 +1595,59 @@ class HistoricalEodRecoveryServiceTest extends TestCase
             'rolled_back',
             $this->readJsonArtifact($runDirectory.DIRECTORY_SEPARATOR.'manifest.json')['status'] ?? null,
         );
+    }
+
+    public function test_rollback_resumes_cache_fencing_without_redeleting_rows(): void
+    {
+        [$runDirectory, $validation] = $this->validatedRun();
+        $candidateSha = (string) $validation['candidate_sha256'];
+        $versions = app(EodCacheVersion::class);
+
+        $published = $this->service()->publish($runDirectory, $candidateSha);
+        $this->assertTrue((bool) ($published['ok'] ?? false), json_encode($published));
+        $publishedVersion = $versions->current(EodCacheVersion::DOMAIN_GEX, self::SYMBOL);
+
+        $service = new class(app(HistoricalEodRecoveryProvider::class), app(HistoricalEodArchiveReader::class)) extends HistoricalEodRecoveryService
+        {
+            private bool $failFence = true;
+
+            protected function publishRecoveryGexVersion(array $intent): void
+            {
+                if ($this->failFence && ($intent['type'] ?? null) === 'rollback') {
+                    $this->failFence = false;
+
+                    throw new \RuntimeException('simulated recovery rollback cache failure');
+                }
+
+                parent::publishRecoveryGexVersion($intent);
+            }
+        };
+
+        $failed = $this->rejectionResult(
+            fn (): array => $service->rollback($runDirectory, $candidateSha),
+        );
+
+        $this->assertRejected($failed);
+        $this->assertDatabaseCount('option_chain_data', 0);
+        $this->assertFileExists($runDirectory.DIRECTORY_SEPARATOR.'rollback-intent.json');
+        $this->assertFileDoesNotExist($runDirectory.DIRECTORY_SEPARATOR.'rollback-receipt.json');
+        $this->assertSame(
+            $publishedVersion,
+            $versions->current(EodCacheVersion::DOMAIN_GEX, self::SYMBOL),
+        );
+
+        $intent = $this->readJsonArtifact(
+            $runDirectory.DIRECTORY_SEPARATOR.'rollback-intent.json',
+        );
+        $resumed = $service->rollback($runDirectory, $candidateSha);
+
+        $this->assertTrue((bool) ($resumed['ok'] ?? false), json_encode($resumed));
+        $this->assertDatabaseCount('option_chain_data', 0);
+        $this->assertSame(
+            $intent['cache_publication']['token'],
+            $versions->current(EodCacheVersion::DOMAIN_GEX, self::SYMBOL),
+        );
+        $this->assertFileExists($runDirectory.DIRECTORY_SEPARATOR.'rollback-receipt.json');
     }
 
     #[DataProvider('rollbackMutationProvider')]
@@ -2074,6 +2220,14 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         $this->assertSame(self::TARGET_DATE, $intent['date'] ?? null);
         $this->assertSame($candidateSha, $intent['candidate_sha256'] ?? null);
         $this->assertNotEmpty($intent['prepared_at'] ?? null);
+        $this->assertStringStartsWith(
+            "recovery-{$type}-",
+            (string) ($intent['cache_publication']['token'] ?? ''),
+        );
+        $this->assertGreaterThan(
+            0,
+            (int) ($intent['cache_publication']['issued_at_microseconds'] ?? 0),
+        );
 
         $symbols = array_values((array) ($intent['symbols'] ?? []));
         $sortedSymbols = $symbols;

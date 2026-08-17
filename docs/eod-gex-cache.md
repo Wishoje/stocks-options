@@ -15,18 +15,12 @@ Endpoint: `GET /api/gex-levels?symbol=SPY&timeframe=14d`
 
 Cache key pattern:
 
-`gex:levels:v2:{symbol}:{timeframe}:{version}`
+`gex:levels:v4:{symbol}:{timeframe}:{published-version}`
 
-Where `version` is derived from:
-
-1. `symbol`
-2. `timeframe`
-3. latest `data_date` for targeted expirations
-4. latest `data_timestamp` for that `data_date`
-5. expiration count in scope
-6. expiration-date signature
-
-This means cache invalidates automatically when a newer EOD snapshot lands.
+The per-symbol GEX version advances only after an orchestrated EOD producer
+finishes its relevant writes. A failed or partial chain keeps the previous
+version readable. Volatility, expiry-pressure, and activity use separate
+domains so their standalone refreshes do not cold the GEX cache.
 
 Default cache TTL:
 
@@ -36,7 +30,8 @@ Force refresh query flag:
 
 `/api/gex-levels?...&refresh=1`
 
-When `refresh=1`, the payload is recomputed and cache is overwritten.
+When `refresh=1`, the payload is recomputed. An existing payload in the current
+published generation is not overwritten; an empty generation may be seeded.
 
 ## Scheduled prewarm
 
@@ -55,7 +50,7 @@ Run default prewarm:
 php artisan gex:warm-cache
 ```
 
-Force recompute and overwrite cache:
+Force recompute without replacing an existing published payload:
 
 ```bash
 php artisan gex:warm-cache --refresh

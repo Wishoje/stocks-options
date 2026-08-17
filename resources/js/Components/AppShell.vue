@@ -111,11 +111,18 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import axios from 'axios'
 import LeftPanel from './LeftPanel.vue'
+import {
+  APP_SHELL_UA_CONCURRENCY,
+  loadUnusualActivityBadges,
+} from '@/Support/app-shell-activity-loader.js'
 
 const watchlistItems = ref([])
 const pinMap = ref({})
 const uaMap = ref({})
 const showMobileWatchlist = ref(false)
+let activeReloadController = null
+let reloadSequence = 0
+let componentUnmounted = false
 
 function pinBadgeClass(score) {
   if (score >= 70) return 'bg-yellow-400/20 text-yellow-300 ring-1 ring-yellow-400/30'
@@ -128,31 +135,76 @@ function handleWatchlistUpdated() {
 }
 
 async function reloadWatchlist() {
-  const { data } = await axios.get('/api/watchlist')
-  watchlistItems.value = Array.isArray(data) ? data : []
-  await loadPinsAndUA()
-}
+  const sequence = ++reloadSequence
+  activeReloadController?.abort()
 
-async function loadPinsAndUA() {
-  const syms = [...new Set(watchlistItems.value.map((item) => item.symbol))]
+  const controller = new AbortController()
+  activeReloadController = controller
 
   try {
-    const { data } = await axios.get('/api/expiry-pressure/batch', { params: { symbols: syms, days: 3 } })
-    pinMap.value = data?.items || {}
-  } catch {
-    pinMap.value = {}
+    const { data } = await axios.get('/api/watchlist', { signal: controller.signal })
+
+    if (!isCurrentReload(sequence, controller)) return
+
+    const items = Array.isArray(data) ? data : []
+    watchlistItems.value = items
+    await loadPinsAndUA(items, sequence, controller)
+  } catch (error) {
+    if (!controller.signal.aborted) throw error
+  } finally {
+    if (activeReloadController === controller) {
+      activeReloadController = null
+    }
+  }
+}
+
+function isCurrentReload(sequence, controller) {
+  return !componentUnmounted
+    && reloadSequence === sequence
+    && activeReloadController === controller
+    && !controller.signal.aborted
+}
+
+async function loadPinsAndUA(items, sequence, controller) {
+  const syms = [...new Set(items.map((item) => item.symbol).filter(Boolean))]
+
+  if (syms.length === 0) {
+    if (isCurrentReload(sequence, controller)) {
+      pinMap.value = {}
+      uaMap.value = {}
+    }
+    return
   }
 
-  const out = {}
-  await Promise.all(syms.map(async (symbol) => {
-    try {
-      const { data } = await axios.get('/api/ua', { params: { symbol } })
-      out[symbol] = { data_date: data?.data_date || null, count: (data?.items || []).length }
-    } catch {
-      out[symbol] = { data_date: null, count: 0 }
+  try {
+    const { data } = await axios.get('/api/expiry-pressure/batch', {
+      params: { symbols: syms, days: 3 },
+      signal: controller.signal,
+    })
+
+    if (isCurrentReload(sequence, controller)) {
+      pinMap.value = data?.items || {}
     }
-  }))
-  uaMap.value = out
+  } catch {
+    if (!controller.signal.aborted && isCurrentReload(sequence, controller)) {
+      pinMap.value = {}
+    }
+  }
+
+  if (!isCurrentReload(sequence, controller)) return
+
+  const out = await loadUnusualActivityBadges(
+    syms,
+    async (symbol, signal) => {
+      const { data } = await axios.get('/api/ua', { params: { symbol }, signal })
+      return data
+    },
+    { concurrency: APP_SHELL_UA_CONCURRENCY, signal: controller.signal },
+  )
+
+  if (isCurrentReload(sequence, controller)) {
+    uaMap.value = out
+  }
 }
 
 async function handleSelectSymbol(symbol) {
@@ -173,11 +225,16 @@ async function handleRemoveFromWatchlist(id) {
 }
 
 onMounted(() => {
+  componentUnmounted = false
   reloadWatchlist()
   window.addEventListener('watchlist-updated', handleWatchlistUpdated)
 })
 
 onUnmounted(() => {
+  componentUnmounted = true
+  reloadSequence += 1
+  activeReloadController?.abort()
+  activeReloadController = null
   window.removeEventListener('watchlist-updated', handleWatchlistUpdated)
 })
 </script>

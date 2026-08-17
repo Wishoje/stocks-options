@@ -4,6 +4,7 @@ This runbook covers how to run and verify `watchlist:preload` so all watchlist s
 
 ## What `watchlist:preload` does
 
+- Preserves unrelated cache values and locks; it never performs a global cache flush.
 - Loads all distinct symbols from `watchlists`.
 - Creates one independent chain per symbol and adds each chain head to the
   `Watchlist EOD Preload` batch:
@@ -15,6 +16,7 @@ This runbook covers how to run and verify `watchlist:preload` so all watchlist s
   - `ComputeExpiryPressureJob`
   - `ComputePositioningJob`
   - `ComputeUAJob`
+  - `PublishEodCacheVersionJob` (only reached after the preceding symbol chain succeeds)
 
 The chain order is unchanged. A provider timeout or incomplete chain stops
 downstream calculations for that symbol only. It cannot replay or block other

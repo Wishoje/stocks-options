@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use App\Support\EodCacheVersion;
 use App\Support\EodHealth;
 use App\Support\Market;
 use App\Support\Symbols;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 /**
@@ -301,6 +303,11 @@ class HistoricalEodRecoveryService
                 throw new RuntimeException('Recovery publication did not produce every exact prepared slice.');
             }
 
+            // Keep this before artifact finalization. If Redis is unavailable,
+            // the exact database slices and prepared intent remain resumable,
+            // and a retry reuses the same publication token.
+            $this->publishRecoveryGexVersion($intent);
+
             $receipt = $this->finalizePublishArtifacts($runDirectory, $manifest, $intent);
             $published = (array) $receipt['symbols'];
 
@@ -385,6 +392,10 @@ class HistoricalEodRecoveryService
                 throw new RuntimeException('Recovery rollback did not empty every prepared slice.');
             }
 
+            // Rollback is also a new authoritative GEX state. Fence it before
+            // writing the terminal receipt so a cache failure can be retried.
+            $this->publishRecoveryGexVersion($intent);
+
             $rollback = $this->finalizeRollbackArtifacts($runDirectory, $manifest, $intent);
 
             return [
@@ -393,6 +404,52 @@ class HistoricalEodRecoveryService
                 'candidate_sha256' => $candidateSha,
             ];
         });
+    }
+
+    /** @param array<string,mixed> $intent */
+    protected function publishRecoveryGexVersion(array $intent): void
+    {
+        $type = (string) ($intent['type'] ?? '');
+        $intentSha = strtolower((string) ($intent['intent_sha256'] ?? ''));
+        $symbols = (array) ($intent['symbols'] ?? []);
+
+        if (
+            ! in_array($type, ['publish', 'rollback'], true)
+            || ! $this->validSha256($intentSha)
+        ) {
+            throw new RuntimeException('Recovery cache publication intent is invalid.');
+        }
+
+        $cachePublication = (array) ($intent['cache_publication'] ?? []);
+        $publicationToken = trim((string) ($cachePublication['token'] ?? ''));
+        $issuedAtMicroseconds = (int) ($cachePublication['issued_at_microseconds'] ?? 0);
+
+        if ($cachePublication === []) {
+            // Compatibility for a prepared intent written before GEX-014.
+            $preparedAt = (string) ($intent['prepared_at'] ?? '');
+            try {
+                $issuedAt = CarbonImmutable::parse($preparedAt, 'UTC');
+            } catch (\Throwable $exception) {
+                throw new RuntimeException(
+                    'Recovery cache publication timestamp is invalid.',
+                    previous: $exception,
+                );
+            }
+            $publicationToken = "recovery-{$type}-{$intentSha}";
+            $issuedAtMicroseconds = ($issuedAt->getTimestamp() * 1_000_000)
+                + (int) $issuedAt->format('u');
+        }
+
+        if ($publicationToken === '' || $issuedAtMicroseconds <= 0) {
+            throw new RuntimeException('Recovery cache publication metadata is invalid.');
+        }
+
+        app(EodCacheVersion::class)->publish(
+            $symbols,
+            [EodCacheVersion::DOMAIN_GEX],
+            $publicationToken,
+            $issuedAtMicroseconds,
+        );
     }
 
     /** @param array<int,string> $symbols */
@@ -538,6 +595,10 @@ class HistoricalEodRecoveryService
             'candidate_sha256' => strtolower($candidateSha),
             'symbols' => array_values($symbols),
             'expectations' => $expectations,
+            'cache_publication' => [
+                'token' => "recovery-{$type}-".(string) Str::orderedUuid(),
+                'issued_at_microseconds' => (int) floor(microtime(true) * 1_000_000),
+            ],
             'prepared_at' => now('UTC')->toIso8601String(),
         ];
         $intent['intent_sha256'] = hash('sha256', $this->canonicalJson($intent));
@@ -582,6 +643,20 @@ class HistoricalEodRecoveryService
                 || ! $this->validSha256((string) ($expectation['full_slice_sha256'] ?? ''))
             ) {
                 throw new RuntimeException("Recovery {$type} intent expectation is invalid for {$symbol}.");
+            }
+        }
+
+        if (array_key_exists('cache_publication', $intent)) {
+            $cachePublication = $intent['cache_publication'];
+            if (
+                ! is_array($cachePublication)
+                || ! str_starts_with(
+                    (string) ($cachePublication['token'] ?? ''),
+                    "recovery-{$type}-",
+                )
+                || (int) ($cachePublication['issued_at_microseconds'] ?? 0) <= 0
+            ) {
+                throw new RuntimeException("Recovery {$type} cache publication metadata is invalid.");
             }
         }
 

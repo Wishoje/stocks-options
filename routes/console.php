@@ -24,7 +24,7 @@ Schedule::command('chain:snapshot')
     ->at('17:30');
 
 // 3) Compute vol metrics nightly
-Schedule::job(new ComputeVolMetricsJob(['SPY', 'QQQ', 'IWM']))
+Schedule::job(new ComputeVolMetricsJob(['SPY', 'QQQ', 'IWM'], null, true))
     ->weekdays()
     ->timezone('America/New_York')
     ->dailyAt('17:45')

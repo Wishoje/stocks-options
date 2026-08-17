@@ -16,6 +16,7 @@ use App\Jobs\FetchUnderlyingQuotesJob;
 use App\Jobs\PricesBackfillJob;
 use App\Jobs\PricesDailyJob;
 use App\Jobs\PrimeSymbolJob;
+use App\Jobs\PublishEodCacheVersionJob;
 use App\Jobs\QueueSymbolEnrichmentJob;
 use App\Jobs\Seasonality5DJob;
 use App\Jobs\SendLifecycleEmailJob;
@@ -141,8 +142,14 @@ return [
     PrimeSymbolJob::class => [
         'connection' => 'redis', 'queues' => ['prime'], 'max_timeout' => 60,
         'isolated_queues' => ['default'],
-        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'symbol',
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'symbol + completed cache domains',
         'write_strategy' => 'read-before-dispatch ordered child chain',
+    ],
+    PublishEodCacheVersionJob::class => [
+        'connection' => 'redis', 'queues' => ['default', 'prime', 'bootstrap'], 'max_timeout' => 30,
+        'isolated_queues' => ['default', 'bootstrap-fast'],
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'sorted symbols + stable publication token',
+        'write_strategy' => 'idempotent per-symbol EOD cache publication fence',
     ],
     QueueSymbolEnrichmentJob::class => [
         'connection' => 'redis', 'queues' => ['bootstrap'], 'max_timeout' => 30,

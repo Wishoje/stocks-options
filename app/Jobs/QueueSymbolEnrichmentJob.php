@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Jobs\Middleware\EnsureWorkRunOrchestrationCurrent;
+use App\Support\EodCacheVersion;
 use App\Support\QueueLanes;
 use App\Support\Symbols;
 use Illuminate\Bus\Queueable;
@@ -19,6 +20,11 @@ class QueueSymbolEnrichmentJob extends QueueJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $timeout = 30;
+
+    private const BASE_CACHE_DOMAINS = [
+        EodCacheVersion::DOMAIN_GEX,
+        EodCacheVersion::DOMAIN_EXPIRY_PRESSURE,
+    ];
 
     public function __construct(
         public string $symbol,
@@ -56,10 +62,20 @@ class QueueSymbolEnrichmentJob extends QueueJob implements ShouldQueue
                 (string) $this->workRunOrchestrationToken
             );
 
-            $jobs = (new PrimeSymbolJob($symbol))->plannedJobs();
+            $prime = new PrimeSymbolJob($symbol);
+            $jobs = $prime->plannedJobs();
             foreach ($jobs as $job) {
                 $this->appendToChain($job->through([$middleware]));
             }
+
+            $this->appendToChain(
+                (new PublishEodCacheVersionJob([$symbol], array_values(array_unique(array_merge(
+                    self::BASE_CACHE_DOMAINS,
+                    $prime->cacheDomainsForJobs($jobs)
+                )))))
+                    ->onQueue(QueueLanes::bootstrapChild())
+                    ->through([$middleware])
+            );
 
             $this->appendToChain(
                 (new CompleteWorkRunJob(
@@ -79,7 +95,7 @@ class QueueSymbolEnrichmentJob extends QueueJob implements ShouldQueue
         }
 
         try {
-            Bus::dispatch(new PrimeSymbolJob($symbol));
+            Bus::dispatch(new PrimeSymbolJob($symbol, self::BASE_CACHE_DOMAINS));
         } catch (\Throwable $exception) {
             $dispatchLock->release();
             throw $exception;

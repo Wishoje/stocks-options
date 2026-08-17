@@ -12,7 +12,7 @@ class WarmGexCacheCommand extends Command
     protected $signature = 'gex:warm-cache
                             {--symbols=SPY,QQQ : Comma-separated symbols}
                             {--timeframes=14d,30d,90d : Comma-separated EOD timeframes}
-                            {--refresh : Force recompute and overwrite cache}';
+                            {--refresh : Force recompute without replacing an existing published payload}';
 
     protected $description = 'Prewarm /api/gex-levels server cache for selected symbols and timeframes';
 
@@ -38,6 +38,7 @@ class WarmGexCacheCommand extends Command
 
         if (empty($symbols) || empty($timeframes)) {
             $this->warn('No valid symbols/timeframes to warm.');
+
             return self::SUCCESS;
         }
 
@@ -64,6 +65,7 @@ class WarmGexCacheCommand extends Command
 
                 if ($status === 200) {
                     $ok++;
+
                     continue;
                 }
 

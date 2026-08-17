@@ -546,6 +546,7 @@ Ticket-specific regression proof:
 Type: Bug
 Epic: Data integrity
 Depends on: GEX-002
+Status: Implemented locally with a date-scoped transactional swap, checksum verification, and interruption tests.
 
 Problem and scope:
 
@@ -569,6 +570,7 @@ Ticket-specific regression proof:
 Type: Bug
 Epic: Cache safety
 Depends on: GEX-002
+Status: Implemented locally with monotonic, domain-scoped per-symbol publication and focused regression proof.
 
 Problem and scope:
 

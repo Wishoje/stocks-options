@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\EodCacheVersion;
 use App\Support\EodSnapshotSelector;
 use Carbon\Carbon;
 use Illuminate\Bus\Batchable;
@@ -11,16 +12,34 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
+    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public function __construct(public array $symbols, public ?string $anchorDate = null)
-    {
+    public bool $publishCacheVersion = false;
+
+    public ?string $cachePublicationToken = null;
+
+    public ?int $cachePublicationIssuedAt = null;
+
+    public function __construct(
+        public array $symbols,
+        public ?string $anchorDate = null,
+        bool $publishCacheVersion = false,
+        ?string $cachePublicationToken = null,
+        ?int $cachePublicationIssuedAt = null
+    ) {
         $this->anchorDate = app(EodSnapshotSelector::class)->resolvedAnchorDate($anchorDate);
+        $this->publishCacheVersion = $publishCacheVersion;
+        $this->cachePublicationToken = $cachePublicationToken;
+        $this->cachePublicationIssuedAt = $cachePublicationIssuedAt;
+        if ($publishCacheVersion) {
+            $this->cachePublicationToken ??= (string) Str::orderedUuid();
+            $this->cachePublicationIssuedAt ??= (int) floor(microtime(true) * 1_000_000);
+        }
     }
 
     public function handle(): void
@@ -73,9 +92,15 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
                 $this->computeSkewCurvature($symbol, $date, $expMap, $selectedDates, $rows);
             }, 3);
 
-            Cache::forget("iv_term:{$symbol}");
-            Cache::forget("vrp:{$symbol}");
-            Cache::forget("iv_skew:{$symbol}");
+        }
+
+        if ($this->publishCacheVersion) {
+            app(EodCacheVersion::class)->publish(
+                $this->symbols,
+                [EodCacheVersion::DOMAIN_VOLATILITY],
+                $this->cachePublicationToken,
+                $this->cachePublicationIssuedAt
+            );
         }
     }
 
@@ -142,11 +167,11 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
             $putATM = $slice->where('option_type', 'put')->sortBy(fn ($row) => abs($row->strike - $spot))->first();
 
             $ivATM = null;
-            if (!empty($callATM?->iv) && !empty($putATM?->iv)) {
+            if (! empty($callATM?->iv) && ! empty($putATM?->iv)) {
                 $ivATM = 0.5 * ((float) $callATM->iv + (float) $putATM->iv);
-            } elseif (!empty($callATM?->iv)) {
+            } elseif (! empty($callATM?->iv)) {
                 $ivATM = (float) $callATM->iv;
-            } elseif (!empty($putATM?->iv)) {
+            } elseif (! empty($putATM?->iv)) {
                 $ivATM = (float) $putATM->iv;
             }
 
@@ -160,7 +185,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
 
                 $ivCall = $this->vwapIV($calls);
                 $ivPut = $this->vwapIV($puts);
-                if (!is_null($ivCall) && !is_null($ivPut)) {
+                if (! is_null($ivCall) && ! is_null($ivPut)) {
                     $ivATM = 0.5 * ($ivCall + $ivPut);
                 } else {
                     $ivATM = $ivCall ?? $ivPut;
@@ -207,7 +232,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
     }
 
     /**
-     * @param array<int,array<string,mixed>> $termRows
+     * @param  array<int,array<string,mixed>>  $termRows
      * @return array{0:?float,1:array<string,mixed>}
      */
     protected function pick1MIV(array $termRows, string $date): array
@@ -226,7 +251,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
         $bestDiff = PHP_INT_MAX;
 
         foreach ($termRows as $row) {
-            if (!isset($row['iv']) || is_null($row['iv'])) {
+            if (! isset($row['iv']) || is_null($row['iv'])) {
                 continue;
             }
 
@@ -237,7 +262,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
             }
         }
 
-        if (!$best) {
+        if (! $best) {
             return [null, [
                 'anchor_date' => $date,
                 'selected_exp_date' => null,
@@ -305,7 +330,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
             ->orderByDesc('data_date')
             ->limit(252)
             ->pluck('vrp')
-            ->filter(fn ($value) => !is_null($value))
+            ->filter(fn ($value) => ! is_null($value))
             ->values();
 
         if ($history->count() < 30) {
@@ -336,7 +361,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
 
         foreach ($expMap as $expDate => $expId) {
             $slice = $rows->where('expiration_id', $expId)
-                ->filter(fn ($row) => !is_null($row->iv) && !is_null($row->delta) && !is_null($row->strike));
+                ->filter(fn ($row) => ! is_null($row->iv) && ! is_null($row->delta) && ! is_null($row->strike));
 
             if ($slice->isEmpty()) {
                 continue;
@@ -369,7 +394,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
                     if ($span >= 0.05) {
                         $curvatureRaw = $this->quadA($points);
                         $curvature = is_finite($curvatureRaw) ? $curvatureRaw * 0.01 : null;
-                        if (!is_finite($curvature) || abs($curvature) > 1e6) {
+                        if (! is_finite($curvature) || abs($curvature) > 1e6) {
                             $curvature = null;
                         }
                     }
@@ -377,7 +402,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
             }
 
             $skew = (is_null($iv25p) || is_null($iv25c)) ? null : ($iv25p - $iv25c);
-            if (!is_finite($skew) || abs($skew) > 10) {
+            if (! is_finite($skew) || abs($skew) > 10) {
                 $skew = null;
             }
 
@@ -388,8 +413,8 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
                 ->orderByDesc('data_date')
                 ->first(['skew_pc', 'curvature']);
 
-            $skewDod = (!is_null($skew) && $prev) ? ($skew - (float) $prev->skew_pc) : null;
-            $curvatureDod = (!is_null($curvature) && $prev) ? ($curvature - (float) $prev->curvature) : null;
+            $skewDod = (! is_null($skew) && $prev) ? ($skew - (float) $prev->skew_pc) : null;
+            $curvatureDod = (! is_null($curvature) && $prev) ? ($curvature - (float) $prev->curvature) : null;
 
             DB::table('iv_skew')->updateOrInsert(
                 ['symbol' => $symbol, 'data_date' => $date, 'exp_date' => $expDate],
@@ -438,17 +463,19 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
             }
         }
 
-        if (!$lo || !$hi || $lo['d'] === $hi['d']) {
+        if (! $lo || ! $hi || $lo['d'] === $hi['d']) {
             usort($points, fn ($a, $b) => abs($a['d'] - $target) <=> abs($b['d'] - $target));
+
             return $points[0]['iv'] ?? null;
         }
 
         $t = ($target - $lo['d']) / ($hi['d'] - $lo['d']);
+
         return $lo['iv'] + $t * ($hi['iv'] - $lo['iv']);
     }
 
     /**
-     * @param array<int,array{k: float, iv: float}> $points
+     * @param  array<int,array{k: float, iv: float}>  $points
      */
     protected function quadA(array $points): ?float
     {

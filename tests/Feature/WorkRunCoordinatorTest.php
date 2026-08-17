@@ -8,8 +8,10 @@ use App\Jobs\CompleteWorkRunJob;
 use App\Jobs\ConfirmWorkRunOrchestrationJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Jobs\Middleware\EnsureWorkRunOrchestrationCurrent;
+use App\Jobs\PublishEodCacheVersionJob;
 use App\Jobs\QueueSymbolEnrichmentJob;
 use App\Models\WorkRun;
+use App\Support\EodCacheVersion;
 use App\Support\WorkRunCoordinator;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Queue\Job as QueueJobContract;
@@ -451,6 +453,10 @@ class WorkRunCoordinatorTest extends TestCase
 
         $this->assertGreaterThan(1, $children->count());
         $this->assertInstanceOf(CompleteWorkRunJob::class, $children->last());
+        $this->assertInstanceOf(PublishEodCacheVersionJob::class, $children->get($children->count() - 2));
+        $this->assertCount(1, $children->filter(
+            static fn (object $child): bool => $child instanceof PublishEodCacheVersionJob
+        ));
         $this->assertFalse($children->slice(0, -1)->contains(
             static fn (object $child): bool => $child instanceof CompleteWorkRunJob
         ));
@@ -464,6 +470,12 @@ class WorkRunCoordinatorTest extends TestCase
         $this->assertSame('run-id', $completion->workRunId);
         $this->assertSame('delivery-token', $completion->workRunDeliveryToken);
         $this->assertSame(2, $completion->workRunAttempt);
+
+        /** @var PublishEodCacheVersionJob $publication */
+        $publication = $children->get($children->count() - 2);
+        $this->assertEqualsCanonicalizing(EodCacheVersion::ALL_DOMAINS, $publication->domains);
+        $this->assertNotEmpty($publication->publicationToken);
+        $this->assertGreaterThan(0, $publication->issuedAtMicroseconds);
     }
 
     public function test_durable_intraday_no_expiries_hands_off_to_one_owned_bootstrap_without_unowned_retry(): void
