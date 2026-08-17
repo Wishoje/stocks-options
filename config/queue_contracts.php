@@ -2,12 +2,12 @@
 
 use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\BuildAiExportJob;
+use App\Jobs\CompleteWorkRunJob;
 use App\Jobs\ComputeBlindSpotsJob;
 use App\Jobs\ComputeExpiryPressureJob;
 use App\Jobs\ComputePositioningJob;
 use App\Jobs\ComputeUAJob;
 use App\Jobs\ComputeVolMetricsJob;
-use App\Jobs\CompleteWorkRunJob;
 use App\Jobs\ConfirmWorkRunOrchestrationJob;
 use App\Jobs\FetchCalculatorChainJob;
 use App\Jobs\FetchOptionChainDataJob;
@@ -111,7 +111,7 @@ return [
             'bootstrap-fast' => 270,
         ],
         'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'sorted symbols + current market session',
-        'write_strategy' => 'contract capture upsert and aggregate upsert; nullable total uniqueness remains GEX-012',
+        'write_strategy' => 'contract capture upsert plus freshness-fenced legacy total and flagged canonical dual-write',
         'provider_timeout' => 10,
     ],
     FetchUnderlyingQuotesJob::class => [

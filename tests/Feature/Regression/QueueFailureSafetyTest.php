@@ -10,6 +10,7 @@ use App\Jobs\PricesBackfillJob;
 use App\Models\AiExport;
 use App\Models\User;
 use App\Services\AiExportBuilder;
+use App\Support\OptionLiveTotalsRepository;
 use App\Support\PolygonClient;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -108,7 +109,7 @@ class QueueFailureSafetyTest extends MySqlTestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
-        DB::table('option_live_counters')->insert([
+        $legacyTotalId = (int) DB::table('option_live_counters')->insertGetId([
             'symbol' => 'SPY',
             'trade_date' => '2026-03-18',
             'exp_date' => null,
@@ -119,6 +120,17 @@ class QueueFailureSafetyTest extends MySqlTestCase
             'asof' => '2026-03-18 16:55:00',
             'created_at' => now(),
             'updated_at' => now(),
+        ]);
+        app(OptionLiveTotalsRepository::class)->store([
+            'symbol' => 'SPY',
+            'trade_date' => '2026-03-18',
+            'call_volume' => 300,
+            'put_volume' => 477,
+            'volume' => 777,
+            'premium_usd' => 12345,
+            'asof' => '2026-03-18 16:55:00',
+            'source_updated_at' => now('UTC'),
+            'source_row_id' => $legacyTotalId,
         ]);
 
         $client = Mockery::mock(PolygonClient::class);
@@ -150,6 +162,89 @@ class QueueFailureSafetyTest extends MySqlTestCase
         $this->assertCount(1, $totals);
         $this->assertSame(777, (int) $totals->first()->volume);
         $this->assertSame('2026-03-18 16:55:00', (string) $totals->first()->asof);
+
+        $canonical = DB::table('option_live_totals')
+            ->where('symbol', 'SPY')
+            ->whereDate('trade_date', '2026-03-18')
+            ->get();
+
+        $this->assertCount(1, $canonical);
+        $this->assertSame(300, (int) $canonical->first()->call_volume);
+        $this->assertSame(477, (int) $canonical->first()->put_volume);
+        $this->assertSame(777, (int) $canonical->first()->volume);
+        $this->assertSame('12345.0000', (string) $canonical->first()->premium_usd);
+        $this->assertSame('2026-03-18 16:55:00.000000', (string) $canonical->first()->asof);
+    }
+
+    public function test_complete_intraday_fetch_dual_writes_one_canonical_total_with_the_freshest_asof(): void
+    {
+        config()->set('option_live_totals.dual_write', true);
+        config()->set('option_live_totals.compare_writes', true);
+
+        DB::table('option_expirations')->insert([
+            [
+                'symbol' => 'SPY',
+                'expiration_date' => '2026-03-20',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'symbol' => 'SPY',
+                'expiration_date' => '2026-03-27',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $client = Mockery::mock(PolygonClient::class);
+        $client->shouldReceive('intradayOptionVolumes')
+            ->once()
+            ->with('SPY', '2026-03-20')
+            ->andReturn($this->completeIntradayPayload(
+                '2026-03-20',
+                '2026-03-18 16:59:00',
+                10,
+                20,
+                1000,
+                500
+            ));
+        $client->shouldReceive('intradayOptionVolumes')
+            ->once()
+            ->with('SPY', '2026-03-27')
+            ->andReturn($this->completeIntradayPayload(
+                '2026-03-27',
+                '2026-03-18 16:57:00',
+                30,
+                40,
+                2000,
+                510
+            ));
+        $this->app->instance(PolygonClient::class, $client);
+
+        (new FetchPolygonIntradayOptionsJob(['SPY']))->handle();
+
+        $canonical = app(OptionLiveTotalsRepository::class)
+            ->canonicalTotal('SPY', '2026-03-18');
+
+        $this->assertNotNull($canonical);
+        $this->assertSame(40, $canonical['call_volume']);
+        $this->assertSame(60, $canonical['put_volume']);
+        $this->assertSame(100, $canonical['volume']);
+        $this->assertSame('3000.0000', $canonical['premium_usd']);
+        $this->assertSame('2026-03-18T16:59:00.000000Z', $canonical['asof']->toISOString());
+        $this->assertTrue(
+            app(OptionLiveTotalsRepository::class)->compare('SPY', '2026-03-18')['matches']
+        );
+        $this->assertSame(
+            1,
+            DB::table('option_live_counters')
+                ->where('symbol', 'SPY')
+                ->whereDate('trade_date', '2026-03-18')
+                ->whereNull('exp_date')
+                ->whereNull('strike')
+                ->whereNull('option_type')
+                ->count()
+        );
     }
 
     public function test_a_late_export_failure_cannot_regress_a_completed_export(): void
@@ -482,6 +577,49 @@ class QueueFailureSafetyTest extends MySqlTestCase
             'day' => ['volume' => 10, 'close' => 2.5],
             'open_interest' => 50,
             'underlying_asset' => ['price' => 180],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function completeIntradayPayload(
+        string $expiration,
+        string $asof,
+        int $callVolume,
+        int $putVolume,
+        int $premium,
+        int $strike,
+    ): array {
+        return [
+            'complete' => true,
+            'asof' => $asof,
+            'request_id' => 'gex012-'.$expiration,
+            'totals' => [
+                'call_vol' => $callVolume,
+                'put_vol' => $putVolume,
+                'premium' => $premium,
+            ],
+            'by_strike' => [[
+                'exp_date' => $expiration,
+                'strike' => $strike,
+                'call_vol' => $callVolume,
+                'put_vol' => $putVolume,
+                'call_prem' => $premium / 2,
+                'put_prem' => $premium / 2,
+            ]],
+            'contracts' => [[
+                'underlying_asset' => ['ticker' => 'SPY'],
+                'details' => [
+                    'ticker' => 'O:SPY'.str_replace('-', '', $expiration).'C'.str_pad((string) ($strike * 1000), 8, '0', STR_PAD_LEFT),
+                    'contract_type' => 'call',
+                    'expiration_date' => $expiration,
+                    'strike_price' => $strike,
+                ],
+                'day' => [
+                    'volume' => $callVolume,
+                    'close' => 2.5,
+                ],
+                'open_interest' => 100,
+            ]],
         ];
     }
 }

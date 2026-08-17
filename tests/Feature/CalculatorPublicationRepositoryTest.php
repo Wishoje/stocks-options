@@ -69,6 +69,25 @@ class CalculatorPublicationRepositoryTest extends TestCase
         $this->publications = new CalculatorPublicationRepository;
     }
 
+    protected function tearDown(): void
+    {
+        foreach ([
+            'calculator_expiry_heads',
+            'calculator_catalog_heads',
+            'calculator_run_expirations',
+            'calculator_expiry_publication_rows',
+            'calculator_expiry_publications',
+            'calculator_publication_runs',
+            'calculator_symbol_generations',
+        ] as $table) {
+            DB::table($table)->delete();
+        }
+        DB::table('option_snapshots')->delete();
+        DB::table('option_expirations')->delete();
+
+        parent::tearDown();
+    }
+
     public function test_generations_are_monotonic_per_symbol_and_independent_from_optional_work_runs(): void
     {
         $at = $this->time('2026-08-16 14:00:00');

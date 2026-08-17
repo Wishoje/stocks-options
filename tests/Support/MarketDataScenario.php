@@ -3,12 +3,14 @@
 namespace Tests\Support;
 
 use App\Models\User;
+use App\Support\OptionLiveTotalsRepository;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 final class MarketDataScenario
 {
     public const DATE = '2026-03-18';
+
     public const NOW = '2026-03-18 17:00:00';
 
     /** @var array<int,string> */
@@ -344,6 +346,11 @@ final class MarketDataScenario
 
         DB::table('intraday_option_volumes')->insert($contractRows);
         DB::table('option_live_counters')->insert($counterRows);
+
+        $totals = app(OptionLiveTotalsRepository::class);
+        foreach ($symbols as $symbol) {
+            $totals->backfillOne($symbol, self::DATE);
+        }
     }
 
     /**

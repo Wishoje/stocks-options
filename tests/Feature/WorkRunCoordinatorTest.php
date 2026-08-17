@@ -469,11 +469,13 @@ class WorkRunCoordinatorTest extends TestCase
     public function test_durable_intraday_no_expiries_hands_off_to_one_owned_bootstrap_without_unowned_retry(): void
     {
         $this->createEnrichmentTables();
-        Schema::create('option_snapshots', function (Blueprint $table): void {
-            $table->id();
-            $table->string('symbol');
-            $table->date('expiry');
-        });
+        if (! Schema::hasTable('option_snapshots')) {
+            Schema::create('option_snapshots', function (Blueprint $table): void {
+                $table->id();
+                $table->string('symbol');
+                $table->date('expiry');
+            });
+        }
 
         $at = CarbonImmutable::parse('2026-08-16 14:00:00', 'UTC');
         $this->travelTo($at);
@@ -716,28 +718,36 @@ class WorkRunCoordinatorTest extends TestCase
 
     private function createEnrichmentTables(): void
     {
-        Schema::create('prices_daily', function (Blueprint $table): void {
-            $table->id();
-            $table->string('symbol');
-            $table->date('trade_date');
-        });
-        Schema::create('option_expirations', function (Blueprint $table): void {
-            $table->id();
-            $table->string('symbol');
-            $table->date('expiration_date')->nullable();
-        });
-        Schema::create('option_chain_data', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('expiration_id');
-            $table->date('data_date');
-        });
-
-        foreach (['seasonality_5d', 'expiry_pressure', 'dex_by_expiry', 'iv_term', 'unusual_activity'] as $name) {
-            Schema::create($name, function (Blueprint $table): void {
+        if (! Schema::hasTable('prices_daily')) {
+            Schema::create('prices_daily', function (Blueprint $table): void {
                 $table->id();
                 $table->string('symbol');
+                $table->date('trade_date');
+            });
+        }
+        if (! Schema::hasTable('option_expirations')) {
+            Schema::create('option_expirations', function (Blueprint $table): void {
+                $table->id();
+                $table->string('symbol');
+                $table->date('expiration_date')->nullable();
+            });
+        }
+        if (! Schema::hasTable('option_chain_data')) {
+            Schema::create('option_chain_data', function (Blueprint $table): void {
+                $table->id();
+                $table->unsignedBigInteger('expiration_id');
                 $table->date('data_date');
             });
+        }
+
+        foreach (['seasonality_5d', 'expiry_pressure', 'dex_by_expiry', 'iv_term', 'unusual_activity'] as $name) {
+            if (! Schema::hasTable($name)) {
+                Schema::create($name, function (Blueprint $table): void {
+                    $table->id();
+                    $table->string('symbol');
+                    $table->date('data_date');
+                });
+            }
         }
     }
 }

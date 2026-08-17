@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\WorkRun;
+use App\Support\OptionLiveTotalsRepository;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\QueueLanes;
 use App\Support\WorkRunCoordinator;
@@ -209,7 +210,9 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                 DB::transaction(function () use ($symbol, $tradeDate, $snap, $expiry, &$totCallAll, &$totPutAll, &$totPremAll, &$rowsAll, &$lastCapturedAt, &$requestId, &$intradayTableFull, &$symbolIncomplete) {
                     $now = now();
                     $capturedAt = \Carbon\Carbon::parse($snap['asof'] ?? now('America/New_York'))->setTimezone('UTC');
-                    $lastCapturedAt = $capturedAt;
+                    if ($lastCapturedAt === null || $capturedAt->greaterThan($lastCapturedAt)) {
+                        $lastCapturedAt = $capturedAt;
+                    }
                     $requestId = $snap['request_id'] ?? $requestId;
 
                     $ingestor = app(\App\Services\IntradayOptionVolumeIngestor::class);
@@ -313,33 +316,40 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                 continue;
             }
 
-            // Write aggregated totals and strikes after all chunks
+            // Publish detail rows before the aggregate so shadow comparison sees
+            // one internally consistent completed symbol/session. The canonical
+            // total store freshness-fences stale retries independently.
             if ($lastCapturedAt) {
                 $now = now();
-                DB::table('option_live_counters')->upsert(
-                    [[
+                DB::transaction(function () use (
+                    $symbol,
+                    $tradeDate,
+                    $rowsAll,
+                    $totCallAll,
+                    $totPutAll,
+                    $totPremAll,
+                    $lastCapturedAt,
+                    $now
+                ): void {
+                    if ($rowsAll !== []) {
+                        DB::table('option_live_counters')->upsert(
+                            $rowsAll,
+                            ['symbol', 'trade_date', 'exp_date', 'strike', 'option_type'],
+                            ['volume', 'premium_usd', 'asof', 'updated_at']
+                        );
+                    }
+
+                    app(OptionLiveTotalsRepository::class)->publish([
                         'symbol' => $symbol,
                         'trade_date' => $tradeDate,
-                        'exp_date' => null,
-                        'strike' => null,
-                        'option_type' => null,
+                        'call_volume' => $totCallAll,
+                        'put_volume' => $totPutAll,
                         'volume' => $totCallAll + $totPutAll,
                         'premium_usd' => $totPremAll,
                         'asof' => $lastCapturedAt,
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ]],
-                    ['symbol', 'trade_date', 'exp_date', 'strike', 'option_type'],
-                    ['volume', 'premium_usd', 'asof', 'updated_at']
-                );
-            }
-
-            if (! empty($rowsAll)) {
-                DB::table('option_live_counters')->upsert(
-                    $rowsAll,
-                    ['symbol', 'trade_date', 'exp_date', 'strike', 'option_type'],
-                    ['volume', 'premium_usd', 'asof', 'updated_at']
-                );
+                        'source_updated_at' => $now,
+                    ]);
+                }, 3);
             }
 
             continue;

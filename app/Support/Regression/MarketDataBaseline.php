@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Schema;
 
 final class MarketDataBaseline
 {
-    public const SCHEMA_VERSION = 2;
+    public const SCHEMA_VERSION = 3;
 
     /**
      * Capture a deterministic, credential-free market-data artifact.
@@ -46,6 +46,7 @@ final class MarketDataBaseline
                 'option_snapshots' => $this->captureOptionSnapshots($symbols, $date),
                 'intraday_option_volumes' => $this->captureIntradayOptionVolumes($symbols, $date),
                 'option_live_counters' => $this->captureOptionLiveCounters($symbols, $date),
+                'option_live_totals' => $this->captureOptionLiveTotals($symbols, $date),
                 'daily_chain_snapshot' => $this->captureDailyChainSnapshot($symbols, $date),
                 'unusual_activity' => $this->captureUnusualActivity($symbols, $date),
                 'expiry_pressure' => $this->captureExpiryPressure($symbols, $date),
@@ -91,7 +92,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureOptionExpirations(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('option_expirations')) {
+        if (! Schema::hasTable('option_expirations')) {
             return $this->missingTable();
         }
 
@@ -112,7 +113,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureOptionChainData(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('option_chain_data') || !Schema::hasTable('option_expirations')) {
+        if (! Schema::hasTable('option_chain_data') || ! Schema::hasTable('option_expirations')) {
             return $this->missingTable();
         }
 
@@ -152,7 +153,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureOptionSnapshots(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('option_snapshots')) {
+        if (! Schema::hasTable('option_snapshots')) {
             return $this->missingTable();
         }
 
@@ -184,7 +185,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureIntradayOptionVolumes(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('intraday_option_volumes')) {
+        if (! Schema::hasTable('intraday_option_volumes')) {
             return $this->missingTable();
         }
 
@@ -224,7 +225,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureOptionLiveCounters(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('option_live_counters')) {
+        if (! Schema::hasTable('option_live_counters')) {
             return $this->missingTable();
         }
 
@@ -256,9 +257,46 @@ final class MarketDataBaseline
     }
 
     /** @param array<int,string> $symbols */
+    private function captureOptionLiveTotals(array $symbols, string $date): array
+    {
+        if (! Schema::hasTable('option_live_totals')) {
+            return $this->missingTable();
+        }
+
+        $rows = DB::table('option_live_totals')
+            ->whereIn('symbol', $symbols)
+            ->whereDate('trade_date', $date)
+            ->get([
+                'symbol',
+                'trade_date',
+                'call_volume',
+                'put_volume',
+                'volume',
+                'premium_usd',
+                'asof',
+                'source_updated_at',
+                'source_row_id',
+                'freshness_key',
+            ])
+            ->all();
+
+        return $this->fingerprint(
+            $rows,
+            sumFields: [
+                'call_volume' => 'int',
+                'put_volume' => 'int',
+                'volume' => 'int',
+                'premium_usd' => 'float',
+            ],
+            timestampFields: ['asof', 'source_updated_at'],
+            naturalKeyFields: ['symbol', 'trade_date'],
+        );
+    }
+
+    /** @param array<int,string> $symbols */
     private function captureDailyChainSnapshot(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('daily_chain_snapshot') || !Schema::hasTable('option_expirations')) {
+        if (! Schema::hasTable('daily_chain_snapshot') || ! Schema::hasTable('option_expirations')) {
             return $this->missingTable();
         }
 
@@ -296,7 +334,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureUnusualActivity(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('unusual_activity')) {
+        if (! Schema::hasTable('unusual_activity')) {
             return $this->missingTable();
         }
 
@@ -316,7 +354,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureExpiryPressure(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('expiry_pressure')) {
+        if (! Schema::hasTable('expiry_pressure')) {
             return $this->missingTable();
         }
 
@@ -341,7 +379,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureDexByExpiry(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('dex_by_expiry')) {
+        if (! Schema::hasTable('dex_by_expiry')) {
             return $this->missingTable();
         }
 
@@ -366,7 +404,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureUnderlyingQuotes(array $symbols): array
     {
-        if (!Schema::hasTable('underlying_quotes')) {
+        if (! Schema::hasTable('underlying_quotes')) {
             return $this->missingTable();
         }
 
@@ -385,7 +423,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function capturePricesDaily(array $symbols, string $date): array
     {
-        if (!Schema::hasTable('prices_daily')) {
+        if (! Schema::hasTable('prices_daily')) {
             return $this->missingTable();
         }
 
@@ -404,7 +442,7 @@ final class MarketDataBaseline
     /** @param array<int,string> $symbols */
     private function captureWatchlists(array $symbols): array
     {
-        if (!Schema::hasTable('watchlists')) {
+        if (! Schema::hasTable('watchlists')) {
             return $this->missingTable();
         }
 
@@ -450,7 +488,7 @@ final class MarketDataBaseline
             }
         }
 
-        if (!Schema::hasTable('option_snapshots')) {
+        if (! Schema::hasTable('option_snapshots')) {
             foreach ($state as &$symbolState) {
                 $symbolState['catalog_expirations'] = $this->sortedUnique($symbolState['catalog_expirations']);
             }
@@ -473,7 +511,7 @@ final class MarketDataBaseline
             $fetchedAt = (string) $row->fetched_at;
             $key = $symbol.'|'.$expiry.'|'.$fetchedAt;
 
-            if (!isset($generations[$key])) {
+            if (! isset($generations[$key])) {
                 $generations[$key] = [
                     'symbol' => $symbol,
                     'expiry' => $expiry,
@@ -518,7 +556,7 @@ final class MarketDataBaseline
             $generation['is_partial'] = $generation['row_count'] < 40
                 || $generation['call_rows'] === 0
                 || $generation['put_rows'] === 0
-                || !$coversSpot;
+                || ! $coversSpot;
 
             $symbol = $generation['symbol'];
             $expiry = $generation['expiry'];
@@ -580,7 +618,7 @@ final class MarketDataBaseline
     {
         $safe = [];
         foreach ($payloads as $name => $payload) {
-            if (!is_string($name) || trim($name) === '') {
+            if (! is_string($name) || trim($name) === '') {
                 throw new \InvalidArgumentException('Every API payload requires a stable string name.');
             }
 
@@ -705,7 +743,7 @@ final class MarketDataBaseline
         $expirationSet = [];
         foreach ($normalizedRows as $row) {
             foreach ($expirationFields as $field) {
-                if (!empty($row[$field])) {
+                if (! empty($row[$field])) {
                     $expirationSet[] = substr((string) $row[$field], 0, 10);
                 }
             }
@@ -717,9 +755,9 @@ final class MarketDataBaseline
         foreach ($timestampFields as $field) {
             $values = [];
             foreach ($normalizedRows as $row) {
-                if (!empty($row[$field])) {
+                if (! empty($row[$field])) {
                     $values[] = (string) $row[$field];
-                    if (!empty($row['symbol'])) {
+                    if (! empty($row['symbol'])) {
                         $symbol = (string) $row['symbol'];
                         $latestBySymbol[$field][$symbol] = max(
                             (string) ($latestBySymbol[$field][$symbol] ?? ''),

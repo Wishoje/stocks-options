@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\WorkRunRateLimited;
 use App\Support\Market;
+use App\Support\OptionLiveTotalsRepository;
 use App\Support\QueueLanes;
 use App\Support\Symbols;
 use App\Support\WorkRunCoordinator;
@@ -209,21 +210,14 @@ class IntradayController extends Controller
     }
 
     // GET /api/intraday/summary?symbol=SPY
-    public function summary(Request $request)
+    public function summary(Request $request, OptionLiveTotalsRepository $totals)
     {
         $startedAt = microtime(true);
         $symbol = strtoupper($request->query('symbol', 'SPY'));
         $preferredTradeDate = $this->tradingDate(now());
         $tradeDate = $this->resolveTradeDate($symbol, $preferredTradeDate);
 
-        $row = \App\Models\OptionLiveCounter::query()
-            ->where('symbol', $symbol)
-            ->where('trade_date', $tradeDate)
-            ->whereNull('exp_date')
-            ->whereNull('strike')
-            ->whereNull('option_type')
-            ->orderByDesc('updated_at')
-            ->first();
+        $row = $totals->read($symbol, $tradeDate);
 
         $open = $this->isMarketOpen();
         if (! $row) {
@@ -251,24 +245,25 @@ class IntradayController extends Controller
             return response()->json($payload);
         }
 
-        [$callVol, $putVol] = $this->sumTypeVolumes($symbol, $tradeDate);
+        $callVol = (int) $row['call_volume'];
+        $putVol = (int) $row['put_volume'];
 
         $pcr = $callVol > 0 ? round($putVol / $callVol, 3) : null;
 
-        $asof = $row->asof ? \Carbon\Carbon::parse($row->asof) : null;
+        $asof = $row['asof'] ? \Carbon\Carbon::parse($row['asof']) : null;
         $staleSeconds = $asof ? now('America/New_York')->diffInSeconds($asof) : null;
 
         $payload = [
             'open' => $open,
             'trade_date' => $tradeDate,
-            'asof' => $row->asof,
+            'asof' => $asof,
             'stale_seconds' => $staleSeconds,
             'totals' => [
                 'call_vol' => $callVol,
                 'put_vol' => $putVol,
-                'total' => (int) $row->volume,
+                'total' => (int) $row['volume'],
                 'pcr_vol' => $pcr,
-                'premium' => (float) $row->premium_usd,
+                'premium' => (float) $row['premium_usd'],
             ],
         ];
 

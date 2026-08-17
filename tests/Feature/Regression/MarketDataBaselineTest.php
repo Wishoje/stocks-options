@@ -59,11 +59,17 @@ class MarketDataBaselineTest extends MySqlTestCase
         );
 
         $this->assertSame($first, $second);
+        $this->assertSame(3, $first['schema_version']);
         $this->assertSame('mysql', DB::connection()->getDriverName());
         $this->assertSame(30, data_get($first, 'tables.option_expirations.row_count'));
         $this->assertCount(6, data_get($first, 'tables.option_expirations.expiration_set'));
         $this->assertGreaterThan(0, data_get($first, 'tables.option_chain_data.sums.open_interest'));
         $this->assertGreaterThan(0, data_get($first, 'tables.option_live_counters.sums.volume'));
+        $this->assertSame(5, data_get($first, 'tables.option_live_totals.row_count'));
+        $this->assertSame(600, data_get($first, 'tables.option_live_totals.sums.call_volume'));
+        $this->assertSame(700, data_get($first, 'tables.option_live_totals.sums.put_volume'));
+        $this->assertSame(1300, data_get($first, 'tables.option_live_totals.sums.volume'));
+        $this->assertSame(0, data_get($first, 'tables.option_live_totals.duplicate_natural_key_count'));
 
         $firstExpiry = MarketDataScenario::expirationDates()[0];
         $this->assertFalse(data_get($first, "calculator.SPY.expirations.{$firstExpiry}.latest_is_partial"));
@@ -90,7 +96,7 @@ class MarketDataBaselineTest extends MySqlTestCase
             MarketDataScenario::DATE,
             ['gex_spy_30d' => ['symbol' => 'SPY', 'status' => 'ok', 'items' => [['strike' => 100]]]]
         );
-        $comparator = new BaselineComparator();
+        $comparator = new BaselineComparator;
 
         $missingExpiration = $baseline;
         array_pop($missingExpiration['tables']['option_expirations']['expiration_set']);
@@ -129,7 +135,7 @@ class MarketDataBaselineTest extends MySqlTestCase
         $this->assertTrue($state['latest_is_partial']);
         $this->assertTrue($state['latest_is_thinner_than_fullest']);
         $this->assertSame(4, $state['latest_row_count']);
-        $this->assertFalse((new BaselineComparator())->compare($baseline, $candidate)['matches']);
+        $this->assertFalse((new BaselineComparator)->compare($baseline, $candidate)['matches']);
     }
 
     public function test_comparator_rejects_an_older_intraday_asof_overwrite(): void
@@ -146,7 +152,7 @@ class MarketDataBaselineTest extends MySqlTestCase
             ]);
 
         $candidate = $this->baselineService->capture(MarketDataScenario::SYMBOLS, MarketDataScenario::DATE);
-        $result = (new BaselineComparator())->compare($baseline, $candidate);
+        $result = (new BaselineComparator)->compare($baseline, $candidate);
 
         $this->assertFalse($result['matches']);
         $this->assertTrue($this->hasDifferenceType($result, 'stale_timestamp'));
@@ -172,10 +178,31 @@ class MarketDataBaselineTest extends MySqlTestCase
             data_get($candidate, 'tables.option_live_counters.latest_timestamps_by_symbol.asof.SPY')
         );
 
-        $result = (new BaselineComparator())->compare($baseline, $candidate);
+        $result = (new BaselineComparator)->compare($baseline, $candidate);
         $this->assertFalse($result['matches']);
         $this->assertTrue($this->hasDifferenceType($result, 'stale_timestamp'));
         $this->assertTrue($this->hasDifferenceAt($result, 'timestamps_by_natural_key'));
+    }
+
+    public function test_comparator_detects_a_stale_canonical_option_total(): void
+    {
+        $baseline = $this->baselineService->capture(MarketDataScenario::SYMBOLS, MarketDataScenario::DATE);
+
+        DB::table('option_live_totals')
+            ->where('symbol', 'SPY')
+            ->whereDate('trade_date', MarketDataScenario::DATE)
+            ->update([
+                'volume' => 1,
+                'asof' => '2026-03-18 19:55:00',
+                'source_updated_at' => '2026-03-18 19:55:00',
+            ]);
+
+        $candidate = $this->baselineService->capture(MarketDataScenario::SYMBOLS, MarketDataScenario::DATE);
+        $result = (new BaselineComparator)->compare($baseline, $candidate);
+
+        $this->assertFalse($result['matches']);
+        $this->assertTrue($this->hasDifferenceType($result, 'stale_timestamp'));
+        $this->assertTrue($this->hasDifferenceAt($result, 'option_live_totals'));
     }
 
     public function test_artisan_command_captures_and_compares_artifacts(): void
@@ -236,7 +263,7 @@ class MarketDataBaselineTest extends MySqlTestCase
 
     public function test_comparator_preserves_numeric_api_types_while_tolerating_float_noise(): void
     {
-        $comparator = new BaselineComparator();
+        $comparator = new BaselineComparator;
 
         $typeChange = $comparator->compare(
             ['api' => ['volume' => 100]],
