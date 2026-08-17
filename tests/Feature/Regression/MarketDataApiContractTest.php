@@ -24,6 +24,7 @@ class MarketDataApiContractTest extends MySqlTestCase
         Queue::fake();
         Http::preventStrayRequests();
         $this->scenario = MarketDataScenario::seed();
+        $this->actingAs($this->scenario['user']);
     }
 
     protected function tearDown(): void
@@ -104,32 +105,69 @@ class MarketDataApiContractTest extends MySqlTestCase
         $payload = $response->json();
 
         $this->assertRootKeys([
+            'as_of_exchange_date',
+            'catalog',
+            'catalog_state',
             'chain',
+            'completed_count',
             'expirations',
+            'expected_count',
+            'failed_count',
+            'failure_reason',
             'fetch_meta',
             'health',
+            'publication',
+            'publication_generation',
             'refresh_queued',
             'requested_expiry',
+            'resolved_expiry',
+            'run',
+            'run_id',
+            'run_state',
+            'selected_chain_state',
             'snapshot_at',
             'snapshot_stats',
+            'source_asof',
             'status',
             'underlying',
+            'work_run',
         ], $payload);
         $this->assertSame('ok', $payload['status']);
         $this->assertSame(42, count($payload['chain']));
         $this->assertSame(6, count($payload['expirations']));
-        $this->assertSame(MarketDataScenario::expirationDates()[0], $payload['requested_expiry']);
+        $this->assertNull($payload['requested_expiry']);
+        $this->assertSame(MarketDataScenario::expirationDates()[0], $payload['resolved_expiry']);
         $this->assertFalse($payload['health']['is_partial']);
 
         $cold = $this->getJson('/api/option-chain?symbol=COLD');
         $cold->assertStatus(202);
         $this->assertRootKeys([
+            'as_of_exchange_date',
+            'catalog',
+            'catalog_state',
             'chain',
+            'completed_count',
             'expirations',
+            'expected_count',
+            'failed_count',
+            'failure_reason',
             'fetch_meta',
+            'health',
+            'publication',
+            'publication_generation',
             'refresh_queued',
+            'requested_expiry',
+            'resolved_expiry',
+            'run',
+            'run_id',
+            'run_state',
+            'selected_chain_state',
+            'snapshot_at',
+            'snapshot_stats',
+            'source_asof',
             'status',
             'underlying',
+            'work_run',
         ], $cold->json());
         $cold->assertJsonPath('status', 'no_snapshot');
         $cold->assertJsonCount(0, 'chain');

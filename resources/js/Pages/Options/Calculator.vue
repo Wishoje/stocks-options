@@ -4,13 +4,37 @@ import Chart from 'chart.js/auto'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import AppShell from '@/Components/AppShell.vue'
 import axios from 'axios'
+import {
+  calculateLongOption,
+  closestContract,
+  contractIdentity,
+  contractPremium,
+  groupContractsByStrike,
+  longOptionPayoff,
+  normalizeContract,
+  selectContractState,
+  switchContractType,
+} from '@/Support/calculator-contracts.js'
+import { attachServerDte, normalizeUnderlying } from '@/Support/calculator-market-state.js'
+import {
+  abortableDelay,
+  calculatorProgress,
+  CALCULATOR_STATUS_MAX_REQUESTS,
+  expirationReadinessMap,
+  isRequestCancellation,
+  readyExpiryToken,
+  retryDelayMs,
+  terminalRunState,
+  workRunFromResponse,
+} from '@/Support/calculator-refresh-state.js'
 
 const initialSymbol =
   typeof window !== 'undefined'
     ? (localStorage.getItem('calculator_last_symbol') || 'SPY')
     : 'SPY'
 const symbol         = ref(initialSymbol)
-const stockPrice     = ref(0)
+const underlyingQuote = ref(normalizeUnderlying(null))
+const stockPrice     = ref(null)
 const optionType     = ref('call') // 'call' | 'put'
 const selectedOption = ref(null)
 const contracts      = ref(1)
@@ -23,6 +47,12 @@ const entryPrice     = ref(null) // per-share price YOU paid (or want)
 const entryAuto      = ref(true)
 const snapshotAt     = ref(null)
 const refreshingLive = ref(false)
+const refreshRun     = ref(null)
+const refreshState   = ref('idle')
+const refreshMessage = ref('')
+const refreshProgress = ref(null)
+const expiryReadiness = ref({})
+const pollRequestCount = ref(0)
 
 // scenario + view modes
 const decayMode      = ref('breakeven')    // 'flat' | 'breakeven' | 'target'
@@ -34,6 +64,10 @@ const strikeBandMode = ref('wide') // 'near' | 'wide' | 'all'
 
 let chart = null
 let decayChart = null
+let requestSequence = 0
+let requestController = null
+let mounted = false
+const lastKnownGood = new Map()
 const chartRef = ref(null)
 const decayChartRef = ref(null)
 
@@ -44,32 +78,15 @@ const safeNumber = (val) => {
   return isNaN(num) ? 0 : num
 }
 
-const safePremium = (opt) => {
-  if (!opt) return 0
+const positiveNumber = (val) => {
+  if (val === null || val === undefined || val === '') return null
+  const number = typeof val === 'string' ? Number.parseFloat(val) : Number(val)
 
-  // prefer mid-like fields first
-  const mid =
-    opt.mid ??
-    opt.mark ??
-    opt.mid_price ??
-    opt.midPrice ??
-    opt.price ??
-    opt.last ??
-    opt.fmv
-
-  const nMid = safeNumber(mid)
-  if (nMid > 0) return nMid
-
-  // fallback: bid/ask avg
-  const bid = safeNumber(opt.bid ?? opt.bid_price ?? opt.b)
-  const ask = safeNumber(opt.ask ?? opt.ask_price ?? opt.a)
-
-  if (bid > 0 && ask > 0) return (bid + ask) / 2
-  return bid > 0 ? bid : ask > 0 ? ask : 0
+  return Number.isFinite(number) && number > 0 ? number : null
 }
-// ----- Black–Scholes helpers -----
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const safePremium = (opt) => contractPremium(opt)
+// ----- Black–Scholes helpers -----
 
 const needsFollowUpPrime = (payload) => {
   if (!payload) return true
@@ -78,11 +95,89 @@ const needsFollowUpPrime = (payload) => {
   const chain = payload.chain || []
   const status = payload.status || ''
 
+  if (status === 'no_options' && payload.catalog_state === 'complete') return false
+
   if (!exp.length || !chain.length) return true
   if (status === 'no_snapshot' || status === 'no_expiry_snapshot') return true
   if (status === 'partial') return true
 
   return false
+}
+
+const requestKey = (sym = symbol.value, expiry = selectedExpiry.value) => (
+  `${String(sym ?? '').trim().toUpperCase()}|${expiry ?? '*'}`
+)
+
+const beginRequestContext = () => {
+  requestController?.abort()
+  requestController = new AbortController()
+  requestSequence += 1
+
+  return {
+    sequence: requestSequence,
+    signal: requestController.signal,
+    symbol: symbol.value,
+    expiry: selectedExpiry.value,
+  }
+}
+
+const resetRefreshObserver = ({ clearReadiness = false } = {}) => {
+  requestController?.abort()
+  requestController = null
+  requestSequence += 1
+  refreshingLive.value = false
+  loading.value = false
+  refreshRun.value = null
+  refreshState.value = 'idle'
+  refreshMessage.value = ''
+  refreshProgress.value = null
+  pollRequestCount.value = 0
+  if (clearReadiness) expiryReadiness.value = {}
+}
+
+const currentRequest = (context) => mounted
+  && !context.signal.aborted
+  && context.sequence === requestSequence
+  && context.symbol === symbol.value
+
+const requestConfig = (context, config = {}) => ({
+  ...config,
+  signal: context.signal,
+})
+
+const rememberCurrentChain = () => {
+  if (!chainData.value.length || !selectedExpiry.value) return
+
+  lastKnownGood.set(requestKey(), {
+    chain: chainData.value,
+    expirations: expirations.value,
+    underlying: underlyingQuote.value,
+    snapshotAt: snapshotAt.value,
+  })
+}
+
+const restoreKnownChain = () => {
+  const known = lastKnownGood.get(requestKey())
+  if (!known) {
+    chainData.value = []
+    selectedOption.value = null
+    return false
+  }
+
+  chainData.value = known.chain
+  expirations.value = known.expirations
+  underlyingQuote.value = known.underlying
+  stockPrice.value = known.underlying.price
+  snapshotAt.value = known.snapshotAt
+
+  return true
+}
+
+const clearKnownChainsForSymbol = (sym) => {
+  const prefix = `${String(sym ?? '').trim().toUpperCase()}|`
+  for (const key of lastKnownGood.keys()) {
+    if (key.startsWith(prefix)) lastKnownGood.delete(key)
+  }
 }
 
 const riskFreeRate = 0.04 // rough guess; tweak if you want
@@ -153,44 +248,50 @@ const impliedVolBS = (price, S, K, T, r, type) => {
 
 // Effective premium PER SHARE used as *entry price*
 const effectivePremium = computed(() => {
-  const entered = entryPrice.value
-  if (entered !== null && entered !== '' && entered !== undefined) {
-    const n = safeNumber(entered)
-    if (n > 0) return n
-  }
+  if (!entryAuto.value) return positiveNumber(entryPrice.value)
   // fallback: you “entered” at current mid
   return safePremium(selectedOption.value)
 })
 
 // ---------- main metrics ----------
+const tradeSummary = computed(() => {
+  return calculateLongOption({
+    selectedContract: selectedOption.value,
+    entryPrice: effectivePremium.value,
+    contracts: contracts.value,
+  })
+})
+
+const calculationReady = computed(() => tradeSummary.value !== null)
+
 const totalCost = computed(() => {
-  const premium = effectivePremium.value
-  const c = Math.max(1, safeNumber(contracts.value || 1))
-  return premium * 100 * c
+  return tradeSummary.value?.cost ?? null
 })
 
 const breakeven = computed(() => {
-  if (!selectedOption.value) return '0.00'
-  const premium = effectivePremium.value
-  const be =
-    optionType.value === 'call'
-      ? selectedOption.value.strike + premium
-      : selectedOption.value.strike - premium
-  return Number(be).toFixed(2)
+  return tradeSummary.value?.breakeven ?? null
 })
 
-const maxLoss = computed(() => -totalCost.value)
+const maxLoss = computed(() => tradeSummary.value?.max_loss ?? null)
 
-const cost = computed(() => totalCost.value)
+const cost = computed(() => tradeSummary.value?.cost ?? null)
 
 const formatPrice = (val) => {
-  const n = safeNumber(val)
+  if (val === null || val === undefined || val === '') return '\u2014'
+  const n = typeof val === 'string' ? Number.parseFloat(val) : Number(val)
   if (!Number.isFinite(n)) return '—'
   return n.toFixed(2)
 }
 
+const formatMoney = (val) => {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) return '\u2014'
+
+  return Number(val).toLocaleString()
+}
+
 const priceRange = computed(() => {
-  const center = stockPrice.value || 100
+  const center = underlyingQuote.value.usable ? stockPrice.value : null
+  if (center === null) return []
   const width = center * 0.4
   const prices = []
   for (let i = 0; i <= 50; i++) {
@@ -200,30 +301,28 @@ const priceRange = computed(() => {
 })
 
 const profitData = computed(() => {
-  if (!selectedOption.value) return []
-  const premium = effectivePremium.value
-  const c = Math.max(1, safeNumber(contracts.value || 1))
+  if (!calculationReady.value) return []
 
-  return priceRange.value.map((price) => {
-    const intrinsic =
-      optionType.value === 'call'
-        ? Math.max(price - selectedOption.value.strike, 0)
-        : Math.max(selectedOption.value.strike - price, 0)
-
-    return Number((intrinsic - premium) * 100 * c)
-  })
+  return priceRange.value.map((price) => longOptionPayoff({
+    selectedContract: selectedOption.value,
+    entryPrice: effectivePremium.value,
+    contracts: contracts.value,
+    underlyingPrice: price,
+  }))
 })
 
 const moveNeeded = computed(() => {
-  if (!stockPrice.value || stockPrice.value === 0) return 'N/A'
-  const be = Number(breakeven.value)
+  if (!calculationReady.value || stockPrice.value === null) return 'N/A'
+  const be = breakeven.value
   const pct = ((be / stockPrice.value) - 1) * 100
   return (pct > 0 ? '+' : '') + Number(pct).toFixed(1) + '%'
 })
 
 // payoff table at expiration
-const payoffTableRows = computed(() =>
-  priceRange.value.map((p, idx) => {
+const payoffTableRows = computed(() => {
+  if (!calculationReady.value) return []
+
+  return priceRange.value.map((p, idx) => {
     const pnl = profitData.value[idx] ?? 0
     const roi = totalCost.value > 0 ? (pnl / totalCost.value) * 100 : 0
     return {
@@ -232,31 +331,26 @@ const payoffTableRows = computed(() =>
       roi,
     }
   })
-)
+})
 
 // ---------- DTE + scenario ----------
 const daysToExpiration = computed(() => {
-  if (!selectedOption.value?.expiry) return 0
+  const rawDte = selectedOption.value?.dte
+  if (rawDte === null || rawDte === undefined || rawDte === '') return null
+  const dte = Number(rawDte)
 
-  const exp = new Date(selectedOption.value.expiry) // YYYY-MM-DD
-  const today = new Date()
-
-  const msPerDay = 1000 * 60 * 60 * 24
-  const diff = Math.ceil((exp - today) / msPerDay)
-
-  return Math.max(diff, 0)
+  return Number.isInteger(dte) && dte >= 0 ? dte : null
 })
 
 const decayUnderlying = computed(() => {
-  if (!selectedOption.value) return null
+  if (!calculationReady.value || stockPrice.value === null) return null
 
   if (decayMode.value === 'flat') {
-    return safeNumber(stockPrice.value || 0)
+    return stockPrice.value
   }
 
   if (decayMode.value === 'breakeven') {
-    const be = safeNumber(breakeven.value)
-    return be > 0 ? be : safeNumber(stockPrice.value || 0)
+    return breakeven.value > 0 ? breakeven.value : stockPrice.value
   }
 
   // 'target'
@@ -264,7 +358,7 @@ const decayUnderlying = computed(() => {
   if (t > 0) return t
 
   // fallback to spot if target is not set
-  return safeNumber(stockPrice.value || 0)
+  return stockPrice.value
 })
 
 const timeDecayTitle = computed(() => {
@@ -292,12 +386,12 @@ const timeDecayTitle = computed(() => {
  *   - entryPrice / effectivePremium for P&L
  */
 const timeDecayRows = computed(() => {
-  if (!selectedOption.value) return []
+  if (!calculationReady.value) return []
 
   const dte = daysToExpiration.value
-  if (dte <= 0) return []
+  if (dte === null || dte <= 0) return []
 
-  const Sspot = safeNumber(stockPrice.value || 0)
+  const Sspot = stockPrice.value
   const S = decayUnderlying.value
   if (!S || S <= 0 || !Sspot || Sspot <= 0) return []
 
@@ -306,13 +400,14 @@ const timeDecayRows = computed(() => {
   const c = Math.max(1, safeNumber(contracts.value || 1))
 
   const currentMid = safePremium(selectedOption.value)
-  if (currentMid <= 0 || K <= 0) return []
+  if (currentMid === null || currentMid <= 0 || K <= 0 || entry === null) return []
 
   const Tyears = dte / 365
-  const type = optionType.value === 'put' ? 'put' : 'call'
+  const type = selectedOption.value.type
 
-  // Fit IV from current mid at *spot* (what your snapshot actually is)
-  let iv = impliedVolBS(currentMid, Sspot, K, Tyears, riskFreeRate, type)
+  // Prefer the selected contract's provider IV. Fit it only when the provider omitted it.
+  let iv = positiveNumber(selectedOption.value.iv)
+    ?? impliedVolBS(currentMid, Sspot, K, Tyears, riskFreeRate, type)
 
   // Fallback: if IV fails, bail out (no rows) instead of spewing nonsense
   if (!Number.isFinite(iv) || iv <= 0) {
@@ -367,19 +462,9 @@ const hiddenTimeDecayCount = computed(() => {
   return Math.max(total - visible, 0)
 })
 
-// ---------- "is everything ready?" ----------
-const hasData = computed(() => {
-  return (
-    !!selectedOption.value &&
-    chainData.value.length > 0 &&
-    expirations.value.length > 0 &&
-    safeNumber(stockPrice.value) > 0
-  )
-})
-
 // ---------- chain display ----------
 const strikesAroundPrice = computed(() => {
-  const center = stockPrice.value || 0
+  const center = stockPrice.value
   if (!center || chainData.value.length === 0) return chainData.value
 
   if (strikeBandMode.value === 'all') {
@@ -394,69 +479,200 @@ const strikesAroundPrice = computed(() => {
 })
 
 const groupedStrikes = computed(() => {
-  const map = {}
-  strikesAroundPrice.value.forEach((o) => {
-    if (!map[o.strike]) map[o.strike] = { strike: o.strike, call: null, put: null }
-    map[o.strike][o.type] = o
-  })
-  return Object.values(map).sort((a, b) => a.strike - b.strike)
+  return groupContractsByStrike(strikesAroundPrice.value)
 })
 
 const handleExpiryClick = async (value) => {
   if (selectedExpiry.value === value) return // no-op if same
+  resetRefreshObserver()
+  rememberCurrentChain()
   selectedExpiry.value = value
-  await loadChain()
+  selectedOption.value = null
+  entryPrice.value = null
+  entryAuto.value = true
+  restoreKnownChain()
+
+  const context = beginRequestContext()
+  await loadChain({ context, startRefresh: true })
 }
 
 // ---------- API ----------
-const loadChain = async (opts = { retries: 0, maxRetries: 6, autoPrimeOnFollowUp: true, keepLoading: false }) => {
-  const { retries = 0, maxRetries = 6, autoPrimeOnFollowUp = true, keepLoading = false } = opts
+const mergeReadiness = (payload) => {
+  expiryReadiness.value = {
+    ...expiryReadiness.value,
+    ...expirationReadinessMap(payload),
+  }
+}
+
+const expirationStatus = (expiration) => {
+  const value = String(expiration?.value ?? expiration ?? '').slice(0, 10)
+  return expiryReadiness.value[value] ?? 'ready'
+}
+
+const expirationStatusLabel = (expiration) => {
+  const status = expirationStatus(expiration)
+  if (status === 'ready') return 'Ready'
+  if (status === 'failed') return 'Unavailable'
+  if (['preparing', 'pending', 'processing', 'running'].includes(status)) return 'Preparing'
+  return 'Pending'
+}
+
+const publishableChainResponse = (data) => {
+  const status = String(data?.status ?? 'ok').toLowerCase()
+  const responseChain = Array.isArray(data?.chain) ? data.chain : []
+  const canonicalReady = data?.selected_chain_state === 'ready'
+    && data?.publication?.state === 'ready'
+    && data?.publication?.source === 'canonical'
+
+  return responseChain.length > 0 && (
+    canonicalReady
+    || !['partial', 'preparing', 'pending', 'no_snapshot', 'no_expiry_snapshot', 'failed'].includes(status)
+  )
+}
+
+const publishChain = (data) => {
+  const status = String(data?.status ?? 'ok').toLowerCase()
+  const responseChain = Array.isArray(data?.chain) ? data.chain : []
+  const publishable = publishableChainResponse(data)
+  const responseExpirations = Array.isArray(data?.expirations) ? data.expirations : []
+
+  mergeReadiness(data)
+  const inferredReadiness = {}
+  responseExpirations.forEach((item) => {
+    const expiration = String(item?.value ?? item?.expiration ?? item?.expiration_date ?? '').slice(0, 10)
+    if (expiration && !Object.hasOwn(expiryReadiness.value, expiration)) {
+      inferredReadiness[expiration] = publishable ? 'ready' : 'pending'
+    }
+  })
+  expiryReadiness.value = { ...expiryReadiness.value, ...inferredReadiness }
+  if (responseExpirations.length && (publishable || !expirations.value.length)) {
+    expirations.value = responseExpirations
+  }
+  const chainExpiries = [...new Set(responseChain
+    .map((contract) => String(contract?.expiration_date ?? contract?.expiry ?? '').slice(0, 10))
+    .filter(Boolean))]
+  const resolvedExpiry = data.resolved_expiry
+    ? String(data.resolved_expiry).slice(0, 10)
+    : (chainExpiries.length === 1 ? chainExpiries[0] : null)
+  const selectionBeforeResolution = selectedExpiry.value
+  if (resolvedExpiry) selectedExpiry.value = resolvedExpiry
+  if (!selectedExpiry.value && responseExpirations.length) {
+    selectedExpiry.value = responseExpirations[0].value
+  }
+
+  if (!publishable
+    && resolvedExpiry
+    && selectionBeforeResolution
+    && resolvedExpiry !== selectionBeforeResolution) {
+    restoreKnownChain()
+  }
+
+  if (status === 'no_options' && data?.catalog_state === 'complete') {
+    clearKnownChainsForSymbol(data?.underlying?.symbol ?? symbol.value)
+    chainData.value = []
+    expirations.value = responseExpirations
+    selectedExpiry.value = null
+    selectedOption.value = null
+    snapshotAt.value = null
+    underlyingQuote.value = normalizeUnderlying(data.underlying)
+    stockPrice.value = underlyingQuote.value.price
+    entryPrice.value = null
+    entryAuto.value = true
+    return false
+  }
+
+  if (!publishable) return false
+
+  const nextUnderlying = normalizeUnderlying(data.underlying)
+  underlyingQuote.value = nextUnderlying
+  stockPrice.value = nextUnderlying.price
+  chainData.value = attachServerDte(responseChain, responseExpirations)
+    .map(normalizeContract)
+    .filter(Boolean)
+  loading.value = false
+  snapshotAt.value = data.snapshot_at || null
+  error.value = ''
+
+  const previousIdentity = contractIdentity(selectedOption.value)
+  const refreshedSelection = previousIdentity
+    ? chainData.value.find((contract) => contractIdentity(contract) === previousIdentity)
+    : null
+  const opt = previousIdentity
+    ? refreshedSelection
+    : closestContract(chainData.value, optionType.value, stockPrice.value)
+
+  if (opt) {
+    selectOption(opt)
+  } else {
+    selectedOption.value = null
+    entryPrice.value = null
+    entryAuto.value = true
+  }
+
+  rememberCurrentChain()
+  return true
+}
+
+const adoptRun = (response) => {
+  const run = workRunFromResponse(response)
+  if (!run) return false
+
+  refreshRun.value = run
+  refreshState.value = run.terminal ? 'idle' : 'running'
+  refreshMessage.value = ''
+  return true
+}
+
+const loadChain = async (opts = {}) => {
+  const context = opts.context ?? beginRequestContext()
+  const startRefresh = opts.startRefresh ?? false
+  const followRun = opts.followRun ?? true
+  const keepLoading = opts.keepLoading ?? (chainData.value.length > 0 || expirations.value.length > 0)
   if (!keepLoading) loading.value = true
   try {
-    const { data } = await axios.get('/api/option-chain', {
-      params: { symbol: symbol.value, expiry: selectedExpiry.value },
-    })
+    const response = await axios.get('/api/option-chain', requestConfig(context, {
+      params: { symbol: context.symbol, expiry: context.expiry },
+    }))
+    if (!currentRequest(context)) return null
 
-    stockPrice.value   = safeNumber(data.underlying.price)
-    chainData.value    = data.chain || []
-    expirations.value  = data.expirations || []
-    snapshotAt.value   = data.snapshot_at || null
-    error.value        = ''
+    const { data } = response
+    const published = publishChain(data)
+    const hasRun = adoptRun(data)
+    if (hasRun) refreshRun.value.request_key = requestKey(context.symbol, context.expiry)
+    const noOptions = data?.status === 'no_options' && data?.catalog_state === 'complete'
+    const refreshContext = context.expiry === null
+      ? context
+      : { ...context, expiry: selectedExpiry.value ?? context.expiry }
 
-    // Keep polling for new symbols / partial chain snapshots while backend priming finishes.
-    if (autoPrimeOnFollowUp && needsFollowUpPrime(data) && retries < maxRetries) {
-      const shouldPrime = retries === 0 || !data.refresh_queued
-      if (shouldPrime) {
-        await primeCalculator(symbol.value, selectedExpiry.value, { force: retries > 0 })
-      }
-      await sleep(1200)
-      return await loadChain({ retries: retries + 1, maxRetries, autoPrimeOnFollowUp: true, keepLoading: true })
+    if (followRun && hasRun && !refreshRun.value.terminal) {
+      loading.value = !chainData.value.length && !expirations.value.length
+      await pollWorkRun(context)
+    } else if (noOptions) {
+      loading.value = false
+      refreshState.value = 'no_options'
+      refreshMessage.value = `No options are available for ${context.symbol}.`
+    } else if (startRefresh && needsFollowUpPrime(data)) {
+      loading.value = !chainData.value.length && !expirations.value.length
+      await startCalculatorRefresh(refreshContext)
+    } else if (!published && !chainData.value.length) {
+      loading.value = false
+      refreshState.value = 'idle'
     }
 
-    // If nothing selected yet, pick first expiry
-    if (!selectedExpiry.value && expirations.value.length) {
-      selectedExpiry.value = expirations.value[0].value
-    }
-
-    // Pick ATM call/put as default
-    const atm = Math.round(stockPrice.value / 5) * 5
-    const opt =
-      chainData.value.find(
-        (o) => Number(o.strike) === atm && o.type === optionType.value
-      ) || chainData.value[0]
-
-    if (opt) selectOption(opt)
     return data
   } catch (e) {
+    if (isRequestCancellation(e) || !currentRequest(context)) return null
     console.error(e)
-    error.value = 'Failed to load chain'
+    if (!chainData.value.length) error.value = 'Failed to load chain'
     return null
   } finally {
-    if (!keepLoading) loading.value = false
+    if (currentRequest(context) && refreshState.value !== 'starting' && refreshState.value !== 'running') {
+      loading.value = false
+    }
 
     await nextTick()
 
-    if (selectedOption.value) {
+    if (currentRequest(context)) {
       renderChart()
       renderDecayChart()
     }
@@ -468,23 +684,56 @@ const selectOption = (opt) => {
 
   localStorage.setItem('calculator_last_symbol', symbol.value)
 
-  const premium = safePremium(opt)
+  const next = selectContractState({
+    contract: opt,
+    entryMode: entryAuto.value ? 'auto' : 'manual',
+    entryPrice: entryPrice.value,
+  })
 
-  selectedOption.value = { ...opt, premium }
-  optionType.value = opt.type
+  selectedOption.value = next.selectedOption
+  optionType.value = next.optionType
+  entryAuto.value = next.entryMode === 'auto'
 
   // ✅ always follow selected contract price while auto mode is on
   if (entryAuto.value) {
-    entryPrice.value = premium
+    entryPrice.value = next.entryPrice
   }
 
   renderChart()
   renderDecayChart()
 }
 
+const switchOptionType = (targetType) => {
+  if (targetType === optionType.value && selectedOption.value?.type === targetType) return
+
+  const next = switchContractType({
+    chain: chainData.value,
+    selectedContract: selectedOption.value,
+    targetType,
+    entryMode: entryAuto.value ? 'auto' : 'manual',
+    entryPrice: entryPrice.value,
+  })
+
+  optionType.value = next.optionType
+  selectedOption.value = next.selectedOption
+  entryAuto.value = next.entryMode === 'auto'
+  entryPrice.value = next.entryPrice
+}
+
+const useLiveEntryPrice = () => {
+  entryAuto.value = true
+  entryPrice.value = contractPremium(selectedOption.value)
+}
+
 // ---------- charts ----------
 const renderChart = () => {
-  if (!chartRef.value || !selectedOption.value) return
+  if (!chartRef.value || !calculationReady.value || profitData.value.length === 0) {
+    if (chart) {
+      chart.destroy()
+      chart = null
+    }
+    return
+  }
   const ctx = chartRef.value.getContext('2d')
   if (chart) chart.destroy()
 
@@ -496,9 +745,9 @@ const renderChart = () => {
         {
           label: 'P&L vs Price (Expiration)',
           data: profitData.value,
-          borderColor: optionType.value === 'call' ? '#10b981' : '#ef4444',
+          borderColor: selectedOption.value.type === 'call' ? '#10b981' : '#ef4444',
           backgroundColor:
-            optionType.value === 'call'
+            selectedOption.value.type === 'call'
               ? 'rgba(16, 185, 129, 0.15)'
               : 'rgba(239, 68, 68, 0.15)',
           fill: true,
@@ -538,9 +787,9 @@ const renderDecayChart = () => {
         {
           label: 'P&L vs Time',
           data: rows.map((r) => r.pnl),
-          borderColor: optionType.value === 'call' ? '#22c55e' : '#f97316',
+          borderColor: selectedOption.value.type === 'call' ? '#22c55e' : '#f97316',
           backgroundColor:
-            optionType.value === 'call'
+            selectedOption.value.type === 'call'
               ? 'rgba(34, 197, 94, 0.15)'
               : 'rgba(249, 115, 22, 0.15)',
           fill: true,
@@ -571,7 +820,6 @@ watch(
     targetPrice,
   ],
   () => {
-    if (!selectedOption.value) return
     renderChart()
     renderDecayChart()
   }
@@ -583,93 +831,247 @@ const onEntryPriceInput = () => {
 // NO watcher on selectedExpiry – we control it via handleExpiryClick + loadChain
 
 // ---------- symbol selection handler ----------
-const primeCalculator = async (sym, expiry = null, opts = {}) => {
+const mergeProgressReadiness = (progress) => {
+  const additions = {}
+  Object.entries(progress?.readiness ?? {}).forEach(([expiration, item]) => {
+    additions[expiration] = item.readiness
+  })
+  expiryReadiness.value = { ...expiryReadiness.value, ...additions }
+}
+
+const stableRequestFailure = (errorResponse) => {
+  const status = Number(errorResponse?.status ?? 0)
+  const retrySeconds = errorResponse
+    ? Math.max(1, Math.round(retryDelayMs(errorResponse) / 1_000))
+    : null
+
+  if (status === 401) {
+    refreshState.value = 'unauthorized'
+    refreshMessage.value = 'Your session expired. Sign in again before refreshing.'
+  } else if (status === 403) {
+    refreshState.value = 'forbidden'
+    refreshMessage.value = 'Your plan does not include calculator refreshes.'
+  } else if (status === 429) {
+    refreshState.value = 'rate_limited'
+    refreshMessage.value = `Refresh capacity is busy. Try again in about ${retrySeconds} second${retrySeconds === 1 ? '' : 's'}.`
+  } else {
+    refreshState.value = 'failed'
+    refreshMessage.value = errorResponse?.data?.message || 'The calculator refresh could not be started.'
+  }
+
+  loading.value = false
+  refreshingLive.value = false
+}
+
+const pollWorkRun = async (context) => {
+  const run = refreshRun.value
+  if (!run?.status_url || !currentRequest(context)) return
+
+  refreshState.value = 'running'
+  refreshingLive.value = true
+  const observedExpiry = selectedExpiry.value
+  let previousReady = readyExpiryToken(refreshProgress.value, observedExpiry)
+
+  for (let request = 0; request < CALCULATOR_STATUS_MAX_REQUESTS; request += 1) {
+    if (!currentRequest(context)) return
+
+    let response
+    try {
+      response = await axios.get(run.status_url, requestConfig(context))
+    } catch (pollError) {
+      if (isRequestCancellation(pollError) || !currentRequest(context)) return
+
+      const status = Number(pollError?.response?.status ?? 0)
+      if ([401, 403].includes(status)) {
+        stableRequestFailure(pollError.response)
+        return
+      }
+      pollRequestCount.value = request + 1
+      try {
+        await abortableDelay(retryDelayMs(pollError.response), context.signal)
+      } catch (delayError) {
+        if (isRequestCancellation(delayError)) return
+        throw delayError
+      }
+      continue
+    }
+
+    if (!currentRequest(context)) return
+    pollRequestCount.value = request + 1
+    refreshRun.value = { ...run, ...workRunFromResponse(response), ...response.data }
+
+    const progress = calculatorProgress(response.data)
+    refreshProgress.value = progress
+    mergeProgressReadiness(progress)
+    const nextReady = readyExpiryToken(progress, observedExpiry)
+    let progressChainData = null
+    if (nextReady && nextReady !== previousReady) {
+      previousReady = nextReady
+      progressChainData = await loadChain({
+        context,
+        startRefresh: false,
+        keepLoading: true,
+        followRun: false,
+      })
+      if (!currentRequest(context)) return
+    }
+
+    const terminal = terminalRunState(response.data)
+    if (terminal) {
+      if (terminal === 'completed') {
+        const progressReadSettled = publishableChainResponse(progressChainData)
+          || (progressChainData?.status === 'no_options' && progressChainData?.catalog_state === 'complete')
+        const terminalData = progressReadSettled
+          ? progressChainData
+          : await loadChain({
+            context,
+            startRefresh: false,
+            keepLoading: true,
+            followRun: false,
+          })
+        if (!currentRequest(context)) return
+        if (terminalData?.status === 'no_options' && terminalData?.catalog_state === 'complete') {
+          refreshState.value = 'no_options'
+          refreshMessage.value = `No options are available for ${context.symbol}.`
+        } else {
+          refreshState.value = 'completed'
+          refreshMessage.value = 'Calculator data is ready.'
+        }
+      } else {
+        refreshState.value = 'failed'
+        refreshMessage.value = response.data?.calculator?.failure_reason
+          ?? response.data?.error?.message
+          ?? response.data?.message
+          ?? response.data?.error_code
+          ?? 'The background refresh failed. Your last complete chain is still shown.'
+      }
+      refreshRun.value = { ...refreshRun.value, terminal: true }
+      refreshingLive.value = false
+      loading.value = false
+      return
+    }
+
+    try {
+      await abortableDelay(retryDelayMs(response), context.signal)
+    } catch (delayError) {
+      if (isRequestCancellation(delayError)) return
+      throw delayError
+    }
+  }
+
+  if (!currentRequest(context)) return
+  refreshState.value = 'slow'
+  refreshMessage.value = 'The refresh is still running in the background. Continue checking when you are ready.'
+  refreshingLive.value = false
+  loading.value = false
+}
+
+const startCalculatorRefresh = async (context, opts = {}) => {
+  const key = requestKey(context.symbol, context.expiry)
+  const active = refreshRun.value
+    && !refreshRun.value.terminal
+    && refreshRun.value.request_key === key
+
+  if (active) {
+    await pollWorkRun(context)
+    return refreshRun.value
+  }
+
+  refreshState.value = 'starting'
+  refreshMessage.value = ''
+  refreshProgress.value = null
+  refreshingLive.value = true
+  pollRequestCount.value = 0
+
   try {
-    const payload = { symbol: sym }
-    if (expiry) payload.expiry = expiry
+    const payload = { symbol: context.symbol }
+    if (context.expiry) payload.expiry = context.expiry
     if (opts.force) payload.force = true
 
-    const resp = await axios.post('/api/prime-calculator', payload)
-    console.log('Primed calculator for', sym, resp.data)
-  } catch (err) {
-    console.warn('Prime calculator failed', sym, err)
+    const response = await axios.post(
+      '/api/prime-calculator',
+      payload,
+      requestConfig(context),
+    )
+    if (!currentRequest(context)) return null
+
+    const run = workRunFromResponse(response)
+    if (!run) {
+      refreshState.value = 'failed'
+      refreshMessage.value = 'The server did not return a refresh status link.'
+      loading.value = false
+      refreshingLive.value = false
+      return null
+    }
+
+    refreshRun.value = { ...run, request_key: key }
+    await pollWorkRun(context)
+    return refreshRun.value
+  } catch (requestError) {
+    if (isRequestCancellation(requestError) || !currentRequest(context)) return null
+    console.warn('Prime calculator failed', context.symbol, requestError)
+    stableRequestFailure(requestError.response)
+    return null
   }
 }
 
 const refreshLiveData = async () => {
-  if (refreshingLive.value) return
+  if (refreshingLive.value && refreshState.value !== 'slow') return
 
-  refreshingLive.value = true
-  loading.value = true
+  const context = beginRequestContext()
   error.value = ''
 
-  try {
-    const previousSnapshot = snapshotAt.value
-    await primeCalculator(symbol.value, selectedExpiry.value, { force: true })
-
-    const maxAttempts = 8
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      if (attempt > 0) {
-        await sleep(1500)
-      }
-
-      const data = await loadChain({
-        retries: 0,
-        maxRetries: 0,
-        autoPrimeOnFollowUp: false,
-        keepLoading: true,
-      })
-      if (!data) continue
-
-      const snapshotChanged = previousSnapshot
-        ? (data.snapshot_at && data.snapshot_at !== previousSnapshot)
-        : !!data.snapshot_at
-      const complete = (data.status || 'ok') === 'ok' && (data.chain || []).length > 0
-
-      if (complete && (snapshotChanged || !previousSnapshot)) {
-        break
-      }
-    }
-  } finally {
-    refreshingLive.value = false
-    loading.value = false
+  const exactKey = requestKey(context.symbol, context.expiry)
+  const catalogKey = requestKey(context.symbol, null)
+  const runMatchesSelection = refreshRun.value?.request_key === exactKey
+    || refreshRun.value?.request_key === catalogKey
+  if (refreshRun.value && !refreshRun.value.terminal && runMatchesSelection) {
+    await pollWorkRun(context)
+    return
   }
+  if (refreshRun.value && !runMatchesSelection) refreshRun.value = null
+
+  await startCalculatorRefresh(context, { force: true })
 }
 
 const handleSelectSymbol = async (e) => {
   const sym = e.detail.symbol || 'SPY'
   if (sym === symbol.value && chainData.value.length) return
 
+  rememberCurrentChain()
+  resetRefreshObserver({ clearReadiness: true })
   symbol.value         = sym
   selectedExpiry.value = null
   selectedOption.value = null
+  chainData.value      = []
+  expirations.value    = []
+  snapshotAt.value     = null
   entryPrice.value     = null
   targetPrice.value    = null
+  underlyingQuote.value = normalizeUnderlying(null)
+  stockPrice.value     = null
   entryAuto.value      = true   // ✅ reset auto on symbol change
   error.value          = ''
   loading.value        = true
 
-  await primeCalculator(sym, null)
-  await loadChain()
+  const context = beginRequestContext()
+  await loadChain({ context, startRefresh: true })
 }
 
 // ---------- mounted / unmounted ----------
 onMounted(async () => {
+  mounted = true
   window.addEventListener('select-symbol', handleSelectSymbol)
-
-  try {
-    await primeCalculator(symbol.value, selectedExpiry.value)
-  } catch (e) {
-    console.warn('Prime calculator failed, using SPY', e)
-    symbol.value = 'SPY'
-    await primeCalculator('SPY', null)
-  }
-
-  await loadChain()
+  const context = beginRequestContext()
+  await loadChain({ context, startRefresh: true })
 })
 
 onBeforeUnmount(() => {
+  mounted = false
+  resetRefreshObserver({ clearReadiness: true })
   window.removeEventListener('select-symbol', handleSelectSymbol)
+  chart?.destroy()
+  decayChart?.destroy()
 })
 </script>
 
@@ -702,6 +1104,61 @@ onBeforeUnmount(() => {
 
           <!-- Main UI only when fully ready -->
           <div v-else class="space-y-6">
+            <div
+              v-if="refreshState === 'no_options'"
+              class="rounded-xl border border-slate-500/40 bg-slate-900/50 px-4 py-3 text-sm text-slate-200"
+              data-testid="calculator-no-options"
+            >
+              {{ refreshMessage }}
+            </div>
+            <div
+              v-else-if="['starting', 'running'].includes(refreshState)"
+              class="rounded-xl border border-cyan-500/30 bg-cyan-950/30 px-4 py-3 text-sm text-cyan-100"
+              data-testid="calculator-refresh-running"
+            >
+              Preparing updated calculator data in the background.
+              <span v-if="refreshProgress?.expected_count" class="ml-1 text-cyan-300">
+                {{ refreshProgress.completed_count }} of {{ refreshProgress.expected_count }} expirations ready.
+              </span>
+            </div>
+            <div
+              v-else-if="refreshState === 'slow'"
+              class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-100"
+              data-testid="calculator-refresh-slow"
+            >
+              <span>{{ refreshMessage }}</span>
+              <button class="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white" @click="refreshLiveData">
+                Continue checking
+              </button>
+            </div>
+            <div
+              v-else-if="['failed', 'rate_limited', 'unauthorized', 'forbidden'].includes(refreshState)"
+              class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/40 bg-red-950/30 px-4 py-3 text-sm text-red-100"
+              data-testid="calculator-refresh-failed"
+            >
+              <span>{{ refreshMessage }}</span>
+              <button
+                v-if="!['unauthorized', 'forbidden'].includes(refreshState)"
+                class="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
+                @click="refreshLiveData"
+              >
+                Retry refresh
+              </button>
+            </div>
+            <div
+              v-if="!underlyingQuote.usable"
+              class="rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200"
+            >
+              A trustworthy underlying quote is unavailable. Contract cost, maximum loss, and breakeven remain available, but spot-dependent payoff and time-decay charts are paused.
+            </div>
+            <div
+              v-else-if="underlyingQuote.status === 'stale'"
+              class="rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-xs text-amber-200"
+            >
+              Using a stale quote from {{ underlyingQuote.source || 'the market-data provider' }}
+              <span v-if="underlyingQuote.asof"> (as of {{ underlyingQuote.asof }})</span>.
+            </div>
+
             <!-- Expiry chips -->
             <div class="flex flex-wrap gap-2 items-center">
               <span class="text-xs text-gray-400 mr-1">Expiry:</span>
@@ -712,7 +1169,13 @@ onBeforeUnmount(() => {
                 :class="selectedExpiry === exp.value ? 'bg-cyan-600' : 'bg-gray-700'"
                 class="px-3 py-1.5 rounded-lg text-xs font-medium"
               >
-                {{ exp.label }}
+                <span>{{ exp.label }}</span>
+                <span
+                  class="ml-1 text-[10px] opacity-80"
+                  :data-readiness="expirationStatus(exp)"
+                >
+                  {{ expirationStatusLabel(exp) }}
+                </span>
               </button>
               <span v-if="!expirations.length" class="text-xs text-amber-300">
                 No expirations loaded yet.
@@ -772,17 +1235,28 @@ onBeforeUnmount(() => {
                   <tbody>
                     <tr
                       v-for="row in groupedStrikes"
-                      :key="row.strike"
+                      :key="row.key"
+                      :data-contract-family="row.family"
                       class="hover:bg-gray-800/50 cursor-pointer border-b border-gray-800"
-                      :class="{ 'bg-gray-800/30': selectedOption?.strike === row.strike }"
+                      :class="{
+                        'bg-gray-800/30': selectedOption && [row.call, row.put]
+                          .some((contract) => contractIdentity(contract) === contractIdentity(selectedOption)),
+                      }"
                     >
-                      <td class="py-3 font-mono">{{ row.strike }}</td>
+                      <td class="py-3 font-mono">
+                        <div>{{ row.strike }}</div>
+                        <div v-if="row.show_family" class="text-[10px] text-cyan-300">
+                          {{ row.family_label }} contract
+                        </div>
+                      </td>
 
                       <td
                         @click="selectOption(row.call)"
+                        :data-contract-symbol="row.call?.contract_symbol ?? null"
+                        :title="row.call?.contract_symbol ?? ''"
                         class="py-3"
                         :class="
-                          optionType === 'call' && selectedOption?.strike === row.strike
+                          contractIdentity(row.call) === contractIdentity(selectedOption)
                             ? 'text-emerald-400 font-bold'
                             : 'text-gray-300'
                         "
@@ -795,9 +1269,11 @@ onBeforeUnmount(() => {
 
                       <td
                         @click="selectOption(row.put)"
+                        :data-contract-symbol="row.put?.contract_symbol ?? null"
+                        :title="row.put?.contract_symbol ?? ''"
                         class="py-3"
                         :class="
-                          optionType === 'put' && selectedOption?.strike === row.strike
+                          contractIdentity(row.put) === contractIdentity(selectedOption)
                             ? 'text-red-400 font-bold'
                             : 'text-gray-300'
                         "
@@ -825,19 +1301,21 @@ onBeforeUnmount(() => {
                   class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6"
                 >
                   <h3 class="text-xl font-bold mb-4">
-                    {{ symbol }} @ ${{ stockPrice.toFixed(2) }}
+                    {{ symbol }} @
+                    <span v-if="underlyingQuote.usable">${{ formatPrice(stockPrice) }}</span>
+                    <span v-else class="text-amber-300">Quote unavailable</span>
                   </h3>
                   <div class="space-y-4">
                     <div class="flex gap-3">
                       <button
-                        @click="optionType = 'call'"
+                        @click="switchOptionType('call')"
                         :class="optionType === 'call' ? 'bg-emerald-600' : 'bg-gray-700'"
                         class="flex-1 py-3 rounded-lg font-medium"
                       >
                         Long Call
                       </button>
                       <button
-                        @click="optionType = 'put'"
+                        @click="switchOptionType('put')"
                         :class="optionType === 'put' ? 'bg-red-600' : 'bg-gray-700'"
                         class="flex-1 py-3 rounded-lg font-medium"
                       >
@@ -852,14 +1330,17 @@ onBeforeUnmount(() => {
                       <div class="text-sm text-gray-400">Selected</div>
                       <div class="font-mono text-lg text-cyan-300">
                         {{ selectedOption.expiry }} {{ selectedOption.strike }}
-                        {{ optionType.toUpperCase() }}
+                        {{ selectedOption.type.toUpperCase() }}
                       </div>
                       <div class="text-sm">
                         <span class="text-gray-400">Mid:</span>
                         <span class="font-bold text-emerald-400 ml-2">
-                          ${{ selectedOption.premium.toFixed(2) }}
+                          ${{ formatPrice(selectedOption.premium) }}
                         </span>
                       </div>
+                    </div>
+                    <div v-else class="rounded-lg bg-amber-950/30 p-3 text-sm text-amber-200">
+                      No {{ optionType }} contract exists at the selected strike and expiration. Select another contract.
                     </div>
 
                     <div>
@@ -874,7 +1355,10 @@ onBeforeUnmount(() => {
 
                     <div class="mt-4">
                       <label class="text-sm text-gray-300">
-                        Entry price per share (optional)
+                        Entry price per share
+                        <span class="ml-1 text-xs" :class="entryAuto ? 'text-cyan-300' : 'text-amber-300'">
+                          ({{ entryAuto ? 'live mid' : 'manual' }})
+                        </span>
                       </label>
                      <input
                         v-model.number="entryPrice"
@@ -889,9 +1373,11 @@ onBeforeUnmount(() => {
                     <button
                       type="button"
                       class="text-xs text-cyan-400 hover:text-cyan-300"
-                      @click="entryAuto = true; entryPrice = selectedOption?.premium ?? null"
+                      @click="useLiveEntryPrice"
+                      :disabled="!selectedOption || selectedOption.premium === null"
+                      :class="{ 'opacity-50 cursor-not-allowed': !selectedOption || selectedOption.premium === null }"
                     >
-                      Use live Price For Entry Price
+                      Use live mid for entry price
                     </button>
                   </div>
                 </div>
@@ -903,18 +1389,18 @@ onBeforeUnmount(() => {
                   <div class="space-y-3 text-sm">
                     <div class="flex justify-between">
                       <span class="text-gray-400">Breakeven</span>
-                      <span class="font-bold text-white">${{ breakeven }}</span>
+                      <span class="font-bold text-white">{{ breakeven === null ? '\u2014' : `$${formatPrice(breakeven)}` }}</span>
                     </div>
                     <div class="flex justify-between">
                       <span class="text-gray-400">Max Loss</span>
                       <span class="font-bold text-red-400">
-                        ${{ Math.abs(maxLoss).toLocaleString() }}
+                        {{ maxLoss === null ? '\u2014' : `$${formatMoney(Math.abs(maxLoss))}` }}
                       </span>
                     </div>
                     <div class="flex justify-between">
                       <span class="text-gray-400">Cost</span>
                       <span class="font-bold text-white">
-                        ${{ cost.toLocaleString() }}
+                        {{ cost === null ? '\u2014' : `$${formatMoney(cost)}` }}
                       </span>
                     </div>
                     <div class="flex justify-between">
@@ -928,7 +1414,13 @@ onBeforeUnmount(() => {
               <div class="lg:col-span-2 space-y-6">
                 <!-- charts -->
                 <div class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6">
-                  <div class="grid lg:grid-cols-2 gap-6">
+                  <p v-if="!underlyingQuote.usable" class="text-sm text-amber-300" data-testid="calculator-charts-paused">
+                    Spot-dependent charts are paused until a trustworthy underlying quote is available.
+                  </p>
+                  <p v-else-if="!calculationReady" class="mb-4 text-sm text-amber-300">
+                    Select a priced contract to view calculations.
+                  </p>
+                  <div v-else class="grid lg:grid-cols-2 gap-6">
                     <div>
                       <h3 class="text-xl font-bold mb-4">P&L vs Price (at Expiration)</h3>
                       <canvas ref="chartRef" class="w-full h-80"></canvas>
@@ -937,7 +1429,7 @@ onBeforeUnmount(() => {
                     <div>
                       <h3 class="text-xl font-bold mb-1">P&L vs Time</h3>
                       <p class="text-xs text-gray-400 mb-3">
-                        Scenario: {{ timeDecayTitle }} • DTE: {{ daysToExpiration }}
+                        Scenario: {{ timeDecayTitle }} • DTE: {{ daysToExpiration ?? 'Unavailable' }}
                       </p>
                       <canvas ref="decayChartRef" class="w-full h-80"></canvas>
                     </div>
@@ -954,7 +1446,9 @@ onBeforeUnmount(() => {
                         {{ timeDecayTitle }}
                       </h3>
                       <span class="text-xs text-gray-400">
-                        DTE: {{ daysToExpiration }} day<span v-if="daysToExpiration !== 1">s</span>
+                        DTE: {{ daysToExpiration ?? 'Unavailable' }}<template v-if="daysToExpiration !== null">
+                          day<span v-if="daysToExpiration !== 1">s</span>
+                        </template>
                       </span>
                     </div>
 
@@ -1115,7 +1609,7 @@ onBeforeUnmount(() => {
                     class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
                   >
                     <div class="text-2xl font-bold text-red-400">
-                      ${{ Math.abs(maxLoss).toLocaleString() }}
+                      {{ maxLoss === null ? '\u2014' : `$${formatMoney(Math.abs(maxLoss))}` }}
                     </div>
                     <div class="text-xs text-gray-400">Max Risk</div>
                   </div>

@@ -237,6 +237,12 @@ Schedule::command('calculator:prime-watchlist')
     ->withoutOverlapping(10)
     ->onOneServer();
 
+Schedule::command('work-runs:reconcile --limit=100')
+    ->everyMinute()
+    ->withoutOverlapping(2)
+    ->onOneServer()
+    ->name('work-runs:reconcile');
+
 Schedule::command('emails:lifecycle-run')
     ->timezone('America/New_York')
     ->everyThirtyMinutes()

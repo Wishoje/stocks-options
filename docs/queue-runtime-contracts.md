@@ -75,9 +75,9 @@ For rollback, stop or roll back the web producer first while retaining the new e
 
 The current jobs are not yet bounded enough to certify every kill/retry case:
 
-- Calculator and EOD jobs can fetch many pages in one job. Bounded expiration/page jobs belong to GEX-008/GEX-015.
+- Calculator and EOD jobs can still fetch many pages in one job. Calculator publication is now atomic, but bounded expiration/page jobs remain GEX-015 scope.
 - A historical-price provider response is treated as usable when it contains at least one valid bar. Full requested-range coverage needs a later manifest/health rule so young listings remain supported without silently accepting truncated mature-symbol history.
-- Calculator ingestion can still publish a partial provider result. Intraday can retain raw per-contract rows from completed expirations before a later expiration fails. Atomic generation publication belongs to GEX-008, GEX-009, GEX-012, and GEX-013.
+- Calculator ingestion now publishes immutable, generation-fenced expirations and advances a catalog only after terminal complete discovery. Intraday can still retain raw per-contract rows from completed expirations before a later expiration fails; GEX-012 and GEX-013 own that remaining path.
 - Intraday nullable total keys can still duplicate in MySQL. GEX-012 owns the schema correction.
 - Multi-symbol work can keep unrelated symbols together. GEX-018 owns singleton intraday dispatch.
 - Cache-based bootstrap claims can expire before the full child graph finishes. GEX-010 owns the durable run manifest.

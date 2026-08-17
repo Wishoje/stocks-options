@@ -4,16 +4,19 @@ namespace App\Providers;
 
 use App\Support\ProviderConcurrencyLimiter;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskSkipped;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Notifications\Messages\MailMessage;
+use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\QueueBusy;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -49,6 +52,55 @@ class AppServiceProvider extends ServiceProvider
 
         $this->registerSchedulerMonitoring();
         $this->registerQueueMonitoring();
+        $this->registerWorkRequestRateLimits();
+    }
+
+    protected function registerWorkRequestRateLimits(): void
+    {
+        RateLimiter::for('work-start', function (Request $request): array {
+            $userKey = $request->user()?->getAuthIdentifier() ?: $request->ip();
+            $response = fn (Request $request, array $headers) => $this->rateLimitResponse($headers);
+
+            return [
+                Limit::perMinute(max(1, (int) config('work_runs.rate_limits.user_per_minute', 120)))
+                    ->by('work:user:'.$userKey)
+                    ->response($response),
+                Limit::perMinute(max(1, (int) config('work_runs.rate_limits.ip_per_minute', 240)))
+                    ->by('work:ip:'.$request->ip())
+                    ->response($response),
+            ];
+        });
+
+        RateLimiter::for('work-status', function (Request $request): array {
+            $limit = max(1, (int) config('work_runs.rate_limits.status_per_minute', 180));
+            $response = fn (Request $request, array $headers) => $this->rateLimitResponse($headers);
+
+            return [
+                Limit::perMinute($limit)
+                    ->by('work-status:user:'.($request->user()?->getAuthIdentifier() ?: $request->ip()))
+                    ->response($response),
+                Limit::perMinute($limit * 2)
+                    ->by('work-status:ip:'.$request->ip())
+                    ->response($response),
+            ];
+        });
+
+        RateLimiter::for('market-data-read', function (Request $request): Limit {
+            return Limit::perMinute(300)
+                ->by('market-read:'.($request->user()?->getAuthIdentifier() ?: $request->ip()))
+                ->response(fn (Request $request, array $headers) => $this->rateLimitResponse($headers));
+        });
+    }
+
+    protected function rateLimitResponse(array $headers)
+    {
+        $retryAfter = max(1, (int) ($headers['Retry-After'] ?? 60));
+
+        return response()->json([
+            'message' => 'Too many refresh requests. Please retry later.',
+            'code' => 'work_rate_limited',
+            'retry_after_seconds' => $retryAfter,
+        ], 429, $headers);
     }
 
     protected function registerSchedulerMonitoring(): void

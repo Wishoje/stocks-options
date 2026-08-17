@@ -33,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'subscribed' => \App\Http\Middleware\EnsureSubscribed::class,
             'feature'    => \App\Http\Middleware\EnsureFeature::class,
             'eodhealth'  => \App\Http\Middleware\EnsureEodHealthAccess::class,
+            'work-run-feature' => \App\Http\Middleware\EnsureWorkRunFeature::class,
         ]);
 
         $middleware->validateCsrfTokens(except: [

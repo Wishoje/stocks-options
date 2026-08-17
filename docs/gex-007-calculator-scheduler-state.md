@@ -53,7 +53,7 @@ The calculator job keeps its existing execution contract:
 
 Pending work has a 12-hour claim so jobs near the tail of a 75-symbol fan-out cannot be queued again before a calculator worker reaches them. When a worker starts an attempt, it changes the lease to at least 3600 seconds. That covers the approximately 2430-second worst case for three hard timeouts with Redis redelivery. Terminal failure releases the active claim. Failure cooldown starts at five minutes, doubles after consecutive failures, and is capped at one hour. A successful completion resets the failure count.
 
-Cache loss is treated as stale. It may cause a safe refetch, but it cannot create a false completion. Durable calculator run manifests and atomic version publication remain GEX-008 scope.
+Cache loss is treated as stale. It may cause a safe refetch, but it cannot create a false completion. GEX-008 now provides the durable calculator run manifest and atomic version publication; GEX-007 state remains the scheduler's fairness and duplicate-dispatch control.
 
 ## Configuration
 

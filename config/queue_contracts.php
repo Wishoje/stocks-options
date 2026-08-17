@@ -7,6 +7,8 @@ use App\Jobs\ComputeExpiryPressureJob;
 use App\Jobs\ComputePositioningJob;
 use App\Jobs\ComputeUAJob;
 use App\Jobs\ComputeVolMetricsJob;
+use App\Jobs\CompleteWorkRunJob;
+use App\Jobs\ConfirmWorkRunOrchestrationJob;
 use App\Jobs\FetchCalculatorChainJob;
 use App\Jobs\FetchOptionChainDataJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
@@ -70,11 +72,23 @@ return [
         'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'sorted symbols + resolved session',
         'write_strategy' => 'per-symbol atomic derived-metric publication',
     ],
+    CompleteWorkRunJob::class => [
+        'connection' => 'redis', 'queues' => ['bootstrap'], 'max_timeout' => 60,
+        'isolated_queues' => ['bootstrap-fast'],
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'work run + fenced attempt',
+        'write_strategy' => 'token-fenced durable work-run terminal transition',
+    ],
+    ConfirmWorkRunOrchestrationJob::class => [
+        'connection' => 'redis', 'queues' => ['bootstrap'], 'max_timeout' => 60,
+        'isolated_queues' => ['bootstrap-fast'],
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'work run + fenced orchestration attempt',
+        'write_strategy' => 'token-fenced durable orchestration confirmation',
+    ],
     FetchCalculatorChainJob::class => [
         'connection' => 'redis', 'queues' => ['calculator'], 'max_timeout' => 270,
         'isolated_queues' => ['calculator-interactive', 'calculator-fill', 'calculator-fill-heavy'],
-        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'symbol + selected expiration + optional scheduler generation',
-        'write_strategy' => 'natural-key upsert; completeness publication remains GEX-008/GEX-009',
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'symbol + selected expiration + scheduled or durable generation',
+        'write_strategy' => 'immutable expiry publication with generation-fenced catalog and compatibility pointers',
         'provider_timeout' => 30,
     ],
     FetchOptionChainDataJob::class => [

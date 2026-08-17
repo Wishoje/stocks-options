@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Exceptions\ProviderConcurrencyUnavailable;
+use App\Models\User;
 use App\Support\ProviderConcurrencyLimiter;
 use Illuminate\Support\Facades\Cache;
 use Mockery;
@@ -24,6 +25,13 @@ class SymbolSearchConcurrencyTest extends TestCase
             ->once()
             ->andThrow(new ProviderConcurrencyUnavailable('test capacity pressure'));
         app()->instance(ProviderConcurrencyLimiter::class, $limiter);
+
+        $this->actingAs((new User)->forceFill([
+            'id' => 42,
+            'name' => 'Search tester',
+            'email' => 'search@example.test',
+            'trial_ends_at' => now()->addDay(),
+        ]));
 
         $this->getJson('/api/symbols?q=ABC')
             ->assertStatus(503)

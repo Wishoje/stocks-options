@@ -10,15 +10,28 @@ class EnsureSubscribed
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (! $user) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Unauthenticated.'], 401);
+            }
+
             return redirect()->route('login');
         }
 
         $subName = config('plans.default_subscription_name');
 
-        // allow active subscription or trial
-        if ($user->subscribed($subName) || $user->onTrial($subName)) {
+        // Generic trials do not require a subscription lookup.
+        if ($user->onGenericTrial()
+            || $user->subscribed($subName)
+            || $user->onTrial($subName)) {
             return $next($request);
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'An active subscription is required.',
+                'code' => 'subscription_required',
+            ], 403);
         }
 
         // If you want: allow “grace period” after cancel

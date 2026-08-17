@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Jobs\BootstrapUserSymbolJob;
-use App\Support\QueueLanes;
+use App\Support\WorkRunCoordinator;
+use App\Support\Symbols;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -24,19 +24,25 @@ class GexController extends Controller
     public function getGexLevels(Request $request)
     {
         $startedAt = microtime(true);
-        $symbol    = strtoupper($request->query('symbol', 'SPY'));
+        $symbol = Symbols::canon((string) $request->query('symbol', 'SPY'));
+        if (! Symbols::isValid($symbol)) {
+            return response()->json(['message' => 'The selected symbol is invalid.'], 422);
+        }
         $timeframe = $request->query('timeframe', '90d');
         $forceRefresh = (bool) $request->boolean('refresh', false);
+        $workRuns = app(WorkRunCoordinator::class);
+        $activeRun = $workRuns->active('symbol_bootstrap', $symbol);
+        $runPayload = $activeRun ? $workRuns->payload($activeRun) : null;
 
         // Resolve dates + IDs for you
         $timeframeExpirations = $this->getTimeframeExpirations($symbol, $timeframe);
         $dates = $timeframeExpirations[$timeframe] ?? [];
 
         if (empty($dates)) {
-            $this->kickoffSymbolPrime($symbol);
             $payload = [
                 'error' => "No expirations found for {$symbol}/{$timeframe}",
-                'status' => 'queued',
+                'status' => $activeRun ? 'queued' : 'missing',
+                'run' => $runPayload,
                 'available_timeframes'  => array_keys($timeframeExpirations),
                 'timeframe_expirations' => $timeframeExpirations,
             ];
@@ -73,10 +79,10 @@ class GexController extends Controller
                 ?: $latestDate;
         }
         if (!$latestDate) {
-            $this->kickoffSymbolPrime($symbol);
             $payload = [
                 'error' => "No data for {$symbol}/{$timeframe}",
-                'status' => 'fetching',
+                'status' => $activeRun ? 'fetching' : 'incomplete',
+                'run' => $runPayload,
             ];
             $this->logPerf($symbol, $timeframe, $startedAt, [
                 'status_code' => 404,
@@ -139,10 +145,10 @@ class GexController extends Controller
         }
 
         if (!$payload) {
-            $this->kickoffSymbolPrime($symbol);
             $fallback = [
                 'error' => "No data for {$symbol}/{$timeframe}",
-                'status' => 'fetching',
+                'status' => $activeRun ? 'fetching' : 'incomplete',
+                'run' => $runPayload,
             ];
             $this->logPerf($symbol, $timeframe, $startedAt, [
                 'status_code' => 404,
@@ -531,37 +537,6 @@ class GexController extends Controller
         $level3 = $filtered[2]['strike'] ?? null;
 
         return [$level1, $level2, $level3];
-    }
-
-    /**
-     * Queue symbol priming once per short window to avoid dispatch storms.
-     */
-    protected function kickoffSymbolPrime(string $symbol): void
-    {
-        $sym = strtoupper(trim($symbol));
-        if ($sym === '') {
-            return;
-        }
-
-        $lockKey = "prime:symbol:{$sym}";
-        if (!Cache::add($lockKey, 1, now()->addSeconds(90))) {
-            return;
-        }
-
-        BootstrapUserSymbolJob::dispatchIfNeeded($sym, 'gex_controller');
-        $hasExpiries = DB::table('option_expirations')
-            ->where('symbol', $sym)
-            ->exists();
-
-        if ($hasExpiries) {
-            dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))
-                ->onQueue($this->intradayQueueForSymbol($sym));
-        }
-    }
-
-    protected function intradayQueueForSymbol(string $symbol): string
-    {
-        return QueueLanes::intraday($symbol, interactive: true);
     }
 
     protected function hasUsableGreeks(array $expirationIds, string $date): bool

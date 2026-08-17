@@ -1349,7 +1349,7 @@ async function startPreparingPoll(sym, timeframe, onReady) {
 
 function kickoffSymbolWarm(sym, timeframe = '14d') {
   if (!sym) return
-  axios.get('/api/symbol/status', { params: { symbol: sym, timeframe } }).catch(() => {})
+  axios.post('/api/prime', { symbol: sym, timeframe }).catch(() => {})
 }
 
 function startAutoRefresh() {

@@ -36,6 +36,7 @@ final class MarketDataScenario
         $user = User::factory()->create([
             'name' => 'Regression User',
             'email' => 'regression@example.test',
+            'trial_ends_at' => $now->copy()->addDay()->utc(),
         ]);
 
         foreach (['SPY', 'AAPL', 'COLD'] as $symbol) {

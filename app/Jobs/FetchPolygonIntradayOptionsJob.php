@@ -2,8 +2,13 @@
 
 namespace App\Jobs;
 
-use Illuminate\Bus\Queueable;
+use App\Models\WorkRun;
+use App\Support\ProviderConcurrencyLimiter;
+use App\Support\QueueLanes;
+use App\Support\WorkRunCoordinator;
+use App\Support\WorkRunDispatcher;
 use Illuminate\Bus\Batchable;
+use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -11,13 +16,13 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\Support\QueueLanes;
-use App\Support\ProviderConcurrencyLimiter;
+use InvalidArgumentException;
 use RuntimeException;
+use Throwable;
 
 class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
+    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     // ❌ REMOVE this line:
     // public string $queue = 'intraday';
@@ -27,14 +32,23 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
     public function __construct(
         public array $symbols,
         ?int $timeoutSeconds = null,
-        public ?string $tradeDate = null
-    )
-    {
+        public ?string $tradeDate = null,
+        public ?string $workRunId = null,
+        public ?string $workRunDeliveryToken = null
+    ) {
+        if (($workRunId === null) !== ($workRunDeliveryToken === null)) {
+            throw new InvalidArgumentException('Work-run ID and delivery token must be provided together.');
+        }
+
         $canonicalSymbols = collect($symbols)
             ->map(fn ($symbol) => \App\Support\Symbols::canon($symbol))
             ->filter()
             ->unique()
             ->values();
+        if ($workRunId !== null && $canonicalSymbols->count() !== 1) {
+            throw new InvalidArgumentException('A durable intraday work run must own exactly one symbol.');
+        }
+        $this->symbols = $canonicalSymbols->all();
         $requiresLongLane = QueueLanes::intradayBatch($canonicalSymbols->all())
             === (string) config('queue_lanes.queues.intraday_heavy', 'intraday-heavy');
         $this->timeout = max(30, min(540, $timeoutSeconds ?? ($requiresLongLane ? 540 : 105)));
@@ -47,18 +61,75 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 
     public function handle(): void
     {
+        $workRuns = $this->workRunCoordinator();
+        $attempt = max(1, $this->attempts());
+        if ($workRuns && ! $workRuns->markStarted(
+            (string) $this->workRunId,
+            (string) $this->workRunDeliveryToken,
+            $attempt,
+            now()
+        )) {
+            return;
+        }
+
         $limiter = app(ProviderConcurrencyLimiter::class);
-        $limiter->withPriority(
+        $status = $limiter->withPriority(
             QueueLanes::providerPriority($this->queue),
-            fn () => $this->fetchAndPersist(),
+            fn (): string => $this->fetchAndPersist(),
             5
+        );
+
+        if (! $workRuns) {
+            return;
+        }
+
+        if ($status === 'ok') {
+            $workRuns->markCompleted(
+                (string) $this->workRunId,
+                (string) $this->workRunDeliveryToken,
+                $attempt,
+                now()
+            );
+
+            return;
+        }
+
+        $workRuns->markFailed(
+            (string) $this->workRunId,
+            (string) $this->workRunDeliveryToken,
+            $attempt,
+            'intraday_incomplete',
+            $status,
+            now()
         );
     }
 
-    private function fetchAndPersist(): void
+    public function failed(Throwable $exception): void
+    {
+        $this->workRunCoordinator()?->markTerminalException(
+            (string) $this->workRunId,
+            (string) $this->workRunDeliveryToken,
+            max(1, $this->attempts()),
+            $exception
+        );
+
+        parent::failed($exception);
+    }
+
+    protected function identityPayload(): array
+    {
+        return array_filter([
+            'symbols' => $this->symbols,
+            'tradeDate' => $this->tradeDate,
+            'workRunId' => $this->workRunId,
+        ], static fn (mixed $value): bool => $value !== null);
+    }
+
+    private function fetchAndPersist(): string
     {
         $tradeDate = (string) $this->tradeDate;
         $failedSymbols = 0;
+        $deferredSymbols = 0;
 
         // Log::debug('FetchPolygonIntradayOptionsJob.start', [
         //     'symbols'    => $this->symbols,
@@ -103,10 +174,14 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                     'trade_date' => $tradeDate,
                 ]);
                 $this->bootstrapMissingExpiries($symbol, $tradeDate);
+                $deferredSymbols++;
+
                 continue;
             }
 
-            $totCallAll = 0; $totPutAll = 0; $totPremAll = 0.0;
+            $totCallAll = 0;
+            $totPutAll = 0;
+            $totPremAll = 0.0;
             $rowsAll = [];
             $lastCapturedAt = null;
             $requestId = null;
@@ -137,9 +212,9 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                     $lastCapturedAt = $capturedAt;
                     $requestId = $snap['request_id'] ?? $requestId;
 
-                    $ingestor  = app(\App\Services\IntradayOptionVolumeIngestor::class);
+                    $ingestor = app(\App\Services\IntradayOptionVolumeIngestor::class);
 
-                    if (!$intradayTableFull) {
+                    if (! $intradayTableFull) {
                         foreach ($snap['contracts'] as $contract) {
                             try {
                                 $ingestor->ingest($contract, $requestId ?? '', $capturedAt);
@@ -172,51 +247,51 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                         }
                     }
 
-                    $totCall = (int)($snap['totals']['call_vol'] ?? 0);
-                    $totPut  = (int)($snap['totals']['put_vol'] ?? 0);
+                    $totCall = (int) ($snap['totals']['call_vol'] ?? 0);
+                    $totPut = (int) ($snap['totals']['put_vol'] ?? 0);
                     $totPrem = $snap['totals']['premium'] ?? 0;
 
                     $totCallAll += $totCall;
-                    $totPutAll  += $totPut;
-                    $totPremAll += (float)$totPrem;
+                    $totPutAll += $totPut;
+                    $totPremAll += (float) $totPrem;
 
                     foreach ($snap['by_strike'] as $row) {
-                        $K       = isset($row['strike']) ? (float)$row['strike'] : null;
+                        $K = isset($row['strike']) ? (float) $row['strike'] : null;
                         $expDate = $row['exp_date'] ?? $expiry;
 
-                        $callVol  = (int)($row['call_vol']   ?? 0);
-                        $putVol   = (int)($row['put_vol']    ?? 0);
+                        $callVol = (int) ($row['call_vol'] ?? 0);
+                        $putVol = (int) ($row['put_vol'] ?? 0);
                         $callPrem = $row['call_prem'] ?? null;
-                        $putPrem  = $row['put_prem']  ?? null;
+                        $putPrem = $row['put_prem'] ?? null;
 
                         if ($K && $expDate) {
                             if ($callVol > 0) {
                                 $rowsAll[] = [
-                                    'symbol'      => $symbol,
-                                    'trade_date'  => $tradeDate,
-                                    'exp_date'    => $expDate,
-                                    'strike'      => $K,
+                                    'symbol' => $symbol,
+                                    'trade_date' => $tradeDate,
+                                    'exp_date' => $expDate,
+                                    'strike' => $K,
                                     'option_type' => 'call',
-                                    'volume'      => $callVol,
+                                    'volume' => $callVol,
                                     'premium_usd' => $callPrem,
-                                    'asof'        => $capturedAt,
-                                    'created_at'  => $now,
-                                    'updated_at'  => $now,
+                                    'asof' => $capturedAt,
+                                    'created_at' => $now,
+                                    'updated_at' => $now,
                                 ];
                             }
 
                             if ($putVol > 0) {
                                 $rowsAll[] = [
-                                    'symbol'      => $symbol,
-                                    'trade_date'  => $tradeDate,
-                                    'exp_date'    => $expDate,
-                                    'strike'      => $K,
+                                    'symbol' => $symbol,
+                                    'trade_date' => $tradeDate,
+                                    'exp_date' => $expDate,
+                                    'strike' => $K,
                                     'option_type' => 'put',
-                                    'volume'      => $putVol,
+                                    'volume' => $putVol,
                                     'premium_usd' => $putPrem,
-                                    'asof'        => $capturedAt,
-                                    'created_at'  => $now,
-                                    'updated_at'  => $now,
+                                    'asof' => $capturedAt,
+                                    'created_at' => $now,
+                                    'updated_at' => $now,
                                 ];
                             }
                         }
@@ -234,6 +309,7 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                     'symbol' => $symbol,
                     'trade_date' => $tradeDate,
                 ]);
+
                 continue;
             }
 
@@ -242,27 +318,27 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                 $now = now();
                 DB::table('option_live_counters')->upsert(
                     [[
-                        'symbol'      => $symbol,
-                        'trade_date'  => $tradeDate,
-                        'exp_date'    => null,
-                        'strike'      => null,
+                        'symbol' => $symbol,
+                        'trade_date' => $tradeDate,
+                        'exp_date' => null,
+                        'strike' => null,
                         'option_type' => null,
-                        'volume'      => $totCallAll + $totPutAll,
+                        'volume' => $totCallAll + $totPutAll,
                         'premium_usd' => $totPremAll,
-                        'asof'        => $lastCapturedAt,
-                        'created_at'  => $now,
-                        'updated_at'  => $now,
+                        'asof' => $lastCapturedAt,
+                        'created_at' => $now,
+                        'updated_at' => $now,
                     ]],
-                    ['symbol','trade_date','exp_date','strike','option_type'],
-                    ['volume','premium_usd','asof','updated_at']
+                    ['symbol', 'trade_date', 'exp_date', 'strike', 'option_type'],
+                    ['volume', 'premium_usd', 'asof', 'updated_at']
                 );
             }
 
-            if (!empty($rowsAll)) {
+            if (! empty($rowsAll)) {
                 DB::table('option_live_counters')->upsert(
                     $rowsAll,
-                    ['symbol','trade_date','exp_date','strike','option_type'],
-                    ['volume','premium_usd','asof','updated_at']
+                    ['symbol', 'trade_date', 'exp_date', 'strike', 'option_type'],
+                    ['volume', 'premium_usd', 'asof', 'updated_at']
                 );
             }
 
@@ -272,6 +348,13 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
         if ($failedSymbols > 0) {
             throw new RuntimeException("Intraday refresh incomplete for {$failedSymbols} symbol(s).");
         }
+
+        return $deferredSymbols > 0 ? 'no_expiries' : 'ok';
+    }
+
+    private function workRunCoordinator(): ?WorkRunCoordinator
+    {
+        return $this->workRunId !== null ? app(WorkRunCoordinator::class) : null;
     }
 
     protected function tradingDate(\Carbon\Carbon $now): string
@@ -281,11 +364,40 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
         if ($ny->isWeekend() || $t < 930) {
             $ny->previousWeekday();
         }
+
         return $ny->toDateString();
     }
 
     private function bootstrapMissingExpiries(string $symbol, string $tradeDate): void
     {
+        if ($this->workRunId !== null) {
+            $runs = app(WorkRunCoordinator::class);
+            $dispatcher = app(WorkRunDispatcher::class);
+            $owner = WorkRun::query()->with('requestedBy')->find($this->workRunId)?->requestedBy;
+            $claim = $runs->claim(
+                'symbol_bootstrap',
+                $symbol,
+                [],
+                QueueLanes::bootstrap(),
+                $owner,
+                deferWhenRateLimited: true
+            );
+            if ($claim['created'] && ! $claim['deferred']) {
+                $dispatcher->dispatch($claim['run']);
+            }
+
+            Log::info('FetchPolygonIntradayOptionsJob.durableBootstrapHandoff', [
+                'symbol' => $symbol,
+                'trade_date' => $tradeDate,
+                'intraday_work_run_id' => $this->workRunId,
+                'bootstrap_work_run_id' => $claim['run']->id,
+                'bootstrap_deferred' => $claim['deferred'],
+                'bootstrap_coalesced' => ! $claim['created'],
+            ]);
+
+            return;
+        }
+
         // Prime EOD chain scaffolding once per short window.
         $primeKey = "intraday:noexp:prime:{$symbol}";
         if (Cache::lock($primeKey, 300)->get()) {

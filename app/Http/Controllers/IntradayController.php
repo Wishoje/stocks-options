@@ -2,41 +2,65 @@
 
 namespace App\Http\Controllers;
 
-use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Exceptions\WorkRunRateLimited;
+use App\Support\Market;
+use App\Support\QueueLanes;
+use App\Support\Symbols;
+use App\Support\WorkRunCoordinator;
+use App\Support\WorkRunDispatcher;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
-use App\Models\Watchlist;
-use App\Support\Market;
-use App\Support\Symbols;
-use App\Support\QueueLanes;
+use Throwable;
 
 class IntradayController extends Controller
 {
     private const STRIKES_CACHE_SECONDS = 90;
+
     private const REPRICED_CACHE_SECONDS = 90;
+
     private const EOD_OI_CACHE_SECONDS = 300;
+
     private const IV_CACHE_SECONDS = 45;
+
     private const IV_LOOKBACK_MINUTES = 12;
+
     private const PERF_SLOW_MS = 800;
+
     private const PERF_SAMPLE_PERCENT = 5;
 
     // POST /api/intraday/pull { symbols: ["SPY","QQQ"] }
-    private function k2($v): string { return number_format((float)$v, 2, '.', ''); }
-
-    public function pull(Request $request)
+    private function k2($v): string
     {
-        $symbolsInput = $request->input('symbols', []);
-        if (!is_array($symbolsInput) || empty($symbolsInput)) {
-            return response()->json(['error' => 'symbols[] required'], 422);
+        return number_format((float) $v, 2, '.', '');
+    }
+
+    public function pull(
+        Request $request,
+        WorkRunCoordinator $runs,
+        WorkRunDispatcher $dispatcher
+    ) {
+        $validated = $request->validate([
+            'symbols' => ['required', 'array', 'min:1'],
+            'symbols.*' => ['required', 'string', 'max:10'],
+            'force' => ['sometimes', 'boolean'],
+            'sync' => ['sometimes', 'boolean'],
+        ]);
+        $symbolsInput = $validated['symbols'];
+        $canonical = collect($symbolsInput)
+            ->map(fn ($s) => Symbols::canon((string) $s))
+            ->values();
+
+        if ($canonical->contains(fn (string $symbol): bool => ! Symbols::isValid($symbol))) {
+            return response()->json([
+                'message' => 'Every symbol must use a supported ticker format.',
+                'code' => 'invalid_symbol',
+            ], 422);
         }
 
-        $symbols = collect($symbolsInput)
-            ->map(fn ($s) => Symbols::canon((string) $s))
-            ->filter()
+        $symbols = $canonical
             ->unique()
             ->values()
             ->all();
@@ -45,13 +69,22 @@ class IntradayController extends Controller
             return response()->json(['error' => 'symbols[] required'], 422);
         }
 
+        $maxSymbols = max(1, (int) config('work_runs.max_symbols_per_request', 250));
+        if (count($symbols) > $maxSymbols) {
+            return response()->json([
+                'message' => "No more than {$maxSymbols} symbols may be refreshed at once.",
+                'code' => 'too_many_symbols',
+                'max_symbols' => $maxSymbols,
+            ], 422);
+        }
+
         $force = (bool) $request->boolean('force', false);
         $marketOpen = Market::isRthOpen(now('America/New_York'));
         $skipped = [];
 
         // After close / pre-open: do not repull symbols that already have any intraday data.
         // Allow new symbols (or stale-session symbols) to bootstrap.
-        if (!$force && !$marketOpen) {
+        if (! $force && ! $marketOpen) {
             $targetTradeDate = $this->tradingDate(now());
             $freshCutoffUtc = \Carbon\Carbon::parse($targetTradeDate, 'America/New_York')
                 ->setTime(15, 30, 0)
@@ -90,6 +123,7 @@ class IntradayController extends Controller
                 // Skip only if symbol has data and that data is fresh for the latest closed session.
                 if ($hasAny && $sessionFresh) {
                     $skipped[] = $sym;
+
                     continue;
                 }
                 $filtered[] = $sym;
@@ -106,42 +140,79 @@ class IntradayController extends Controller
             }
         }
 
-        // GLOBAL watchlist: if there are no symbols in the watchlists table at all -> run sync
-        $watchlistEmpty = !Watchlist::query()->exists();
-        // (equivalent) $watchlistEmpty = !DB::table('watchlists')->exists();
+        $tradeDate = $this->tradingDate(now());
+        $runPayloads = [];
+        $newlyQueued = [];
+        $coalesced = [];
+        $rateLimited = [];
+        $dispatchErrors = [];
 
-        if ($watchlistEmpty && ! QueueLanes::isolated()) {
-            foreach (QueueLanes::scheduledIntradayBatches($symbols, count($symbols)) as $batch) {
-                Bus::dispatchSync(new FetchPolygonIntradayOptionsJob($batch));
+        foreach ($symbols as $symbol) {
+            try {
+                $claim = $runs->claim(
+                    'intraday_refresh',
+                    $symbol,
+                    ['trade_date' => $tradeDate],
+                    QueueLanes::intraday($symbol, interactive: true),
+                    $request->user(),
+                    reuseCompleted: ! $force
+                );
+            } catch (WorkRunRateLimited $exception) {
+                $rateLimited[$symbol] = $exception->retryAfterSeconds;
+
+                continue;
             }
-            return response()->json([
-                'ok' => true,
-                'dispatch' => 'sync',
-                'queued_symbols' => $symbols,
-                'skipped_symbols' => $skipped,
+
+            $run = $claim['run'];
+            $queued = false;
+            if ($claim['created']) {
+                try {
+                    $queued = $dispatcher->dispatch($run);
+                } catch (Throwable $exception) {
+                    $dispatchErrors[$symbol] = $exception::class;
+                }
+            }
+
+            if ($claim['created'] && $queued) {
+                $newlyQueued[] = $symbol;
+            } elseif (! $claim['created']) {
+                $coalesced[] = $symbol;
+            }
+
+            $runPayloads[] = array_merge($runs->payload($run->fresh()), [
+                'queued' => $queued,
+                'coalesced' => ! $claim['created'],
             ]);
         }
 
-        foreach (QueueLanes::scheduledIntradayBatches($symbols, count($symbols)) as $batch) {
-            Bus::dispatch(
-                (new FetchPolygonIntradayOptionsJob($batch))
-                    ->onQueue(QueueLanes::intradayBatch($batch, interactive: true))
-            );
-        }
-        return response()->json([
-            'ok' => true,
-            'dispatch' => 'async',
-            'queued_symbols' => $symbols,
-            'skipped_symbols' => $skipped,
-        ]);
-    }
+        $retryAfter = $rateLimited === [] ? null : max($rateLimited);
+        $statusCode = match (true) {
+            $dispatchErrors !== [] => 503,
+            $runPayloads === [] && $rateLimited !== [] => 429,
+            $newlyQueued !== [] => 202,
+            default => 200,
+        };
+        $headers = $retryAfter ? ['Retry-After' => (string) $retryAfter] : [];
 
+        return response()->json([
+            'ok' => $dispatchErrors === [] && $rateLimited === [],
+            'dispatch' => 'async',
+            'queued_symbols' => array_values(array_unique(array_merge($newlyQueued, $coalesced))),
+            'newly_queued_symbols' => $newlyQueued,
+            'coalesced_symbols' => $coalesced,
+            'skipped_symbols' => $skipped,
+            'rate_limited_symbols' => array_keys($rateLimited),
+            'dispatch_error_symbols' => array_keys($dispatchErrors),
+            'retry_after_seconds' => $retryAfter,
+            'runs' => $runPayloads,
+        ], $statusCode, $headers);
+    }
 
     // GET /api/intraday/summary?symbol=SPY
     public function summary(Request $request)
     {
         $startedAt = microtime(true);
-        $symbol    = strtoupper($request->query('symbol', 'SPY'));
+        $symbol = strtoupper($request->query('symbol', 'SPY'));
         $preferredTradeDate = $this->tradingDate(now());
         $tradeDate = $this->resolveTradeDate($symbol, $preferredTradeDate);
 
@@ -155,18 +226,18 @@ class IntradayController extends Controller
             ->first();
 
         $open = $this->isMarketOpen();
-        if (!$row) {
+        if (! $row) {
             $payload = [
-                'open'   => $open,
+                'open' => $open,
                 'trade_date' => $tradeDate,
-                'asof'   => null,
+                'asof' => null,
                 'stale_seconds' => null,
                 'totals' => [
                     'call_vol' => 0,
-                    'put_vol'  => 0,
-                    'total'    => 0,
-                    'pcr_vol'  => null,
-                    'premium'  => 0,
+                    'put_vol' => 0,
+                    'total' => 0,
+                    'pcr_vol' => null,
+                    'premium' => 0,
                 ],
             ];
 
@@ -188,16 +259,16 @@ class IntradayController extends Controller
         $staleSeconds = $asof ? now('America/New_York')->diffInSeconds($asof) : null;
 
         $payload = [
-            'open'          => $open,
-            'trade_date'    => $tradeDate,
-            'asof'          => $row->asof,
+            'open' => $open,
+            'trade_date' => $tradeDate,
+            'asof' => $row->asof,
             'stale_seconds' => $staleSeconds,
-            'totals'        => [
+            'totals' => [
                 'call_vol' => $callVol,
-                'put_vol'  => $putVol,
-                'total'    => (int) $row->volume,
-                'pcr_vol'  => $pcr,
-                'premium'  => (float) $row->premium_usd,
+                'put_vol' => $putVol,
+                'total' => (int) $row->volume,
+                'pcr_vol' => $pcr,
+                'premium' => (float) $row->premium_usd,
             ],
         ];
 
@@ -211,7 +282,6 @@ class IntradayController extends Controller
 
         return response()->json($payload);
     }
-
 
     // GET /api/intraday/volume-by-strike?symbol=SPY
     public function volumeByStrike(Request $request)
@@ -236,24 +306,24 @@ class IntradayController extends Controller
         // Roll up: strike -> { call_vol, put_vol }
         $byStrike = [];
         foreach ($rows as $r) {
-            $K = (string)$r->strike;
-            if (!isset($byStrike[$K])) {
+            $K = (string) $r->strike;
+            if (! isset($byStrike[$K])) {
                 $byStrike[$K] = [
-                    'strike'   => (float)$r->strike,
+                    'strike' => (float) $r->strike,
                     'call_vol' => 0,
-                    'put_vol'  => 0,
+                    'put_vol' => 0,
                 ];
             }
             if ($r->option_type === 'call') {
-                $byStrike[$K]['call_vol'] += (int)$r->volume;
+                $byStrike[$K]['call_vol'] += (int) $r->volume;
             } elseif ($r->option_type === 'put') {
-                $byStrike[$K]['put_vol'] += (int)$r->volume;
+                $byStrike[$K]['put_vol'] += (int) $r->volume;
             }
         }
 
         // turn dict -> array sorted by strike asc
         $items = array_values($byStrike);
-        usort($items, fn($a,$b) => $a['strike'] <=> $b['strike']);
+        usort($items, fn ($a, $b) => $a['strike'] <=> $b['strike']);
 
         return response()->json([
             'items' => $items,
@@ -267,6 +337,7 @@ class IntradayController extends Controller
         if ($ny->isWeekend() || $t < 930) {
             $ny->previousWeekday();
         }
+
         return $ny->toDateString();
     }
 
@@ -312,14 +383,14 @@ class IntradayController extends Controller
         return [(int) ($rows['call'] ?? 0), (int) ($rows['put'] ?? 0)];
     }
 
-     public function ua(Request $request)
+    public function ua(Request $request)
     {
         // TODO: replace with true intraday UA logic.
         // For now just call the same service you use for /api/ua so the UI has data.
         return app(\App\Http\Controllers\ActivityController::class)->index($request);
     }
 
-      /**
+    /**
      * GET /api/intraday/strikes?symbol=SPY
      * Returns a single payload with:
      *  - call/put volume by strike (today)
@@ -331,14 +402,14 @@ class IntradayController extends Controller
     public function strikesComposite(Request $request)
     {
         $startedAt = microtime(true);
-        $symbol    = strtoupper($request->query('symbol', 'SPY'));
+        $symbol = strtoupper($request->query('symbol', 'SPY'));
         $preferredTradeDate = $this->tradingDate(now());
         $tradeDate = $this->resolveTradeDate($symbol, $preferredTradeDate);
 
         $cacheKey = "intraday:strikesComposite:{$symbol}:{$tradeDate}";
         $cacheHit = Cache::has($cacheKey);
 
-        $data = Cache::remember($cacheKey, now()->addSeconds(self::STRIKES_CACHE_SECONDS),function () use ($symbol, $tradeDate) {
+        $data = Cache::remember($cacheKey, now()->addSeconds(self::STRIKES_CACHE_SECONDS), function () use ($symbol, $tradeDate) {
             // 1) Intraday volume & premium by strike (today)
             $rows = DB::table('option_live_counters')
                 ->where('symbol', $symbol)
@@ -356,21 +427,21 @@ class IntradayController extends Controller
             $byK = [];
             foreach ($rows as $r) {
                 $k = $this->k2($r->strike);
-                if (!isset($byK[$k])) {
+                if (! isset($byK[$k])) {
                     $byK[$k] = [
-                        'strike'         => (float) $r->strike,
-                        'call_vol'       => 0, 'put_vol' => 0,
-                        'call_prem'      => 0.0, 'put_prem' => 0.0,
-                        'oi_call_eod'    => 0, 'oi_put_eod' => 0,
-                        'vol_oi'         => null, 'pcr' => null,
-                        'net_gex_live'   => null, 'net_gex_delta' => null,
+                        'strike' => (float) $r->strike,
+                        'call_vol' => 0, 'put_vol' => 0,
+                        'call_prem' => 0.0, 'put_prem' => 0.0,
+                        'oi_call_eod' => 0, 'oi_put_eod' => 0,
+                        'vol_oi' => null, 'pcr' => null,
+                        'net_gex_live' => null, 'net_gex_delta' => null,
                     ];
                 }
                 if ($r->option_type === 'call') {
-                    $byK[$k]['call_vol']  += (int) $r->vol;
+                    $byK[$k]['call_vol'] += (int) $r->vol;
                     $byK[$k]['call_prem'] += (float) $r->prem;
                 } elseif ($r->option_type === 'put') {
-                    $byK[$k]['put_vol']  += (int) $r->vol;
+                    $byK[$k]['put_vol'] += (int) $r->vol;
                     $byK[$k]['put_prem'] += (float) $r->prem;
                 }
             }
@@ -379,30 +450,30 @@ class IntradayController extends Controller
             $eodOi = $this->eodOiByStrike($symbol);
             foreach ($eodOi as $kRaw => $oi) {
                 $k = $this->k2($kRaw);
-                if (!isset($byK[$k])) {
+                if (! isset($byK[$k])) {
                     $byK[$k] = [
-                        'strike'        => (float) $k,
-                        'call_vol'      => 0,
-                        'put_vol'       => 0,
-                        'call_prem'     => 0.0,
-                        'put_prem'      => 0.0,
-                        'oi_call_eod'   => 0,
-                        'oi_put_eod'    => 0,
-                        'vol_oi'        => null,
-                        'pcr'           => null,
-                        'net_gex_live'  => null,
+                        'strike' => (float) $k,
+                        'call_vol' => 0,
+                        'put_vol' => 0,
+                        'call_prem' => 0.0,
+                        'put_prem' => 0.0,
+                        'oi_call_eod' => 0,
+                        'oi_put_eod' => 0,
+                        'vol_oi' => null,
+                        'pcr' => null,
+                        'net_gex_live' => null,
                         'net_gex_delta' => null,
                     ];
                 }
                 $byK[$k]['oi_call_eod'] = (int) ($oi['call'] ?? 0);
-                $byK[$k]['oi_put_eod']  = (int) ($oi['put']  ?? 0);
+                $byK[$k]['oi_put_eod'] = (int) ($oi['put'] ?? 0);
             }
 
             // 3) ratios
             foreach ($byK as &$row) {
                 $totVol = $row['call_vol'] + $row['put_vol'];
-                $totOi  = $row['oi_call_eod'] + $row['oi_put_eod'];
-                $row['pcr']    = $row['call_vol'] > 0 ? round($row['put_vol'] / max(1, $row['call_vol']), 4) : null;
+                $totOi = $row['oi_call_eod'] + $row['oi_put_eod'];
+                $row['pcr'] = $row['call_vol'] > 0 ? round($row['put_vol'] / max(1, $row['call_vol']), 4) : null;
                 $row['vol_oi'] = $totOi > 0 ? round($totVol / $totOi, 4) : null;
             }
             unset($row);
@@ -411,7 +482,7 @@ class IntradayController extends Controller
             $repriced = $this->repricedGexCompute($symbol, array_values($byK));
             foreach ($repriced as $k => $vals) {
                 if (isset($byK[$k])) {
-                    $byK[$k]['net_gex_live']  = $vals['net_gex_live'];
+                    $byK[$k]['net_gex_live'] = $vals['net_gex_live'];
                     $byK[$k]['net_gex_delta'] = $vals['net_gex_delta'];
                 }
             }
@@ -420,8 +491,8 @@ class IntradayController extends Controller
             usort($items, fn ($a, $b) => $a['strike'] <=> $b['strike']);
 
             $totCall = array_sum(array_column($items, 'call_vol'));
-            $totPut  = array_sum(array_column($items, 'put_vol'));
-            $pcr     = $totCall > 0 ? round($totPut / $totCall, 3) : null;
+            $totPut = array_sum(array_column($items, 'put_vol'));
+            $pcr = $totCall > 0 ? round($totPut / $totCall, 3) : null;
             $asof = DB::table('option_live_counters')
                 ->where('symbol', $symbol)
                 ->where('trade_date', $tradeDate)
@@ -430,21 +501,21 @@ class IntradayController extends Controller
             $asofCarbon = $asof ? \Carbon\Carbon::parse($asof) : null;
 
             return [
-                'open'   => $this->isMarketOpen(),
-                'asof'   => $asof,
+                'open' => $this->isMarketOpen(),
+                'asof' => $asof,
                 'stale_seconds' => $asofCarbon
                     ? now('America/New_York')->diffInSeconds($asofCarbon)
                     : null,
                 'totals' => [
                     'call_vol' => $totCall,
-                    'put_vol'  => $totPut,
-                    'pcr_vol'  => $pcr,
-                    'premium'  => array_sum(array_map(
+                    'put_vol' => $totPut,
+                    'pcr_vol' => $pcr,
+                    'premium' => array_sum(array_map(
                         fn ($r) => $r['call_prem'] + $r['put_prem'],
                         $items
                     )),
                 ],
-                'items'  => $items,
+                'items' => $items,
             ];
         });
 
@@ -477,22 +548,23 @@ class IntradayController extends Controller
             $byK = [];
             foreach ($eodOi as $k => $oi) {
                 $byK[] = [
-                    'strike' => (float)$k,
-                    'oi_call_eod' => (int)($oi['call'] ?? 0),
-                    'oi_put_eod'  => (int)($oi['put']  ?? 0),
+                    'strike' => (float) $k,
+                    'oi_call_eod' => (int) ($oi['call'] ?? 0),
+                    'oi_put_eod' => (int) ($oi['put'] ?? 0),
                 ];
             }
             $repr = $this->repricedGexCompute($symbol, $byK);
             $items = [];
             foreach ($repr as $k => $vals) {
                 $items[] = [
-                    'strike'        => (float)$k,
-                    'net_gex_live'  => $vals['net_gex_live'],
+                    'strike' => (float) $k,
+                    'net_gex_live' => $vals['net_gex_live'],
                     'net_gex_delta' => $vals['net_gex_delta'],
                 ];
             }
-            usort($items, fn($a,$b)=>$a['strike'] <=> $b['strike']);
-            return ['items'=>$items];
+            usort($items, fn ($a, $b) => $a['strike'] <=> $b['strike']);
+
+            return ['items' => $items];
         });
 
         return response()->json($data);
@@ -509,12 +581,12 @@ class IntradayController extends Controller
         $latestKey = "intraday:eodOiLatest:{$symbol}";
         $latest = Cache::remember($latestKey, now()->addSeconds(60), function () use ($symbol) {
             return DB::table('option_chain_data as o')
-                ->join('option_expirations as e','e.id','=','o.expiration_id')
-                ->where('e.symbol',$symbol)
+                ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+                ->where('e.symbol', $symbol)
                 ->max('o.data_date');
         });
 
-        if (!$latest) {
+        if (! $latest) {
             return [];
         }
 
@@ -522,23 +594,23 @@ class IntradayController extends Controller
 
         return Cache::remember($cacheKey, now()->addSeconds(self::EOD_OI_CACHE_SECONDS), function () use ($symbol, $latest) {
             $rows = DB::table('option_chain_data as o')
-                ->join('option_expirations as e','e.id','=','o.expiration_id')
-                ->where('e.symbol',$symbol)
-                ->whereDate('o.data_date',$latest)
-                ->select('o.strike','o.option_type', DB::raw('SUM(COALESCE(o.open_interest,0)) as oi'))
-                ->groupBy('o.strike','o.option_type')
+                ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+                ->where('e.symbol', $symbol)
+                ->whereDate('o.data_date', $latest)
+                ->select('o.strike', 'o.option_type', DB::raw('SUM(COALESCE(o.open_interest,0)) as oi'))
+                ->groupBy('o.strike', 'o.option_type')
                 ->get();
 
             $out = [];
             foreach ($rows as $r) {
                 $k = $this->k2($r->strike);
-                if (!isset($out[$k])) {
-                    $out[$k] = ['call'=>0,'put'=>0];
+                if (! isset($out[$k])) {
+                    $out[$k] = ['call' => 0, 'put' => 0];
                 }
                 if ($r->option_type === 'call') {
-                    $out[$k]['call'] += (int)$r->oi;
+                    $out[$k]['call'] += (int) $r->oi;
                 } elseif ($r->option_type === 'put') {
-                    $out[$k]['put'] += (int)$r->oi;
+                    $out[$k]['put'] += (int) $r->oi;
                 }
             }
 
@@ -560,7 +632,7 @@ class IntradayController extends Controller
         // map of IV by strike (quick sample from latest intraday snapshots, if you have them)
         $ivMap = $this->latestIvByStrike($symbol); // [strike_str => iv]
         // time to expiry: use next weekly as an anchor (in years)
-        $tau = $this->approxTimeToNearestExpiryYears($symbol) ?? (1.0/365.0); // fallback ~1 day
+        $tau = $this->approxTimeToNearestExpiryYears($symbol) ?? (1.0 / 365.0); // fallback ~1 day
 
         $r = 0.00; // risk-free (ignore intraday)
         $q = 0.00; // dividend yield (ignore intraday)
@@ -572,19 +644,24 @@ class IntradayController extends Controller
 
         $out = [];
         foreach ($byK as $row) {
-            $K  = (float)$row['strike'];
+            $K = (float) $row['strike'];
             $kS = $this->k2($K);
 
-            $oiCall = (int)($row['oi_call_eod'] ?? 0);
-            $oiPut  = (int)($row['oi_put_eod']  ?? 0);
-            if (($oiCall + $oiPut) === 0) { $out[$kS] = ['net_gex_live'=>0.0,'net_gex_delta'=>0.0]; continue; }
+            $oiCall = (int) ($row['oi_call_eod'] ?? 0);
+            $oiPut = (int) ($row['oi_put_eod'] ?? 0);
+            if (($oiCall + $oiPut) === 0) {
+                $out[$kS] = ['net_gex_live' => 0.0, 'net_gex_delta' => 0.0];
 
-            $sigma = (float)($ivMap[$kS] ?? 0.20); // 20% fallback
-            $gamma = $this->bsGamma($S, $K, $r, $q, max(0.0001,$sigma), max(1e-6,$tau));
-            $net   = ($oiCall - $oiPut) * $mult * $S * $S * $gamma;
+                continue;
+            }
 
-            $out[$kS] = ['net_gex_live'=>round($net,3), 'net_gex_delta'=>round($net-$baseline,3)];
+            $sigma = (float) ($ivMap[$kS] ?? 0.20); // 20% fallback
+            $gamma = $this->bsGamma($S, $K, $r, $q, max(0.0001, $sigma), max(1e-6, $tau));
+            $net = ($oiCall - $oiPut) * $mult * $S * $S * $gamma;
+
+            $out[$kS] = ['net_gex_live' => round($net, 3), 'net_gex_delta' => round($net - $baseline, 3)];
         }
+
         return $out;
     }
 
@@ -592,18 +669,20 @@ class IntradayController extends Controller
     {
         // d1 = [ln(S/K) + (r - q + 0.5 σ^2) τ] / (σ √τ)
         $sqrtTau = sqrt($tau);
-        $d1 = (log(max(1e-12,$S/$K)) + ($r - $q + 0.5*$sigma*$sigma)*$tau) / ($sigma*$sqrtTau);
+        $d1 = (log(max(1e-12, $S / $K)) + ($r - $q + 0.5 * $sigma * $sigma) * $tau) / ($sigma * $sqrtTau);
         // φ(d1) / (S σ √τ) * e^{-q τ}
-        $phi = exp(-0.5*$d1*$d1) / sqrt(2*M_PI);
-        return $phi * exp(-$q*$tau) / (max(1e-12,$S) * $sigma * $sqrtTau);
+        $phi = exp(-0.5 * $d1 * $d1) / sqrt(2 * M_PI);
+
+        return $phi * exp(-$q * $tau) / (max(1e-12, $S) * $sigma * $sqrtTau);
     }
+
     private function latestIvByStrike(string $symbol): array
     {
-        if (!$this->isMarketOpen()) {
+        if (! $this->isMarketOpen()) {
             return [];
         }
 
-        if (!Schema::hasTable('intraday_option_volumes')) {
+        if (! Schema::hasTable('intraday_option_volumes')) {
             return [];
         }
 
@@ -638,19 +717,22 @@ class IntradayController extends Controller
             ->where('symbol', $symbol)
             ->max('fetched_at');
 
-        if (!$latest) {
+        if (! $latest) {
             return null;
         }
 
         $exp = DB::table('option_snapshots')
-            ->where('symbol',$symbol)
+            ->where('symbol', $symbol)
             ->where('fetched_at', $latest)
-            ->where('expiry','>=',$nowNy->toDateString())
+            ->where('expiry', '>=', $nowNy->toDateString())
             ->orderBy('expiry')
             ->value('expiry');
 
-        if (!$exp) return null;
-        $days = max(0.25, \Carbon\Carbon::parse($exp, 'America/New_York')->endOfDay()->diffInHours($nowNy)/24.0);
+        if (! $exp) {
+            return null;
+        }
+        $days = max(0.25, \Carbon\Carbon::parse($exp, 'America/New_York')->endOfDay()->diffInHours($nowNy) / 24.0);
+
         return $days / 365.0;
     }
 
@@ -675,6 +757,7 @@ class IntradayController extends Controller
 
         if ($durationMs >= self::PERF_SLOW_MS) {
             Log::warning('intraday.perf.slow', $payload);
+
             return;
         }
 
@@ -683,4 +766,3 @@ class IntradayController extends Controller
         }
     }
 }
-

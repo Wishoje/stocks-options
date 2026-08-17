@@ -2,20 +2,24 @@
 
 namespace App\Http\Controllers;
 
-use App\Jobs\BootstrapUserSymbolJob;
 use App\Support\EodSnapshotSelector;
-use App\Support\QueueLanes;
+use App\Support\Symbols;
+use App\Support\WorkRunCoordinator;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class SymbolStatusController extends Controller
 {
-    public function show(Request $req)
+    public function show(Request $req, WorkRunCoordinator $runs)
     {
-        $symbol = strtoupper($req->query('symbol', 'SPY'));
+        $symbol = Symbols::canon((string) $req->query('symbol', 'SPY'));
+        if (! Symbols::isValid($symbol)) {
+            return response()->json(['message' => 'The selected symbol is invalid.'], 422);
+        }
         $timeframe = $req->query('timeframe', '14d'); // keep in sync with UI default
+        $activeRun = $runs->active('symbol_bootstrap', $symbol);
+        $runPayload = $activeRun ? $runs->payload($activeRun) : null;
 
         // --- trading date (NY, roll back on weekends) ---
         $ny = Carbon::now('America/New_York');
@@ -61,14 +65,13 @@ class SymbolStatusController extends Controller
                 ->all();
         }
 
-        // nothing seeded yet? enqueue full prime + intraday and report queued
+        // A read reports current readiness only. Expensive work starts through POST /api/prime.
         if (empty($expDates)) {
-            $this->queueBootstrap($symbol);
-
             return response()->json([
-                'status' => 'queued',
+                'status' => $activeRun ? 'queued' : 'missing',
                 'symbol' => $symbol,
-            ], 202);
+                'run' => $runPayload,
+            ], $activeRun ? 202 : 404);
         }
 
         // target expirations -> ids
@@ -106,42 +109,19 @@ class SymbolStatusController extends Controller
                 'expirations_targeted' => $targetExpCount,
                 'expirations_covered' => $coveredExpCount,
                 'rows_today' => $totalRows,
+                'run' => $runPayload,
             ]);
         }
 
         // we have expirations but not enough rows yet -> fetching
         // (also useful to expose progress to the UI)
-        $this->queueBootstrap($symbol);
-
         return response()->json([
-            'status' => 'fetching',
+            'status' => $activeRun ? 'fetching' : 'incomplete',
             'symbol' => $symbol,
             'expirations_targeted' => $targetExpCount,
             'expirations_covered' => $coveredExpCount,
             'rows_today' => $totalRows,
-        ], 202);
-    }
-
-    private function queueBootstrap(string $symbol): void
-    {
-        $sym = strtoupper(trim($symbol));
-        if ($sym === '') {
-            return;
-        }
-
-        BootstrapUserSymbolJob::dispatchIfNeeded($sym, 'symbol_status');
-        $hasExpiries = DB::table('option_expirations')
-            ->where('symbol', $sym)
-            ->exists();
-
-        if ($hasExpiries && Cache::add("symbol-status:intraday:{$sym}", 1, now()->addSeconds(45))) {
-            dispatch(new \App\Jobs\FetchPolygonIntradayOptionsJob([$sym]))
-                ->onQueue($this->intradayQueueForSymbol($sym));
-        }
-    }
-
-    private function intradayQueueForSymbol(string $symbol): string
-    {
-        return QueueLanes::intraday($symbol, interactive: true);
+            'run' => $runPayload,
+        ], $activeRun ? 202 : 200);
     }
 }

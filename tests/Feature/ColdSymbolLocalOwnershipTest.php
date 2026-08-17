@@ -53,6 +53,7 @@ class ColdSymbolLocalOwnershipTest extends TestCase
             'id' => 42,
             'name' => 'Cold symbol owner',
             'email' => 'cold-symbol@example.test',
+            'trial_ends_at' => now()->addDay(),
         ]);
 
         $this->actingAs($user)
@@ -62,7 +63,8 @@ class ColdSymbolLocalOwnershipTest extends TestCase
 
         $this->actingAs($user)
             ->postJson('/api/prime', ['symbol' => 'AAPL'])
-            ->assertNoContent();
+            ->assertOk()
+            ->assertJsonPath('coalesced', true);
 
         Bus::assertDispatchedTimes(BootstrapUserSymbolJob::class, 1);
         Bus::assertDispatched(
@@ -156,6 +158,9 @@ class ColdSymbolLocalOwnershipTest extends TestCase
             $table->id();
             $table->string('symbol');
         });
+
+        $migration = require database_path('migrations/2026_08_16_000001_create_work_runs_table.php');
+        $migration->up();
     }
 
     protected function tearDown(): void

@@ -6,16 +6,33 @@ use Illuminate\Http\Request;
 
 class EnsureFeature
 {
-    public function handle(Request $request, Closure $next, string $feature)
+    public function handle(Request $request, Closure $next, string $feature, string $mode = 'legacy')
     {
         $user = $request->user();
-        if (!$user) return redirect()->route('login');
+        if (! $user) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Unauthenticated.'], 401);
+            }
+
+            return redirect()->route('login');
+        }
 
         $subName = config('plans.default_subscription_name');
 
-        $isTrial = $user->onTrial($subName) || $user->onGenericTrial();
+        if ($user->onGenericTrial()) {
+            return $next($request);
+        }
 
-        if (!$user->subscribed($subName) && !$isTrial) {
+        $isTrial = $user->onTrial($subName);
+
+        if (! $user->subscribed($subName) && ! $isTrial) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'An active subscription is required.',
+                    'code' => 'subscription_required',
+                ], 403);
+            }
+
             return redirect()->route('pricing');
         }
 
@@ -32,15 +49,32 @@ class EnsureFeature
             $allPrices = array_values($plan['prices'] ?? []);
             if ($priceId && in_array($priceId, $allPrices, true)) {
                 $allowed = $plan['features'] ?? [];
-                return in_array($feature, $allowed, true)
-                    ? $next($request)
-                    : redirect()->route('pricing');
+                if (in_array($feature, $allowed, true)) {
+                    return $next($request);
+                }
+
+                if ($request->expectsJson()) {
+                    return response()->json([
+                        'message' => 'This feature is not included in the current plan.',
+                        'code' => 'feature_not_available',
+                    ], 403);
+                }
+
+                return redirect()->route('pricing');
             }
         }
 
-        // If subscribed but mapping missing, let them in (or log + allow)
-        if ($user->subscribed($subName)) {
+        // Preserve the established web behavior unless a sensitive API route
+        // explicitly requires a mapped plan and feature entitlement.
+        if ($user->subscribed($subName) && $mode !== 'strict') {
             return $next($request);
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'This feature is not included in the current plan.',
+                'code' => $mode === 'strict' ? 'plan_unmapped' : 'feature_not_available',
+            ], 403);
         }
 
         return redirect()->route('pricing');
