@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use RuntimeException;
 use Throwable;
 
 class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
@@ -389,16 +390,26 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
         $largeMaxPages = max($baseMaxPages, (int) env('CALC_CHAIN_MAX_PAGES_LARGE', 350));
         $isLargeSymbol = ! $targetExpiry && QueueLanes::isCalculatorHeavy($symbol);
         $maxPages = $isLargeSymbol ? $largeMaxPages : $baseMaxPages;
-        $url = "{$base}/v3/snapshot/options/{$symbol}";
+        $endpointUrl = "{$base}/v3/snapshot/options/{$symbol}";
+        $scopeParams = [
+            'limit' => $perPage,
+            'sort' => 'strike_price',
+            'order' => 'asc',
+        ];
+        if ($targetExpiry) {
+            $scopeParams['expiration_date'] = $targetExpiry;
+        }
         $contracts = [];
         $page = 0;
         $pageFailedStatus = null;
         $providerFailureCode = null;
         $providerFailureReason = null;
-        $visitedPageUrls = [];
+        $cursor = null;
+        $hasMorePages = true;
+        $visitedCursors = [];
 
-        while ($url && $page < $maxPages) {
-            if (isset($visitedPageUrls[$url])) {
+        while ($hasMorePages && $page < $maxPages) {
+            if ($cursor !== null && isset($visitedCursors[$cursor])) {
                 $providerFailureCode = 'provider_pagination_cycle';
                 $providerFailureReason = 'The option-chain provider repeated a pagination cursor.';
                 Log::warning('CalculatorChain.paginationCycle', [
@@ -407,34 +418,29 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 ]);
                 break;
             }
-            $visitedPageUrls[$url] = true;
+            if ($cursor !== null) {
+                $visitedCursors[$cursor] = true;
+            }
             $page++;
             if ($page === 1 || $page % 10 === 0) {
                 $publications->heartbeat($publicationRunId);
             }
 
             $request = $makeRequest(30);
-
-            $params = ($page === 1)
-                ? [
-                    'limit' => $perPage,
-                    'sort' => 'strike_price',
-                    'order' => 'asc',
-                ]
-                : [];
-            if ($targetExpiry) {
-                $params['expiration_date'] = $targetExpiry;
+            $params = $scopeParams;
+            if ($cursor !== null) {
+                $params['cursor'] = $cursor;
             }
 
             // Log::debug('CalculatorChain.page.request', [
             //     'symbol' => $symbol,
             //     'page'   => $page,
-            //     'url'    => $url,
+            //     'url'    => $endpointUrl,
             //     'params' => $params,
             // ]);
 
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $request->get($url, $authParams($params))
+                fn () => $request->get($endpointUrl, $authParams($params))
             );
 
             // limit fallback for page 1
@@ -449,16 +455,10 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 ]);
 
                 $perPage = 100;
-                $params = [
-                    'limit' => $perPage,
-                    'sort' => 'strike_price',
-                    'order' => 'asc',
-                ];
-                if ($targetExpiry) {
-                    $params['expiration_date'] = $targetExpiry;
-                }
+                $scopeParams['limit'] = $perPage;
+                $params = $scopeParams;
                 $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                    fn () => $request->get($url, $authParams($params))
+                    fn () => $request->get($endpointUrl, $authParams($params))
                 );
 
                 // Log::debug('CalculatorChain.limitRetry', [
@@ -520,6 +520,26 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 break;
             }
             $next = is_string($next) && trim($next) !== '' ? trim($next) : null;
+            $nextCursor = null;
+            if ($next !== null) {
+                try {
+                    $nextCursor = $this->massiveTrustedCursor(
+                        $next,
+                        $base,
+                        $endpointUrl,
+                        $scopeParams,
+                        $qparam
+                    );
+                } catch (RuntimeException $exception) {
+                    $providerFailureCode = 'provider_cursor_scope_violation';
+                    $providerFailureReason = $exception->getMessage();
+                    Log::warning('CalculatorChain.cursorScopeViolation', [
+                        'symbol' => $symbol,
+                        'page' => $page,
+                    ]);
+                    break;
+                }
+            }
 
             if ($batch !== []) {
                 $contracts = array_merge($contracts, $batch);
@@ -532,18 +552,21 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             //     ]);
             // }
 
-            if ($next && ! str_starts_with($next, 'http')) {
-                $next = $base.$next;
-                // Log::debug('CalculatorChain.nextUrl.normalized', [
-                //     'page' => $page,
-                //     'url'  => $next,
-                // ]);
+            if ($nextCursor !== null && isset($visitedCursors[$nextCursor])) {
+                $providerFailureCode = 'provider_pagination_cycle';
+                $providerFailureReason = 'The option-chain provider repeated a pagination cursor.';
+                Log::warning('CalculatorChain.paginationCycle', [
+                    'symbol' => $symbol,
+                    'page' => $page + 1,
+                ]);
+                break;
             }
 
-            $url = $next;
+            $cursor = $nextCursor;
+            $hasMorePages = $nextCursor !== null;
         }
 
-        if ($url && $providerFailureCode === null) {
+        if ($hasMorePages && $providerFailureCode === null) {
             Log::warning('CalculatorChain.paginationCapReached', [
                 'symbol' => $symbol,
                 'pages' => $page,
@@ -551,7 +574,7 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 'target_expiry' => $targetExpiry,
             ]);
         }
-        $paginationCapped = $url !== null && $providerFailureCode === null;
+        $paginationCapped = $hasMorePages && $providerFailureCode === null;
 
         Log::info('CalculatorChain.fetchComplete', [
             'symbol' => $symbol,
@@ -1128,6 +1151,82 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
         $runStatus = (string) data_get($completion, 'run.status', 'partial');
 
         return in_array($runStatus, ['complete', 'superseded'], true) ? 'ok' : $runStatus;
+    }
+
+    /**
+     * Accept only the opaque cursor from a provider continuation URL. The
+     * endpoint, immutable request scope, and authentication remain local.
+     *
+     * @param  array<string, mixed>  $scopeParams
+     */
+    private function massiveTrustedCursor(
+        string $nextUrl,
+        string $base,
+        string $endpointUrl,
+        array $scopeParams,
+        string $qparam
+    ): string {
+        if (str_starts_with($nextUrl, '?')) {
+            $nextUrl = $endpointUrl.$nextUrl;
+        } elseif (! str_starts_with($nextUrl, 'http://') && ! str_starts_with($nextUrl, 'https://')) {
+            $nextUrl = rtrim($base, '/').'/'.ltrim($nextUrl, '/');
+        }
+
+        $expectedOrigin = parse_url($base);
+        $actual = parse_url($nextUrl);
+        if (
+            ! is_array($expectedOrigin)
+            || ! is_array($actual)
+            || isset($actual['user'])
+            || isset($actual['pass'])
+            || isset($actual['fragment'])
+            || strtolower((string) ($expectedOrigin['scheme'] ?? '')) !== strtolower((string) ($actual['scheme'] ?? ''))
+            || strtolower((string) ($expectedOrigin['host'] ?? '')) !== strtolower((string) ($actual['host'] ?? ''))
+            || (int) ($expectedOrigin['port'] ?? 0) !== (int) ($actual['port'] ?? 0)
+        ) {
+            throw new RuntimeException('Massive returned an untrusted cursor URL.');
+        }
+
+        $expectedPath = (string) parse_url($endpointUrl, PHP_URL_PATH);
+        $actualPath = (string) ($actual['path'] ?? '');
+        if ($expectedPath === '' || $actualPath !== $expectedPath) {
+            throw new RuntimeException('Massive returned a cursor for an unexpected endpoint.');
+        }
+
+        $cursor = null;
+        $seen = [];
+        $allowed = array_fill_keys(array_keys($scopeParams), true);
+        $allowed[$qparam] = true;
+        $allowed['cursor'] = true;
+        foreach (explode('&', (string) ($actual['query'] ?? '')) as $pair) {
+            if ($pair === '') {
+                continue;
+            }
+
+            [$encodedKey, $encodedValue] = array_pad(explode('=', $pair, 2), 2, '');
+            $name = rawurldecode($encodedKey);
+            $value = rawurldecode($encodedValue);
+            if ($name === '' || isset($seen[$name]) || ! isset($allowed[$name])) {
+                throw new RuntimeException('Massive returned an invalid cursor query.');
+            }
+            $seen[$name] = true;
+
+            if ($name === 'cursor') {
+                $cursor = $value;
+
+                continue;
+            }
+
+            if ($name !== $qparam && (string) $scopeParams[$name] !== $value) {
+                throw new RuntimeException('Massive cursor changed the requested scope.');
+            }
+        }
+
+        if (! is_string($cursor) || trim($cursor) === '') {
+            throw new RuntimeException('Massive returned a malformed cursor.');
+        }
+
+        return $cursor;
     }
 
     private function providerExpiration(mixed $value, string $exchangeDate): ?string

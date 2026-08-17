@@ -544,10 +544,12 @@ class FetchCalculatorChainJobStateTest extends TestCase
 
         [$generation, $token] = $this->claim('AAPL', 'generation-http-failure');
         Http::fake(function (Request $request) {
-            if (str_contains($request->url(), '/page-2')) {
-                return Http::response(['error' => 'provider unavailable'], 503);
-            }
             if (str_contains($request->url(), '/v3/snapshot/options/AAPL')) {
+                parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+                if (($query['cursor'] ?? null) === 'http-failure-page-2') {
+                    return Http::response(['error' => 'provider unavailable'], 503);
+                }
+
                 return Http::response([
                     'results' => [[
                         'ticker' => 'NEW-PARTIAL',
@@ -558,7 +560,7 @@ class FetchCalculatorChainJobStateTest extends TestCase
                         ],
                         'last_quote' => ['bid' => 1.9, 'ask' => 2.1],
                     ]],
-                    'next_url' => 'https://api.massive.test/page-2',
+                    'next_url' => 'https://api.massive.test/v3/snapshot/options/AAPL?cursor=http-failure-page-2',
                 ]);
             }
 
@@ -587,21 +589,23 @@ class FetchCalculatorChainJobStateTest extends TestCase
         [$generation, $token] = $this->claim('AAPL', 'generation-empty-intermediate');
 
         Http::fake(function (Request $request) {
-            if (str_contains($request->url(), '/empty-page-2')) {
-                return Http::response(['results' => [[
-                    'ticker' => 'O:AAPL260821C00150000',
-                    'details' => [
-                        'contract_type' => 'call',
-                        'strike_price' => 150,
-                        'expiration_date' => '2026-08-21',
-                    ],
-                    'last_quote' => ['bid' => 2, 'ask' => 2.2],
-                ]]]);
-            }
             if (str_contains($request->url(), '/v3/snapshot/options/AAPL')) {
+                parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+                if (($query['cursor'] ?? null) === 'empty-page-2') {
+                    return Http::response(['results' => [[
+                        'ticker' => 'O:AAPL260821C00150000',
+                        'details' => [
+                            'contract_type' => 'call',
+                            'strike_price' => 150,
+                            'expiration_date' => '2026-08-21',
+                        ],
+                        'last_quote' => ['bid' => 2, 'ask' => 2.2],
+                    ]]]);
+                }
+
                 return Http::response([
                     'results' => [],
-                    'next_url' => 'https://api.massive.test/empty-page-2',
+                    'next_url' => 'https://api.massive.test/v3/snapshot/options/AAPL?cursor=empty-page-2',
                 ]);
             }
 
@@ -615,7 +619,11 @@ class FetchCalculatorChainJobStateTest extends TestCase
         $catalog = app(CalculatorPublicationRepository::class)->authoritativeCatalog('AAPL');
         $this->assertSame('complete', $catalog['state']);
         $this->assertSame(['2026-08-21'], collect($catalog['expirations'])->pluck('expiration')->all());
-        Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/empty-page-2'));
+        Http::assertSent(function (Request $request): bool {
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+
+            return ($query['cursor'] ?? null) === 'empty-page-2';
+        });
     }
 
     public function test_malformed_success_payload_cannot_replace_the_last_complete_catalog(): void
@@ -678,10 +686,7 @@ class FetchCalculatorChainJobStateTest extends TestCase
         $page = 0;
 
         Http::fake(function (Request $request) use (&$page) {
-            if (
-                str_contains($request->url(), '/v3/snapshot/options/AAPL')
-                || str_contains($request->url(), '/calculator-cap-page-')
-            ) {
+            if (str_contains($request->url(), '/v3/snapshot/options/AAPL')) {
                 $page++;
 
                 return Http::response([
@@ -694,7 +699,7 @@ class FetchCalculatorChainJobStateTest extends TestCase
                         ],
                         'last_quote' => ['bid' => 1, 'ask' => 1.2],
                     ]],
-                    'next_url' => 'https://api.massive.test/calculator-cap-page-'.($page + 1),
+                    'next_url' => 'https://api.massive.test/v3/snapshot/options/AAPL?cursor=calculator-cap-page-'.($page + 1),
                 ]);
             }
 
@@ -713,6 +718,194 @@ class FetchCalculatorChainJobStateTest extends TestCase
         $this->assertSame('discovery_capped', $candidate['run']['failure_code']);
     }
 
+    public function test_bearer_auth_preserves_the_provider_cursor_for_a_catalog_page(): void
+    {
+        config()->set('services.massive.mode', 'bearer');
+        [$generation, $token] = $this->claim('AAPL', 'generation-bearer-cursor');
+        $chainQueries = [];
+
+        Http::fake(function (Request $request) use (&$chainQueries) {
+            if (parse_url($request->url(), PHP_URL_PATH) === '/v3/snapshot/options/AAPL') {
+                parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+                $chainQueries[] = $query;
+
+                if (($query['cursor'] ?? null) === 'catalog-page-2') {
+                    return Http::response(['results' => [[
+                        'ticker' => 'O:AAPL260821P00151000',
+                        'details' => [
+                            'contract_type' => 'put',
+                            'strike_price' => 151,
+                            'expiration_date' => '2026-08-21',
+                        ],
+                        'last_quote' => ['bid' => 2.5, 'ask' => 2.7],
+                    ]]]);
+                }
+
+                return Http::response([
+                    'results' => [[
+                        'ticker' => 'O:AAPL260821C00150000',
+                        'details' => [
+                            'contract_type' => 'call',
+                            'strike_price' => 150,
+                            'expiration_date' => '2026-08-21',
+                        ],
+                        'last_quote' => ['bid' => 2, 'ask' => 2.2],
+                    ]],
+                    'next_url' => 'https://api.massive.test/v3/snapshot/options/AAPL?cursor=catalog-page-2',
+                ]);
+            }
+
+            return Http::response(['results' => []]);
+        });
+
+        (new FetchCalculatorChainJob('AAPL', null, $generation, $token))->handle();
+
+        $this->assertCount(2, $chainQueries);
+        $this->assertSame('catalog-page-2', $chainQueries[1]['cursor'] ?? null);
+        $this->assertSame('250', (string) ($chainQueries[1]['limit'] ?? null));
+        $this->assertSame('strike_price', $chainQueries[1]['sort'] ?? null);
+        $this->assertSame(CalculatorRefreshState::STATUS_COMPLETED, $this->states->get('AAPL')['status']);
+        $this->assertSame(2, DB::table('option_snapshots')->where('symbol', 'AAPL')->count());
+    }
+
+    public function test_bearer_auth_preserves_the_provider_cursor_for_a_selected_expiry_page(): void
+    {
+        config()->set('services.massive.mode', 'bearer');
+        $chainQueries = [];
+
+        Http::fake(function (Request $request) use (&$chainQueries) {
+            if (parse_url($request->url(), PHP_URL_PATH) === '/v3/snapshot/options/AAPL') {
+                parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+                $chainQueries[] = $query;
+
+                if (($query['cursor'] ?? null) === 'expiry-page-2') {
+                    return Http::response(['results' => [[
+                        'ticker' => 'O:AAPL260821P00151000',
+                        'details' => [
+                            'contract_type' => 'put',
+                            'strike_price' => 151,
+                            'expiration_date' => '2026-08-21',
+                        ],
+                        'last_quote' => ['bid' => 2.5, 'ask' => 2.7],
+                    ]]]);
+                }
+
+                return Http::response([
+                    'results' => [[
+                        'ticker' => 'O:AAPL260821C00150000',
+                        'details' => [
+                            'contract_type' => 'call',
+                            'strike_price' => 150,
+                            'expiration_date' => '2026-08-21',
+                        ],
+                        'last_quote' => ['bid' => 2, 'ask' => 2.2],
+                    ]],
+                    'next_url' => 'https://api.massive.test/v3/snapshot/options/AAPL?cursor=expiry-page-2',
+                ]);
+            }
+
+            return Http::response(['results' => []]);
+        });
+
+        (new FetchCalculatorChainJob('AAPL', '2026-08-21'))->handle();
+
+        $this->assertCount(2, $chainQueries);
+        $this->assertSame('2026-08-21', $chainQueries[0]['expiration_date'] ?? null);
+        $this->assertSame('expiry-page-2', $chainQueries[1]['cursor'] ?? null);
+        $this->assertSame('2026-08-21', $chainQueries[1]['expiration_date'] ?? null);
+        $published = app(CalculatorPublicationRepository::class)
+            ->publishedExpiry('AAPL', '2026-08-21');
+        $this->assertSame(2, $published['row_count']);
+        $this->assertSame('complete', app(CalculatorPublicationRepository::class)
+            ->run($published['run_id'])['status']);
+    }
+
+    public function test_query_auth_appends_the_api_key_without_replacing_the_provider_cursor(): void
+    {
+        config()->set('services.massive.mode', 'query');
+        [$generation, $token] = $this->claim('AAPL', 'generation-query-cursor');
+        $chainQueries = [];
+
+        Http::fake(function (Request $request) use (&$chainQueries) {
+            if (parse_url($request->url(), PHP_URL_PATH) === '/v3/snapshot/options/AAPL') {
+                parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+                $chainQueries[] = $query;
+
+                if (($query['cursor'] ?? null) === 'query-page-2') {
+                    return Http::response(['results' => [[
+                        'ticker' => 'O:AAPL260821P00151000',
+                        'details' => [
+                            'contract_type' => 'put',
+                            'strike_price' => 151,
+                            'expiration_date' => '2026-08-21',
+                        ],
+                        'last_quote' => ['bid' => 2.5, 'ask' => 2.7],
+                    ]]]);
+                }
+
+                return Http::response([
+                    'results' => [[
+                        'ticker' => 'O:AAPL260821C00150000',
+                        'details' => [
+                            'contract_type' => 'call',
+                            'strike_price' => 150,
+                            'expiration_date' => '2026-08-21',
+                        ],
+                        'last_quote' => ['bid' => 2, 'ask' => 2.2],
+                    ]],
+                    'next_url' => 'https://api.massive.test/v3/snapshot/options/AAPL?cursor=query-page-2',
+                ]);
+            }
+
+            return Http::response(['results' => []]);
+        });
+
+        (new FetchCalculatorChainJob('AAPL', null, $generation, $token))->handle();
+
+        $this->assertCount(2, $chainQueries);
+        $this->assertSame('massive-test', $chainQueries[0]['apiKey'] ?? null);
+        $this->assertSame('query-page-2', $chainQueries[1]['cursor'] ?? null);
+        $this->assertSame('massive-test', $chainQueries[1]['apiKey'] ?? null);
+        $this->assertSame(CalculatorRefreshState::STATUS_COMPLETED, $this->states->get('AAPL')['status']);
+        $this->assertSame(2, DB::table('option_snapshots')->where('symbol', 'AAPL')->count());
+    }
+
+    public function test_untrusted_cursor_origin_is_rejected_without_forwarding_provider_credentials(): void
+    {
+        config()->set('services.massive.mode', 'bearer');
+        [$generation, $token] = $this->claim('AAPL', 'generation-untrusted-cursor');
+
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), '/v3/snapshot/options/AAPL')) {
+                return Http::response([
+                    'results' => [[
+                        'ticker' => 'UNTRUSTED-PARTIAL',
+                        'details' => [
+                            'contract_type' => 'call',
+                            'strike_price' => 150,
+                            'expiration_date' => '2026-08-21',
+                        ],
+                        'last_quote' => ['bid' => 1, 'ask' => 1.2],
+                    ]],
+                    'next_url' => 'https://attacker.invalid/v3/snapshot/options/AAPL?cursor=stolen',
+                ]);
+            }
+
+            return Http::response(['results' => []]);
+        });
+
+        (new FetchCalculatorChainJob('AAPL', null, $generation, $token))->handle();
+
+        Http::assertNotSent(
+            fn (Request $request): bool => parse_url($request->url(), PHP_URL_HOST) === 'attacker.invalid'
+        );
+        $candidate = app(CalculatorPublicationRepository::class)->latestRunForSymbol('AAPL');
+        $this->assertSame(CalculatorRefreshState::STATUS_FAILED, $this->states->get('AAPL')['status']);
+        $this->assertSame('failed', $candidate['run']['status']);
+        $this->assertSame('provider_cursor_scope_violation', $candidate['run']['failure_code']);
+        $this->assertSame(0, DB::table('option_snapshots')->where('symbol', 'AAPL')->count());
+    }
+
     public function test_repeated_pagination_cursor_fails_closed_without_legacy_rows(): void
     {
         [$generation, $token] = $this->claim('AAPL', 'generation-pagination-cycle');
@@ -729,7 +922,7 @@ class FetchCalculatorChainJobStateTest extends TestCase
                         ],
                         'last_quote' => ['bid' => 1, 'ask' => 1.2],
                     ]],
-                    'next_url' => 'https://api.massive.test/v3/snapshot/options/AAPL',
+                    'next_url' => 'https://api.massive.test/v3/snapshot/options/AAPL?cursor=cycle-page',
                 ]);
             }
 
