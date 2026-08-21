@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Exceptions\QuoteRefreshIncomplete;
 use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\ComputeExpiryPressureJob;
 use App\Jobs\ComputePositioningJob;
@@ -17,6 +18,7 @@ use App\Jobs\Seasonality5DJob;
 use App\Models\SymbolBootstrapPhase;
 use App\Models\SymbolBootstrapRun;
 use App\Models\WorkRun;
+use App\Support\PolygonClient;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\SymbolBootstrapCoordinator;
 use App\Support\SymbolBootstrapPhaseDispatcher;
@@ -109,6 +111,183 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
                 ->where('work_run_id', $run->id)
                 ->where('status', SymbolBootstrapPhase::STATUS_BLOCKED)
                 ->count()
+        );
+    }
+
+    public function test_zero_day_snapshot_uses_positive_minute_price(): void
+    {
+        config()->set('queue_lanes.isolated', false);
+        config()->set('services.massive.concurrency.enabled', false);
+        Http::fake([
+            '*' => Http::response([
+                'status' => 'OK',
+                'ticker' => [
+                    'ticker' => 'V',
+                    'updated' => 1787328000000000000,
+                    'day' => ['c' => 0],
+                    'min' => ['c' => 366.51, 't' => 1787327940000],
+                    'lastQuote' => ['P' => 370.00],
+                    'prevDay' => ['c' => 365.73],
+                ],
+            ], 200),
+        ]);
+
+        $quote = app(PolygonClient::class)->underlyingQuote('V');
+
+        $this->assertNotNull($quote);
+        $this->assertSame(366.51, $quote['last_price']);
+        $this->assertSame(365.73, $quote['prev_close']);
+        Http::assertSent(fn ($request): bool => $request->url()
+            === 'https://api.massive.test/v2/snapshot/locale/us/markets/stocks/tickers/V');
+    }
+
+    public function test_previous_close_alone_is_not_reported_as_a_live_quote(): void
+    {
+        config()->set('queue_lanes.isolated', false);
+        config()->set('services.massive.concurrency.enabled', false);
+        Http::fake([
+            '*' => Http::response([
+                'status' => 'OK',
+                'ticker' => [
+                    'ticker' => 'OLDQ',
+                    'updated' => 1787328000000000000,
+                    'day' => ['c' => 0],
+                    'prevDay' => ['c' => 365.73],
+                ],
+            ], 200),
+        ]);
+
+        $this->assertNull(app(PolygonClient::class)->underlyingQuote('OLDQ'));
+    }
+
+    public function test_missing_quote_completes_degraded_and_unblocks_catalog(): void
+    {
+        DB::table('underlying_quotes')->where('symbol', 'V')->delete();
+        DB::table('underlying_quotes')->insert([
+            'symbol' => 'V',
+            'source' => 'massive-v3-snapshot',
+            'last_price' => 365.73,
+            'prev_close' => 364.15,
+            'asof' => '2026-08-21 13:19:01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        [$run, $deliveryToken] = $this->runningParent(
+            $this->phasedParameters(),
+            symbol: 'V'
+        );
+        Bus::fake();
+
+        (new BootstrapUserSymbolJob('V', 'api_prime', $run->id, $deliveryToken))->handle();
+
+        /** @var ConfirmWorkRunOrchestrationJob $confirmation */
+        $confirmation = Bus::dispatched(ConfirmWorkRunOrchestrationJob::class)->sole();
+        $phaseJob = collect($confirmation->chained)
+            ->map(static fn (string $serialized): object => unserialize($serialized))
+            ->sole();
+        $this->assertInstanceOf(RunSymbolBootstrapPhaseJob::class, $phaseJob);
+        $confirmation->handle($this->workRuns);
+
+        $passthroughLimiter = new class extends ProviderConcurrencyLimiter
+        {
+            public function withPriority(string $priority, callable $callback, ?int $blockForSeconds = null): mixed
+            {
+                return $callback();
+            }
+
+            public function massive(callable $callback, ?int $blockForSeconds = null): mixed
+            {
+                return $callback();
+            }
+        };
+        $this->app->instance(ProviderConcurrencyLimiter::class, $passthroughLimiter);
+        Http::fake(['*' => Http::response([], 404)]);
+
+        $phaseJob->handle(
+            $this->bootstraps,
+            app(SymbolBootstrapPhaseDispatcher::class),
+            $this->workRuns
+        );
+
+        $quotePhase = SymbolBootstrapPhase::query()
+            ->where('work_run_id', $run->id)
+            ->where('phase', SymbolBootstrapCoordinator::PHASE_QUOTE)
+            ->sole();
+        $this->assertSame(SymbolBootstrapPhase::STATUS_COMPLETED, $quotePhase->status);
+        $this->assertFalse($quotePhase->outcome['quote_ready']);
+        $this->assertTrue($quotePhase->outcome['stored_quote_available']);
+        $this->assertSame('stored_fallback', $quotePhase->outcome['status']);
+        Bus::assertDispatched(
+            RunSymbolBootstrapPhaseJob::class,
+            fn (RunSymbolBootstrapPhaseJob $job): bool => $job->workRunId === $run->id
+                && $job->phase === SymbolBootstrapCoordinator::PHASE_CATALOG
+        );
+    }
+
+    public function test_quote_http_failure_keeps_catalog_blocked(): void
+    {
+        [$run, $deliveryToken] = $this->runningParent(
+            $this->phasedParameters(),
+            symbol: 'HARDQ'
+        );
+        Bus::fake();
+
+        (new BootstrapUserSymbolJob('HARDQ', 'api_prime', $run->id, $deliveryToken))->handle();
+
+        /** @var ConfirmWorkRunOrchestrationJob $confirmation */
+        $confirmation = Bus::dispatched(ConfirmWorkRunOrchestrationJob::class)->sole();
+        $phaseJob = collect($confirmation->chained)
+            ->map(static fn (string $serialized): object => unserialize($serialized))
+            ->sole();
+        $this->assertInstanceOf(RunSymbolBootstrapPhaseJob::class, $phaseJob);
+        $confirmation->handle($this->workRuns);
+
+        $passthroughLimiter = new class extends ProviderConcurrencyLimiter
+        {
+            public function withPriority(string $priority, callable $callback, ?int $blockForSeconds = null): mixed
+            {
+                return $callback();
+            }
+
+            public function massive(callable $callback, ?int $blockForSeconds = null): mixed
+            {
+                return $callback();
+            }
+        };
+        $this->app->instance(ProviderConcurrencyLimiter::class, $passthroughLimiter);
+        Http::fake(['*' => Http::response([], 500)]);
+
+        try {
+            $phaseJob->handle(
+                $this->bootstraps,
+                app(SymbolBootstrapPhaseDispatcher::class),
+                $this->workRuns
+            );
+            $this->fail('HTTP 500 must fail the quote phase.');
+        } catch (RuntimeException $exception) {
+            $this->assertNotInstanceOf(QuoteRefreshIncomplete::class, $exception);
+            $this->assertStringContainsString('Quote refresh failed', $exception->getMessage());
+            $phaseJob->failed($exception);
+        }
+
+        $this->assertSame(
+            SymbolBootstrapPhase::STATUS_FAILED,
+            SymbolBootstrapPhase::query()
+                ->where('work_run_id', $run->id)
+                ->where('phase', SymbolBootstrapCoordinator::PHASE_QUOTE)
+                ->value('status')
+        );
+        $this->assertSame(
+            SymbolBootstrapPhase::STATUS_BLOCKED,
+            SymbolBootstrapPhase::query()
+                ->where('work_run_id', $run->id)
+                ->where('phase', SymbolBootstrapCoordinator::PHASE_CATALOG)
+                ->value('status')
+        );
+        Bus::assertNotDispatched(
+            RunSymbolBootstrapPhaseJob::class,
+            fn (RunSymbolBootstrapPhaseJob $job): bool => $job->workRunId === $run->id
+                && $job->phase === SymbolBootstrapCoordinator::PHASE_CATALOG
         );
     }
 
@@ -469,6 +648,7 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
                 (new \App\Jobs\FetchUnderlyingQuotesJob(['SPY']))->handle();
                 $this->fail("HTTP {$status} must remain a categorized provider failure.");
             } catch (RuntimeException $exception) {
+                $this->assertNotInstanceOf(QuoteRefreshIncomplete::class, $exception);
                 $this->assertStringContainsString(
                     $category,
                     $exception->getMessage(),
@@ -478,6 +658,16 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
 
             Http::assertSent(fn ($request): bool => $request->url()
                 === 'https://api.massive.test/v2/snapshot/locale/us/markets/stocks/tickers/SPY');
+        }
+
+        $responseStatus = 500;
+
+        try {
+            (new \App\Jobs\FetchUnderlyingQuotesJob(['SPY']))->handle();
+            $this->fail('HTTP 500 must remain a retryable provider failure.');
+        } catch (RuntimeException $exception) {
+            $this->assertNotInstanceOf(QuoteRefreshIncomplete::class, $exception);
+            $this->assertStringContainsString('Quote refresh failed', $exception->getMessage());
         }
     }
 

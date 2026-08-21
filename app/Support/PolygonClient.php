@@ -382,13 +382,21 @@ class PolygonClient
             throw new \RuntimeException('Massive underlying quote rate_limited');
         }
 
+        if ($resp->status() === 404) {
+            Log::warning('PolygonClient.underlying.notFound', [
+                'endpoint' => self::endpointForLog($url),
+                'symbol' => $uSym,
+            ]);
+            return null;
+        }
+
         if (!$resp->ok()) {
             Log::warning('PolygonClient.underlying.httpError', [
                 'endpoint' => self::endpointForLog($url),
                 'symbol' => $uSym,
                 'code' => $resp->status(),
             ]);
-            return null;
+            throw new \RuntimeException('Massive underlying quote http_error');
         }
 
         $json = $resp->json() ?: [];
@@ -405,18 +413,25 @@ class PolygonClient
         $prevDay = (array)($results['prevDay'] ?? []);
         $last    = (array)($results['lastTrade'] ?? []);
         $quote   = (array)($results['lastQuote'] ?? []);
+        $minute  = (array)($results['min'] ?? []);
 
         $lastPrice = null;
 
-        // Prefer most recent trade
-        if (isset($last['p']) && is_numeric($last['p'])) {
-            $lastPrice = (float)$last['p'];
-        } elseif (isset($day['c']) && is_numeric($day['c'])) {
-            // fall back to day close
-            $lastPrice = (float)$day['c'];
-        } elseif (isset($quote['P']) && is_numeric($quote['P'])) {
-            // fall back to ask (or you could average bid/ask)
-            $lastPrice = (float)$quote['P'];
+        // Provider snapshots can include zero placeholders for an unopened
+        // session. Skip them so a valid minute bar or quote remains available
+        // to first-use symbol bootstraps.
+        foreach ([
+            $last['p'] ?? null,
+            $day['c'] ?? null,
+            $minute['c'] ?? null,
+            $quote['P'] ?? null,
+        ] as $candidate) {
+            if (is_numeric($candidate)
+                && is_finite((float) $candidate)
+                && (float) $candidate > 0) {
+                $lastPrice = (float) $candidate;
+                break;
+            }
         }
 
         if ($lastPrice === null || $lastPrice <= 0) {
@@ -435,7 +450,7 @@ class PolygonClient
         }
 
         // Use ticker.updated as asof if present
-        $asof = $results['updated'] ?? $results['min']['t'] ?? null;
+        $asof = $results['updated'] ?? $minute['t'] ?? null;
 
         // Log::debug('PolygonClient.underlying.done', [
         //     'symbol'     => $uSym,

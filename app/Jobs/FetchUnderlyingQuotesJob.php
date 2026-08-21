@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Exceptions\ProviderConcurrencyUnavailable;
+use App\Exceptions\QuoteRefreshIncomplete;
 use App\Models\UnderlyingQuote;
 use App\Support\Symbols;
 use App\Support\Market;
@@ -54,6 +55,7 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
         $client = app(PolygonClient::class);
 
         $failed = 0;
+        $errored = 0;
 
        foreach ($this->symbols as $raw) {
             $symbol = Symbols::canon($raw);
@@ -131,7 +133,7 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
                     // transient throttling into a generic quote failure.
                     throw $e;
                 }
-                $failed++;
+                $errored++;
                 Log::warning('FetchUnderlyingQuotesJob.error', [
                     'symbol' => $symbol,
                     'exception' => $e::class,
@@ -139,8 +141,12 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
             }
         }
 
+        if ($errored > 0) {
+            throw new RuntimeException("Quote refresh failed for {$errored} symbol(s).");
+        }
+
         if ($failed > 0) {
-            throw new RuntimeException("Quote refresh incomplete for {$failed} symbol(s).");
+            throw new QuoteRefreshIncomplete("Quote refresh incomplete for {$failed} symbol(s).");
         }
     }
 

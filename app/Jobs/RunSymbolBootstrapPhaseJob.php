@@ -2,10 +2,12 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\QuoteRefreshIncomplete;
 use App\Jobs\Middleware\EnsureSymbolBootstrapPhaseCurrent;
 use App\Jobs\Middleware\EnsureSymbolBootstrapPhaseOrchestrationCurrent;
 use App\Jobs\Middleware\EnsureWorkRunOrchestrationCurrent;
 use App\Models\SymbolBootstrapRun;
+use App\Models\UnderlyingQuote;
 use App\Support\EodCacheVersion;
 use App\Support\MassiveExpirationCatalog;
 use App\Support\ProviderConcurrencyLimiter;
@@ -19,6 +21,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
@@ -154,12 +157,37 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
             throw new RuntimeException('Quote refresh configuration invalid: invalid_configuration');
         }
 
-        (new FetchUnderlyingQuotesJob([$manifest->symbol]))
-            ->onConnection((string) $this->connection)
-            ->onQueue((string) $this->queue)
-            ->handle();
+        try {
+            (new FetchUnderlyingQuotesJob([$manifest->symbol]))
+                ->onConnection((string) $this->connection)
+                ->onQueue((string) $this->queue)
+                ->handle();
+        } catch (QuoteRefreshIncomplete $exception) {
+            $storedQuote = UnderlyingQuote::query()
+                ->where('symbol', $manifest->symbol)
+                ->where('last_price', '>', 0)
+                ->first(['source', 'asof']);
 
-        return ['symbol' => $manifest->symbol, 'quote_ready' => true];
+            Log::warning('SymbolBootstrap.quoteUnavailable', [
+                'work_run_id' => $this->workRunId,
+                'symbol' => $manifest->symbol,
+                'stored_quote_available' => $storedQuote !== null,
+                'reason' => $exception->getMessage(),
+            ]);
+
+            return [
+                'symbol' => $manifest->symbol,
+                'quote_ready' => false,
+                'stored_quote_available' => $storedQuote !== null,
+                'status' => $storedQuote === null ? 'unavailable' : 'stored_fallback',
+            ];
+        }
+
+        return [
+            'symbol' => $manifest->symbol,
+            'quote_ready' => true,
+            'status' => 'refreshed',
+        ];
     }
 
     /** @return array<string,mixed> */
