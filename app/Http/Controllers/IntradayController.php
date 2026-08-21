@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\WorkRunRateLimited;
+use App\Support\IntradayCompositeCache;
 use App\Support\Market;
 use App\Support\OptionLiveTotalsRepository;
 use App\Support\QueueLanes;
@@ -19,6 +20,10 @@ use Throwable;
 class IntradayController extends Controller
 {
     private const STRIKES_CACHE_SECONDS = 90;
+
+    private const STRIKES_CLOSED_CACHE_SECONDS = 900;
+
+    private const STRIKES_REFRESH_LOCK_SECONDS = 180;
 
     private const REPRICED_CACHE_SECONDS = 90;
 
@@ -401,10 +406,21 @@ class IntradayController extends Controller
         $preferredTradeDate = $this->tradingDate(now());
         $tradeDate = $this->resolveTradeDate($symbol, $preferredTradeDate);
 
-        $cacheKey = "intraday:strikesComposite:{$symbol}:{$tradeDate}";
+        $cacheKey = IntradayCompositeCache::key($symbol, $tradeDate);
         $cacheHit = Cache::has($cacheKey);
 
-        $data = Cache::remember($cacheKey, now()->addSeconds(self::STRIKES_CACHE_SECONDS), function () use ($symbol, $tradeDate) {
+        $marketOpen = $this->isMarketOpen();
+        $freshSeconds = $marketOpen
+            ? self::STRIKES_CACHE_SECONDS
+            : self::STRIKES_CLOSED_CACHE_SECONDS;
+        $staleSeconds = IntradayCompositeCache::STALE_SECONDS;
+
+        // Cache::remember values from releases before stale-while-revalidate do not
+        // have Laravel's creation marker. Preserve that warm payload on deploy so
+        // the first request does not synchronously rebuild a heavy symbol.
+        IntradayCompositeCache::promoteLegacy($cacheKey, $staleSeconds);
+
+        $data = Cache::flexible($cacheKey, [$freshSeconds, $staleSeconds], function () use ($symbol, $tradeDate) {
             // 1) Intraday volume & premium by strike (today)
             $rows = DB::table('option_live_counters')
                 ->where('symbol', $symbol)
@@ -512,7 +528,21 @@ class IntradayController extends Controller
                 ],
                 'items' => $items,
             ];
-        });
+        }, ['seconds' => self::STRIKES_REFRESH_LOCK_SECONDS]);
+
+        // EOD OI can produce strikes before a cold symbol has any live rows.
+        // Do not let an unready response mask the queued intraday publication.
+        if (($data['asof'] ?? null) === null) {
+            IntradayCompositeCache::forgetUnready($cacheKey);
+        }
+
+        // Freshness metadata belongs to this response, not to the moment the
+        // cached strike payload was built. A prior-session stale response must
+        // not tell the browser that the market is still closed.
+        $data['open'] = $marketOpen;
+        $data['stale_seconds'] = isset($data['asof'])
+            ? abs((int) now('America/New_York')->diffInSeconds(\Carbon\Carbon::parse($data['asof'])))
+            : null;
 
         $this->logPerf('strikesComposite', $symbol, $startedAt, [
             'trade_date' => $tradeDate,
@@ -591,7 +621,10 @@ class IntradayController extends Controller
             $rows = DB::table('option_chain_data as o')
                 ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
                 ->where('e.symbol', $symbol)
-                ->whereDate('o.data_date', $latest)
+                // data_date is already a DATE column. Comparing it directly
+                // keeps the (expiration_id, data_date) index usable; wrapping
+                // it in DATE() made cold heavy-symbol reads scan far more rows.
+                ->where('o.data_date', $latest)
                 ->select('o.strike', 'o.option_type', DB::raw('SUM(COALESCE(o.open_interest,0)) as oi'))
                 ->groupBy('o.strike', 'o.option_type')
                 ->get();
@@ -708,20 +741,15 @@ class IntradayController extends Controller
     private function approxTimeToNearestExpiryYears(string $symbol): ?float
     {
         $nowNy = now('America/New_York');
-        $latest = DB::table('option_snapshots')
+        // The expiration catalog is the source of truth and has a
+        // (symbol, expiration_date) index. Looking up MAX(fetched_at) in the
+        // snapshots table took 5-6 seconds for MU/SPY before a second query
+        // could select the same nearest expiration.
+        $exp = DB::table('option_expirations')
             ->where('symbol', $symbol)
-            ->max('fetched_at');
-
-        if (! $latest) {
-            return null;
-        }
-
-        $exp = DB::table('option_snapshots')
-            ->where('symbol', $symbol)
-            ->where('fetched_at', $latest)
-            ->where('expiry', '>=', $nowNy->toDateString())
-            ->orderBy('expiry')
-            ->value('expiry');
+            ->where('expiration_date', '>=', $nowNy->toDateString())
+            ->orderBy('expiration_date')
+            ->value('expiration_date');
 
         if (! $exp) {
             return null;
@@ -733,7 +761,16 @@ class IntradayController extends Controller
 
     private function currentSpot(string $symbol): ?float
     {
-        return app(\App\Services\WallService::class)->latestSpot($symbol, 20);
+        // underlying_quotes has one indexed current row per symbol. The legacy
+        // option_snapshots fallback scans a large table when the market is
+        // closed (6.8s for SPY in production) and still returns no recent row.
+        $spot = DB::table('underlying_quotes')
+            ->where('symbol', $symbol)
+            ->value('last_price');
+
+        return $spot !== null && (float) $spot > 0
+            ? (float) $spot
+            : null;
     }
 
     private function isMarketOpen(): bool

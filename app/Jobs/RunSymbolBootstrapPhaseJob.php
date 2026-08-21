@@ -272,13 +272,6 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
             ];
         }
         $liveTradeDate = $this->liveTradingDate();
-        if ($liveTradeDate === null) {
-            return [
-                'status' => 'market_closed',
-                'max_expirations' => 0,
-                'interactive' => $interactive,
-            ];
-        }
 
         $job = (new FetchPolygonIntradayOptionsJob(
             [$manifest->symbol],
@@ -303,11 +296,11 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
         ];
     }
 
-    private function liveTradingDate(): ?string
+    private function liveTradingDate(): string
     {
         $ny = now('America/New_York');
         if ($ny->isWeekend() || (int) $ny->format('Hi') < 930) {
-            return null;
+            $ny->previousWeekday();
         }
 
         return $ny->toDateString();

@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\WorkRun;
+use App\Support\IntradayCompositeCache;
 use App\Support\OptionLiveTotalsRepository;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\QueueLanes;
@@ -368,6 +369,8 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                         'source_updated_at' => $now,
                     ]);
                 }, 3);
+
+                IntradayCompositeCache::markPublished($symbol, $tradeDate);
             }
 
             continue;

@@ -385,7 +385,7 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
         );
     }
 
-    public function test_first_use_intraday_uses_monday_live_date_and_skips_closed_windows(): void
+    public function test_first_use_intraday_uses_live_date_or_latest_completed_session(): void
     {
         $job = new RunSymbolBootstrapPhaseJob(
             'run-id',
@@ -405,10 +405,10 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
         $this->assertSame('2026-08-17', $liveDate->invoke($job));
 
         $this->travelTo(CarbonImmutable::parse('2026-08-17 12:00:00', 'UTC'));
-        $this->assertNull($liveDate->invoke($job));
+        $this->assertSame('2026-08-14', $liveDate->invoke($job));
 
         $this->travelTo(CarbonImmutable::parse('2026-08-16 16:00:00', 'UTC'));
-        $this->assertNull($liveDate->invoke($job));
+        $this->assertSame('2026-08-14', $liveDate->invoke($job));
     }
 
     public function test_phase_failure_classifier_separates_terminal_configuration_and_validation(): void

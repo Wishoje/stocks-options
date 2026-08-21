@@ -851,8 +851,13 @@ const marketOpen = ref(false)
 const inflightIntraday = new Map()
 const cacheIntraday = new Map()
 const INTRADAY_TTL_MS = 60_000 // 1 minute cache window
+const INTRADAY_PENDING_RETRY_MS = 5_000
+const INTRADAY_PENDING_MAX_RETRIES = 12
 const intradayDataSymbol = ref(null)
+const intradaySnapshotAsOf = ref(null)
 const intradayHasData = computed(() => {
+  if (intradayDataSymbol.value !== userSymbol.value || !intradaySnapshotAsOf.value) return false
+
   const rows = levels.value?.strike_data
   if (Array.isArray(rows) && rows.length > 0) return true
 
@@ -1435,6 +1440,7 @@ onUnmounted(() => {
   window.removeEventListener('select-symbol', handleSelectSymbolEvent)
   Object.keys(tabPollers).forEach(stopTabPoll)
   clearTimeout(symbolTimer)
+  clearIntradayPendingRetry()
   cancel('gex_eod')
   stopPreparingPoll({ reset: true })
   bootstrapStartResponses.clear()
@@ -1445,6 +1451,34 @@ function stopRefresh() {
     clearInterval(refreshTimer.value)
     refreshTimer.value = null
   }
+  clearIntradayPendingRetry()
+}
+
+let intradayPendingTimer = null
+let intradayPendingSymbol = null
+let intradayPendingAttempts = 0
+
+function clearIntradayPendingRetry() {
+  if (intradayPendingTimer) clearTimeout(intradayPendingTimer)
+  intradayPendingTimer = null
+  intradayPendingSymbol = null
+  intradayPendingAttempts = 0
+}
+
+function scheduleIntradayPendingRetry(sym) {
+  if (intradayPendingSymbol !== sym) {
+    clearIntradayPendingRetry()
+    intradayPendingSymbol = sym
+  }
+  if (intradayPendingTimer || intradayPendingAttempts >= INTRADAY_PENDING_MAX_RETRIES) return
+
+  intradayPendingAttempts += 1
+  intradayPendingTimer = setTimeout(() => {
+    intradayPendingTimer = null
+    if (dataMode.value === 'intraday' && userSymbol.value === sym) {
+      refreshIntraday({ force: true })
+    }
+  }, INTRADAY_PENDING_RETRY_MS)
 }
 
 let preparingPollGeneration = 0
@@ -1648,7 +1682,7 @@ async function kickoffSymbolWarm(sym, timeframe = '14d') {
 }
 
 function startAutoRefresh() {
-  stopRefresh()
+  if (refreshTimer.value) clearInterval(refreshTimer.value)
   refreshTimer.value = setInterval(refreshIntraday, 30_000)
 }
 
@@ -1661,6 +1695,9 @@ async function refreshIntraday({ force = false } = {}) {
   if (!force && cached && now - cached.t < INTRADAY_TTL_MS) {
     if (!intradayLevels.value) intradayLevels.value = {}
     Object.assign(intradayLevels.value, cached.payload)
+    intradayDataSymbol.value = sym
+    intradaySnapshotAsOf.value = cached.asof
+    clearIntradayPendingRetry()
     lastUpdated.value = cached.asof || new Date(cached.t).toISOString()
     firstIntradayLoadDone.value = true
     return
@@ -1690,8 +1727,9 @@ async function refreshIntraday({ force = false } = {}) {
       const asofMs = sumData.asof ? new Date(sumData.asof).getTime() : null
       const isFresh = !!asofMs && (now - asofMs) < INTRADAY_TTL_MS
 
-      // Step B: only hit heavy job if market is open AND snapshot is stale
-      if (marketOpen.value && !isFresh) {
+      // Step B: refresh stale live data during RTH. A symbol with no snapshot
+      // must also be queued after hours so first-use bootstrap can complete.
+      if (!isFresh && (marketOpen.value || !asofMs)) {
         await axios.post('/api/intraday/pull', { symbols: [sym] }).catch(() => {})
       }
 
@@ -1731,16 +1769,26 @@ async function refreshIntraday({ force = false } = {}) {
       Object.assign(intradayLevels.value, next)
 
       intradayDataSymbol.value = sym
+      const snapshotAsOf = compData.asof || sumData.asof || null
+      intradaySnapshotAsOf.value = snapshotAsOf
 
-      lastUpdated.value = compData.asof || sumData.asof || new Date().toISOString()
+      lastUpdated.value = snapshotAsOf
       firstIntradayLoadDone.value = true
 
-      // Step D: update cache for this symbol
-      cacheIntraday.set(sym, {
-        t: Date.now(),
-        asof: compData.asof || sumData.asof || null,
-        payload: next,
-      })
+      // Step D: never retain the placeholder read made while a new symbol's
+      // queued ingest is still running. Poll briefly, then fall back to the
+      // normal 30-second refresh interval.
+      if (snapshotAsOf) {
+        clearIntradayPendingRetry()
+        cacheIntraday.set(sym, {
+          t: Date.now(),
+          asof: snapshotAsOf,
+          payload: next,
+        })
+      } else {
+        cacheIntraday.delete(sym)
+        scheduleIntradayPendingRetry(sym)
+      }
     } catch (e) {
       intradayError.value = e?.response?.data?.error || e.message
     } finally {
@@ -1758,7 +1806,7 @@ async function refreshIntraday({ force = false } = {}) {
 async function manualRefresh() {
   try {
     await axios.post('/api/intraday/pull', { symbols: [userSymbol.value] })
-    await refreshIntraday()
+    await refreshIntraday({ force: true })
   } catch (e) {
     if (dataMode.value === 'eod') {
       eodError.value = e?.response?.data?.error || e.message

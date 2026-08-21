@@ -1,8 +1,9 @@
 <?php
 
 use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Foundation\Http\Middleware\InvokeDeferredCallbacks;
 use Illuminate\Http\Middleware\HandleCors;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
@@ -16,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         // Global middleware
         $middleware->use([
+            InvokeDeferredCallbacks::class,
             HandleCors::class, // <- CORS
             // ... (whatever else you use globally)
         ]);
@@ -31,8 +33,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'subscribed' => \App\Http\Middleware\EnsureSubscribed::class,
-            'feature'    => \App\Http\Middleware\EnsureFeature::class,
-            'eodhealth'  => \App\Http\Middleware\EnsureEodHealthAccess::class,
+            'feature' => \App\Http\Middleware\EnsureFeature::class,
+            'eodhealth' => \App\Http\Middleware\EnsureEodHealthAccess::class,
             'work-run-feature' => \App\Http\Middleware\EnsureWorkRunFeature::class,
         ]);
 
