@@ -9,6 +9,7 @@ use App\Jobs\FetchUnderlyingQuotesJob;
 use App\Jobs\PrimeSymbolJob;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\QueueLanes;
+use App\Support\SymbolBootstrapPolicy;
 use LogicException;
 use Tests\TestCase;
 
@@ -68,6 +69,17 @@ class QueueLanesTest extends TestCase
         $this->assertSame('intraday', QueueLanes::intraday('AAPL'));
         $this->assertSame('intraday-interactive', QueueLanes::intraday('AAPL', true));
         $this->assertSame('intraday-heavy', QueueLanes::intraday('SPY', true));
+        $this->assertSame('intraday-interactive', QueueLanes::firstUseIntraday());
+        $this->assertSame('default', QueueLanes::bootstrapFill('SPY'));
+        $this->assertNotSame(QueueLanes::bootstrap(), QueueLanes::bootstrapFill('SPY'));
+
+        $firstUseHeavy = new FetchPolygonIntradayOptionsJob(
+            ['SPY'],
+            interactive: true,
+            maxExpirations: 8
+        );
+        $this->assertSame('intraday-interactive', $firstUseHeavy->queue);
+        $this->assertSame(105, $firstUseHeavy->timeout);
 
         $this->assertSame(
             QueueLanes::PRIORITY_INTERACTIVE,
@@ -113,6 +125,16 @@ class QueueLanesTest extends TestCase
 
         $this->expectException(LogicException::class);
         QueueLanes::bootstrap();
+    }
+
+    public function test_phased_bootstrap_fails_closed_without_isolated_consumers(): void
+    {
+        config()->set('symbol_bootstrap.enabled', true);
+        config()->set('queue_lanes.isolated', false);
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('QUEUE_LANES_ISOLATED=true');
+        app(SymbolBootstrapPolicy::class)->enabled();
     }
 
     public function test_isolated_routing_fails_closed_without_an_explicit_provider_limit(): void

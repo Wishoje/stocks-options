@@ -54,14 +54,18 @@ class PrimeSymbolJob extends QueueJob implements ShouldQueue
      *
      * @return array<int, object>
      */
-    public function plannedJobs(): array
+    public function plannedJobs(?string $frozenSessionDate = null): array
     {
         $s = $this->symbol;
         $selector = app(EodSnapshotSelector::class);
 
-        $completedSessionDate = $selector->completedSessionDate(now('America/New_York'));
+        $completedSessionDate = $frozenSessionDate
+            ? substr($frozenSessionDate, 0, 10)
+            : $selector->completedSessionDate(now('America/New_York'));
         $tradeDate = $completedSessionDate;
-        $anchorDate = $selector->resolvedAnchorDate();
+        $anchorDate = $frozenSessionDate
+            ? $completedSessionDate
+            : $selector->resolvedAnchorDate();
 
         $hasPrices = DB::table('prices_daily')
             ->where('symbol', $s)->where('trade_date', $completedSessionDate)->exists();
@@ -103,29 +107,50 @@ class PrimeSymbolJob extends QueueJob implements ShouldQueue
 
         $jobs = [];
 
-        if ($priceRows < 30) {
-            $jobs[] = new \App\Jobs\PricesBackfillJob([$s], 400);
+        // A phased bootstrap promises the complete history window frozen for
+        // that manifest. The backfill is idempotent, so always schedule it for
+        // frozen-session planning instead of treating 30 partial rows as full.
+        if ($frozenSessionDate !== null || $priceRows < 30) {
+            $jobs[] = $frozenSessionDate !== null
+                ? new \App\Jobs\PricesBackfillJob([$s], 400, $completedSessionDate)
+                : new \App\Jobs\PricesBackfillJob([$s], 400);
         }
         if (! $hasPrices) {
-            $jobs[] = new \App\Jobs\PricesDailyJob([$s]);
+            $jobs[] = $frozenSessionDate !== null
+                ? new \App\Jobs\PricesDailyJob([$s], $completedSessionDate)
+                : new \App\Jobs\PricesDailyJob([$s]);
         }
         if (! $hasChainsForTradeDate) {
-            $jobs[] = new \App\Jobs\FetchOptionChainDataJob([$s], 90, null, 110);
+            $jobs[] = new \App\Jobs\FetchOptionChainDataJob(
+                [$s],
+                90,
+                $frozenSessionDate !== null ? $tradeDate : null,
+                110
+            );
         }
-        if (! $hasVolMetricsForAnchorDate) {
-            $jobs[] = new \App\Jobs\ComputeVolMetricsJob([$s]);
+        // Frozen bootstrap planning follows the completed fill phase. Existing
+        // derived rows may have been calculated from an earlier partial chain,
+        // so recompute option-dependent domains against the frozen full scope.
+        if ($frozenSessionDate !== null || ! $hasVolMetricsForAnchorDate) {
+            $jobs[] = $frozenSessionDate !== null
+                ? new \App\Jobs\ComputeVolMetricsJob([$s], $anchorDate)
+                : new \App\Jobs\ComputeVolMetricsJob([$s]);
         }
-        if (! $hasSeasonalityForTradeDate) {
-            $jobs[] = new \App\Jobs\Seasonality5DJob([$s], 15, 2);
+        if ($frozenSessionDate !== null || ! $hasSeasonalityForTradeDate) {
+            $jobs[] = $frozenSessionDate !== null
+                ? new \App\Jobs\Seasonality5DJob([$s], 15, 2, $completedSessionDate)
+                : new \App\Jobs\Seasonality5DJob([$s], 15, 2);
         }
-        if (! $hasExpiryPressureForTradeDate) {
+        if ($frozenSessionDate !== null || ! $hasExpiryPressureForTradeDate) {
             $jobs[] = new \App\Jobs\ComputeExpiryPressureJob([$s], 3, $tradeDate);
         }
-        if (! $hasPositioningForTradeDate) {
+        if ($frozenSessionDate !== null || ! $hasPositioningForTradeDate) {
             $jobs[] = new \App\Jobs\ComputePositioningJob([$s], $tradeDate);
         }
-        if (! $hasUaForAnchorDate) {
-            $jobs[] = new \App\Jobs\ComputeUAJob([$s]);
+        if ($frozenSessionDate !== null || ! $hasUaForAnchorDate) {
+            $jobs[] = $frozenSessionDate !== null
+                ? new \App\Jobs\ComputeUAJob([$s], anchorDate: $anchorDate)
+                : new \App\Jobs\ComputeUAJob([$s]);
         }
 
         $queue = QueueLanes::enrichment();

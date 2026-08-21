@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Support\EodSnapshotSelector;
+use App\Support\SymbolBootstrapCoordinator;
+use App\Support\SymbolBootstrapPolicy;
 use App\Support\Symbols;
 use App\Support\WorkRunCoordinator;
 use Carbon\Carbon;
@@ -11,15 +13,60 @@ use Illuminate\Support\Facades\DB;
 
 class SymbolStatusController extends Controller
 {
-    public function show(Request $req, WorkRunCoordinator $runs)
+    public function show(
+        Request $req,
+        WorkRunCoordinator $runs,
+        SymbolBootstrapPolicy $bootstrapPolicy,
+        SymbolBootstrapCoordinator $bootstrap
+    )
     {
         $symbol = Symbols::canon((string) $req->query('symbol', 'SPY'));
         if (! Symbols::isValid($symbol)) {
             return response()->json(['message' => 'The selected symbol is invalid.'], 422);
         }
         $timeframe = $req->query('timeframe', '14d'); // keep in sync with UI default
-        $activeRun = $runs->active('symbol_bootstrap', $symbol);
-        $runPayload = $activeRun ? $runs->payload($activeRun) : null;
+        $parameters = $bootstrapPolicy->claimParameters();
+        $activeRun = $runs->active(
+            'symbol_bootstrap',
+            $symbol,
+            $parameters
+        );
+        $statusRun = $activeRun;
+        $bootstrapPayload = null;
+        if ($bootstrapPolicy->enabled()) {
+            $statusRun ??= $bootstrap->authoritativeWorkRun(
+                $symbol,
+                (string) $parameters['session_date']
+            );
+            if (! $statusRun) {
+                $latest = $bootstrap->latestForSymbol(
+                    $symbol,
+                    (string) $parameters['session_date']
+                );
+                $statusRun = $latest?->workRun;
+            }
+            $bootstrapPayload = $statusRun ? $bootstrap->payload($statusRun) : null;
+        }
+        $runPayload = $statusRun ? $runs->payload($statusRun) : null;
+
+        if ($bootstrapPayload && ! $bootstrapPayload['fast_ready']) {
+            $terminal = (bool) $bootstrapPayload['terminal'];
+
+            return response()->json([
+                'status' => $terminal ? 'failed' : ($activeRun ? 'fetching' : 'incomplete'),
+                'symbol' => $symbol,
+                'run' => $runPayload,
+                'bootstrap' => $bootstrapPayload,
+            ], $activeRun ? 202 : 200);
+        }
+        if ($bootstrapPayload && $bootstrapPayload['no_options']) {
+            return response()->json([
+                'status' => 'no_options',
+                'symbol' => $symbol,
+                'run' => $runPayload,
+                'bootstrap' => $bootstrapPayload,
+            ]);
+        }
 
         // --- trading date (NY, roll back on weekends) ---
         $ny = Carbon::now('America/New_York');
@@ -67,11 +114,11 @@ class SymbolStatusController extends Controller
 
         // A read reports current readiness only. Expensive work starts through POST /api/prime.
         if (empty($expDates)) {
-            return response()->json([
+            return response()->json(array_merge([
                 'status' => $activeRun ? 'queued' : 'missing',
                 'symbol' => $symbol,
                 'run' => $runPayload,
-            ], $activeRun ? 202 : 404);
+            ], $bootstrapPayload !== null ? ['bootstrap' => $bootstrapPayload] : []), $activeRun ? 202 : 404);
         }
 
         // target expirations -> ids
@@ -103,25 +150,25 @@ class SymbolStatusController extends Controller
         $healthy = ($totalRows >= $minRows) && ($coveredExpCount >= $minExpToCover);
 
         if ($hasAnyRowsToday || $healthy) {
-            return response()->json([
+            return response()->json(array_merge([
                 'status' => 'ready',
                 'symbol' => $symbol,
                 'expirations_targeted' => $targetExpCount,
                 'expirations_covered' => $coveredExpCount,
                 'rows_today' => $totalRows,
                 'run' => $runPayload,
-            ]);
+            ], $bootstrapPayload !== null ? ['bootstrap' => $bootstrapPayload] : []));
         }
 
         // we have expirations but not enough rows yet -> fetching
         // (also useful to expose progress to the UI)
-        return response()->json([
+        return response()->json(array_merge([
             'status' => $activeRun ? 'fetching' : 'incomplete',
             'symbol' => $symbol,
             'expirations_targeted' => $targetExpCount,
             'expirations_covered' => $coveredExpCount,
             'rows_today' => $totalRows,
             'run' => $runPayload,
-        ], $activeRun ? 202 : 200);
+        ], $bootstrapPayload !== null ? ['bootstrap' => $bootstrapPayload] : []), $activeRun ? 202 : 200);
     }
 }

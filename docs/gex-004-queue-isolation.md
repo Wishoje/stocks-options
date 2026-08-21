@@ -20,7 +20,7 @@ Updated: 2026-07-17
 | default | Enrichment and scheduled compute | 6 | 600s |
 | exports on redis-long | AI exports | 1 | 960s |
 
-The bootstrap graph has not been split into durable fast and fill phases. It moves unchanged to two reserved consumers so a single long job cannot occupy all cold-symbol capacity. GEX-010 owns the bounded fast/fill redesign.
+GEX-010 adds a durable fast/fill bootstrap graph behind `SYMBOL_BOOTSTRAP_ENABLED=false`. Until that separate flag is enabled, the existing ordered graph continues to use the two reserved consumers unchanged.
 
 SPY and QQQ are dispatched as separate scheduled intraday jobs. Normal batching remains unchanged until GEX-018 proves singleton data equivalence and provider load. A normal 15-symbol batch still runs on `intraday-heavy`, so it can wait behind both heavy consumers when SPY and QQQ are active. GEX-004 reserves other lanes but does not close the bulk-scheduling issue.
 

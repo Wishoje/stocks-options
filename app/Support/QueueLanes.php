@@ -45,6 +45,14 @@ final class QueueLanes
         return self::bootstrap();
     }
 
+    /** Full new-symbol EOD work must never consume the reserved fast lane. */
+    public static function bootstrapFill(string $symbol): string
+    {
+        self::isolated();
+
+        return self::enrichment();
+    }
+
     public static function enrichment(): string
     {
         return self::isolated()
@@ -72,6 +80,17 @@ final class QueueLanes
         }
 
         return self::queue('intraday');
+    }
+
+    /**
+     * A first-use intraday request owns reserved interactive capacity even for
+     * a heavy symbol. Its job contract is separately bounded by GEX-010.
+     */
+    public static function firstUseIntraday(): string
+    {
+        return self::isolated()
+            ? self::queue('intraday_interactive')
+            : self::queue('intraday');
     }
 
     /**

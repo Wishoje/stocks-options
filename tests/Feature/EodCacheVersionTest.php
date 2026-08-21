@@ -9,6 +9,7 @@ use App\Jobs\PricesDailyJob;
 use App\Jobs\PrimeSymbolJob;
 use App\Jobs\PublishEodCacheVersionJob;
 use App\Jobs\QueueJob;
+use App\Models\User;
 use App\Support\EodCacheVersion;
 use Illuminate\Bus\PendingBatch;
 use Illuminate\Bus\Queueable;
@@ -161,8 +162,9 @@ class EodCacheVersionTest extends TestCase
     {
         $this->ensureWatchlistsTable();
         DB::table('watchlists')->delete();
+        $user = User::factory()->create();
         DB::table('watchlists')->insert([
-            'user_id' => 1,
+            'user_id' => $user->id,
             'symbol' => 'SPY',
             'timeframe' => '14d',
             'created_at' => now(),
@@ -206,6 +208,8 @@ class EodCacheVersionTest extends TestCase
         DB::table('option_chain_data')->insert([
             'expiration_id' => 1,
             'data_date' => '2026-08-14',
+            'option_type' => 'call',
+            'strike' => 500,
             'gamma' => 0.1,
             'data_timestamp' => '2026-08-14 20:00:00',
         ]);
@@ -395,7 +399,7 @@ class StubGexController extends GexController
 
 class NoOpPrimeSymbolJob extends PrimeSymbolJob
 {
-    public function plannedJobs(): array
+    public function plannedJobs(?string $frozenSessionDate = null): array
     {
         return [];
     }
@@ -403,7 +407,7 @@ class NoOpPrimeSymbolJob extends PrimeSymbolJob
 
 class NonCacheOnlyPrimeSymbolJob extends PrimeSymbolJob
 {
-    public function plannedJobs(): array
+    public function plannedJobs(?string $frozenSessionDate = null): array
     {
         return [new PricesDailyJob([$this->symbol])];
     }

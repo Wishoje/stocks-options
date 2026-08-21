@@ -2,12 +2,14 @@
 
 use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\BuildAiExportJob;
+use App\Jobs\CompleteSymbolBootstrapPhaseJob;
 use App\Jobs\CompleteWorkRunJob;
 use App\Jobs\ComputeBlindSpotsJob;
 use App\Jobs\ComputeExpiryPressureJob;
 use App\Jobs\ComputePositioningJob;
 use App\Jobs\ComputeUAJob;
 use App\Jobs\ComputeVolMetricsJob;
+use App\Jobs\ConfirmSymbolBootstrapPhaseOrchestrationJob;
 use App\Jobs\ConfirmWorkRunOrchestrationJob;
 use App\Jobs\FetchCalculatorChainJob;
 use App\Jobs\FetchOptionChainDataJob;
@@ -18,6 +20,7 @@ use App\Jobs\PricesDailyJob;
 use App\Jobs\PrimeSymbolJob;
 use App\Jobs\PublishEodCacheVersionJob;
 use App\Jobs\QueueSymbolEnrichmentJob;
+use App\Jobs\RunSymbolBootstrapPhaseJob;
 use App\Jobs\Seasonality5DJob;
 use App\Jobs\SendLifecycleEmailJob;
 
@@ -35,6 +38,12 @@ return [
         'isolated_queues' => ['exports'],
         'tries' => 2, 'backoff' => [60], 'identity' => 'export id',
         'write_strategy' => 'one export row transitions queued -> processing -> completed/failed',
+    ],
+    CompleteSymbolBootstrapPhaseJob::class => [
+        'connection' => 'redis', 'queues' => [], 'max_timeout' => 30,
+        'isolated_queues' => ['default'],
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'work run + phase + phase token + fenced attempt',
+        'write_strategy' => 'phase-token-and-attempt-fenced durable completion transition',
     ],
     ComputeBlindSpotsJob::class => [
         'connection' => 'redis', 'queues' => ['default'], 'max_timeout' => 540,
@@ -72,6 +81,12 @@ return [
         'isolated_queues' => ['default'],
         'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'sorted symbols + resolved session',
         'write_strategy' => 'per-symbol atomic derived-metric publication',
+    ],
+    ConfirmSymbolBootstrapPhaseOrchestrationJob::class => [
+        'connection' => 'redis', 'queues' => [], 'max_timeout' => 30,
+        'isolated_queues' => ['default'],
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'work run + phase + phase token + fenced orchestration attempt',
+        'write_strategy' => 'phase-orchestration-token-fenced durable dispatch confirmation',
     ],
     CompleteWorkRunJob::class => [
         'connection' => 'redis', 'queues' => ['bootstrap'], 'max_timeout' => 60,
@@ -156,6 +171,20 @@ return [
         'isolated_queues' => ['bootstrap-fast'],
         'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'symbol + source',
         'write_strategy' => 'cache dispatch guard',
+    ],
+    RunSymbolBootstrapPhaseJob::class => [
+        'connection' => 'redis', 'queues' => [], 'max_timeout' => 540,
+        'isolated_queues' => ['bootstrap-fast', 'intraday-interactive', 'intraday', 'intraday-heavy', 'default'],
+        'isolated_queue_timeouts' => [
+            'bootstrap-fast' => 270,
+            'intraday-interactive' => 105,
+            'intraday' => 105,
+            'intraday-heavy' => 540,
+            'default' => 540,
+        ],
+        'tries' => 1, 'backoff' => $standardBackoff,
+        'identity' => 'work run + phase + phase delivery token + fenced parent orchestration',
+        'write_strategy' => 'phase-token-fenced durable transition with coverage-fenced EOD publication',
     ],
     Seasonality5DJob::class => [
         'connection' => 'redis', 'queues' => ['default', 'prime'], 'max_timeout' => 540,

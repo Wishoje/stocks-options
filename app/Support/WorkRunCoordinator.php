@@ -204,11 +204,18 @@ final class WorkRunCoordinator
 
         return DB::transaction(function () use ($runId, $deliveryToken, $attempt, $at): bool {
             $run = WorkRun::query()->lockForUpdate()->find($runId);
+            $reservationSeconds = max(
+                30,
+                (int) config('work_runs.dispatch_reservation_seconds', 120)
+            );
+            $orchestrationReservationLive = $run?->orchestration_token !== null
+                && $run->orchestration_reserved_at !== null
+                && $run->orchestration_reserved_at->addSeconds($reservationSeconds)->isAfter($at);
             if (! $run
                 || ! hash_equals((string) $run->delivery_token, $deliveryToken)
                 || ! in_array($run->status, WorkRun::ACTIVE_STATUSES, true)
                 || ($run->status === WorkRun::STATUS_RUNNING
-                    && $run->orchestration_dispatched_at !== null)
+                    && ($run->orchestration_dispatched_at !== null || $orchestrationReservationLive))
                 || ($run->status === WorkRun::STATUS_RUNNING && $attempt <= $run->attempt)) {
                 return false;
             }
@@ -216,6 +223,12 @@ final class WorkRunCoordinator
             $runningTtl = max(300, (int) config("work_runs.running_ttl_seconds.{$run->kind}", 3600));
             $run->status = WorkRun::STATUS_RUNNING;
             $run->attempt = max(1, $attempt);
+            if ($run->orchestration_token !== null) {
+                $run->orchestration_token = null;
+                $run->orchestration_attempt = 0;
+                $run->orchestration_reserved_at = null;
+                $run->orchestration_dispatched_at = null;
+            }
             $run->started_at ??= $at;
             $run->heartbeat_at = $at;
             $run->lease_expires_at = $at->addSeconds($runningTtl);
@@ -353,6 +366,41 @@ final class WorkRunCoordinator
             && hash_equals((string) $run->delivery_token, $deliveryToken)
             && hash_equals((string) $run->orchestration_token, $orchestrationToken)
             && $run->orchestration_attempt === $attempt;
+    }
+
+    public function heartbeatOrchestration(
+        string $runId,
+        string $deliveryToken,
+        int $attempt,
+        string $orchestrationToken,
+        ?CarbonInterface $at = null
+    ): bool {
+        $at = $this->at($at);
+
+        return DB::transaction(function () use (
+            $runId,
+            $deliveryToken,
+            $attempt,
+            $orchestrationToken,
+            $at
+        ): bool {
+            $run = WorkRun::query()->lockForUpdate()->find($runId);
+            if (! $run
+                || $run->status !== WorkRun::STATUS_RUNNING
+                || $run->attempt !== $attempt
+                || $run->orchestration_attempt !== $attempt
+                || ! hash_equals((string) $run->delivery_token, $deliveryToken)
+                || ! hash_equals((string) $run->orchestration_token, $orchestrationToken)) {
+                return false;
+            }
+
+            $runningTtl = max(300, (int) config("work_runs.running_ttl_seconds.{$run->kind}", 3600));
+            $run->heartbeat_at = $at;
+            $run->lease_expires_at = $at->addSeconds($runningTtl);
+            $run->save();
+
+            return true;
+        });
     }
 
     public function markCompleted(

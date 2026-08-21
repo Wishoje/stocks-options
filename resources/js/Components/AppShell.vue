@@ -115,6 +115,7 @@ import {
   APP_SHELL_UA_CONCURRENCY,
   loadUnusualActivityBadges,
 } from '@/Support/app-shell-activity-loader.js'
+import { selectionWarmupPlan } from '@/Support/symbol-bootstrap-state.js'
 
 const watchlistItems = ref([])
 const pinMap = ref({})
@@ -210,13 +211,45 @@ async function loadPinsAndUA(items, sequence, controller) {
 async function handleSelectSymbol(symbol) {
   showMobileWatchlist.value = false
 
-  await Promise.allSettled([
-    axios.post('/api/intraday/pull', { symbols: [symbol] }),
-    axios.post('/api/prime-calculator', { symbol }),
-    axios.get('/api/symbol/status', { params: { symbol, timeframe: '14d' } }),
-  ])
+  let statusResponse = null
+  try {
+    statusResponse = await axios.get('/api/symbol/status', {
+      params: { symbol, timeframe: '14d' },
+      validateStatus: () => true,
+    })
+  } catch {
+    // A status transport failure is treated as not ready. Priming is the
+    // bounded, durable fallback and intraday waits for the server handoff.
+  }
 
-  window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol } }))
+  const plan = selectionWarmupPlan(
+    statusResponse?.data || { status: 'missing' },
+    statusResponse?.status || 0,
+  )
+  let bootstrapStart = null
+  const requests = [axios.post('/api/prime-calculator', { symbol })]
+
+  if (plan.startIntraday) {
+    requests.push(axios.post('/api/intraday/pull', { symbols: [symbol] }))
+  } else if (plan.startPrime) {
+    requests.push(
+      axios.post('/api/prime', { symbol, timeframe: '14d' })
+        .then((response) => {
+          bootstrapStart = response?.data || null
+        }),
+    )
+  }
+
+  await Promise.allSettled(requests)
+
+  window.dispatchEvent(new CustomEvent('select-symbol', {
+    detail: {
+      symbol,
+      symbolStatus: statusResponse?.data || null,
+      symbolStatusHttpStatus: statusResponse?.status || null,
+      bootstrapStart,
+    },
+  }))
 }
 
 async function handleRemoveFromWatchlist(id) {

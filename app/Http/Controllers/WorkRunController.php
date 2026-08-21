@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\WorkRun;
 use App\Support\CalculatorPublicationRepository;
+use App\Support\SymbolBootstrapCoordinator;
 use App\Support\WorkRunCoordinator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,7 +15,8 @@ class WorkRunController extends Controller
         Request $request,
         string $runId,
         WorkRunCoordinator $runs,
-        CalculatorPublicationRepository $publications
+        CalculatorPublicationRepository $publications,
+        SymbolBootstrapCoordinator $bootstrap
     ): JsonResponse {
         $workRun = $request->attributes->get('workRun');
         if (! $workRun instanceof WorkRun || $workRun->id !== $runId) {
@@ -25,6 +27,12 @@ class WorkRunController extends Controller
             $payload['calculator'] = $this->calculatorManifest(
                 $publications->runForWorkRun($workRun->id)
             );
+        }
+        if ($workRun->kind === 'symbol_bootstrap') {
+            $bootstrapPayload = $bootstrap->payload($workRun);
+            if ($bootstrapPayload !== null) {
+                $payload['bootstrap'] = $bootstrapPayload;
+            }
         }
         $response = response()->json($payload);
 

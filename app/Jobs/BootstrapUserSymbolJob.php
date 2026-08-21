@@ -3,9 +3,13 @@
 namespace App\Jobs;
 
 use App\Jobs\Middleware\EnsureWorkRunOrchestrationCurrent;
+use App\Models\WorkRun;
 use App\Support\QueueLanes;
+use App\Support\SymbolBootstrapPhaseDispatcher;
+use App\Support\SymbolBootstrapPolicy;
 use App\Support\Symbols;
 use App\Support\WorkRunCoordinator;
+use App\Support\WorkRunDispatcher;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -41,8 +45,31 @@ class BootstrapUserSymbolJob extends QueueJob implements ShouldQueue
     public static function dispatchIfNeeded(string $symbol, ?string $source = null, int $ttlSeconds = 120): bool
     {
         $sym = Symbols::canon($symbol);
-        if (! $sym) {
+        if (! $sym || ! Symbols::isValid($sym)) {
             return false;
+        }
+
+        $policy = app(SymbolBootstrapPolicy::class);
+        if ($policy->enabled()) {
+            $runs = app(WorkRunCoordinator::class);
+            $parameters = $policy->claimParameters();
+            if (app(\App\Support\SymbolBootstrapCoordinator::class)->authoritativeWorkRun(
+                $sym,
+                (string) $parameters['session_date'],
+                (string) $parameters['purpose']
+            )) {
+                return true;
+            }
+            $claim = $runs->claim(
+                'symbol_bootstrap',
+                $sym,
+                $parameters,
+                QueueLanes::bootstrap(),
+                deferWhenRateLimited: true
+            );
+
+            return ! $claim['deferred']
+                && app(WorkRunDispatcher::class)->dispatch($claim['run']);
         }
 
         $lockKey = "symbol-bootstrap:dispatch:{$sym}";
@@ -91,6 +118,19 @@ class BootstrapUserSymbolJob extends QueueJob implements ShouldQueue
                 'invalid_symbol',
                 now()
             );
+
+            return;
+        }
+
+        $phasedWorkRun = $workRuns !== null && $this->ownsPhasedWorkRun();
+        if ($phasedWorkRun || ($workRuns === null && app(SymbolBootstrapPolicy::class)->enabled())) {
+            if ($workRuns === null) {
+                self::dispatchIfNeeded($symbol, $this->source);
+
+                return;
+            }
+
+            $this->handlePhasedBootstrap($workRuns, $workRunAttempt);
 
             return;
         }
@@ -214,6 +254,54 @@ class BootstrapUserSymbolJob extends QueueJob implements ShouldQueue
     private function workRunCoordinator(): ?WorkRunCoordinator
     {
         return $this->workRunId !== null ? app(WorkRunCoordinator::class) : null;
+    }
+
+    private function handlePhasedBootstrap(WorkRunCoordinator $workRuns, int $workRunAttempt): void
+    {
+        $orchestrationToken = $workRuns->reserveOrchestration(
+            (string) $this->workRunId,
+            (string) $this->workRunDeliveryToken,
+            $workRunAttempt
+        );
+        if (! $orchestrationToken) {
+            return;
+        }
+
+        try {
+            app(\App\Support\SymbolBootstrapCoordinator::class)->initialize((string) $this->workRunId);
+            app(SymbolBootstrapPhaseDispatcher::class)->dispatchReady(
+                (string) $this->workRunId,
+                new ConfirmWorkRunOrchestrationJob(
+                    (string) $this->workRunId,
+                    (string) $this->workRunDeliveryToken,
+                    $workRunAttempt,
+                    $orchestrationToken
+                )
+            );
+        } catch (Throwable $exception) {
+            $workRuns->markOrchestrationDispatchFailed(
+                (string) $this->workRunId,
+                (string) $this->workRunDeliveryToken,
+                $workRunAttempt,
+                $orchestrationToken
+            );
+
+            throw $exception;
+        }
+    }
+
+    private function ownsPhasedWorkRun(): bool
+    {
+        if ($this->workRunId === null) {
+            return false;
+        }
+        $run = WorkRun::query()->find($this->workRunId);
+        $parameters = $run?->parameters ?? [];
+
+        return $run?->kind === 'symbol_bootstrap'
+            && ($parameters['purpose'] ?? null) === SymbolBootstrapPolicy::PURPOSE
+            && is_string($parameters['session_date'] ?? null)
+            && preg_match('/^\d{4}-\d{2}-\d{2}$/', $parameters['session_date']) === 1;
     }
 
     private function tradeDate(Carbon $now): string

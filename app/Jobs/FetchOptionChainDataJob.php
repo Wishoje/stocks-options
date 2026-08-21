@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use RuntimeException;
 
 class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
@@ -32,6 +33,17 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
     /** @var string|null Forced data_date (YYYY-MM-DD) for backfills/repairs */
     protected ?string $targetDate;
+
+    /**
+     * An immutable expiration scope supplied by a durable bootstrap manifest.
+     * Null keeps the legacy provider-discovery behavior.
+     *
+     * @var string[]|null
+     */
+    protected ?array $expirationScope = null;
+
+    /** Fast bootstrap candidates may add missing rows but never replace rows. */
+    protected bool $mergeOnly = false;
 
     // ----- Tunables (adjust as needed) -----
     /** Keep strikes within ±X% of spot (precision default widened). */
@@ -55,8 +67,14 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
     public int $timeout = 540;
 
-    public function __construct(array $symbols, ?int $days = null, ?string $targetDate = null, ?int $timeoutSeconds = null)
-    {
+    public function __construct(
+        array $symbols,
+        ?int $days = null,
+        ?string $targetDate = null,
+        ?int $timeoutSeconds = null,
+        ?array $expirationScope = null,
+        bool $mergeOnly = false
+    ) {
         $this->symbols = array_values(array_unique(array_map(
             static fn ($s) => \App\Support\Symbols::canon($s),
             $symbols
@@ -68,6 +86,25 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         if ($timeoutSeconds !== null) {
             $this->timeout = max(30, min(540, $timeoutSeconds));
         }
+
+        if ($expirationScope !== null) {
+            $normalizedScope = [];
+            foreach ($expirationScope as $value) {
+                $expiration = trim((string) $value);
+                try {
+                    $parsed = Carbon::createFromFormat('!Y-m-d', $expiration, 'America/New_York');
+                } catch (\Throwable) {
+                    $parsed = false;
+                }
+                if ($parsed === false || $parsed->format('Y-m-d') !== $expiration) {
+                    throw new InvalidArgumentException('Expiration scope contains an invalid date.');
+                }
+                $normalizedScope[$expiration] = true;
+            }
+            $this->expirationScope = array_keys($normalizedScope);
+            sort($this->expirationScope, SORT_STRING);
+        }
+        $this->mergeOnly = $mergeOnly;
     }
 
     public function handle(): void
@@ -94,6 +131,23 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         }
         $windowStart = $anchorNy->copy()->startOfDay();
         $windowEnd = ($this->days ? $anchorNy->copy()->addDays($this->days) : $anchorNy->copy()->addDays(90))->endOfDay();
+        if ($this->expirationScope !== null && $this->expirationScope !== []) {
+            // A phased bootstrap keeps its EOD data_date on the completed
+            // session, but its option catalog starts on the live request date.
+            // Filter against the frozen catalog itself so a Monday run anchored
+            // to Friday neither includes expired Friday contracts nor drops the
+            // last days of its current-date horizon.
+            $windowStart = Carbon::createFromFormat(
+                '!Y-m-d',
+                $this->expirationScope[0],
+                'America/New_York'
+            )->startOfDay();
+            $windowEnd = Carbon::createFromFormat(
+                '!Y-m-d',
+                $this->expirationScope[array_key_last($this->expirationScope)],
+                'America/New_York'
+            )->endOfDay();
+        }
         $incompleteSymbols = 0;
 
         foreach ($this->symbols as $symbol) {
@@ -105,7 +159,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
             // Duplicate-work guard per symbol/date.
             $guardKey = "optchain:pulling:{$symbol}:{$date}";
-            $guardSeconds = max(($this->timeout + 60), ($this->guardMinutes * 60));
+            $guardSeconds = $this->guardSeconds();
             $guard = Cache::lock($guardKey, $guardSeconds);
             if (! $guard->get()) {
                 $meta = array_merge($context, [
@@ -324,6 +378,12 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
                     if ($rows) {
                         DB::transaction(function () use ($rows) {
+                            if ($this->mergeOnly) {
+                                DB::table('option_chain_data')->insertOrIgnore($rows);
+
+                                return;
+                            }
+
                             DB::table('option_chain_data')->upsert(
                                 $rows,
                                 ['expiration_id', 'data_date', 'option_type', 'strike'],
@@ -370,6 +430,17 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         }
     }
 
+    protected function guardSeconds(): int
+    {
+        // Frozen scopes are resumable phase units. Their guard must expire soon
+        // after the owning worker budget so a killed fast phase can be retried.
+        if ($this->expirationScope !== null) {
+            return $this->timeout + 60;
+        }
+
+        return max($this->timeout + 60, $this->guardMinutes * 60);
+    }
+
     protected function loadRuntimeTunables(): void
     {
         $band = (float) config('services.massive.eod_strike_band_pct', $this->strikeBandPct);
@@ -399,6 +470,10 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
      */
     protected function fetchChain(string $symbol, ?Carbon $windowStart = null, ?Carbon $windowEnd = null): array
     {
+        if ($this->expirationScope !== null) {
+            return $this->fetchFrozenExpirationChain($symbol, $windowStart, $windowEnd);
+        }
+
         [$finnhubChain, $finnhubMeta] = $this->fetchFinnhubChain($symbol);
         if ($finnhubChain !== null) {
             $finnhubSets = $finnhubChain[1];
@@ -473,6 +548,70 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             'massive_status' => $massiveMeta['status'] ?? 'not_attempted',
             'massive_http_status' => $massiveMeta['http_status'] ?? null,
         ], $this->massiveProviderTelemetry($massiveMeta))];
+    }
+
+    /**
+     * Fetch only the expirations frozen by a durable bootstrap manifest.
+     * Every expiration/side partition must terminate before any rows are
+     * accepted by the caller.
+     *
+     * @return array{0:float,1:array,2:array<string,mixed>}
+     */
+    protected function fetchFrozenExpirationChain(
+        string $symbol,
+        ?Carbon $windowStart,
+        ?Carbon $windowEnd
+    ): array {
+        $base = rtrim(config('services.massive.base', 'https://api.massive.com'), '/');
+        $key = config('services.massive.key');
+        $mode = config('services.massive.mode', 'header');
+        $header = config('services.massive.header', 'X-API-Key');
+        $qparam = config('services.massive.qparam', 'apiKey');
+
+        if (empty($key)) {
+            return [0.0, [], [
+                'provider' => 'massive',
+                'provider_status' => 'failed',
+                'provider_complete' => false,
+                'massive_status' => 'missing_api_key',
+                'frozen_catalog' => true,
+            ]];
+        }
+
+        $client = Http::acceptJson()
+            ->connectTimeout(5)
+            ->timeout(20)
+            ->retry(2, 300, throw: false);
+        if ($mode === 'bearer') {
+            $client = $client->withToken($key);
+        } elseif ($mode === 'header') {
+            $client = $client->withHeaders([$header => $key]);
+        }
+
+        [$chain, $meta] = $this->fetchMassiveChainByPartitions(
+            $client,
+            $base,
+            $symbol,
+            $mode,
+            $qparam,
+            (string) $key,
+            $windowStart,
+            $windowEnd,
+            $this->expirationScope
+        );
+
+        return [
+            (float) ($chain[0] ?? 0.0),
+            is_array($chain[1] ?? null) ? $chain[1] : [],
+            array_merge([
+                'provider' => 'massive',
+                'provider_status' => ($meta['complete'] ?? false) ? 'ok' : 'incomplete',
+                'provider_complete' => (bool) ($meta['complete'] ?? false),
+                'massive_status' => $meta['status'] ?? 'unknown',
+                'frozen_catalog' => true,
+                'frozen_expiries_requested' => count($this->expirationScope),
+            ], $this->massiveProviderTelemetry($meta)),
+        ];
     }
 
     /** @return array<string,mixed> */
@@ -1132,7 +1271,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         string $qparam,
         string $key,
         ?Carbon $windowStart,
-        ?Carbon $windowEnd
+        ?Carbon $windowEnd,
+        ?array $frozenExpirations = null
     ): array {
         $startedAt = microtime(true);
         $elapsedMilliseconds = static fn (): int => (int) round((microtime(true) - $startedAt) * 1000);
@@ -1142,32 +1282,30 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             (int) config('services.massive.eod_chain_max_pages_per_partition', 40)
         );
 
-        $referenceProbeMaxPages = max(
-            1,
-            (int) config('services.massive.eod_chain_reference_probe_max_pages', 4)
-        );
-        [$expiries, $referenceProbeMeta] = $this->fetchMassiveReferenceExpirations(
-            $client,
-            $base,
-            $symbol,
-            $mode,
-            $qparam,
-            $key,
-            $windowStart,
-            $windowEnd,
-            $referenceProbeMaxPages
-        );
-
-        $referenceProbeComplete = (bool) ($referenceProbeMeta['complete'] ?? false);
-        if ($referenceProbeComplete) {
-            $referenceMeta = array_merge($referenceProbeMeta, [
-                'strategy' => 'bounded_catalog',
+        if ($frozenExpirations !== null) {
+            $expiries = collect($frozenExpirations)
+                ->map(static fn ($expiration): string => substr(trim((string) $expiration), 0, 10))
+                ->filter()
+                ->unique()
+                ->sort()
+                ->values()
+                ->all();
+            $referenceMeta = [
+                'status' => $expiries === [] ? 'empty_payload' : 'ok',
+                'complete' => true,
+                'pages' => 0,
+                'pagination_capped' => false,
+                'strategy' => 'frozen_manifest',
                 'dates_scanned' => 0,
-                'probe_status' => $referenceProbeMeta['status'] ?? null,
-                'probe_pages' => (int) ($referenceProbeMeta['pages'] ?? 0),
-            ]);
+                'probe_status' => null,
+                'probe_pages' => 0,
+            ];
         } else {
-            [$expiries, $exactReferenceMeta] = $this->fetchMassivePartitionExpirations(
+            $referenceProbeMaxPages = max(
+                1,
+                (int) config('services.massive.eod_chain_reference_probe_max_pages', 4)
+            );
+            [$expiries, $referenceProbeMeta] = $this->fetchMassiveReferenceExpirations(
                 $client,
                 $base,
                 $symbol,
@@ -1175,16 +1313,38 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 $qparam,
                 $key,
                 $windowStart,
-                $windowEnd
+                $windowEnd,
+                $referenceProbeMaxPages
             );
-            $referenceMeta = array_merge($exactReferenceMeta, [
-                'strategy' => 'exact_date_fallback',
-                'pages' => (int) ($referenceProbeMeta['pages'] ?? 0)
-                    + (int) ($exactReferenceMeta['pages'] ?? 0),
-                'probe_status' => $referenceProbeMeta['status'] ?? null,
-                'probe_pages' => (int) ($referenceProbeMeta['pages'] ?? 0),
-                'probe_pagination_capped' => (bool) ($referenceProbeMeta['pagination_capped'] ?? false),
-            ]);
+
+            $referenceProbeComplete = (bool) ($referenceProbeMeta['complete'] ?? false);
+            if ($referenceProbeComplete) {
+                $referenceMeta = array_merge($referenceProbeMeta, [
+                    'strategy' => 'bounded_catalog',
+                    'dates_scanned' => 0,
+                    'probe_status' => $referenceProbeMeta['status'] ?? null,
+                    'probe_pages' => (int) ($referenceProbeMeta['pages'] ?? 0),
+                ]);
+            } else {
+                [$expiries, $exactReferenceMeta] = $this->fetchMassivePartitionExpirations(
+                    $client,
+                    $base,
+                    $symbol,
+                    $mode,
+                    $qparam,
+                    $key,
+                    $windowStart,
+                    $windowEnd
+                );
+                $referenceMeta = array_merge($exactReferenceMeta, [
+                    'strategy' => 'exact_date_fallback',
+                    'pages' => (int) ($referenceProbeMeta['pages'] ?? 0)
+                        + (int) ($exactReferenceMeta['pages'] ?? 0),
+                    'probe_status' => $referenceProbeMeta['status'] ?? null,
+                    'probe_pages' => (int) ($referenceProbeMeta['pages'] ?? 0),
+                    'probe_pagination_capped' => (bool) ($referenceProbeMeta['pagination_capped'] ?? false),
+                ]);
+            }
         }
 
         $referenceComplete = (bool) ($referenceMeta['complete'] ?? false);

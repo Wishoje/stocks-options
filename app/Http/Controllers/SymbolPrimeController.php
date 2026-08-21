@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\WorkRunRateLimited;
 use App\Support\QueueLanes;
+use App\Support\SymbolBootstrapCoordinator;
+use App\Support\SymbolBootstrapPolicy;
 use App\Support\Symbols;
 use App\Support\WorkRunCoordinator;
 use App\Support\WorkRunDispatcher;
@@ -16,7 +18,9 @@ class SymbolPrimeController extends Controller
     public function store(
         Request $request,
         WorkRunCoordinator $runs,
-        WorkRunDispatcher $dispatcher
+        WorkRunDispatcher $dispatcher,
+        SymbolBootstrapPolicy $bootstrapPolicy,
+        SymbolBootstrapCoordinator $bootstrap
     ): JsonResponse {
         $validated = $request->validate([
             'symbol' => ['required', 'string', 'max:10'],
@@ -26,12 +30,29 @@ class SymbolPrimeController extends Controller
             return response()->json(['message' => 'The selected symbol is invalid.'], 422);
         }
 
+        $parameters = $bootstrapPolicy->claimParameters();
+        if ($bootstrapPolicy->enabled()) {
+            $authoritative = $bootstrap->authoritativeWorkRun(
+                $symbol,
+                (string) $parameters['session_date']
+            );
+            if ($authoritative) {
+                return response()->json(array_merge([
+                    'ok' => true,
+                    'queued' => false,
+                    'coalesced' => true,
+                ], $runs->payload($authoritative), [
+                    'bootstrap' => $bootstrap->payload($authoritative),
+                ]));
+            }
+        }
+
         $queue = QueueLanes::bootstrap();
         try {
             $claim = $runs->claim(
                 'symbol_bootstrap',
                 $symbol,
-                [],
+                $parameters,
                 $queue,
                 $request->user()
             );
@@ -44,6 +65,11 @@ class SymbolPrimeController extends Controller
             ], 429, ['Retry-After' => (string) $exception->retryAfterSeconds]);
         }
         $run = $claim['run'];
+        $bootstrapPayload = null;
+        if ($bootstrapPolicy->enabled()) {
+            $bootstrap->initialize($run);
+            $bootstrapPayload = $bootstrap->payload($run);
+        }
         $queued = false;
 
         if ($claim['created']) {
@@ -56,7 +82,8 @@ class SymbolPrimeController extends Controller
                         'message' => 'The symbol refresh could not be queued. Please retry.',
                         'retry_after_seconds' => 2,
                     ],
-                    $runs->payload($run->fresh())
+                    $runs->payload($run->fresh()),
+                    $bootstrapPayload ? ['bootstrap' => $bootstrapPayload] : []
                 ), 503, ['Retry-After' => '2']);
             }
         }
@@ -65,6 +92,8 @@ class SymbolPrimeController extends Controller
             'ok' => true,
             'queued' => $queued,
             'coalesced' => ! $claim['created'],
-        ], $runs->payload($run)), $claim['created'] ? 202 : 200);
+        ], $runs->payload($run), $bootstrapPayload ? [
+            'bootstrap' => $bootstrapPayload,
+        ] : []), $claim['created'] ? 202 : 200);
     }
 }

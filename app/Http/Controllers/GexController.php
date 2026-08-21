@@ -6,6 +6,8 @@ use App\Models\OptionChainData;
 use App\Models\OptionExpiration;
 use App\Support\EodCacheVersion;
 use App\Support\EodSnapshotSelector;
+use App\Support\SymbolBootstrapCoordinator;
+use App\Support\SymbolBootstrapPolicy;
 use App\Support\Symbols;
 use App\Support\WorkRunCoordinator;
 use Carbon\Carbon;
@@ -35,21 +37,73 @@ class GexController extends Controller
         $timeframe = $request->query('timeframe', '90d');
         $forceRefresh = (bool) $request->boolean('refresh', false);
         $workRuns = app(WorkRunCoordinator::class);
-        $activeRun = $workRuns->active('symbol_bootstrap', $symbol);
-        $runPayload = $activeRun ? $workRuns->payload($activeRun) : null;
+        $bootstrapPolicy = app(SymbolBootstrapPolicy::class);
+        $bootstrap = app(SymbolBootstrapCoordinator::class);
+        $parameters = $bootstrapPolicy->claimParameters();
+        $activeRun = $workRuns->active('symbol_bootstrap', $symbol, $parameters);
+        $authoritativeRun = null;
+        $statusRun = $activeRun;
+        $bootstrapPayload = null;
+        if ($bootstrapPolicy->enabled()) {
+            $authoritativeRun = $bootstrap->authoritativeWorkRun(
+                $symbol,
+                (string) $parameters['session_date']
+            );
+            $statusRun ??= $authoritativeRun;
+            if (! $statusRun) {
+                $statusRun = $bootstrap->latestForSymbol(
+                    $symbol,
+                    (string) $parameters['session_date']
+                )?->workRun;
+            }
+            $bootstrapPayload = $statusRun ? $bootstrap->payload($statusRun) : null;
+        }
+        $runPayload = $statusRun
+            ? $workRuns->payload($statusRun)
+            : null;
+
+        // A new symbol must not expose in-place candidate rows before the
+        // fast phase signs its exact catalog coverage. When an older complete
+        // head exists, continue serving that last-good data while the newer
+        // run prepares.
+        if ($bootstrapPayload && ! $bootstrapPayload['fast_ready'] && ! $authoritativeRun) {
+            $terminal = (bool) $bootstrapPayload['terminal'];
+            $headers = [];
+            if (! $terminal && $bootstrapPayload['retry_after_seconds'] !== null) {
+                $headers['Retry-After'] = (string) $bootstrapPayload['retry_after_seconds'];
+            }
+
+            return response()->json([
+                'error' => $terminal
+                    ? "Initial data failed for {$symbol}"
+                    : "Initial data is preparing for {$symbol}",
+                'status' => $terminal ? 'failed' : 'fetching',
+                'run' => $runPayload,
+                'bootstrap' => $bootstrapPayload,
+            ], $terminal ? 503 : 202, $headers);
+        }
+        if ($bootstrapPayload && $bootstrapPayload['full_ready'] && $bootstrapPayload['no_options']) {
+            return response()->json([
+                'status' => 'no_options',
+                'symbol' => $symbol,
+                'run' => $runPayload,
+                'bootstrap' => $bootstrapPayload,
+                'strike_data' => [],
+            ]);
+        }
 
         // Resolve dates + IDs for you
         $timeframeExpirations = $this->getTimeframeExpirations($symbol, $timeframe);
         $dates = $timeframeExpirations[$timeframe] ?? [];
 
         if (empty($dates)) {
-            $payload = [
+            $payload = array_merge([
                 'error' => "No expirations found for {$symbol}/{$timeframe}",
                 'status' => $activeRun ? 'queued' : 'missing',
                 'run' => $runPayload,
                 'available_timeframes' => array_keys($timeframeExpirations),
                 'timeframe_expirations' => $timeframeExpirations,
-            ];
+            ], $bootstrapPayload !== null ? ['bootstrap' => $bootstrapPayload] : []);
             $this->logPerf($symbol, $timeframe, $startedAt, [
                 'status_code' => 404,
                 'result' => 'no_expirations',
@@ -83,11 +137,11 @@ class GexController extends Controller
                 ?: $latestDate;
         }
         if (! $latestDate) {
-            $payload = [
+            $payload = array_merge([
                 'error' => "No data for {$symbol}/{$timeframe}",
                 'status' => $activeRun ? 'fetching' : 'incomplete',
                 'run' => $runPayload,
-            ];
+            ], $bootstrapPayload !== null ? ['bootstrap' => $bootstrapPayload] : []);
             $this->logPerf($symbol, $timeframe, $startedAt, [
                 'status_code' => 404,
                 'result' => 'no_data',
@@ -143,11 +197,11 @@ class GexController extends Controller
         }
 
         if (! $payload) {
-            $fallback = [
+            $fallback = array_merge([
                 'error' => "No data for {$symbol}/{$timeframe}",
                 'status' => $activeRun ? 'fetching' : 'incomplete',
                 'run' => $runPayload,
-            ];
+            ], $bootstrapPayload !== null ? ['bootstrap' => $bootstrapPayload] : []);
             $this->logPerf($symbol, $timeframe, $startedAt, [
                 'status_code' => 404,
                 'result' => 'empty_payload',
@@ -170,6 +224,11 @@ class GexController extends Controller
             'data_date' => $payload['data_date'] ?? null,
             'cache_version' => $version,
         ]);
+
+        if ($bootstrapPayload !== null) {
+            $payload['run'] = $runPayload;
+            $payload['bootstrap'] = $bootstrapPayload;
+        }
 
         return response()->json($payload, 200);
     }

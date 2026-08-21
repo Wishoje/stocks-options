@@ -6,6 +6,7 @@ use App\Models\WorkRun;
 use App\Support\OptionLiveTotalsRepository;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\QueueLanes;
+use App\Support\SymbolBootstrapPolicy;
 use App\Support\WorkRunCoordinator;
 use App\Support\WorkRunDispatcher;
 use Illuminate\Bus\Batchable;
@@ -30,12 +31,18 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 
     public int $timeout = 105;
 
+    public bool $interactive = false;
+
+    public int $maxExpirations = 8;
+
     public function __construct(
         public array $symbols,
         ?int $timeoutSeconds = null,
         public ?string $tradeDate = null,
         public ?string $workRunId = null,
-        public ?string $workRunDeliveryToken = null
+        public ?string $workRunDeliveryToken = null,
+        bool $interactive = false,
+        ?int $maxExpirations = null
     ) {
         if (($workRunId === null) !== ($workRunDeliveryToken === null)) {
             throw new InvalidArgumentException('Work-run ID and delivery token must be provided together.');
@@ -50,14 +57,18 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             throw new InvalidArgumentException('A durable intraday work run must own exactly one symbol.');
         }
         $this->symbols = $canonicalSymbols->all();
-        $requiresLongLane = QueueLanes::intradayBatch($canonicalSymbols->all())
+        $this->interactive = $interactive;
+        $this->maxExpirations = max(1, min(8, $maxExpirations ?? 8));
+        $requiresLongLane = ! $interactive && QueueLanes::intradayBatch($canonicalSymbols->all())
             === (string) config('queue_lanes.queues.intraday_heavy', 'intraday-heavy');
         $this->timeout = max(30, min(540, $timeoutSeconds ?? ($requiresLongLane ? 540 : 105)));
         $this->tradeDate = $tradeDate
             ? substr($tradeDate, 0, 10)
             : $this->tradingDate(now());
 
-        $this->onQueue(QueueLanes::intradayBatch($canonicalSymbols->all()));
+        $this->onQueue($interactive
+            ? QueueLanes::firstUseIntraday()
+            : QueueLanes::intradayBatch($canonicalSymbols->all()));
     }
 
     public function handle(): void
@@ -73,12 +84,7 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             return;
         }
 
-        $limiter = app(ProviderConcurrencyLimiter::class);
-        $status = $limiter->withPriority(
-            QueueLanes::providerPriority($this->queue),
-            fn (): string => $this->fetchAndPersist(),
-            5
-        );
+        $status = $this->execute();
 
         if (! $workRuns) {
             return;
@@ -102,6 +108,18 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             'intraday_incomplete',
             $status,
             now()
+        );
+    }
+
+    /** Execute the bounded ingest without owning a top-level WorkRun. */
+    public function execute(): string
+    {
+        $limiter = app(ProviderConcurrencyLimiter::class);
+
+        return $limiter->withPriority(
+            QueueLanes::providerPriority($this->queue),
+            fn (): string => $this->fetchAndPersist(),
+            5
         );
     }
 
@@ -150,7 +168,7 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                 ->where('symbol', $symbol)
                 ->whereDate('expiration_date', '>=', $tradeDate)
                 ->orderBy('expiration_date')
-                ->limit(8)
+                ->limit($this->maxExpirations)
                 ->pluck('expiration_date')
                 ->map(fn ($d) => substr($d, 0, 10))
                 ->all();
@@ -163,7 +181,7 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                     ->select('expiry')
                     ->distinct()
                     ->orderBy('expiry')
-                    ->limit(8)
+                    ->limit($this->maxExpirations)
                     ->pluck('expiry')
                     ->map(fn ($d) => substr((string) $d, 0, 10))
                     ->all();
@@ -380,6 +398,8 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 
     private function bootstrapMissingExpiries(string $symbol, string $tradeDate): void
     {
+        $bootstrapPolicy = app(SymbolBootstrapPolicy::class);
+
         if ($this->workRunId !== null) {
             $runs = app(WorkRunCoordinator::class);
             $dispatcher = app(WorkRunDispatcher::class);
@@ -387,7 +407,7 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             $claim = $runs->claim(
                 'symbol_bootstrap',
                 $symbol,
-                [],
+                $bootstrapPolicy->claimParameters(),
                 QueueLanes::bootstrap(),
                 $owner,
                 deferWhenRateLimited: true
@@ -403,6 +423,18 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                 'bootstrap_work_run_id' => $claim['run']->id,
                 'bootstrap_deferred' => $claim['deferred'],
                 'bootstrap_coalesced' => ! $claim['created'],
+            ]);
+
+            return;
+        }
+
+        // The phased bootstrap manifest owns both catalog readiness and the
+        // retry. Its interactive unit must never start the legacy delayed
+        // bootstrap/intraday pair.
+        if ($this->interactive && $bootstrapPolicy->enabled()) {
+            Log::info('FetchPolygonIntradayOptionsJob.phasedNoExpiry', [
+                'symbol' => $symbol,
+                'trade_date' => $tradeDate,
             ]);
 
             return;

@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\WorkRun;
+use App\Support\SymbolBootstrapPhaseDispatcher;
 use App\Support\WorkRunCoordinator;
 use App\Support\WorkRunDispatcher;
 use Illuminate\Console\Command;
@@ -16,8 +17,11 @@ class ReconcileWorkRuns extends Command
 
     protected $description = 'Recover durable market-data work runs that were not dispatched or became abandoned';
 
-    public function handle(WorkRunCoordinator $runs, WorkRunDispatcher $dispatcher): int
-    {
+    public function handle(
+        WorkRunCoordinator $runs,
+        WorkRunDispatcher $dispatcher,
+        SymbolBootstrapPhaseDispatcher $bootstrapPhases
+    ): int {
         if (! Schema::hasTable('work_runs') || ! Schema::hasTable('work_run_slots')) {
             $this->line(json_encode([
                 'skipped' => true,
@@ -31,6 +35,7 @@ class ReconcileWorkRuns extends Command
         $abandoned = 0;
         $dispatched = 0;
         $errors = 0;
+        $bootstrapPhasesDispatched = 0;
 
         WorkRun::query()
             ->whereIn('status', WorkRun::ACTIVE_STATUSES)
@@ -61,8 +66,11 @@ class ReconcileWorkRuns extends Command
             }
         }
 
+        $bootstrapPhasesDispatched = $bootstrapPhases->reconcile($limit);
+
         $this->line(json_encode([
             'dispatched' => $dispatched,
+            'bootstrap_phases_dispatched' => $bootstrapPhasesDispatched,
             'abandoned' => $abandoned,
             'errors' => $errors,
         ], JSON_THROW_ON_ERROR));

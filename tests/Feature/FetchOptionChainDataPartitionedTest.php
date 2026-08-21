@@ -28,6 +28,12 @@ class FetchOptionChainDataPartitionedTest extends TestCase
     {
         parent::setUp();
 
+        // A few legacy characterization tests do not wrap their MySQL writes
+        // in RefreshDatabase transactions. Keep this provider-persistence
+        // suite independent of their fixtures as it is in isolated CI runs.
+        DB::table('option_chain_data')->delete();
+        DB::table('option_expirations')->delete();
+
         config()->set([
             'queue_lanes.isolated' => false,
             'services.massive.key' => 'massive-test',
@@ -43,6 +49,199 @@ class FetchOptionChainDataPartitionedTest extends TestCase
             'services.massive.eod_min_keep_oi' => 0,
             'services.massive.eod_min_keep_vol' => 0,
         ]);
+    }
+
+    public function test_frozen_manifest_scope_fetches_only_exact_expiration_partitions(): void
+    {
+        $expirations = [self::TARGET_DATE, '2026-05-22'];
+        $partitions = [];
+        $referenceRequests = 0;
+
+        Http::fake(function (Request $request) use (&$partitions, &$referenceRequests) {
+            $url = (string) $request->url();
+            $params = $this->requestParameters($request);
+            if (str_contains($url, '/v3/reference/options/contracts')) {
+                $referenceRequests++;
+
+                return Http::response([], 500);
+            }
+
+            $expiry = (string) ($params['expiration_date'] ?? '');
+            $side = strtolower((string) ($params['contract_type'] ?? ''));
+            $partitions[] = [$expiry, $side];
+
+            return Http::response([
+                'results' => [$this->contract($expiry, $side, 500.0)],
+            ]);
+        });
+
+        (new FetchOptionChainDataJob(
+            [self::SYMBOL],
+            90,
+            self::TARGET_DATE,
+            270,
+            $expirations
+        ))->handle();
+
+        sort($partitions);
+        $this->assertSame([
+            [self::TARGET_DATE, 'call'],
+            [self::TARGET_DATE, 'put'],
+            ['2026-05-22', 'call'],
+            ['2026-05-22', 'put'],
+        ], $partitions);
+        $this->assertSame(0, $referenceRequests);
+        $this->assertSame(
+            $expirations,
+            DB::table('option_expirations')->orderBy('expiration_date')->pluck('expiration_date')->all()
+        );
+    }
+
+    public function test_monday_catalog_keeps_last_frozen_expiry_beyond_friday_eod_window(): void
+    {
+        $fridayEodDate = '2026-08-14';
+        $mondayHorizonExpiry = '2026-11-13';
+        $snapshotRequests = [];
+
+        Http::fake(function (Request $request) use (&$snapshotRequests) {
+            $params = $this->requestParameters($request);
+            $expiry = (string) ($params['expiration_date'] ?? '');
+            $side = strtolower((string) ($params['contract_type'] ?? ''));
+            $snapshotRequests[] = [$expiry, $side];
+
+            return Http::response([
+                'results' => [$this->contract($expiry, $side, 500.0)],
+            ]);
+        });
+
+        (new FetchOptionChainDataJob(
+            [self::SYMBOL],
+            90,
+            $fridayEodDate,
+            270,
+            [$mondayHorizonExpiry]
+        ))->handle();
+
+        $this->assertEqualsCanonicalizing([
+            [$mondayHorizonExpiry, 'call'],
+            [$mondayHorizonExpiry, 'put'],
+        ], $snapshotRequests);
+        $this->assertDatabaseHas('option_expirations', [
+            'symbol' => self::SYMBOL,
+            'expiration_date' => $mondayHorizonExpiry,
+        ]);
+        $expirationId = DB::table('option_expirations')
+            ->where('symbol', self::SYMBOL)
+            ->where('expiration_date', $mondayHorizonExpiry)
+            ->value('id');
+        $this->assertDatabaseHas('option_chain_data', [
+            'expiration_id' => $expirationId,
+            'data_date' => $fridayEodDate,
+            'option_type' => 'call',
+        ]);
+    }
+
+    public function test_merge_only_fast_scope_never_replaces_an_existing_contract_row(): void
+    {
+        $expirationId = DB::table('option_expirations')->insertGetId([
+            'symbol' => self::SYMBOL,
+            'expiration_date' => self::TARGET_DATE,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('option_chain_data')->insert([
+            'expiration_id' => $expirationId,
+            'data_date' => self::TARGET_DATE,
+            'option_type' => 'call',
+            'strike' => 500,
+            'open_interest' => 999,
+            'volume' => 999,
+            'data_timestamp' => now()->subMinute(),
+        ]);
+
+        Http::fake(function (Request $request) {
+            $params = $this->requestParameters($request);
+            $expiry = (string) ($params['expiration_date'] ?? '');
+            $side = strtolower((string) ($params['contract_type'] ?? ''));
+
+            return Http::response([
+                'results' => [$this->contract($expiry, $side, 500.0)],
+            ]);
+        });
+
+        (new FetchOptionChainDataJob(
+            [self::SYMBOL],
+            90,
+            self::TARGET_DATE,
+            270,
+            [self::TARGET_DATE],
+            true
+        ))->handle();
+
+        $this->assertSame(999, (int) DB::table('option_chain_data')
+            ->where('expiration_id', $expirationId)
+            ->where('option_type', 'call')
+            ->where('strike', 500)
+            ->value('open_interest'));
+        $this->assertDatabaseHas('option_chain_data', [
+            'expiration_id' => $expirationId,
+            'option_type' => 'put',
+            'strike' => 500,
+            'open_interest' => 500,
+        ]);
+    }
+
+    public function test_full_fill_scope_converges_fast_and_remaining_expiries_to_provider_values(): void
+    {
+        $expirations = [self::TARGET_DATE, '2026-05-22'];
+        $expirationIds = [];
+        foreach ($expirations as $expiration) {
+            $expirationId = DB::table('option_expirations')->insertGetId([
+                'symbol' => self::SYMBOL,
+                'expiration_date' => $expiration,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $expirationIds[$expiration] = $expirationId;
+            DB::table('option_chain_data')->insert([
+                'expiration_id' => $expirationId,
+                'data_date' => self::TARGET_DATE,
+                'option_type' => 'call',
+                'strike' => 500,
+                'open_interest' => 999,
+                'volume' => 999,
+                'data_timestamp' => now()->subMinute(),
+            ]);
+        }
+
+        Http::fake(function (Request $request) {
+            $params = $this->requestParameters($request);
+            $expiry = (string) ($params['expiration_date'] ?? '');
+            $side = strtolower((string) ($params['contract_type'] ?? ''));
+
+            return Http::response([
+                'results' => [$this->contract($expiry, $side, 500.0)],
+            ]);
+        });
+
+        (new FetchOptionChainDataJob(
+            [self::SYMBOL],
+            90,
+            self::TARGET_DATE,
+            270,
+            $expirations,
+            false
+        ))->handle();
+
+        foreach ($expirationIds as $expirationId) {
+            $this->assertDatabaseHas('option_chain_data', [
+                'expiration_id' => $expirationId,
+                'option_type' => 'call',
+                'strike' => 500,
+                'open_interest' => 500,
+                'volume' => 10,
+            ]);
+        }
     }
 
     public function test_empty_canary_list_enables_partitioned_fetch_for_an_arbitrary_symbol(): void

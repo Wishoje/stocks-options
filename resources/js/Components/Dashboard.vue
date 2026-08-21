@@ -221,6 +221,36 @@
           </div>
         </div>
         <div
+          v-if="dataMode==='eod' && preparing.partial && levels"
+          role="status"
+          aria-live="polite"
+          class="flex items-start gap-2 rounded-lg border px-4 py-3 text-sm"
+          :class="preparing.partialFailed
+            ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+            : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-100'"
+        >
+          <svg v-if="!preparing.partialFailed" class="mt-0.5 h-4 w-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          <svg v-else class="mt-0.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86l-7.82 13.5A2 2 0 004.2 20h15.6a2 2 0 001.73-3l-7.82-13.5a2 2 0 00-3.42 0z" />
+          </svg>
+          <div>
+            <div class="font-semibold">
+              {{ preparing.partialFailed ? `Partial data for ${userSymbol}` : `Filling full data for ${userSymbol}` }}
+            </div>
+            <div :class="preparing.partialFailed ? 'text-amber-200/80' : 'text-cyan-200/80'">
+              <template v-if="preparing.partialFailed">
+                Fast data remains available, but the full expiration and analytics fill did not complete.
+              </template>
+              <template v-else>
+                Fast data is ready and usable. Remaining expirations and analytics will appear as they finish.
+              </template>
+              <span v-if="preparationCoverageLabel"> {{ preparationCoverageLabel }}</span>
+            </div>
+          </div>
+        </div>
+        <div
           v-if="dataMode==='intraday' && !marketOpen"
           class="bg-slate-500/10 border border-slate-400/30 text-slate-100 text-sm px-4 py-3 rounded-lg flex items-start gap-2"
         >
@@ -634,6 +664,11 @@ import {
   h, defineComponent, defineAsyncComponent
 } from 'vue'
 import axios from 'axios'
+import {
+  bootstrapPollDelayMs,
+  ownsPreparationPoll,
+  symbolPreparationState,
+} from '@/Support/symbol-bootstrap-state.js'
 
 // Components
 import MetricCard from './MetricCard.vue'
@@ -738,7 +773,39 @@ const visibleTimeframeOptions = computed(() => {
 // Separate error states
 const eodError = ref('')
 const intradayError = ref('')
-const preparing = ref({ active: false, phase: 'queued', timer: null })
+const preparing = ref({
+  active: false,
+  phase: 'queued',
+  timer: null,
+  symbol: null,
+  statusUrl: null,
+  fastReady: false,
+  fullReady: false,
+  partial: false,
+  partialFailed: false,
+  filling: false,
+  terminal: false,
+  retryable: false,
+  coverage: null,
+})
+const preparationCoverageLabel = computed(() => {
+  const coverage = preparing.value.coverage
+  if (!coverage || typeof coverage !== 'object') return ''
+
+  const completed = Number(
+    coverage.completed_expirations
+      ?? coverage.expirations_completed
+      ?? coverage.published_expirations?.length,
+  )
+  const expected = Number(
+    coverage.expected_expirations
+      ?? coverage.expirations_expected,
+  )
+
+  return Number.isFinite(completed) && Number.isFinite(expected) && expected > 0
+    ? `${completed} of ${expected} expirations complete.`
+    : ''
+})
 const topError = computed(() => dataMode.value === 'eod' ? eodError.value : intradayError.value)
 
 const lastUpdated = ref(null)
@@ -1046,7 +1113,27 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
     eodLevels.value = hit.data
     lastUpdated.value = new Date().toISOString()
     preparing.value.active = false
-    stopPreparingPoll()
+
+    const startResponse = bootstrapStartResponses.get(sym) || null
+    const startState = startResponse
+      ? symbolPreparationState(startResponse.data, startResponse.status)
+      : null
+    if (startResponse) bootstrapStartResponses.delete(sym)
+    if (
+      startState?.mode === 'bootstrap'
+      && startState.shouldPoll
+      && preparing.value.symbol !== sym
+    ) {
+      await startPreparingPoll(sym, tf, (event) => {
+        if (event.kind === 'full') refreshPreparedGex(sym, tf, event)
+      }, startResponse)
+    }
+
+    const keepFillingPoll = preparing.value.symbol === sym
+      && !preparing.value.fullReady
+      && !preparing.value.terminal
+      && !!preparing.value.statusUrl
+    if (!keepFillingPoll) stopPreparingPoll()
     return
   }
 
@@ -1062,10 +1149,30 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
         params: { symbol: sym, timeframe: tf },
         signal: ctl.signal
       })
+      if (userSymbol.value !== sym) return
+
       eodLevels.value = data || {}
       cache.set(key, { t: Date.now(), data: eodLevels.value })
       uaExp.value = 'ALL'
       lastUpdated.value = new Date().toISOString()
+      if (preparing.value.symbol === sym && preparing.value.fastReady) {
+        preparing.value.active = false
+      }
+
+      const startResponse = bootstrapStartResponses.get(sym) || null
+      const startState = startResponse
+        ? symbolPreparationState(startResponse.data, startResponse.status)
+        : null
+      if (startResponse) bootstrapStartResponses.delete(sym)
+      if (
+        startState?.mode === 'bootstrap'
+        && startState.shouldPoll
+        && preparing.value.symbol !== sym
+      ) {
+        await startPreparingPoll(sym, tf, (event) => {
+          if (event.kind === 'full') refreshPreparedGex(sym, tf, event)
+        }, startResponse)
+      }
 
       if (opts?.applyTf && gexTf.value !== tf) {
         gexTf.value = tf
@@ -1076,7 +1183,9 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
       const payload = e?.response?.data || {}
       const msg = payload?.error || e.message || ''
       const status = e?.response?.status
+      const responsePreparation = symbolPreparationState(payload, status)
       const preparingLike = /No data|No expirations|queued|fetching|preparing/i.test(String(msg))
+        || (responsePreparation.mode === 'bootstrap' && responsePreparation.shouldPoll)
       const available = Array.isArray(payload?.available_timeframes)
         ? payload.available_timeframes
         : Object.keys(payload?.timeframe_expirations || {})
@@ -1092,13 +1201,23 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
       // If it looks like a first-time symbol, go into preparing mode
       if ((status === 404 || status === 202) && preparingLike) {
         eodError.value = ''
-        kickoffSymbolWarm(sym, tf)
+        let startResponse = bootstrapStartResponses.get(sym) || null
+        if (!startResponse && responsePreparation.mode === 'bootstrap') {
+          startResponse = e.response
+        }
+        if (!startResponse) startResponse = await kickoffSymbolWarm(sym, tf)
+        bootstrapStartResponses.delete(sym)
+
+        if (userSymbol.value !== sym) return
+
         // only start the poller if it's not already running
-        if (!preparing.value.timer) {
-          await startPreparingPoll(sym, tf, async () => {
-            // tiny backoff so the data that flipped "ready" actually becomes visible
-            setTimeout(() => fetchGexLevelsEOD(sym, tf), 750)
-          })
+        if (!preparing.value.timer && !preparingPollController) {
+          await startPreparingPoll(
+            sym,
+            tf,
+            (event) => refreshPreparedGex(sym, tf, event),
+            startResponse,
+          )
         }
       } else {
         eodError.value = msg
@@ -1235,7 +1354,30 @@ function handleSelectSymbolEvent(evt) {
   const next = String(evt?.detail?.symbol || '').trim().toUpperCase()
   if (!next) return
 
-  kickoffSymbolWarm(next, gexTf.value)
+  const bootstrapStart = evt?.detail?.bootstrapStart
+  const symbolStatus = evt?.detail?.symbolStatus
+  const symbolStatusHttpStatus = Number(evt?.detail?.symbolStatusHttpStatus || 0)
+  if (bootstrapStart) {
+    bootstrapStartResponses.set(next, {
+      data: bootstrapStart,
+      status: 202,
+      headers: {},
+    })
+  }
+
+  const hintedState = symbolStatus
+    ? symbolPreparationState(symbolStatus, symbolStatusHttpStatus)
+    : null
+  if (!bootstrapStart && hintedState?.mode === 'bootstrap') {
+    bootstrapStartResponses.set(next, {
+      data: symbolStatus,
+      status: symbolStatusHttpStatus,
+      headers: {},
+    })
+  }
+  if (!bootstrapStart && !hintedState?.fastReady) {
+    kickoffSymbolWarm(next, gexTf.value)
+  }
 
   // If we click the same symbol again, optionally just force a refresh
   if (next === userSymbol.value) {
@@ -1248,6 +1390,8 @@ function handleSelectSymbolEvent(evt) {
   }
 
   // Normal case: update the symbol – your watcher on userSymbol will do the rest
+  stopPreparingPoll({ reset: true })
+  cancel('gex_eod')
   userSymbol.value = next
 }
 
@@ -1290,6 +1434,10 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('select-symbol', handleSelectSymbolEvent)
   Object.keys(tabPollers).forEach(stopTabPoll)
+  clearTimeout(symbolTimer)
+  cancel('gex_eod')
+  stopPreparingPoll({ reset: true })
+  bootstrapStartResponses.clear()
 })
 
 function stopRefresh() {
@@ -1299,57 +1447,204 @@ function stopRefresh() {
   }
 }
 
-function stopPreparingPoll() {
+let preparingPollGeneration = 0
+let preparingPollController = null
+let preparingLegacySafetyTimer = null
+const bootstrapStartResponses = new Map()
+
+function refreshPreparedGex(sym, timeframe, event) {
+  if (event?.kind === 'full') {
+    cache.delete(`gex|${sym}|${timeframe}`)
+  }
+
+  // Give the successful publication transaction a short moment to become
+  // visible through every database/cache connection before reading it.
+  setTimeout(() => {
+    if (userSymbol.value === sym) fetchGexLevelsEOD(sym, timeframe)
+  }, 750)
+}
+
+function stopPreparingPoll({ reset = false } = {}) {
+  preparingPollGeneration += 1
   if (preparing.value.timer) {
     clearTimeout(preparing.value.timer)
     preparing.value.timer = null
   }
+  preparingPollController?.abort()
+  preparingPollController = null
+  if (preparingLegacySafetyTimer) {
+    clearTimeout(preparingLegacySafetyTimer)
+    preparingLegacySafetyTimer = null
+  }
+
+  if (reset) {
+    Object.assign(preparing.value, {
+      active: false,
+      phase: 'queued',
+      symbol: null,
+      statusUrl: null,
+      fastReady: false,
+      fullReady: false,
+      partial: false,
+      partialFailed: false,
+      filling: false,
+      terminal: false,
+      retryable: false,
+      coverage: null,
+    })
+  }
 }
 
-async function startPreparingPoll(sym, timeframe, onReady) {
-  if (preparing.value.timer) return
-  preparing.value.active = true
-  preparing.value.phase = 'queued'
+async function startPreparingPoll(sym, timeframe, onReady, initialResponse = null) {
+  if (
+    preparing.value.symbol === sym
+    && (preparing.value.timer || preparingPollController)
+  ) return
+
   stopPreparingPoll()
-  const check = async () => {
-    try {
-      const { data, status } = await axios.get('/api/symbol/status', {
-        params: { symbol: sym, timeframe: timeframe || gexTf.value }
-      })
-      const st = data?.status || (status === 200 ? 'ready' : 'queued')
-      preparing.value.phase = st
-      if (st === 'ready') {
-        stopPreparingPoll()
-        preparing.value.active = false
-        await onReady?.()
-      }
-    } catch {
-      // keep polling; backend might still be provisioning
-    }
-  }
-  await check()
-  const tick = async () => {
-    await check()
-    // 5s ± 1s jitter
-    const next = 5000 + Math.floor(Math.random() * 2000) - 1000
-    preparing.value.timer = setTimeout(tick, Math.max(2500, next))
-  }
-  preparing.value.timer = setTimeout(tick, 0)
-  // optional safety stop after 5 minutes:
-  setTimeout(() => {
-    if (preparing.value.timer) {
+  const owner = { symbol: sym, generation: preparingPollGeneration }
+  preparingPollController = new AbortController()
+  let statusUrl = null
+  let seedResponse = initialResponse
+  let fastRendered = false
+  let fullRendered = false
+
+  Object.assign(preparing.value, {
+    active: true,
+    phase: 'queued',
+    symbol: sym,
+    statusUrl: null,
+    fastReady: false,
+    fullReady: false,
+    partial: false,
+    partialFailed: false,
+    filling: false,
+    terminal: false,
+    retryable: false,
+    coverage: null,
+  })
+
+  const isCurrent = () => ownsPreparationPoll(
+    owner,
+    userSymbol.value,
+    preparingPollGeneration,
+  ) && !preparingPollController?.signal.aborted
+
+  const armLegacySafetyStop = () => {
+    if (preparingLegacySafetyTimer) return
+
+    preparingLegacySafetyTimer = setTimeout(() => {
+      if (!isCurrent()) return
+
       stopPreparingPoll()
       preparing.value.active = false
       if (!levels.value) {
         eodError.value = `Still preparing ${sym}. Try refresh in a minute.`
       }
+    }, 5 * 60 * 1000)
+  }
+
+  const check = async () => {
+    if (!isCurrent()) return
+
+    try {
+      const response = seedResponse || await axios.get(
+        statusUrl || '/api/symbol/status',
+        statusUrl
+          ? {
+              signal: preparingPollController.signal,
+              validateStatus: () => true,
+            }
+          : {
+              params: { symbol: sym, timeframe: timeframe || gexTf.value },
+              signal: preparingPollController.signal,
+              validateStatus: () => true,
+            },
+      )
+      seedResponse = null
+      if (!isCurrent()) return
+
+      const state = symbolPreparationState(response?.data, response?.status)
+      if (state.mode === 'bootstrap' && state.statusUrl) {
+        statusUrl = state.statusUrl
+      }
+      if (state.mode === 'legacy') {
+        armLegacySafetyStop()
+      } else if (preparingLegacySafetyTimer) {
+        clearTimeout(preparingLegacySafetyTimer)
+        preparingLegacySafetyTimer = null
+      }
+
+      Object.assign(preparing.value, {
+        active: (!state.fastReady || !levels.value) && !state.terminal,
+        phase: state.state,
+        statusUrl,
+        fastReady: state.fastReady,
+        fullReady: state.fullReady,
+        partial: state.partial,
+        partialFailed: state.partialFailed,
+        filling: state.filling,
+        terminal: state.terminal,
+        retryable: state.retryable,
+        coverage: state.coverage,
+      })
+
+      if (state.fullReady && !fullRendered) {
+        fastRendered = true
+        fullRendered = true
+        await onReady?.({ kind: 'full', state })
+        if (!isCurrent()) return
+      } else if (state.fastReady && !fastRendered) {
+        fastRendered = true
+        await onReady?.({ kind: 'fast', state })
+        if (!isCurrent()) return
+      }
+
+      if (!state.shouldPoll) {
+        if (!state.fastReady && state.terminal) {
+          eodError.value = `Could not prepare ${sym}. Please retry.`
+        }
+        stopPreparingPoll()
+
+        return
+      }
+
+      preparing.value.timer = setTimeout(
+        check,
+        bootstrapPollDelayMs(
+          response,
+          state.mode === 'bootstrap'
+            ? 2_000
+            : 5_000 + Math.floor(Math.random() * 2_000) - 1_000,
+        ),
+      )
+    } catch (error) {
+      if (!isCurrent()) return
+
+      // A temporary status transport failure does not restart the durable run.
+      preparing.value.timer = setTimeout(check, bootstrapPollDelayMs(error?.response, 5_000))
     }
-  }, 5 * 60 * 1000)
+  }
+
+  // Until an additive bootstrap payload proves otherwise, retain the legacy
+  // five-minute preparation safety stop.
+  armLegacySafetyStop()
+  await check()
 }
 
-function kickoffSymbolWarm(sym, timeframe = '14d') {
-  if (!sym) return
-  axios.post('/api/prime', { symbol: sym, timeframe }).catch(() => {})
+async function kickoffSymbolWarm(sym, timeframe = '14d') {
+  if (!sym) return null
+
+  try {
+    const response = await axios.post('/api/prime', { symbol: sym, timeframe })
+    if (userSymbol.value === sym) {
+      bootstrapStartResponses.set(sym, response)
+    }
+
+    return response
+  } catch {
+    return null
+  }
 }
 
 function startAutoRefresh() {
@@ -1475,6 +1770,13 @@ async function manualRefresh() {
 
 let symbolTimer
 watch(userSymbol, (s) => {
+  if (preparing.value.symbol && preparing.value.symbol !== s) {
+    stopPreparingPoll({ reset: true })
+  }
+  for (const candidate of bootstrapStartResponses.keys()) {
+    if (candidate !== s) bootstrapStartResponses.delete(candidate)
+  }
+
   clearTimeout(symbolTimer)
   symbolTimer = setTimeout(() => {
     if (dataMode.value === 'eod') {

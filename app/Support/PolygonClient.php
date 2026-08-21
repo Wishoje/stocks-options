@@ -365,12 +365,12 @@ class PolygonClient
             fn () => $this->http()->get($url)
         );
 
-        if ($resp->status() === 401) {
+        if (in_array($resp->status(), [401, 403], true)) {
             Log::warning('PolygonClient.underlying.unauthorized', [
                 'endpoint' => self::endpointForLog($url),
                 'symbol' => $uSym,
             ]);
-            return null;
+            throw new \RuntimeException('Massive underlying quote unauthorized');
         }
 
         if ($resp->status() === 429) {
@@ -379,7 +379,7 @@ class PolygonClient
                 'symbol' => $uSym,
                 'retry_after_seconds' => max(1, (int) ($resp->header('Retry-After') ?? 1)),
             ]);
-            return null;
+            throw new \RuntimeException('Massive underlying quote rate_limited');
         }
 
         if (!$resp->ok()) {

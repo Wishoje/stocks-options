@@ -80,7 +80,7 @@ The current jobs are not yet bounded enough to certify every kill/retry case:
 - Calculator ingestion publishes immutable, generation-fenced expirations and advances a catalog only after terminal complete discovery. GEX-013 now publishes each `daily_chain_snapshot` date with one transactional swap, but intraday ingestion can still retain raw per-contract rows from completed expirations before a later expiration fails. GEX-018/GEX-019 must preserve those rows while bounding and isolating the remaining ingestion work; they do not yet provide one atomic raw-chain generation.
 - Legacy intraday aggregate rows still use nullable keys and can duplicate. GEX-012 adds a uniquely keyed canonical total store behind staged dual-write, comparison, and read flags; legacy cleanup remains out of scope.
 - Multi-symbol work can keep unrelated symbols together. GEX-018 owns singleton intraday dispatch.
-- Cache-based bootstrap claims can expire before the full child graph finishes. GEX-010 owns the durable run manifest.
+- Phased symbol bootstrap uses the durable GEX-010 manifest when `SYMBOL_BOOTSTRAP_ENABLED=true`. The legacy cache-based graph remains available while the flag is off.
 - Watchlist preload uses monotonic, domain-scoped per-symbol cache publication. Its finalizer runs only after successful relevant writes; unrelated values, scheduler locks, and idempotency locks are not flushed.
 - GEX-004 adds a minimum Redis-backed provider concurrency gate behind a disabled flag. The provider's numeric allowance and production enablement remain unverified. GEX-021 owns rate windows, `Retry-After` handling, telemetry, and adaptive backpressure.
 - Production worker-kill tests require a disposable MySQL/Redis environment and must not be run against the live databases.

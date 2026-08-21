@@ -122,6 +122,15 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
                 // waiting once per symbol without making a provider request.
                 throw $exception;
             } catch (\Throwable $e) {
+                $message = strtolower($e->getMessage());
+                if (str_contains($message, 'unauthorized')
+                    || str_contains($message, 'rate_limited')
+                    || str_contains($message, 'api key missing')) {
+                    // Preserve safe provider categories for the durable phase
+                    // coordinator instead of collapsing permanent auth and
+                    // transient throttling into a generic quote failure.
+                    throw $e;
+                }
                 $failed++;
                 Log::warning('FetchUnderlyingQuotesJob.error', [
                     'symbol' => $symbol,

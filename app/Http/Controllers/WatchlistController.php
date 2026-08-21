@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Watchlist;
 use App\Support\Market;
 use App\Support\QueueLanes;
+use App\Support\SymbolBootstrapCoordinator;
+use App\Support\SymbolBootstrapPolicy;
 use App\Support\WorkRunCoordinator;
 use App\Support\WorkRunDispatcher;
 use Carbon\Carbon;
@@ -38,7 +40,9 @@ class WatchlistController extends Controller
     public function store(
         Request $req,
         WorkRunCoordinator $runs,
-        WorkRunDispatcher $dispatcher
+        WorkRunDispatcher $dispatcher,
+        SymbolBootstrapPolicy $bootstrapPolicy,
+        SymbolBootstrapCoordinator $bootstrap
     ) {
         $validated = $req->validate([
             // Production watchlists.symbol is VARCHAR(10). Keep validation at
@@ -56,12 +60,14 @@ class WatchlistController extends Controller
             []
         );
 
+        $bootstrapParameters = $bootstrapPolicy->claimParameters();
         $this->startWorkRun(
             $runs,
             $dispatcher,
+            $bootstrap,
             'symbol_bootstrap',
             $symbol,
-            [],
+            $bootstrapParameters,
             QueueLanes::bootstrap(),
             $req
         );
@@ -77,10 +83,11 @@ class WatchlistController extends Controller
             ->where('symbol', $symbol)
             ->exists();
 
-        if (($marketOpen || ! $hasIntraday) && $hasExpiries) {
+        if (! $bootstrapPolicy->enabled() && ($marketOpen || ! $hasIntraday) && $hasExpiries) {
             $this->startWorkRun(
                 $runs,
                 $dispatcher,
+                $bootstrap,
                 'intraday_refresh',
                 $symbol,
                 ['trade_date' => $this->tradingDate(now('America/New_York'))],
@@ -121,12 +128,23 @@ class WatchlistController extends Controller
     private function startWorkRun(
         WorkRunCoordinator $runs,
         WorkRunDispatcher $dispatcher,
+        SymbolBootstrapCoordinator $bootstrap,
         string $kind,
         string $symbol,
         array $parameters,
         string $queue,
         Request $request
     ): void {
+        if ($kind === 'symbol_bootstrap' && isset($parameters['session_date'])) {
+            $authoritative = $bootstrap->authoritativeWorkRun(
+                $symbol,
+                (string) $parameters['session_date']
+            );
+            if ($authoritative) {
+                return;
+            }
+        }
+
         $claim = $runs->claim(
             $kind,
             $symbol,
@@ -135,6 +153,10 @@ class WatchlistController extends Controller
             $request->user(),
             deferWhenRateLimited: true
         );
+
+        if ($kind === 'symbol_bootstrap' && isset($parameters['session_date'])) {
+            $bootstrap->initialize($claim['run']);
+        }
 
         if (! $claim['created'] || $claim['deferred']) {
             return;
