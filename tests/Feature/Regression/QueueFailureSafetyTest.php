@@ -176,6 +176,62 @@ class QueueFailureSafetyTest extends MySqlTestCase
         $this->assertSame('2026-03-18 16:55:00.000000', (string) $canonical->first()->asof);
     }
 
+    public function test_older_complete_intraday_response_cannot_regress_strike_counters(): void
+    {
+        config()->set('option_live_totals.dual_write', true);
+        DB::table('option_expirations')->insert([
+            'symbol' => 'SPY', 'expiration_date' => '2026-03-20',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $client = Mockery::mock(PolygonClient::class);
+        $client->shouldReceive('intradayOptionVolumes')->twice()->andReturn(
+            $this->completeIntradayPayload('2026-03-20', '2026-03-18 16:59:00', 90, 80, 1000, 500),
+            $this->completeIntradayPayload('2026-03-20', '2026-03-18 16:58:00', 10, 20, 500, 500)
+        );
+        $this->app->instance(PolygonClient::class, $client);
+        (new FetchPolygonIntradayOptionsJob(['SPY']))->handle();
+        $before = DB::table('option_live_counters')->where('symbol', 'SPY')
+            ->whereNotNull('strike')->orderBy('id')->get()->toJson();
+        (new FetchPolygonIntradayOptionsJob(['SPY']))->handle();
+        $this->assertSame($before, DB::table('option_live_counters')->where('symbol', 'SPY')
+            ->whereNotNull('strike')->orderBy('id')->get()->toJson());
+        $this->assertSame(170, app(OptionLiveTotalsRepository::class)
+            ->canonicalTotal('SPY', '2026-03-18')['volume']);
+    }
+
+    public function test_failed_bulk_chunk_keeps_previous_publication_and_completed_raw_chunks(): void
+    {
+        config()->set('option_live_totals.dual_write', true);
+        config()->set('intraday_ingestion.bulk_enabled', true);
+        config()->set('intraday_ingestion.chunk_size', 1);
+        DB::table('option_expirations')->insert([
+            'symbol' => 'SPY', 'expiration_date' => '2026-03-20',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $first = $this->completeIntradayPayload('2026-03-20', '2026-03-18 16:58:00', 10, 20, 500, 500);
+        $broken = $this->completeIntradayPayload('2026-03-20', '2026-03-18 16:59:00', 90, 80, 1000, 500);
+        $invalid = $broken['contracts'][0];
+        unset($invalid['details']['ticker']);
+        $broken['contracts'][] = $invalid;
+        $client = Mockery::mock(PolygonClient::class);
+        $client->shouldReceive('intradayOptionVolumes')->twice()->andReturn($first, $broken);
+        $this->app->instance(PolygonClient::class, $client);
+        (new FetchPolygonIntradayOptionsJob(['SPY']))->handle();
+        $before = DB::table('option_live_counters')->where('symbol', 'SPY')->orderBy('id')->get()->toJson();
+        try {
+            (new FetchPolygonIntradayOptionsJob(['SPY']))->handle();
+            $this->fail('An invalid bulk chunk must fail the job.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('Intraday refresh incomplete', $exception->getMessage());
+        }
+        $this->assertSame($before, DB::table('option_live_counters')->where('symbol', 'SPY')
+            ->orderBy('id')->get()->toJson());
+        $this->assertSame(30, app(OptionLiveTotalsRepository::class)
+            ->canonicalTotal('SPY', '2026-03-18')['volume']);
+        $this->assertGreaterThan(0, DB::table('intraday_option_volumes')
+            ->where('symbol', 'SPY')->where('captured_at', '2026-03-18 16:59:00')->count());
+    }
+
     public function test_complete_intraday_fetch_dual_writes_one_canonical_total_with_the_freshest_asof(): void
     {
         config()->set('option_live_totals.dual_write', true);

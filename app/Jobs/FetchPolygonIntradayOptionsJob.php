@@ -205,7 +205,6 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             $rowsAll = [];
             $lastCapturedAt = null;
             $requestId = null;
-            $intradayTableFull = false;
             $symbolIncomplete = false;
 
             foreach ($expiries as $expiry) {
@@ -226,102 +225,80 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                     break;
                 }
 
-                DB::transaction(function () use ($symbol, $tradeDate, $snap, $expiry, &$totCallAll, &$totPutAll, &$totPremAll, &$rowsAll, &$lastCapturedAt, &$requestId, &$intradayTableFull, &$symbolIncomplete) {
-                    $now = now();
-                    $capturedAt = \Carbon\Carbon::parse($snap['asof'] ?? now('America/New_York'))->setTimezone('UTC');
-                    if ($lastCapturedAt === null || $capturedAt->greaterThan($lastCapturedAt)) {
-                        $lastCapturedAt = $capturedAt;
-                    }
-                    $requestId = $snap['request_id'] ?? $requestId;
+                $now = now();
+                $capturedAt = \Carbon\Carbon::parse($snap['asof'])->setTimezone('UTC');
+                $requestId = $snap['request_id'] ?? $requestId;
 
-                    $ingestor = app(\App\Services\IntradayOptionVolumeIngestor::class);
-
-                    if (! $intradayTableFull) {
-                        foreach ($snap['contracts'] as $contract) {
-                            try {
-                                $ingestor->ingest($contract, $requestId ?? '', $capturedAt);
-                            } catch (\Throwable $e) {
-                                $err = (string) $e->getMessage();
-                                $lowerErr = strtolower($err);
-                                $isTableFull = str_contains($lowerErr, '1114')
-                                    && str_contains($lowerErr, 'intraday_option_volumes')
-                                    && str_contains($lowerErr, 'full');
-
-                                if ($isTableFull) {
-                                    // Stop noisy per-contract failures once storage is full.
-                                    $intradayTableFull = true;
-                                    $symbolIncomplete = true;
-                                    Log::error('FetchPolygonIntradayOptionsJob.intradayTableFull', [
-                                        'symbol' => $symbol,
-                                        'expiry' => $expiry,
-                                        'exception' => $e::class,
-                                    ]);
-                                    break;
-                                }
-
-                                $symbolIncomplete = true;
-                                Log::warning('FetchPolygonIntradayOptionsJob.ingestError', [
-                                    'symbol' => $symbol,
-                                    'expiry' => $expiry,
-                                    'exception' => $e::class,
-                                ]);
-                            }
-                        }
-                    }
-
-                    $totCall = (int) ($snap['totals']['call_vol'] ?? 0);
-                    $totPut = (int) ($snap['totals']['put_vol'] ?? 0);
-                    $totPrem = $snap['totals']['premium'] ?? 0;
-
-                    $totCallAll += $totCall;
-                    $totPutAll += $totPut;
-                    $totPremAll += (float) $totPrem;
-
-                    foreach ($snap['by_strike'] as $row) {
-                        $K = isset($row['strike']) ? (float) $row['strike'] : null;
-                        $expDate = $row['exp_date'] ?? $expiry;
-
-                        $callVol = (int) ($row['call_vol'] ?? 0);
-                        $putVol = (int) ($row['put_vol'] ?? 0);
-                        $callPrem = $row['call_prem'] ?? null;
-                        $putPrem = $row['put_prem'] ?? null;
-
-                        if ($K && $expDate) {
-                            if ($callVol > 0) {
-                                $rowsAll[] = [
-                                    'symbol' => $symbol,
-                                    'trade_date' => $tradeDate,
-                                    'exp_date' => $expDate,
-                                    'strike' => $K,
-                                    'option_type' => 'call',
-                                    'volume' => $callVol,
-                                    'premium_usd' => $callPrem,
-                                    'asof' => $capturedAt,
-                                    'created_at' => $now,
-                                    'updated_at' => $now,
-                                ];
-                            }
-
-                            if ($putVol > 0) {
-                                $rowsAll[] = [
-                                    'symbol' => $symbol,
-                                    'trade_date' => $tradeDate,
-                                    'exp_date' => $expDate,
-                                    'strike' => $K,
-                                    'option_type' => 'put',
-                                    'volume' => $putVol,
-                                    'premium_usd' => $putPrem,
-                                    'asof' => $capturedAt,
-                                    'created_at' => $now,
-                                    'updated_at' => $now,
-                                ];
-                            }
-                        }
-                    }
-                });
-
-                if ($symbolIncomplete) {
+                try {
+                    app(\App\Services\IntradayOptionVolumeIngestor::class)->ingestMany(
+                        $snap['contracts'], $requestId ?? '', $capturedAt
+                    );
+                } catch (\Throwable $exception) {
+                    $message = strtolower($exception->getMessage());
+                    $tableFull = str_contains($message, '1114')
+                        && str_contains($message, 'intraday_option_volumes');
+                    Log::log($tableFull ? 'error' : 'warning', $tableFull
+                        ? 'FetchPolygonIntradayOptionsJob.intradayTableFull'
+                        : 'FetchPolygonIntradayOptionsJob.ingestError', [
+                            'symbol' => $symbol,
+                            'expiry' => $expiry,
+                            'exception' => $exception::class,
+                        ]);
+                    $symbolIncomplete = true;
                     break;
+                }
+
+                if ($lastCapturedAt === null || $capturedAt->greaterThan($lastCapturedAt)) {
+                    $lastCapturedAt = $capturedAt;
+                }
+                $totCall = (int) ($snap['totals']['call_vol'] ?? 0);
+                $totPut = (int) ($snap['totals']['put_vol'] ?? 0);
+                $totPrem = $snap['totals']['premium'] ?? 0;
+
+                $totCallAll += $totCall;
+                $totPutAll += $totPut;
+                $totPremAll += (float) $totPrem;
+
+                foreach ($snap['by_strike'] as $row) {
+                    $K = isset($row['strike']) ? (float) $row['strike'] : null;
+                    $expDate = $row['exp_date'] ?? $expiry;
+
+                    $callVol = (int) ($row['call_vol'] ?? 0);
+                    $putVol = (int) ($row['put_vol'] ?? 0);
+                    $callPrem = $row['call_prem'] ?? null;
+                    $putPrem = $row['put_prem'] ?? null;
+
+                    if ($K && $expDate) {
+                        if ($callVol > 0) {
+                            $rowsAll[] = [
+                                'symbol' => $symbol,
+                                'trade_date' => $tradeDate,
+                                'exp_date' => $expDate,
+                                'strike' => $K,
+                                'option_type' => 'call',
+                                'volume' => $callVol,
+                                'premium_usd' => $callPrem,
+                                'asof' => $capturedAt,
+                                'created_at' => $now,
+                                'updated_at' => $now,
+                            ];
+                        }
+
+                        if ($putVol > 0) {
+                            $rowsAll[] = [
+                                'symbol' => $symbol,
+                                'trade_date' => $tradeDate,
+                                'exp_date' => $expDate,
+                                'strike' => $K,
+                                'option_type' => 'put',
+                                'volume' => $putVol,
+                                'premium_usd' => $putPrem,
+                                'asof' => $capturedAt,
+                                'created_at' => $now,
+                                'updated_at' => $now,
+                            ];
+                        }
+                    }
                 }
             }
 
@@ -351,11 +328,7 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                     $now
                 ): void {
                     if ($rowsAll !== []) {
-                        DB::table('option_live_counters')->upsert(
-                            $rowsAll,
-                            ['symbol', 'trade_date', 'exp_date', 'strike', 'option_type'],
-                            ['volume', 'premium_usd', 'asof', 'updated_at']
-                        );
+                        app(\App\Services\IntradayOptionCounterWriter::class)->upsert($rowsAll);
                     }
 
                     app(OptionLiveTotalsRepository::class)->publish([
