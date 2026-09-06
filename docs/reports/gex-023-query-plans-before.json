@@ -1,0 +1,271 @@
+{
+  "checked_at": "2026-09-06T13:00:33+00:00",
+  "intraday_count": 186,
+  "intraday_scope": [
+    {
+      "symbol": "MCK",
+      "rows_n": 186,
+      "first_capture": "2026-09-06 07:33:48",
+      "last_capture": "2026-09-06 07:33:48"
+    }
+  ],
+  "calculator": {
+    "calculator_expiry_publication_rows": {
+      "size": {
+        "TABLE_ROWS": 30589590,
+        "DATA_LENGTH": 8103411712,
+        "INDEX_LENGTH": 15224635392,
+        "DATA_FREE": 4849664000
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ]
+        },
+        "calc_expiry_pub_rows_contract_unique": {
+          "unique": true,
+          "columns": [
+            "publication_id",
+            "contract_key"
+          ]
+        },
+        "calc_expiry_pub_rows_pub_idx": {
+          "unique": false,
+          "columns": [
+            "publication_id"
+          ]
+        }
+      }
+    },
+    "calculator_catalog_heads": {
+      "size": {
+        "TABLE_ROWS": 94,
+        "DATA_LENGTH": 16384,
+        "INDEX_LENGTH": 0,
+        "DATA_FREE": 0
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "symbol"
+          ]
+        }
+      }
+    },
+    "calculator_expiry_heads": {
+      "size": {
+        "TABLE_ROWS": 1878,
+        "DATA_LENGTH": 475136,
+        "INDEX_LENGTH": 81920,
+        "DATA_FREE": 0
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ]
+        },
+        "calc_expiry_heads_symbol_exp_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "expiration"
+          ]
+        }
+      }
+    }
+  },
+  "intraday_plans": {
+    "SPY": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "intraday_option_volumes",
+        "partitions": null,
+        "type": "ref",
+        "possible_keys": "intraday_option_volumes_symbol_index,intraday_option_volumes_strike_price_index,intraday_option_volumes_captured_at_index",
+        "key": "intraday_option_volumes_symbol_index",
+        "key_len": "66",
+        "ref": "const",
+        "rows": 1,
+        "filtered": 90,
+        "Extra": "Using where; Using temporary"
+      }
+    ],
+    "QQQ": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "intraday_option_volumes",
+        "partitions": null,
+        "type": "ref",
+        "possible_keys": "intraday_option_volumes_symbol_index,intraday_option_volumes_strike_price_index,intraday_option_volumes_captured_at_index",
+        "key": "intraday_option_volumes_symbol_index",
+        "key_len": "66",
+        "ref": "const",
+        "rows": 1,
+        "filtered": 90,
+        "Extra": "Using where; Using temporary"
+      }
+    ],
+    "IWM": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "intraday_option_volumes",
+        "partitions": null,
+        "type": "ref",
+        "possible_keys": "intraday_option_volumes_symbol_index,intraday_option_volumes_strike_price_index,intraday_option_volumes_captured_at_index",
+        "key": "intraday_option_volumes_symbol_index",
+        "key_len": "66",
+        "ref": "const",
+        "rows": 1,
+        "filtered": 90,
+        "Extra": "Using where; Using temporary"
+      }
+    ],
+    "AAPL": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "intraday_option_volumes",
+        "partitions": null,
+        "type": "ref",
+        "possible_keys": "intraday_option_volumes_symbol_index,intraday_option_volumes_strike_price_index,intraday_option_volumes_captured_at_index",
+        "key": "intraday_option_volumes_symbol_index",
+        "key_len": "66",
+        "ref": "const",
+        "rows": 1,
+        "filtered": 90,
+        "Extra": "Using where; Using temporary"
+      }
+    ],
+    "V": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "intraday_option_volumes",
+        "partitions": null,
+        "type": "ref",
+        "possible_keys": "intraday_option_volumes_symbol_index,intraday_option_volumes_strike_price_index,intraday_option_volumes_captured_at_index",
+        "key": "intraday_option_volumes_symbol_index",
+        "key_len": "66",
+        "ref": "const",
+        "rows": 1,
+        "filtered": 90,
+        "Extra": "Using where; Using temporary"
+      }
+    ]
+  },
+  "calculator_plans": {
+    "SPY": {
+      "plan": [
+        {
+          "id": 1,
+          "select_type": "SIMPLE",
+          "table": "calculator_expiry_publication_rows",
+          "partitions": null,
+          "type": "ref",
+          "possible_keys": "calc_expiry_pub_rows_contract_unique,calc_expiry_pub_rows_pub_idx",
+          "key": "calc_expiry_pub_rows_contract_unique",
+          "key_len": "144",
+          "ref": "const",
+          "rows": 330,
+          "filtered": 100,
+          "Extra": "Using filesort"
+        }
+      ],
+      "rows": 330,
+      "read_ms": 1.62,
+      "hash": "ed93937abc18e4b6c1600a473fa6bcd221d56263f86047322f70e13f11635f0f"
+    },
+    "QQQ": {
+      "plan": [
+        {
+          "id": 1,
+          "select_type": "SIMPLE",
+          "table": "calculator_expiry_publication_rows",
+          "partitions": null,
+          "type": "ref",
+          "possible_keys": "calc_expiry_pub_rows_contract_unique,calc_expiry_pub_rows_pub_idx",
+          "key": "calc_expiry_pub_rows_contract_unique",
+          "key_len": "144",
+          "ref": "const",
+          "rows": 394,
+          "filtered": 100,
+          "Extra": "Using filesort"
+        }
+      ],
+      "rows": 394,
+      "read_ms": 1.6,
+      "hash": "484601e5672a2e100d6711d86eb8ae2e6e7a229bc00fda4907712b65124c715c"
+    },
+    "IWM": {
+      "plan": [
+        {
+          "id": 1,
+          "select_type": "SIMPLE",
+          "table": "calculator_expiry_publication_rows",
+          "partitions": null,
+          "type": "ref",
+          "possible_keys": "calc_expiry_pub_rows_contract_unique,calc_expiry_pub_rows_pub_idx",
+          "key": "calc_expiry_pub_rows_contract_unique",
+          "key_len": "144",
+          "ref": "const",
+          "rows": 166,
+          "filtered": 100,
+          "Extra": "Using filesort"
+        }
+      ],
+      "rows": 166,
+      "read_ms": 1,
+      "hash": "cf22f38d0eeeeb30c53b3707590e56698c86b2a4ea7036a81830f052f89b2d67"
+    },
+    "AAPL": {
+      "plan": [
+        {
+          "id": 1,
+          "select_type": "SIMPLE",
+          "table": "calculator_expiry_publication_rows",
+          "partitions": null,
+          "type": "ref",
+          "possible_keys": "calc_expiry_pub_rows_contract_unique,calc_expiry_pub_rows_pub_idx",
+          "key": "calc_expiry_pub_rows_contract_unique",
+          "key_len": "144",
+          "ref": "const",
+          "rows": 112,
+          "filtered": 100,
+          "Extra": "Using filesort"
+        }
+      ],
+      "rows": 112,
+      "read_ms": 0.83,
+      "hash": "c654623e638346ef7f5d149c6efd959b39ca41de01050ae1271c49eca3f7aefd"
+    },
+    "TSLA": {
+      "plan": [
+        {
+          "id": 1,
+          "select_type": "SIMPLE",
+          "table": "calculator_expiry_publication_rows",
+          "partitions": null,
+          "type": "ref",
+          "possible_keys": "calc_expiry_pub_rows_contract_unique,calc_expiry_pub_rows_pub_idx",
+          "key": "calc_expiry_pub_rows_contract_unique",
+          "key_len": "144",
+          "ref": "const",
+          "rows": 228,
+          "filtered": 100,
+          "Extra": "Using filesort"
+        }
+      ],
+      "rows": 228,
+      "read_ms": 1.11,
+      "hash": "0f63706376cd0d84bcc911aa0aadbc8fee0120c230fa4b5995ba15d2a337dc02"
+    }
+  }
+}

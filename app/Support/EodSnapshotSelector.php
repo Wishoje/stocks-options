@@ -10,9 +10,42 @@ use Illuminate\Support\Facades\DB;
 
 class EodSnapshotSelector
 {
+    /** A caller may supply only validated, clean facts for this exact policy. */
+    private function manifestFacts(array $ids, ?string $anchor, ?float $ratio, ?array $manifest): ?array
+    {
+        if (! EodSnapshotHealth::enabled() || $manifest === null || $anchor === null
+            || ($manifest['dirty'] ?? false) || ! is_array($manifest['expirations'] ?? null)) {
+            return null;
+        }
+        try {
+            $expected = EodSnapshotManifestBuilder::policy($anchor, $this->minSideRatio($ratio));
+            if (EodSnapshotManifestBuilder::policyHash($manifest['policy'] ?? [])
+                !== EodSnapshotManifestBuilder::policyHash($expected)) {
+                return null;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+        $facts = [];
+        foreach ($ids as $id) {
+            $fact = $manifest['expirations'][$id] ?? null;
+            if (! is_array($fact) || ! array_key_exists('selected_date', $fact)
+                || ($fact['selected_date'] !== null && (! is_string($fact['selected_date'])
+                    || ! EodSnapshotManifestBuilder::isDate($fact['selected_date'])
+                    || $fact['selected_date'] > $anchor))) {
+                return null;
+            }
+            $facts[(int) $id] = $fact;
+        }
+        ksort($facts, SORT_NUMERIC);
+
+        return $facts;
+    }
+
     public function minSideRatio(?float $override = null): float
     {
         $ratio = $override ?? (float) config('services.massive.eod_min_side_strike_ratio', 0.35);
+
         return max(0.01, min(1.0, $ratio));
     }
 
@@ -49,10 +82,24 @@ class EodSnapshotSelector
     }
 
     /**
-     * @param array<int> $expirationIds
+     * @param  array<int>  $expirationIds
      */
-    public function selectedDatesSubquery(array $expirationIds, ?string $anchorDate = null, ?float $minSideRatio = null): QueryBuilder
+    public function selectedDatesSubquery(array $expirationIds, ?string $anchorDate = null, ?float $minSideRatio = null, ?array $manifest = null): QueryBuilder
     {
+        $facts = $this->manifestFacts($expirationIds, $anchorDate, $minSideRatio, $manifest);
+        if ($facts !== null) {
+            $query = null;
+            foreach ($facts as $id => $fact) {
+                if ($fact['selected_date'] === null) {
+                    continue;
+                }
+                $row = DB::query()->selectRaw('? AS expiration_id, CAST(? AS DATE) AS max_date', [(int) $id, $fact['selected_date']]);
+                $query = $query === null ? $row : $query->unionAll($row);
+            }
+
+            return $query ?? DB::query()->selectRaw('NULL AS expiration_id, NULL AS max_date')->whereRaw('1 = 0');
+        }
+
         $minSideRatio = $this->minSideRatio($minSideRatio);
         $dateCandidates = OptionChainData::query()
             ->select(
@@ -94,24 +141,24 @@ class EodSnapshotSelector
     }
 
     /**
-     * @param array<int> $expirationIds
+     * @param  array<int>  $expirationIds
      * @return Collection<int,object>
      */
-    public function selectedDateRows(array $expirationIds, ?string $anchorDate = null, ?float $minSideRatio = null): Collection
+    public function selectedDateRows(array $expirationIds, ?string $anchorDate = null, ?float $minSideRatio = null, ?array $manifest = null): Collection
     {
         return DB::query()
-            ->fromSub($this->selectedDatesSubquery($expirationIds, $anchorDate, $minSideRatio), 'ld')
+            ->fromSub($this->selectedDatesSubquery($expirationIds, $anchorDate, $minSideRatio, $manifest), 'ld')
             ->get();
     }
 
     /**
-     * @param array<int> $expirationIds
-     * @param array<int,string> $columns
+     * @param  array<int>  $expirationIds
+     * @param  array<int,string>  $columns
      * @return Collection<int,object>
      */
-    public function selectedRows(array $expirationIds, array $columns = ['option_chain_data.*'], ?string $anchorDate = null, ?float $minSideRatio = null): Collection
+    public function selectedRows(array $expirationIds, array $columns = ['option_chain_data.*'], ?string $anchorDate = null, ?float $minSideRatio = null, ?array $manifest = null): Collection
     {
-        $selectedDates = $this->selectedDatesSubquery($expirationIds, $anchorDate, $minSideRatio);
+        $selectedDates = $this->selectedDatesSubquery($expirationIds, $anchorDate, $minSideRatio, $manifest);
 
         return OptionChainData::query()
             ->joinSub($selectedDates, 'ld', function ($join) {
@@ -123,11 +170,22 @@ class EodSnapshotSelector
     }
 
     /**
-     * @param array<int> $expirationIds
+     * @param  array<int>  $expirationIds
      * @return Collection<int,array<string,mixed>>
      */
-    public function summary(array $expirationIds, ?string $anchorDate = null, ?float $minSideRatio = null): Collection
+    public function summary(array $expirationIds, ?string $anchorDate = null, ?float $minSideRatio = null, ?array $manifest = null): Collection
     {
+        $facts = $this->manifestFacts($expirationIds, $anchorDate, $minSideRatio, $manifest);
+        if ($facts !== null) {
+            $fields = ['expiration_id', 'latest_any_date', 'latest_balanced_date', 'selected_date',
+                'latest_any_call_rows', 'latest_any_put_rows', 'latest_any_strike_count', 'latest_any_side_ratio',
+                'selected_call_rows', 'selected_put_rows', 'selected_strike_count', 'selected_side_ratio'];
+
+            return collect($expirationIds)->mapWithKeys(static fn ($id): array => [
+                $id => array_intersect_key($facts[$id], array_flip($fields)),
+            ]);
+        }
+
         $minSideRatio = $this->minSideRatio($minSideRatio);
         $selected = $this->selectedDateRows($expirationIds, $anchorDate, $minSideRatio)->keyBy('expiration_id');
 

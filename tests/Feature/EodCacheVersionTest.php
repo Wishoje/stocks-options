@@ -394,7 +394,8 @@ class StubGexController extends GexController
         array $dates,
         array $timeframeExpirations,
         array $expirationIds,
-        ?string $anchorDate = null
+        ?string $anchorDate = null,
+        ?array $manifest = null
     ): ?array {
         return $this->payload;
     }

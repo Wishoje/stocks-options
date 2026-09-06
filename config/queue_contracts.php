@@ -20,6 +20,7 @@ use App\Jobs\PricesDailyJob;
 use App\Jobs\PrimeSymbolJob;
 use App\Jobs\PublishEodCacheVersionJob;
 use App\Jobs\QueueSymbolEnrichmentJob;
+use App\Jobs\RebuildEodSnapshotManifestJob;
 use App\Jobs\RunSymbolBootstrapPhaseJob;
 use App\Jobs\Seasonality5DJob;
 use App\Jobs\SendLifecycleEmailJob;
@@ -27,6 +28,13 @@ use App\Jobs\SendLifecycleEmailJob;
 $standardBackoff = [15, 60, 180];
 
 return [
+    RebuildEodSnapshotManifestJob::class => [
+        'connection' => 'redis', 'queues' => ['prime'], 'max_timeout' => 90,
+        'isolated_queues' => ['default'],
+        'tries' => 3, 'backoff' => $standardBackoff,
+        'identity' => 'symbol + certified revision/version + frozen selector policy + delivery token',
+        'write_strategy' => 'revision-and-delivery-fenced immutable snapshot health materialization',
+    ],
     BootstrapUserSymbolJob::class => [
         'connection' => 'redis', 'queues' => ['bootstrap'], 'max_timeout' => 60,
         'isolated_queues' => ['bootstrap-fast'],

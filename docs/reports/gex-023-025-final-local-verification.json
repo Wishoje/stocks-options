@@ -1,0 +1,235 @@
+{
+  "scope": "local full-suite rerun; no candidate deployment or production schema changes",
+  "date": "2026-09-06",
+  "php": "8.3.14",
+  "phpunit": "11.5.48",
+  "php_result": {
+    "exit_code": 0,
+    "tests": 1073,
+    "passed": 1064,
+    "skipped": 9,
+    "assertions": 12241,
+    "elapsed_seconds": 141.565,
+    "peak_memory_mib": 188
+  },
+  "test_process_memory_limit": "512M; process-only override, no production configuration change",
+  "database": "guarded local gex_profile_test",
+  "redis": "two disposable loopback-only Redis 7 containers; no production Redis connection",
+  "skips": {
+    "email_verification_disabled": 3,
+    "pcntl_unavailable_on_windows": 2,
+    "registration_enabled_disables_opposite_branch": 1,
+    "two_factor_disabled": 3
+  },
+  "frontend": {
+    "tests_passed": 105,
+    "test_files_passed": 11,
+    "production_build": "passed",
+    "warning": "existing stale Browserslist dataset"
+  },
+  "index_benchmark_rerun": {
+    "seed_rows": 100000,
+    "concurrent_rows": 2000,
+    "data_sha256_before": "0683b3a61ddb15090084938103ef41a5298c08aea49196ba66fa5de28cd83c65",
+    "data_sha256_after": "0683b3a61ddb15090084938103ef41a5298c08aea49196ba66fa5de28cd83c65",
+    "reads_before": {
+      "SPY": {
+        "median_ms": 129.55,
+        "p95_ms": 145.917,
+        "sha256": "a05ae2e5713f766c314caeae9990115c59cab9d7c760926e752cd27a18ef1cd9",
+        "explain": [
+          {
+            "id": 1,
+            "select_type": "SIMPLE",
+            "table": "gex_intraday_idx_test_f0f5ce772e095754",
+            "partitions": null,
+            "type": "ref",
+            "possible_keys": "gex_intraday_idx_test_f0f5ce772e095754_symbol_index,gex_intraday_idx_test_f0f5ce772e095754_strike_price_index,gex_intraday_idx_test_f0f5ce772e095754_captured_at_index",
+            "key": "gex_intraday_idx_test_f0f5ce772e095754_symbol_index",
+            "key_len": "66",
+            "ref": "const",
+            "rows": 49813,
+            "filtered": 19.545499801635742,
+            "Extra": "Using where; Using temporary"
+          }
+        ]
+      },
+      "AAPL": {
+        "median_ms": 17.421,
+        "p95_ms": 20.252,
+        "sha256": "e3ad854f3f77017e2ccdd2043f321b76e125c99b25a09a681b736a929d77618a",
+        "explain": [
+          {
+            "id": 1,
+            "select_type": "SIMPLE",
+            "table": "gex_intraday_idx_test_f0f5ce772e095754",
+            "partitions": null,
+            "type": "ref",
+            "possible_keys": "gex_intraday_idx_test_f0f5ce772e095754_symbol_index,gex_intraday_idx_test_f0f5ce772e095754_strike_price_index,gex_intraday_idx_test_f0f5ce772e095754_captured_at_index",
+            "key": "gex_intraday_idx_test_f0f5ce772e095754_symbol_index",
+            "key_len": "66",
+            "ref": "const",
+            "rows": 18244,
+            "filtered": 19.545499801635742,
+            "Extra": "Using where; Using temporary"
+          }
+        ]
+      }
+    },
+    "reads_after": {
+      "SPY": {
+        "median_ms": 2.639,
+        "p95_ms": 3.203,
+        "sha256": "a05ae2e5713f766c314caeae9990115c59cab9d7c760926e752cd27a18ef1cd9",
+        "explain": [
+          {
+            "id": 1,
+            "select_type": "SIMPLE",
+            "table": "gex_intraday_idx_test_f0f5ce772e095754",
+            "partitions": null,
+            "type": "range",
+            "possible_keys": "gex_intraday_idx_test_f0f5ce772e095754_symbol_index,gex_intraday_idx_test_f0f5ce772e095754_strike_price_index,gex_intraday_idx_test_f0f5ce772e095754_captured_at_index,idx_intraday_symbol_capture_strike",
+            "key": "idx_intraday_symbol_capture_strike",
+            "key_len": "70",
+            "ref": null,
+            "rows": 1600,
+            "filtered": 90,
+            "Extra": "Using index condition; Using where; Using temporary"
+          }
+        ]
+      },
+      "AAPL": {
+        "median_ms": 0.658,
+        "p95_ms": 0.783,
+        "sha256": "e3ad854f3f77017e2ccdd2043f321b76e125c99b25a09a681b736a929d77618a",
+        "explain": [
+          {
+            "id": 1,
+            "select_type": "SIMPLE",
+            "table": "gex_intraday_idx_test_f0f5ce772e095754",
+            "partitions": null,
+            "type": "range",
+            "possible_keys": "gex_intraday_idx_test_f0f5ce772e095754_symbol_index,gex_intraday_idx_test_f0f5ce772e095754_strike_price_index,gex_intraday_idx_test_f0f5ce772e095754_captured_at_index,idx_intraday_symbol_capture_strike",
+            "key": "idx_intraday_symbol_capture_strike",
+            "key_len": "70",
+            "ref": null,
+            "rows": 200,
+            "filtered": 90,
+            "Extra": "Using index condition; Using where; Using temporary"
+          }
+        ]
+      }
+    },
+    "upserts_before": {
+      "correction_upsert": {
+        "rows_per_sample": 1000,
+        "table_rows_before_sample": 100000,
+        "statements_per_sample": 4,
+        "sample_count": 7,
+        "warmup_count": 1,
+        "median_ms": 111.575,
+        "p95_ms": 149.974,
+        "p95_method": "nearest_rank_seven_samples_maximum",
+        "samples_ms": [
+          110.886,
+          117.411,
+          97.708,
+          149.974,
+          111.575,
+          104.167,
+          128.158
+        ],
+        "sql_and_payload_sha256": "d7aa35f6b51557482fbb8bb773e1516ef10363b0af0b3d468786e99d248c0c94",
+        "timing_scope": "four_upsert_statements_only_excludes_transaction_commit_rollback_and_verification"
+      },
+      "fresh_insert_upsert": {
+        "rows_per_sample": 1000,
+        "table_rows_before_sample": 100000,
+        "statements_per_sample": 4,
+        "sample_count": 7,
+        "warmup_count": 1,
+        "median_ms": 69.867,
+        "p95_ms": 73.969,
+        "p95_method": "nearest_rank_seven_samples_maximum",
+        "samples_ms": [
+          71.366,
+          73.969,
+          66.284,
+          69.867,
+          62.858,
+          70.723,
+          63.147
+        ],
+        "sql_and_payload_sha256": "b45f9e49b7e8b57535beb171399afd22a190bf5b75912b3b498d49cbff70dd34",
+        "timing_scope": "four_upsert_statements_only_excludes_transaction_commit_rollback_and_verification"
+      }
+    },
+    "upserts_after": {
+      "correction_upsert": {
+        "rows_per_sample": 1000,
+        "table_rows_before_sample": 100000,
+        "statements_per_sample": 4,
+        "sample_count": 7,
+        "warmup_count": 1,
+        "median_ms": 115.354,
+        "p95_ms": 241.056,
+        "p95_method": "nearest_rank_seven_samples_maximum",
+        "samples_ms": [
+          124.431,
+          199.368,
+          115.019,
+          241.056,
+          113.005,
+          115.354,
+          114.279
+        ],
+        "sql_and_payload_sha256": "d7aa35f6b51557482fbb8bb773e1516ef10363b0af0b3d468786e99d248c0c94",
+        "timing_scope": "four_upsert_statements_only_excludes_transaction_commit_rollback_and_verification"
+      },
+      "fresh_insert_upsert": {
+        "rows_per_sample": 1000,
+        "table_rows_before_sample": 100000,
+        "statements_per_sample": 4,
+        "sample_count": 7,
+        "warmup_count": 1,
+        "median_ms": 88.854,
+        "p95_ms": 301.959,
+        "p95_method": "nearest_rank_seven_samples_maximum",
+        "samples_ms": [
+          91.828,
+          88.854,
+          76.81,
+          77.662,
+          80.867,
+          208.104,
+          301.959
+        ],
+        "sql_and_payload_sha256": "b45f9e49b7e8b57535beb171399afd22a190bf5b75912b3b498d49cbff70dd34",
+        "timing_scope": "four_upsert_statements_only_excludes_transaction_commit_rollback_and_verification"
+      }
+    },
+    "ddl_duration_ms": 1149.364,
+    "prune_explain": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "gex_intraday_idx_test_f0f5ce772e095754",
+        "partitions": null,
+        "type": "range",
+        "possible_keys": "u_contract_at,gex_intraday_idx_test_f0f5ce772e095754_captured_at_index,idx_intraday_symbol_capture_strike",
+        "key": "gex_intraday_idx_test_f0f5ce772e095754_captured_at_index",
+        "key_len": "4",
+        "ref": null,
+        "rows": 53994,
+        "filtered": 100,
+        "Extra": "Using where; Using index"
+      }
+    ]
+  },
+  "limitations": [
+    "Index measurements here are a full-suite replication, distinct from the isolated run quoted in the verification document.",
+    "Upsert samples roll back and exclude commit/rollback; they do not measure committed ingestion throughput.",
+    "Nine skips remain; the new cross-process concurrent index test ran and passed.",
+    "No authenticated browser or production candidate parity/timing check has been performed."
+  ]
+}

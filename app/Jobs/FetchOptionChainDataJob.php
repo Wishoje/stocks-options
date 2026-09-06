@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\OptionExpiration;
 use App\Support\EodHealth;
+use App\Support\EodSnapshotHealth;
 use App\Support\EodSnapshotSelector;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\ProviderRequestReplay;
@@ -185,6 +186,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 continue;
             }
 
+            $mutationToken = null;
             try {
                 // Finnhub -> Massive fallback with normalized chain.
                 [$spot, $sets, $providerMeta] = $this->fetchChain($symbol, $windowStart, $windowEnd);
@@ -264,6 +266,24 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
                 // Preload/create expiration ids in bulk.
                 $expDates = collect($expWindowSets)->pluck('date')->unique()->values();
+                $mutationStarted = false;
+                $beginMutation = function () use (&$mutationToken, &$mutationStarted, $symbol, $date, $expDates, $windowStart, $windowEnd): void {
+                    if ($mutationStarted) {
+                        return;
+                    }
+                    $scope = 'fetch-option-chain:v1:'.hash('sha256', json_encode([
+                        'data_date' => $date,
+                        'expiration_dates' => $expDates->sort()->values()->all(),
+                        'merge_only' => $this->mergeOnly,
+                        'frozen_scope' => $this->expirationScope !== null,
+                        'window_start' => $windowStart->toDateString(),
+                        'window_end' => $windowEnd->toDateString(),
+                    ], JSON_THROW_ON_ERROR));
+                    $mutationToken = app(EodSnapshotHealth::class)->begin($symbol, $scope, [
+                        'source' => 'fetch-option-chain', 'data_date' => $date,
+                    ]);
+                    $mutationStarted = true;
+                };
                 $expMap = OptionExpiration::query()
                     ->where('symbol', $symbol)
                     ->whereIn('expiration_date', $expDates)
@@ -280,6 +300,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 }
 
                 if ($toInsert) {
+                    $beginMutation();
                     DB::table('option_expirations')->insert($toInsert);
                     $expMap = OptionExpiration::query()
                         ->where('symbol', $symbol)
@@ -378,6 +399,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                     }
 
                     if ($rows) {
+                        $beginMutation();
                         DB::transaction(function () use ($rows) {
                             if ($this->mergeOnly) {
                                 DB::table('option_chain_data')->insertOrIgnore($rows);
@@ -421,8 +443,16 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 ], $providerMeta);
                 Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
                 $this->storeFetchMeta($symbol, $date, $meta);
+                app(EodSnapshotHealth::class)->complete($mutationToken);
+                $mutationToken = null;
             } finally {
-                $guard->release();
+                try {
+                    if ($mutationToken !== null) {
+                        app(EodSnapshotHealth::class)->fail($mutationToken);
+                    }
+                } finally {
+                    $guard->release();
+                }
             }
         }
 

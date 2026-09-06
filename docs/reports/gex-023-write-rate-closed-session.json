@@ -1,0 +1,143 @@
+{
+  "from": "2026-09-06T12:58:03+00:00",
+  "to": "2026-09-06T13:49:41+00:00",
+  "seconds": 3098,
+  "scope": "Sunday closed session; not market-hours throughput",
+  "after": {
+    "checked_at": "2026-09-06T13:49:41+00:00",
+    "revision": "7b2c25f9331c67256f7f45e01880705d7d89e913",
+    "database_paths": {
+      "data_dir": "/var/lib/mysql/",
+      "temp_dir": "/tmp",
+      "innodb_temp_dir": null,
+      "isolation": "REPEATABLE-READ",
+      "division_precision": 4
+    },
+    "free_bytes": {
+      "/": 9856757760,
+      "/var/lib/mysql/": 9856757760,
+      "/tmp": 9856757760
+    },
+    "write_counters": [
+      {
+        "OBJECT_NAME": "option_live_counters",
+        "COUNT_READ": 22037562,
+        "COUNT_WRITE": 8403659,
+        "COUNT_INSERT": 4160399,
+        "COUNT_UPDATE": 4028517,
+        "COUNT_DELETE": 214743
+      },
+      {
+        "OBJECT_NAME": "option_chain_data",
+        "COUNT_READ": 2085994335,
+        "COUNT_WRITE": 639755,
+        "COUNT_INSERT": 301876,
+        "COUNT_UPDATE": 53034,
+        "COUNT_DELETE": 284845
+      },
+      {
+        "OBJECT_NAME": "option_expirations",
+        "COUNT_READ": 6893315,
+        "COUNT_WRITE": 90,
+        "COUNT_INSERT": 90,
+        "COUNT_UPDATE": 0,
+        "COUNT_DELETE": 0
+      },
+      {
+        "OBJECT_NAME": "prices_daily",
+        "COUNT_READ": 732755,
+        "COUNT_WRITE": 114519,
+        "COUNT_INSERT": 57395,
+        "COUNT_UPDATE": 57124,
+        "COUNT_DELETE": 0
+      },
+      {
+        "OBJECT_NAME": "unusual_activity",
+        "COUNT_READ": 876380,
+        "COUNT_WRITE": 31579,
+        "COUNT_INSERT": 24939,
+        "COUNT_UPDATE": 0,
+        "COUNT_DELETE": 6640
+      },
+      {
+        "OBJECT_NAME": "calculator_publication_runs",
+        "COUNT_READ": 613925,
+        "COUNT_WRITE": 113819,
+        "COUNT_INSERT": 4954,
+        "COUNT_UPDATE": 101721,
+        "COUNT_DELETE": 7144
+      },
+      {
+        "OBJECT_NAME": "calculator_run_expirations",
+        "COUNT_READ": 2155071,
+        "COUNT_WRITE": 290651,
+        "COUNT_INSERT": 84334,
+        "COUNT_UPDATE": 84334,
+        "COUNT_DELETE": 121983
+      },
+      {
+        "OBJECT_NAME": "calculator_expiry_publications",
+        "COUNT_READ": 594280,
+        "COUNT_WRITE": 206317,
+        "COUNT_INSERT": 84334,
+        "COUNT_UPDATE": 0,
+        "COUNT_DELETE": 121983
+      },
+      {
+        "OBJECT_NAME": "intraday_option_volumes",
+        "COUNT_READ": 133447042,
+        "COUNT_WRITE": 16098714,
+        "COUNT_INSERT": 5330788,
+        "COUNT_UPDATE": 0,
+        "COUNT_DELETE": 10767926
+      }
+    ]
+  },
+  "rates": [
+    {
+      "table": "option_live_counters",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    },
+    {
+      "table": "option_chain_data",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    },
+    {
+      "table": "option_expirations",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    },
+    {
+      "table": "prices_daily",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    },
+    {
+      "table": "unusual_activity",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    },
+    {
+      "table": "calculator_publication_runs",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    },
+    {
+      "table": "calculator_run_expirations",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    },
+    {
+      "table": "calculator_expiry_publications",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    },
+    {
+      "table": "intraday_option_volumes",
+      "writes_delta": 0,
+      "writes_per_second": 0
+    }
+  ]
+}

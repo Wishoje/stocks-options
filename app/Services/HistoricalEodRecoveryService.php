@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Support\EodCacheVersion;
 use App\Support\EodHealth;
+use App\Support\EodSnapshotHealth;
 use App\Support\Market;
 use App\Support\Symbols;
 use Carbon\CarbonImmutable;
@@ -296,17 +297,21 @@ class HistoricalEodRecoveryService
                 throw new RuntimeException('Recovery publication found mixed or changed target slices.');
             }
 
-            if ($classification['state'] === 'all_empty') {
-                $this->publishPreparedIntent($runDirectory, $manifest, $intent);
-                $classification = $this->classifyPersistedSlices(
-                    $date,
-                    (array) $intent['expectations'],
-                    false,
-                );
-            }
-            if ($classification['state'] !== 'all_exact') {
-                throw new RuntimeException('Recovery publication did not produce every exact prepared slice.');
-            }
+            $this->withRecoveryMutation($intent, $classification['state'] === 'all_exact', function () use (
+                $classification, $runDirectory, $manifest, $intent, $date
+            ): void {
+                if ($classification['state'] === 'all_empty') {
+                    $this->publishPreparedIntent($runDirectory, $manifest, $intent);
+                    $classification = $this->classifyPersistedSlices(
+                        $date,
+                        (array) $intent['expectations'],
+                        false,
+                    );
+                }
+                if ($classification['state'] !== 'all_exact') {
+                    throw new RuntimeException('Recovery publication did not produce every exact prepared slice.');
+                }
+            });
 
             // Keep this before artifact finalization. If Redis is unavailable,
             // the exact database slices and prepared intent remain resumable,
@@ -385,17 +390,21 @@ class HistoricalEodRecoveryService
                 throw new RuntimeException('Recovery rollback found mixed or changed target slices.');
             }
 
-            if ($classification['state'] === 'all_exact') {
-                $this->rollbackPreparedIntent($intent);
-                $classification = $this->classifyPersistedSlices(
-                    $date,
-                    (array) $intent['expectations'],
-                    false,
-                );
-            }
-            if ($classification['state'] !== 'all_empty') {
-                throw new RuntimeException('Recovery rollback did not empty every prepared slice.');
-            }
+            $this->withRecoveryMutation($intent, $classification['state'] === 'all_empty', function () use (
+                $classification, $intent, $date
+            ): void {
+                if ($classification['state'] === 'all_exact') {
+                    $this->rollbackPreparedIntent($intent);
+                    $classification = $this->classifyPersistedSlices(
+                        $date,
+                        (array) $intent['expectations'],
+                        false,
+                    );
+                }
+                if ($classification['state'] !== 'all_empty') {
+                    throw new RuntimeException('Recovery rollback did not empty every prepared slice.');
+                }
+            });
 
             // Rollback is also a new authoritative GEX state. Fence it before
             // writing the terminal receipt so a cache failure can be retried.
@@ -409,6 +418,35 @@ class HistoricalEodRecoveryService
                 'candidate_sha256' => $candidateSha,
             ];
         });
+    }
+
+    /**
+     * The caller holds every exact recovery slice lock. Receipts are persisted
+     * outside the raw-data transaction and reused only for this immutable intent.
+     */
+    private function withRecoveryMutation(array $intent, bool $postconditionVerified, callable $mutation): void
+    {
+        $tokens = [];
+        try {
+            foreach ($intent['symbols'] as $symbol) {
+                $tokens[$symbol] = app(EodSnapshotHealth::class)->beginRecovery(
+                    $symbol,
+                    $intent['intent_sha256'],
+                    $intent['type'],
+                    $postconditionVerified,
+                    ['source' => 'historical-eod-recovery-'.$intent['type'], 'data_date' => $intent['date']],
+                );
+            }
+            $mutation();
+            foreach ($tokens as $symbol => $token) {
+                app(EodSnapshotHealth::class)->complete($token);
+                unset($tokens[$symbol]);
+            }
+        } finally {
+            foreach ($tokens as $token) {
+                app(EodSnapshotHealth::class)->fail($token);
+            }
+        }
     }
 
     /** @param array<string,mixed> $intent */

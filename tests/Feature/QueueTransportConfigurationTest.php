@@ -11,6 +11,7 @@ class QueueTransportConfigurationTest extends TestCase
     {
         $env = Env::getRepository();
         $old = $env->get('REDIS_QUEUE_CONNECTION');
+        $before = require base_path('config/database.php');
         try {
             $env->set('REDIS_QUEUE_CONNECTION', 'queue');
             $queue = require base_path('config/queue.php');
@@ -19,8 +20,10 @@ class QueueTransportConfigurationTest extends TestCase
             $this->assertSame('queue', $queue['connections']['redis-long']['connection']);
             $this->assertSame('default', $queue['connections']['redis-legacy']['connection']);
             $this->assertSame('default', $queue['connections']['redis-legacy-long']['connection']);
-            $this->assertSame('6380', (string) $database['redis']['queue']['port']);
-            $this->assertSame('6379', (string) $database['redis']['default']['port']);
+            // A transport switch must preserve configured ports, including
+            // explicitly isolated test ports. It must not assume defaults.
+            $this->assertSame($before['redis']['queue']['port'], $database['redis']['queue']['port']);
+            $this->assertSame($before['redis']['default']['port'], $database['redis']['default']['port']);
             $this->assertSame($database['redis']['default']['host'], $database['redis']['cache']['host']);
             $env->set('REDIS_QUEUE_CONNECTION', 'default');
             $rollback = require base_path('config/queue.php');

@@ -87,6 +87,20 @@ final class EodCacheVersion
             }
         }
 
+        if (EodSnapshotHealth::enabled()) {
+            $health = app(EodSnapshotHealth::class);
+            foreach ($published[self::DOMAIN_GEX] ?? [] as $symbol => $version) {
+                // The Redis fence may have rejected an older finalizer. Only
+                // certify the requested token when it is still the accepted
+                // publication. The database independently enforces ordering
+                // and refuses active, failed, or unobserved raw mutations.
+                if ($version === $publicationToken
+                    && $health->certify($symbol, $version, $issuedAtMicroseconds)) {
+                    $health->requestRebuild($symbol, $health->policy());
+                }
+            }
+        }
+
         return $published;
     }
 

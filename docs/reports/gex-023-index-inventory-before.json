@@ -1,0 +1,672 @@
+{
+  "checked_at": "2026-09-06T12:58:03+00:00",
+  "revision": "7b2c25f9331c67256f7f45e01880705d7d89e913",
+  "mysql": "8.0.46-0ubuntu0.24.04.4",
+  "disk_free_gib": 9.18,
+  "tables": {
+    "intraday_option_volumes": {
+      "size": {
+        "TABLE_NAME": "intraday_option_volumes",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 186,
+        "DATA_LENGTH": 65536,
+        "INDEX_LENGTH": 131072,
+        "DATA_FREE": 7594835968
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "u_contract_at": {
+          "unique": true,
+          "columns": [
+            "contract_symbol",
+            "captured_at"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "intraday_option_volumes_symbol_index": {
+          "unique": false,
+          "columns": [
+            "symbol"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "intraday_option_volumes_contract_symbol_index": {
+          "unique": false,
+          "columns": [
+            "contract_symbol"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "intraday_option_volumes_contract_type_index": {
+          "unique": false,
+          "columns": [
+            "contract_type"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "intraday_option_volumes_expiration_date_index": {
+          "unique": false,
+          "columns": [
+            "expiration_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "intraday_option_volumes_strike_price_index": {
+          "unique": false,
+          "columns": [
+            "strike_price"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "intraday_option_volumes_request_id_index": {
+          "unique": false,
+          "columns": [
+            "request_id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "intraday_option_volumes_captured_at_index": {
+          "unique": false,
+          "columns": [
+            "captured_at"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    },
+    "calculator_catalog_publications": {
+      "exists": false
+    },
+    "calculator_expiry_publications": {
+      "size": {
+        "TABLE_NAME": "calculator_expiry_publications",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 216384,
+        "DATA_LENGTH": 129384448,
+        "INDEX_LENGTH": 90734592,
+        "DATA_FREE": 24117248
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_expiry_pubs_run_exp_unique": {
+          "unique": true,
+          "columns": [
+            "run_id",
+            "expiration"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_expiry_pubs_lookup_idx": {
+          "unique": false,
+          "columns": [
+            "symbol",
+            "expiration",
+            "generation"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    },
+    "calculator_publication_runs": {
+      "size": {
+        "TABLE_NAME": "calculator_publication_runs",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 13137,
+        "DATA_LENGTH": 11665408,
+        "INDEX_LENGTH": 14204928,
+        "DATA_FREE": 10485760
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_runs_symbol_generation_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "generation"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_runs_owner_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "scope",
+            "owner_key"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_runs_work_run_unique": {
+          "unique": true,
+          "columns": [
+            "work_run_id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_runs_symbol_status_idx": {
+          "unique": false,
+          "columns": [
+            "symbol",
+            "status"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    },
+    "calculator_run_expirations": {
+      "size": {
+        "TABLE_NAME": "calculator_run_expirations",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 232669,
+        "DATA_LENGTH": 63012864,
+        "INDEX_LENGTH": 86704128,
+        "DATA_FREE": 37748736
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_run_expirations_unique": {
+          "unique": true,
+          "columns": [
+            "run_id",
+            "expiration"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_run_expirations_lookup_idx": {
+          "unique": false,
+          "columns": [
+            "symbol",
+            "expiration"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "calc_run_expirations_pub_idx": {
+          "unique": false,
+          "columns": [
+            "publication_id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    },
+    "option_expirations": {
+      "size": {
+        "TABLE_NAME": "option_expirations",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 6633,
+        "DATA_LENGTH": 278528,
+        "INDEX_LENGTH": 966656,
+        "DATA_FREE": 4194304
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "symbol_expiration_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "expiration_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "option_expirations_symbol_date_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "expiration_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "option_expirations_symbol_idx": {
+          "unique": false,
+          "columns": [
+            "symbol"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "idx_exp_symbol_date": {
+          "unique": false,
+          "columns": [
+            "symbol",
+            "expiration_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    },
+    "option_chain_data": {
+      "size": {
+        "TABLE_NAME": "option_chain_data",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 13611869,
+        "DATA_LENGTH": 1742077952,
+        "INDEX_LENGTH": 5091115008,
+        "DATA_FREE": 59768832
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "ocd_exp_date_type_strike_unique": {
+          "unique": true,
+          "columns": [
+            "expiration_id",
+            "data_date",
+            "option_type",
+            "strike"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "u_chain_exp_date_type_strike": {
+          "unique": true,
+          "columns": [
+            "expiration_id",
+            "data_date",
+            "option_type",
+            "strike"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "option_chain_data_expiration_id_data_date_index": {
+          "unique": false,
+          "columns": [
+            "expiration_id",
+            "data_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "option_chain_data_strike_option_type_index": {
+          "unique": false,
+          "columns": [
+            "strike",
+            "option_type"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "ocd_exp_date_type_strike_idx": {
+          "unique": false,
+          "columns": [
+            "expiration_id",
+            "data_date",
+            "option_type",
+            "strike"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "ocd_exp_strike_type_idx": {
+          "unique": false,
+          "columns": [
+            "expiration_id",
+            "strike",
+            "option_type"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "ocd_date_exp_idx": {
+          "unique": false,
+          "columns": [
+            "data_date",
+            "expiration_id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "idx_chain_date_exp": {
+          "unique": false,
+          "columns": [
+            "data_date",
+            "expiration_id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    },
+    "prices_daily": {
+      "size": {
+        "TABLE_NAME": "prices_daily",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 440717,
+        "DATA_LENGTH": 36241408,
+        "INDEX_LENGTH": 50462720,
+        "DATA_FREE": 6291456
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "prices_daily_symbol_trade_date_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "trade_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "prices_daily_symbol_index": {
+          "unique": false,
+          "columns": [
+            "symbol"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "prices_daily_trade_date_index": {
+          "unique": false,
+          "columns": [
+            "trade_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "prices_daily_symbol_trade_date_index": {
+          "unique": false,
+          "columns": [
+            "symbol",
+            "trade_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    },
+    "unusual_activity": {
+      "size": {
+        "TABLE_NAME": "unusual_activity",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 1121898,
+        "DATA_LENGTH": 375341056,
+        "INDEX_LENGTH": 330448896,
+        "DATA_FREE": 4194304
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "unusual_activity_symbol_data_date_exp_date_strike_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "data_date",
+            "exp_date",
+            "strike"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "ua_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "data_date",
+            "exp_date",
+            "strike"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "unusual_activity_symbol_index": {
+          "unique": false,
+          "columns": [
+            "symbol"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "unusual_activity_data_date_index": {
+          "unique": false,
+          "columns": [
+            "data_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "unusual_activity_exp_date_index": {
+          "unique": false,
+          "columns": [
+            "exp_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "unusual_activity_strike_index": {
+          "unique": false,
+          "columns": [
+            "strike"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "ua_symbol_date": {
+          "unique": false,
+          "columns": [
+            "symbol",
+            "data_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "ua_symbol_date_exp": {
+          "unique": false,
+          "columns": [
+            "symbol",
+            "data_date",
+            "exp_date"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "ua_symbol_date_z": {
+          "unique": false,
+          "columns": [
+            "symbol",
+            "data_date",
+            "z_score"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    },
+    "option_live_counters": {
+      "size": {
+        "TABLE_NAME": "option_live_counters",
+        "ENGINE": "InnoDB",
+        "TABLE_ROWS": 338312,
+        "DATA_LENGTH": 31522816,
+        "INDEX_LENGTH": 52543488,
+        "DATA_FREE": 52428800
+      },
+      "indexes": {
+        "PRIMARY": {
+          "unique": true,
+          "columns": [
+            "id"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        },
+        "olc_symbol_day_strike_type_unique": {
+          "unique": true,
+          "columns": [
+            "symbol",
+            "trade_date",
+            "exp_date",
+            "strike",
+            "option_type"
+          ],
+          "type": "BTREE",
+          "visible": "YES"
+        }
+      }
+    }
+  },
+  "write_counters": [
+    {
+      "OBJECT_NAME": "option_live_counters",
+      "COUNT_READ": 22023454,
+      "COUNT_WRITE": 8403659,
+      "COUNT_FETCH": 22023454,
+      "COUNT_INSERT": 4160399,
+      "COUNT_UPDATE": 4028517,
+      "COUNT_DELETE": 214743
+    },
+    {
+      "OBJECT_NAME": "option_chain_data",
+      "COUNT_READ": 2053601429,
+      "COUNT_WRITE": 639755,
+      "COUNT_FETCH": 2053601429,
+      "COUNT_INSERT": 301876,
+      "COUNT_UPDATE": 53034,
+      "COUNT_DELETE": 284845
+    },
+    {
+      "OBJECT_NAME": "option_expirations",
+      "COUNT_READ": 6871799,
+      "COUNT_WRITE": 90,
+      "COUNT_FETCH": 6871799,
+      "COUNT_INSERT": 90,
+      "COUNT_UPDATE": 0,
+      "COUNT_DELETE": 0
+    },
+    {
+      "OBJECT_NAME": "prices_daily",
+      "COUNT_READ": 732755,
+      "COUNT_WRITE": 114519,
+      "COUNT_FETCH": 732755,
+      "COUNT_INSERT": 57395,
+      "COUNT_UPDATE": 57124,
+      "COUNT_DELETE": 0
+    },
+    {
+      "OBJECT_NAME": "unusual_activity",
+      "COUNT_READ": 876380,
+      "COUNT_WRITE": 31579,
+      "COUNT_FETCH": 876380,
+      "COUNT_INSERT": 24939,
+      "COUNT_UPDATE": 0,
+      "COUNT_DELETE": 6640
+    },
+    {
+      "OBJECT_NAME": "calculator_publication_runs",
+      "COUNT_READ": 613925,
+      "COUNT_WRITE": 113819,
+      "COUNT_FETCH": 613925,
+      "COUNT_INSERT": 4954,
+      "COUNT_UPDATE": 101721,
+      "COUNT_DELETE": 7144
+    },
+    {
+      "OBJECT_NAME": "calculator_run_expirations",
+      "COUNT_READ": 2155071,
+      "COUNT_WRITE": 290651,
+      "COUNT_FETCH": 2155071,
+      "COUNT_INSERT": 84334,
+      "COUNT_UPDATE": 84334,
+      "COUNT_DELETE": 121983
+    },
+    {
+      "OBJECT_NAME": "calculator_expiry_publications",
+      "COUNT_READ": 594280,
+      "COUNT_WRITE": 206317,
+      "COUNT_FETCH": 594280,
+      "COUNT_INSERT": 84334,
+      "COUNT_UPDATE": 0,
+      "COUNT_DELETE": 121983
+    },
+    {
+      "OBJECT_NAME": "intraday_option_volumes",
+      "COUNT_READ": 133446670,
+      "COUNT_WRITE": 16098714,
+      "COUNT_FETCH": 133446670,
+      "COUNT_INSERT": 5330788,
+      "COUNT_UPDATE": 0,
+      "COUNT_DELETE": 10767926
+    }
+  ],
+  "foreign_keys": [
+    {
+      "TABLE_NAME": "option_chain_data",
+      "COLUMN_NAME": "expiration_id",
+      "CONSTRAINT_NAME": "option_chain_data_expiration_id_foreign",
+      "REFERENCED_TABLE_NAME": "option_expirations",
+      "REFERENCED_COLUMN_NAME": "id"
+    }
+  ]
+}

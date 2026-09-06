@@ -6,6 +6,7 @@ use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\FetchCalculatorChainJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Jobs\FetchUnderlyingQuotesJob;
+use App\Jobs\RebuildEodSnapshotManifestJob;
 use App\Models\WorkRun;
 use Illuminate\Support\Facades\Bus;
 use RuntimeException;
@@ -57,6 +58,14 @@ final class WorkRunDispatcher
         $parameters = $run->parameters ?? [];
 
         return match ($run->kind) {
+            'eod_manifest_rebuild' => (new RebuildEodSnapshotManifestJob(
+                $run->id,
+                $deliveryToken,
+                $run->symbol,
+                (int) $parameters['revision'],
+                (string) $parameters['cache_version'],
+                (array) $parameters['policy'],
+            ))->onConnection($run->queue_connection)->onQueue($run->queue),
             'calculator_refresh' => (new FetchCalculatorChainJob(
                 $run->symbol,
                 $parameters['expiry'] ?? null,

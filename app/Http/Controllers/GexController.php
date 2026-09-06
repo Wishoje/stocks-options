@@ -5,7 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\OptionChainData;
 use App\Models\OptionExpiration;
 use App\Support\EodCacheVersion;
+use App\Support\EodSnapshotHealth;
 use App\Support\EodSnapshotSelector;
+use App\Support\GexExpirationUniverse;
+use App\Support\GexSnapshotCache;
 use App\Support\SymbolBootstrapCoordinator;
 use App\Support\SymbolBootstrapPolicy;
 use App\Support\Symbols;
@@ -26,6 +29,12 @@ class GexController extends Controller
     protected const PERF_SLOW_MS = 1200;
 
     protected const PERF_SAMPLE_PERCENT = 10;
+
+    // Set only during shadow comparison so both resolvers use one instant.
+    private ?Carbon $expirationResolutionClock = null;
+
+    // A racing mutation gets one legacy retry, never an unbounded read loop.
+    private bool $skipSnapshotHealth = false;
 
     public function getGexLevels(Request $request)
     {
@@ -92,8 +101,51 @@ class GexController extends Controller
             ]);
         }
 
-        // Resolve dates + IDs for you
-        $timeframeExpirations = $this->getTimeframeExpirations($symbol, $timeframe);
+        $manifest = null;
+        $manifestSelection = null;
+        $manifestCacheKey = null;
+        $health = EodSnapshotHealth::readsEnabled() && ! $this->skipSnapshotHealth
+            ? app(EodSnapshotHealth::class) : null;
+        $snapshotCache = app(GexSnapshotCache::class);
+        if ($health !== null) {
+            $policy = $health->policy();
+            // Dirty facts are allowed only for an existing last-good payload.
+            // They must never choose dates for newly read in-place raw rows.
+            $manifest = $health->read($symbol, $policy, requireCurrent: false);
+            if ($manifest !== null) {
+                $clock = Carbon::now();
+                $manifestSelection = app(GexExpirationUniverse::class)->resolveFromCatalog(
+                    $manifest['catalog'], $timeframe, $this->uiTimeframes, $clock
+                );
+                $manifestCacheKey = $snapshotCache->key($symbol, $timeframe, $manifest, $clock);
+                $warm = ! $forceRefresh ? $snapshotCache->get($manifestCacheKey) : null;
+                if ($warm !== null) {
+                    $this->logPerf($symbol, $timeframe, $startedAt, [
+                        'status_code' => 200, 'result' => 'manifest_cache_hit',
+                        'cache_hit' => true, 'force_refresh' => false,
+                        'expiration_count' => count($manifestSelection['expiration_ids']),
+                        'strike_count' => count($warm['strike_data'] ?? []),
+                        'data_date' => $warm['data_date'] ?? null,
+                        'cache_version' => $manifest['cache_version'],
+                    ]);
+                    if ($bootstrapPayload !== null) {
+                        $warm['run'] = $runPayload;
+                        $warm['bootstrap'] = $bootstrapPayload;
+                    }
+
+                    return response()->json($warm, 200);
+                }
+                if ($manifest['dirty']) {
+                    $manifest = $manifestSelection = $manifestCacheKey = null;
+                }
+            }
+            if ($manifest === null) {
+                $health->requestRebuild($symbol, $policy);
+            }
+        }
+
+        $expirationSelection = $manifestSelection ?? $this->resolveGexExpirationSelection($symbol, $timeframe);
+        $timeframeExpirations = $expirationSelection['timeframe_expirations'];
         $dates = $timeframeExpirations[$timeframe] ?? [];
 
         if (empty($dates)) {
@@ -115,21 +167,23 @@ class GexController extends Controller
             return response()->json($payload, 404);
         }
 
-        $expirationIds = OptionExpiration::where('symbol', $symbol)
+        $expirationIds = $expirationSelection['expiration_ids'] ?? OptionExpiration::where('symbol', $symbol)
             ->whereIn('expiration_date', $dates)
             ->pluck('id')
             ->toArray();
 
         $selector = app(EodSnapshotSelector::class);
-        $anchorDate = $selector->resolvedAnchorDate();
-        $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)
+        $anchorDate = $manifest['policy']['anchor_date'] ?? $selector->resolvedAnchorDate();
+        $latestDate = $manifest === null ? OptionChainData::whereIn('expiration_id', $expirationIds)
             ->whereDate('data_date', '<=', $anchorDate)
-            ->max('data_date');
+            ->max('data_date') : collect($expirationIds)
+            ->map(fn ($id) => $manifest['expirations'][$id]['latest_unbounded_date'])
+            ->filter()->max();
 
-        if (! $latestDate) {
+        if ($manifest === null && ! $latestDate) {
             $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)->max('data_date');
         }
-        if ($latestDate && ! $this->hasUsableGreeks($expirationIds, $latestDate)) {
+        if ($manifest === null && $latestDate && ! $this->hasUsableGreeks($expirationIds, $latestDate)) {
             $latestDate = OptionChainData::whereIn('expiration_id', $expirationIds)
                 ->whereNotNull('gamma')
                 ->where('gamma', '!=', 0)
@@ -156,44 +210,44 @@ class GexController extends Controller
         // The publication token is advanced by the last job in a successful
         // EOD chain. In-place writes made by a failed chain must not create a
         // new readable cache generation.
-        $version = app(EodCacheVersion::class)->current(EodCacheVersion::DOMAIN_GEX, $symbol);
-        $cacheKey = "gex:levels:v4:{$symbol}:{$timeframe}:{$version}";
-        $cacheHit = ! $forceRefresh && Cache::has($cacheKey);
+        $version = $manifest['cache_version']
+            ?? app(EodCacheVersion::class)->current(EodCacheVersion::DOMAIN_GEX, $symbol);
+        $cacheKey = $manifestCacheKey ?? "gex:levels:v4:{$symbol}:{$timeframe}:{$version}";
+        // The manifest warm path already performed its one cache retrieval.
+        // Legacy v4 entries carry no anchor, ratio or calendar identity. An
+        // enabled fallback must recompute rather than reuse an unproven entry.
+        $publishedPayload = $manifest === null && ! EodSnapshotHealth::readsEnabled()
+            ? Cache::get($cacheKey) : null;
+        $cacheHit = ! $forceRefresh && is_array($publishedPayload);
+        $payload = $cacheHit ? $publishedPayload : $this->buildGexPayload(
+            $symbol, $timeframe, $dates, $timeframeExpirations,
+            $expirationIds, $anchorDate, $manifest
+        );
 
-        if ($forceRefresh) {
-            $publishedPayloadExists = Cache::has($cacheKey);
-            $payload = $this->buildGexPayload(
-                $symbol,
-                $timeframe,
-                $dates,
-                $timeframeExpirations,
-                $expirationIds,
-                $anchorDate
-            );
-            // A diagnostic refresh may read in-progress database writes. It
-            // can seed an empty generation, but it must never replace an
-            // existing last-good payload before the publication fence moves.
-            if ($payload && ! $publishedPayloadExists) {
-                Cache::put($cacheKey, $payload, now()->addHours(self::CACHE_HOURS));
+        if ($manifest !== null) {
+            // A mutation may have started after the initial manifest read.
+            // Do not publish rows read across that transition into an older
+            // immutable response generation. Retry once through legacy reads.
+            $after = $health->head($symbol);
+            if ($after === null || $after['dirty']
+                || $after['revision'] !== $manifest['revision']
+                || $after['cache_version'] !== $manifest['cache_version']
+                || $snapshotCache->key($symbol, $timeframe, $manifest) !== $cacheKey) {
+                $this->skipSnapshotHealth = true;
+                try {
+                    return $this->getGexLevels($request);
+                } finally {
+                    $this->skipSnapshotHealth = false;
+                }
             }
-        } else {
-            $payload = Cache::remember($cacheKey, now()->addHours(self::CACHE_HOURS), function () use (
-                $symbol,
-                $timeframe,
-                $dates,
-                $timeframeExpirations,
-                $expirationIds,
-                $anchorDate
-            ) {
-                return $this->buildGexPayload(
-                    $symbol,
-                    $timeframe,
-                    $dates,
-                    $timeframeExpirations,
-                    $expirationIds,
-                    $anchorDate
-                );
-            });
+            if ($payload) {
+                $snapshotCache->putIfMissing($cacheKey, $payload);
+            }
+        } elseif ($payload && $publishedPayload === null && ! EodSnapshotHealth::readsEnabled()) {
+            // Rollback retains the legacy cache generation. An enabled but
+            // uncertified fallback must not seed it from partial raw writes.
+            // add() preserves an existing last-good value in a read race.
+            Cache::add($cacheKey, $payload, now()->addHours(self::CACHE_HOURS));
         }
 
         if (! $payload) {
@@ -239,10 +293,13 @@ class GexController extends Controller
         array $dates,
         array $timeframeExpirations,
         array $expirationIds,
-        ?string $anchorDate = null
+        ?string $anchorDate = null,
+        ?array $manifest = null
     ): ?array {
         $selector = app(EodSnapshotSelector::class);
-        $todayData = $selector->selectedRows($expirationIds, ['option_chain_data.*'], $anchorDate);
+        $todayData = $manifest === null
+            ? $selector->selectedRows($expirationIds, ['option_chain_data.*'], $anchorDate)
+            : $selector->selectedRows($expirationIds, ['option_chain_data.*'], $anchorDate, null, $manifest);
 
         if ($todayData->isEmpty()) {
             return null;
@@ -471,9 +528,56 @@ class GexController extends Controller
         }
     }
 
-    /**
-     * Build a map of timeframe => expiration dates (only those with data).
-     */
+    /** @return array{timeframe_expirations:array,expiration_ids:?array} */
+    protected function resolveGexExpirationSelection(string $symbol, string $requestedTimeframe): array
+    {
+        if (! config('gex_performance.expiration_universe_enabled', false)) {
+            // Preserve the original queries and lazy ID lookup for rollback.
+            return [
+                'timeframe_expirations' => $this->getTimeframeExpirations($symbol, $requestedTimeframe),
+                'expiration_ids' => null,
+            ];
+        }
+
+        $clock = Carbon::now();
+        $resolver = app(GexExpirationUniverse::class);
+        $candidate = $resolver->resolve($symbol, $requestedTimeframe, $this->uiTimeframes, $clock);
+        if (! config('gex_performance.expiration_shadow_enabled', false)) {
+            return $candidate;
+        }
+
+        $previousClock = $this->expirationResolutionClock;
+        $this->expirationResolutionClock = $clock;
+        try {
+            $legacyDates = $this->getTimeframeExpirations($symbol, $requestedTimeframe);
+            $requestedDates = $legacyDates[$requestedTimeframe] ?? [];
+            $legacy = [
+                'timeframe_expirations' => $legacyDates,
+                'expiration_ids' => $requestedDates === [] ? [] : OptionExpiration::where('symbol', $symbol)
+                    ->whereIn('expiration_date', $requestedDates)->pluck('id')->toArray(),
+            ];
+        } finally {
+            $this->expirationResolutionClock = $previousClock;
+        }
+
+        $comparison = $resolver->compareSelections($legacy, $candidate);
+        $context = array_merge($comparison, [
+            'symbol' => $symbol,
+            'timeframe' => $requestedTimeframe,
+            'legacy_expiration_count' => count($legacy['expiration_ids']),
+            'candidate_expiration_count' => count($candidate['expiration_ids']),
+        ]);
+        if (! $comparison['matches']) {
+            Log::warning('gex.expiration_shadow.mismatch', $context);
+
+            return $legacy;
+        }
+        Log::info('gex.expiration_shadow.match', $context);
+
+        return $candidate;
+    }
+
+    /** Build a map of timeframe => catalog expiration dates. */
     protected function getTimeframeExpirations(string $symbol, string $requestedTimeframe): array
     {
         $candidates = array_unique(array_merge($this->uiTimeframes, [$requestedTimeframe]));
@@ -504,10 +608,10 @@ class GexController extends Controller
             return $this->getExpirationsWithinDays($symbol, $map[$tf]);
         }
         if ($tf === 'monthly') {
-            $d = $this->thirdFriday(\Carbon\Carbon::now());
+            $d = $this->thirdFriday($this->expirationNow());
             // if the third Friday is in the past, take next month's third Friday
-            if ($d->lt(\Carbon\Carbon::now()->startOfDay())) {
-                $d = $this->thirdFriday(\Carbon\Carbon::now()->addMonth());
+            if ($d->lt($this->expirationNow()->startOfDay())) {
+                $d = $this->thirdFriday($this->expirationNow()->addMonth());
             }
 
             return \App\Models\OptionExpiration::where('symbol', $symbol)
@@ -538,7 +642,7 @@ class GexController extends Controller
     // Helper: find expirations within X days
     protected function getExpirationsWithinDays(string $symbol, int $days): array
     {
-        $anchorNy = now('America/New_York')->startOfDay();
+        $anchorNy = $this->expirationNow('America/New_York')->startOfDay();
         if ($anchorNy->isWeekend()) {
             $anchorNy = $anchorNy->previousWeekday()->startOfDay();
         }
@@ -555,6 +659,13 @@ class GexController extends Controller
             ->unique()
             ->values()
             ->toArray();
+    }
+
+    private function expirationNow(?string $timezone = null): Carbon
+    {
+        return $this->expirationResolutionClock
+            ? $this->expirationResolutionClock->copy()->setTimezone($timezone ?? date_default_timezone_get())
+            : Carbon::now($timezone);
     }
 
     // Helper: find next monthly expiration
