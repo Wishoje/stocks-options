@@ -2,12 +2,13 @@
 
 use App\Jobs\ComputeVolMetricsJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Support\IntradayRefreshDispatcher;
 use App\Support\Market;
 use App\Support\QueueLanes;
-use App\Support\Symbols;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
 
 // Example default command
@@ -167,16 +168,18 @@ Schedule::call(function () {
         return;
     }
 
-    $symbols = DB::table('watchlists')
-        ->pluck('symbol')
-        ->map(fn ($s) => Symbols::canon($s))
-        ->filter()
-        ->unique()
-        ->values()
-        ->all();
+    $dispatcher = app(IntradayRefreshDispatcher::class);
+    $symbols = $dispatcher->watchlistSymbols();
 
     if (! $symbols) {
         $symbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN'];
+    }
+
+    if ($dispatcher->enabled()) {
+        $result = $dispatcher->dispatch($symbols, $nowEt->toDateString());
+        Log::channel('scheduler')->info('intraday.singleton_scheduler', $result);
+
+        return;
     }
 
     if (! QueueLanes::isolated()) {
@@ -242,6 +245,12 @@ Schedule::command('work-runs:reconcile --limit=100')
     ->withoutOverlapping(2)
     ->onOneServer()
     ->name('work-runs:reconcile');
+
+Schedule::command('queue:readiness --log')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(5)
+    ->onOneServer()
+    ->name('queue:readiness');
 
 Schedule::command('emails:lifecycle-run')
     ->timezone('America/New_York')

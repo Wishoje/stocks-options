@@ -6,8 +6,8 @@ if (PHP_SAPI !== 'cli') { exit(1); }
 $mode = $argv[1] ?? '';
 $roots = ['/home/forge/gexoptions.com', '/home/forge/stocks-options-ss7u2nu2.on-forge.com'];
 $target = realpath(getcwd().'/.env');
-if (! in_array($mode, ['prepare', 'activate', 'rollback'], true) || $target === false) {
-    fwrite(STDERR, "Use prepare, activate, or rollback from the current release.\n"); exit(1);
+if (! in_array($mode, ['prepare', 'activate', 'rollback', 'singletons-enable', 'singletons-disable'], true) || $target === false) {
+    fwrite(STDERR, "Use prepare, activate, rollback, singletons-enable, or singletons-disable from the current release.\n"); exit(1);
 }
 $allowed = false;
 foreach ($roots as $root) {
@@ -18,7 +18,22 @@ if (! $allowed || ! is_file($target) || ! is_writable($target)) {
 }
 $original = file_get_contents($target);
 if ($original === false) { exit(1); }
-$changes = ['REDIS_QUEUE_CONNECTION' => $mode === 'activate' ? 'queue' : 'default'];
+$changes = str_starts_with($mode, 'singletons-')
+    ? ['INTRADAY_SINGLETON_JOBS_ENABLED' => $mode === 'singletons-enable' ? 'true' : 'false',
+        'INTRADAY_SINGLETON_ROLLOUT_VALIDATED' => $mode === 'singletons-enable' ? 'true' : 'false']
+    : ['REDIS_QUEUE_CONNECTION' => $mode === 'activate' ? 'queue' : 'default'];
+if ($mode === 'rollback') {
+    $changes += ['INTRADAY_SINGLETON_JOBS_ENABLED' => 'false', 'INTRADAY_SINGLETON_ROLLOUT_VALIDATED' => 'false'];
+}
+if ($mode === 'singletons-enable') {
+    require getcwd().'/vendor/autoload.php';
+    $app = require getcwd().'/bootstrap/app.php';
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    $readiness = $app->make(App\Support\QueueReadiness::class)->inspect();
+    if (! $readiness['checks_passed'] || config('queue.connections.redis.connection') !== 'queue') {
+        fwrite(STDERR, "Queue readiness must pass on the active dedicated transport before enabling singletons.\n"); exit(1);
+    }
+}
 if ($mode === 'prepare') {
     $password = trim(stream_get_contents(STDIN));
     if (! preg_match('/^[a-f0-9]{64}$/D', $password)) {

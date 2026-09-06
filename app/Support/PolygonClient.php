@@ -258,8 +258,7 @@ class PolygonClient
         $hops = 0;
         $sym = strtoupper($symbol);
         // Treat only the biggest names as “heavy”; others stay lighter to finish quickly.
-        $heavySymbols = ['SPY','QQQ'];
-        $isHeavy = in_array($sym, $heavySymbols, true);
+        $isHeavy = QueueLanes::isIntradayHeavy($sym);
         $maxHops = $isHeavy ? 500 : 50;
         while (true) {
             if ($hops >= $maxHops) {

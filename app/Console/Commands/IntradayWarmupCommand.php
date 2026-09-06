@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Support\IntradayRefreshDispatcher;
 use App\Support\Market;
 use Carbon\Carbon;
 use App\Support\QueueLanes;
@@ -16,7 +17,7 @@ class IntradayWarmupCommand extends Command
 
     protected $description = 'Fetch intraday option volumes for today\'s hot option symbols';
 
-    public function handle(): int
+    public function handle(IntradayRefreshDispatcher $dispatcher): int
     {
         // if (!Market::isRthOpen(Carbon::now('America/New_York'))) {
         //     $this->info('Market is closed; skipping intraday warmup.');
@@ -35,17 +36,27 @@ class IntradayWarmupCommand extends Command
 
         $symbols = DB::table('hot_option_symbols')
             ->whereDate('trade_date', $tradeDate)
-            ->orderBy('rank')
+            ->whereNotNull('symbol')
+            ->whereRaw('TRIM(symbol) <> ?', [''])
+            ->selectRaw('UPPER(TRIM(symbol)) as symbol, MIN(`rank`) as first_rank')
+            ->groupByRaw('UPPER(TRIM(symbol))')
+            ->orderBy('first_rank')
             ->limit($limit)
             ->pluck('symbol')
-            ->map(fn ($s) => \App\Support\Symbols::canon($s))
-            ->unique()
-            ->values()
             ->all();
 
         if (!$symbols) {
             $this->info('No symbols found to warm up.');
             return self::SUCCESS;
+        }
+
+        if ($dispatcher->enabled()) {
+            // The hot-list date selects the universe; the current session owns
+            // the live snapshot, matching the previous job's date behavior.
+            $result = $dispatcher->dispatch($symbols);
+            $this->line(json_encode($result, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+
+            return $result['failed'] === 0 ? self::SUCCESS : self::FAILURE;
         }
 
         if (! QueueLanes::isolated()) {
