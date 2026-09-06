@@ -1071,6 +1071,9 @@ final class SymbolBootstrapCoordinator
             'state' => $state,
             'fast_ready' => $fastReady,
             'full_ready' => $fullReady,
+            // EOD completion does not promise a first live snapshot while the exchange is closed.
+            'intraday_ready' => ($phasePayload[self::PHASE_INTRADAY]['status'] ?? null) === SymbolBootstrapPhase::STATUS_COMPLETED
+                && ($phasePayload[self::PHASE_INTRADAY]['outcome']['intraday_ready'] ?? true),
             'no_options' => $noOptions,
             'retryable' => ($fastFailed || $fillFailed)
                 && (bool) $manifest->workRun?->isActive(),

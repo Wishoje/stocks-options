@@ -145,7 +145,7 @@
               </span>
             </span>
             <span v-else-if="dataMode === 'intraday'" class="flex items-center justify-end gap-1">
-              <span class="font-medium text-green-400">{{ marketOpen ? 'Live' : 'Market Closed' }}</span>
+              <span class="font-medium" :class="marketOpen && intradaySourceAge !== null && intradaySourceAge < 90 ? 'text-green-400' : 'text-amber-300'">{{ intradaySourceLabel }}</span>
               <button @click="manualRefresh" class="ml-1 text-cyan-400 hover:text-cyan-300">
                 <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -259,14 +259,16 @@
           </svg>
           <div>
             <div class="font-semibold">
-              {{ intradayHasData ? 'Showing last completed intraday session' : `Preparing first intraday snapshot for ${userSymbol}` }}
+              {{ intradayHasData ? 'Showing last available intraday snapshot' : `No intraday snapshot for ${userSymbol} yet` }}
             </div>
             <div class="text-slate-200/80">
               <template v-if="intradayHasData">
-                As of {{ intradayAsOfEtLabel }} ET. Live updates resume at 9:30 AM ET.
+                <span v-if="intradaySnapshotAsOf">Source as of {{ intradayAsOfEtLabel }} ET.</span>
+                <span v-else>Provider update time is unavailable.</span>
+                Live updates resume {{ intradayNextOpenLabel }}.
               </template>
               <template v-else>
-                No prior intraday snapshot yet. We will populate this symbol and show data here.
+                The market is closed. The first live snapshot can be collected {{ intradayNextOpenLabel }}.
               </template>
             </div>
           </div>
@@ -855,8 +857,19 @@ const INTRADAY_PENDING_RETRY_MS = 5_000
 const INTRADAY_PENDING_MAX_RETRIES = 12
 const intradayDataSymbol = ref(null)
 const intradaySnapshotAsOf = ref(null)
+const intradaySnapshotAvailable = ref(false)
+const intradayNextOpen = ref(null)
+const intradaySourceAge = ref(null)
+const intradaySourceLabel = computed(() => {
+  if (!marketOpen.value) return 'Market Closed'
+  if (intradaySourceAge.value === null) return 'Provider update time unavailable'
+  return intradaySourceAge.value < 90 ? 'Live' : `Delayed (${Math.floor(intradaySourceAge.value / 60)}m)`
+})
+const intradayNextOpenLabel = computed(() => intradayNextOpen.value
+  ? `at ${formatEtDateTime(intradayNextOpen.value)} ET`
+  : 'at the next trading session')
 const intradayHasData = computed(() => {
-  if (intradayDataSymbol.value !== userSymbol.value || !intradaySnapshotAsOf.value) return false
+  if (intradayDataSymbol.value !== userSymbol.value || !intradaySnapshotAvailable.value) return false
 
   const rows = levels.value?.strike_data
   if (Array.isArray(rows) && rows.length > 0) return true
@@ -973,7 +986,6 @@ watch([dataMode, activeTab], async ([mode, tab], [oldMode, oldTab]) => {
   // Mode change
   if (mode !== oldMode) {
     if (mode === 'intraday') {
-      await axios.post('/api/intraday/pull', { symbols: [userSymbol.value] }).catch(() => {})
       await refreshIntraday()
       startAutoRefresh()
     } else {
@@ -1728,8 +1740,11 @@ async function refreshIntraday({ force = false } = {}) {
     Object.assign(intradayLevels.value, cached.payload)
     intradayDataSymbol.value = sym
     intradaySnapshotAsOf.value = cached.asof
+    intradaySnapshotAvailable.value = cached.available ?? !!cached.asof
+    intradayNextOpen.value = cached.nextOpen ?? null
+    intradaySourceAge.value = cached.asof ? Math.max(0, Math.floor((now - new Date(cached.asof).getTime()) / 1000)) : null
     clearIntradayPendingRetry()
-    lastUpdated.value = cached.asof || new Date(cached.t).toISOString()
+    lastUpdated.value = cached.asof
     firstIntradayLoadDone.value = true
     return
   }
@@ -1752,15 +1767,19 @@ async function refreshIntraday({ force = false } = {}) {
         signal: ctl.signal,
       })
       const sumData = summaryResp.data || {}
+      if (userSymbol.value !== sym || dataMode.value !== 'intraday' || ctl.signal.aborted) return
 
       marketOpen.value = !!sumData.open
 
       const asofMs = sumData.asof ? new Date(sumData.asof).getTime() : null
       const isFresh = !!asofMs && (now - asofMs) < INTRADAY_TTL_MS
 
-      // Step B: refresh stale live data during RTH. A symbol with no snapshot
-      // must also be queued after hours so first-use bootstrap can complete.
-      if (!isFresh && (marketOpen.value || !asofMs)) {
+      // New servers decide from completed ingestion, pending work and session policy.
+      // Keep the legacy fallback during a rolling deployment.
+      const refreshEligible = typeof sumData.refresh_eligible === 'boolean'
+        ? sumData.refresh_eligible
+        : !isFresh && (marketOpen.value || !asofMs)
+      if (refreshEligible) {
         await axios.post('/api/intraday/pull', { symbols: [sym] }).catch(() => {})
       }
 
@@ -1771,6 +1790,7 @@ async function refreshIntraday({ force = false } = {}) {
       })
 
       const compData = comp.data || {}
+      if (userSymbol.value !== sym || dataMode.value !== 'intraday' || ctl.signal.aborted) return
       marketOpen.value = !!compData.open
 
       const next = {
@@ -1802,6 +1822,10 @@ async function refreshIntraday({ force = false } = {}) {
       intradayDataSymbol.value = sym
       const snapshotAsOf = compData.asof || sumData.asof || null
       intradaySnapshotAsOf.value = snapshotAsOf
+      intradaySourceAge.value = snapshotAsOf ? Math.max(0, Math.floor((Date.now() - new Date(snapshotAsOf).getTime()) / 1000)) : null
+      const snapshotAvailable = compData.snapshot_available ?? sumData.snapshot_available ?? !!snapshotAsOf
+      intradaySnapshotAvailable.value = snapshotAvailable
+      intradayNextOpen.value = compData.market_session?.next_open_at ?? sumData.market_session?.next_open_at ?? null
 
       lastUpdated.value = snapshotAsOf
       firstIntradayLoadDone.value = true
@@ -1809,22 +1833,32 @@ async function refreshIntraday({ force = false } = {}) {
       // Step D: never retain the placeholder read made while a new symbol's
       // queued ingest is still running. Poll briefly, then fall back to the
       // normal 30-second refresh interval.
-      if (snapshotAsOf) {
+      if (snapshotAvailable) {
         clearIntradayPendingRetry()
         cacheIntraday.set(sym, {
           t: Date.now(),
           asof: snapshotAsOf,
+          available: snapshotAvailable,
+          nextOpen: intradayNextOpen.value,
           payload: next,
         })
       } else {
         cacheIntraday.delete(sym)
-        scheduleIntradayPendingRetry(sym)
+        if (compData.market_session?.refresh_allowed === false || sumData.market_session?.refresh_allowed === false) {
+          clearIntradayPendingRetry()
+        } else {
+          scheduleIntradayPendingRetry(sym)
+        }
       }
     } catch (e) {
-      intradayError.value = e?.response?.data?.error || e.message
+      if (userSymbol.value === sym && dataMode.value === 'intraday' && !ctl.signal.aborted) {
+        intradayError.value = e?.response?.data?.error || e.message
+      }
     } finally {
-      intradayLoading.value = false
-      intradayRefreshing.value = false
+      if (userSymbol.value === sym && !ctl.signal.aborted) {
+        intradayLoading.value = false
+        intradayRefreshing.value = false
+      }
     }
   })().finally(() => {
     inflightIntraday.delete(sym)
@@ -1836,7 +1870,6 @@ async function refreshIntraday({ force = false } = {}) {
 
 async function manualRefresh() {
   try {
-    await axios.post('/api/intraday/pull', { symbols: [userSymbol.value] })
     await refreshIntraday({ force: true })
   } catch (e) {
     if (dataMode.value === 'eod') {

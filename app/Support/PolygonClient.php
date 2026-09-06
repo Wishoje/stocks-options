@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -90,6 +91,10 @@ class PolygonClient
 
     protected function fromRawContracts(array $contracts, ?string $requestId): array
     {
+        $receivedAt = CarbonImmutable::now('UTC');
+        $sessionDate = app(MarketSession::class)->describe($receivedAt)['session_date'];
+        $sourceAsOf = null;
+        $sourceTimestampComplete = true;
         $byStrikeExp = [];
         $totCall = 0; $totPut = 0; $totPrem = 0.0;
         $seen = 0; $used = 0; $skipped = 0;
@@ -156,6 +161,16 @@ class PolygonClient
             // sanity for required fields
             if ($strike <= 0 || !$expiry || !$side) { $skipped++; continue; }
 
+            // Only the option's volume-bearing day object can describe the
+            // source time of these totals. A quote/underlying timestamp does
+            // not establish when the option volume was last updated.
+            $contractSource = $this->optionDaySourceAsOf($day['last_updated'] ?? null, $receivedAt, $sessionDate);
+            if ($contractSource === null) {
+                $sourceTimestampComplete = false;
+            } elseif ($sourceAsOf === null || $contractSource->gt($sourceAsOf)) {
+                $sourceAsOf = $contractSource;
+            }
+
             $notional = $px * $vol * 100;
 
             $key = "{$strike}|{$expiry}";
@@ -206,7 +221,14 @@ class PolygonClient
         // ]);
 
         return [
-            'asof' => now('America/New_York')->subMinutes(1)->toIso8601String(),
+            // Legacy internal publication-order clock. With GEX-020 enabled
+            // this is receipt time, never the displayed market-data as-of.
+            'asof' => config('intraday_freshness.enabled', false)
+                ? $receivedAt->toIso8601String()
+                : $receivedAt->setTimezone('America/New_York')->subMinute()->toIso8601String(),
+            'received_at' => $receivedAt->toISOString(),
+            'source_asof' => $used > 0 && $sourceTimestampComplete ? $sourceAsOf?->toISOString() : null,
+            'source_timestamp_complete' => $used > 0 && $sourceTimestampComplete,
             'totals' => [
                 'call_vol' => $totCall,
                 'put_vol'  => $totPut,
@@ -220,9 +242,57 @@ class PolygonClient
     {
         return [
             'asof'   => null,        // <-- no fake current time
+            'received_at' => CarbonImmutable::now('UTC')->toISOString(),
+            'source_asof' => null,
+            'source_timestamp_complete' => false,
             'totals' => ['call_vol'=>0,'put_vol'=>0,'premium'=>0.0],
             'by_strike' => [],
         ];
+    }
+
+    private function optionDaySourceAsOf(mixed $value, CarbonImmutable $receivedAt, string $sessionDate): ?CarbonImmutable
+    {
+        // Do not cast epoch nanoseconds through a float. Preserve the source
+        // instant to microseconds, the precision supported by our SQL clocks.
+        if (! is_int($value) && ! is_string($value)) {
+            return null;
+        }
+        $digits = (string) $value;
+        if (! preg_match('/^\d{1,19}$/D', $digits)) {
+            return null;
+        }
+        $precision = match (strlen($digits)) {
+            13 => 3,
+            16 => 6,
+            19 => 9,
+            default => 0,
+        };
+        if ($precision === 0 && strlen($digits) > 10) {
+            return null;
+        }
+        $seconds = $precision === 0 ? $digits : substr($digits, 0, -$precision);
+        $fraction = $precision === 0 ? '' : substr($digits, -$precision);
+        $microseconds = substr(str_pad($fraction, 6, '0'), 0, 6);
+
+        try {
+            $source = CarbonImmutable::createFromFormat('U.u', $seconds.'.'.$microseconds)->utc();
+        } catch (\Throwable) {
+            return null;
+        }
+        if ($source->gt($receivedAt)) {
+            return null;
+        }
+        $sourceNy = $source->setTimezone('America/New_York');
+        if ($sourceNy->toDateString() !== $sessionDate) {
+            return null;
+        }
+        // Daily/session markers are not evidence of an intraday update.
+        if ($source->format('H:i:s.u') === '00:00:00.000000'
+            || $sourceNy->format('H:i:s.u') === '00:00:00.000000') {
+            return null;
+        }
+
+        return $source;
     }
 
     /** Paginate through Massive options snapshot for a symbol. */

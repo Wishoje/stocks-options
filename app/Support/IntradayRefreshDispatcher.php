@@ -63,7 +63,7 @@ final class IntradayRefreshDispatcher
      * Persist each intent before enqueueing it. A Redis failure leaves the
      * intent dispatchable by reconciliation and does not prevent later symbols.
      *
-     * @param iterable<string> $symbols
+     * @param  iterable<string>  $symbols
      * @return array{requested:int,created:int,dispatched:int,reused:int,deferred:int,failed:int}
      */
     public function dispatch(iterable $symbols, ?string $tradeDate = null, bool $interactive = false): array
@@ -89,6 +89,11 @@ final class IntradayRefreshDispatcher
         foreach (array_keys($canonical) as $symbol) {
             $run = null;
             try {
+                if (IntradayFreshness::enabled() && ! app(IntradayFreshness::class)->decision($symbol, $tradeDate)['eligible']) {
+                    $result['reused']++;
+
+                    continue;
+                }
                 $claim = $this->runs->claim(
                     'intraday_refresh',
                     $symbol,
@@ -130,6 +135,10 @@ final class IntradayRefreshDispatcher
             }
 
             return $value;
+        }
+
+        if (IntradayFreshness::enabled()) {
+            return MarketSession::describe()['trade_date'];
         }
 
         // Preserve the existing job's session selection, including pre-open

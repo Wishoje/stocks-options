@@ -4,6 +4,8 @@ namespace App\Jobs;
 
 use App\Models\WorkRun;
 use App\Support\IntradayCompositeCache;
+use App\Support\IntradayFreshness;
+use App\Support\MarketSession;
 use App\Support\OptionLiveTotalsRepository;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\QueueLanes;
@@ -91,7 +93,7 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             return;
         }
 
-        if ($status === 'ok') {
+        if (in_array($status, ['ok', 'recently_completed', 'market_closed', 'pending'], true)) {
             $workRuns->markCompleted(
                 (string) $this->workRunId,
                 (string) $this->workRunDeliveryToken,
@@ -158,6 +160,18 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 
         foreach ($this->symbols as $raw) {
             $symbol = \App\Support\Symbols::canon($raw);
+            if (IntradayFreshness::enabled()) {
+                $decision = app(IntradayFreshness::class)->decision($symbol, $tradeDate, ignoreRunId: $this->workRunId);
+                if (! $decision['eligible']) {
+                    // Historical queued snapshots cannot be relabelled as the current session.
+                    if (count($this->symbols) === 1) {
+                        return $decision['reason'];
+                    }
+
+                    continue;
+                }
+            }
+            $ingestionStartedAt = now('UTC');
 
             // Log::debug('FetchPolygonIntradayOptionsJob.symbolLoop', [
             //     'raw'    => $raw,
@@ -204,6 +218,8 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             $totPremAll = 0.0;
             $rowsAll = [];
             $lastCapturedAt = null;
+            $sourceAsOf = null;
+            $sourceComplete = true;
             $requestId = null;
             $symbolIncomplete = false;
 
@@ -227,6 +243,14 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 
                 $now = now();
                 $capturedAt = \Carbon\Carbon::parse($snap['asof'])->setTimezone('UTC');
+                if (IntradayFreshness::enabled()) {
+                    $capturedAt = \Carbon\Carbon::parse($snap['received_at'] ?? now('UTC'))->utc();
+                    $sourceComplete = $sourceComplete && ($snap['source_timestamp_complete'] ?? false);
+                    $expirySource = isset($snap['source_asof']) ? \Carbon\Carbon::parse($snap['source_asof'])->utc() : null;
+                    if ($expirySource && ($sourceAsOf === null || $expirySource->greaterThan($sourceAsOf))) {
+                        $sourceAsOf = $expirySource;
+                    }
+                }
                 $requestId = $snap['request_id'] ?? $requestId;
 
                 try {
@@ -317,7 +341,7 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
             // total store freshness-fences stale retries independently.
             if ($lastCapturedAt) {
                 $now = now();
-                DB::transaction(function () use (
+                $publish = function () use (
                     $symbol,
                     $tradeDate,
                     $rowsAll,
@@ -341,9 +365,19 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                         'asof' => $lastCapturedAt,
                         'source_updated_at' => $now,
                     ]);
-                }, 3);
-
-                IntradayCompositeCache::markPublished($symbol, $tradeDate);
+                };
+                if (IntradayFreshness::enabled()) {
+                    $published = app(IntradayFreshness::class)->publish(
+                        $symbol, $tradeDate, $ingestionStartedAt, $lastCapturedAt,
+                        $sourceComplete ? $sourceAsOf : null, $this->workRunId, count($expiries), $publish
+                    );
+                } else {
+                    DB::transaction($publish, 3);
+                    $published = true;
+                }
+                if ($published) {
+                    IntradayCompositeCache::markPublished($symbol, $tradeDate);
+                }
             }
 
             continue;
@@ -363,6 +397,9 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 
     protected function tradingDate(\Carbon\Carbon $now): string
     {
+        if (IntradayFreshness::enabled()) {
+            return MarketSession::describe($now)['trade_date'];
+        }
         $ny = $now->copy()->setTimezone('America/New_York');
         $t = (int) $ny->format('Hi');
         if ($ny->isWeekend() || $t < 930) {

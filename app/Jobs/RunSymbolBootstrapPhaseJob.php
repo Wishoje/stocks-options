@@ -311,7 +311,7 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
             maxExpirations: 8
         ))->onConnection((string) $this->connection)->onQueue((string) $this->queue);
         $status = $job->execute();
-        if ($status !== 'ok') {
+        if (! in_array($status, ['ok', 'recently_completed', 'market_closed', 'pending'], true)) {
             throw new RuntimeException("First-use intraday refresh incomplete: {$status}");
         }
 
@@ -321,11 +321,16 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
             'interactive' => $interactive,
             'timeout_seconds' => $timeout,
             'trade_date' => $job->tradeDate,
+            'intraday_ready' => in_array($status, ['ok', 'recently_completed'], true),
+            'next_open_at' => $status === 'market_closed' ? \App\Support\MarketSession::describe()['next_open_at'] : null,
         ];
     }
 
     private function liveTradingDate(): string
     {
+        if (\App\Support\IntradayFreshness::enabled()) {
+            return \App\Support\MarketSession::describe()['trade_date'];
+        }
         $ny = now('America/New_York');
         if ($ny->isWeekend() || (int) $ny->format('Hi') < 930) {
             $ny->previousWeekday();

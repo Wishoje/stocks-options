@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\WorkRunRateLimited;
 use App\Support\IntradayCompositeCache;
+use App\Support\IntradayFreshness;
 use App\Support\Market;
+use App\Support\MarketSession;
 use App\Support\OptionLiveTotalsRepository;
 use App\Support\QueueLanes;
 use App\Support\Symbols;
@@ -90,7 +92,7 @@ class IntradayController extends Controller
 
         // After close / pre-open: do not repull symbols that already have any intraday data.
         // Allow new symbols (or stale-session symbols) to bootstrap.
-        if (! $force && ! $marketOpen) {
+        if (! IntradayFreshness::enabled() && ! $force && ! $marketOpen) {
             $targetTradeDate = $this->tradingDate(now());
             $freshCutoffUtc = \Carbon\Carbon::parse($targetTradeDate, 'America/New_York')
                 ->setTime(15, 30, 0)
@@ -155,6 +157,15 @@ class IntradayController extends Controller
 
         foreach ($symbols as $symbol) {
             try {
+                if (IntradayFreshness::enabled()) {
+                    $decision = app(IntradayFreshness::class)->decision($symbol, $tradeDate, $force);
+                    // Let the coordinator return the existing pending/failed run and its backoff.
+                    if (in_array($decision['reason'], ['market_closed', 'recently_completed'], true)) {
+                        $skipped[] = $symbol;
+
+                        continue;
+                    }
+                }
                 $claim = $runs->claim(
                     'intraday_refresh',
                     $symbol,
@@ -247,6 +258,10 @@ class IntradayController extends Controller
                 'market_open' => $open,
             ]);
 
+            if (IntradayFreshness::enabled()) {
+                $payload = array_replace($payload, app(IntradayFreshness::class)->metadata($symbol, $tradeDate, false));
+            }
+
             return response()->json($payload);
         }
 
@@ -279,6 +294,10 @@ class IntradayController extends Controller
             'stale_seconds' => $staleSeconds,
             'market_open' => $open,
         ]);
+
+        if (IntradayFreshness::enabled()) {
+            $payload = array_replace($payload, app(IntradayFreshness::class)->metadata($symbol, $tradeDate, true));
+        }
 
         return response()->json($payload);
     }
@@ -332,6 +351,9 @@ class IntradayController extends Controller
 
     private function tradingDate(\Carbon\Carbon $now): string
     {
+        if (IntradayFreshness::enabled()) {
+            return MarketSession::describe($now)['trade_date'];
+        }
         $ny = $now->copy()->setTimezone('America/New_York');
         $t = (int) $ny->format('Hi');
         if ($ny->isWeekend() || $t < 930) {
@@ -552,6 +574,10 @@ class IntradayController extends Controller
             'market_open' => (bool) ($data['open'] ?? false),
             'stale_seconds' => $data['stale_seconds'] ?? null,
         ]);
+
+        if (IntradayFreshness::enabled()) {
+            $data = array_replace($data, app(IntradayFreshness::class)->metadata($symbol, $tradeDate, ($data['asof'] ?? null) !== null));
+        }
 
         return response()->json($data);
     }
