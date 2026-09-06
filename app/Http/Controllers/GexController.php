@@ -261,8 +261,14 @@ class GexController extends Controller
         // Formula: gamma × OI × 100 (contract multiplier) × spot²
         // Spot² converts raw gamma to dollar GEX (matches industry-standard scaling).
         $strikesRaw = [];
+        $currentTotals = [];
         foreach ($todayData as $opt) {
             $s = $opt->strike;
+            // Accumulate once per contract. Filtering the entire chain four
+            // times for every strike makes large timeframes quadratic.
+            $side = $opt->option_type;
+            $currentTotals[$s][$side]['oi'] = ($currentTotals[$s][$side]['oi'] ?? 0) + $opt->open_interest;
+            $currentTotals[$s][$side]['volume'] = ($currentTotals[$s][$side]['volume'] ?? 0) + $opt->volume;
             $spot = (float) ($opt->underlying_price ?? 0);
             $spotSq = $spot > 0 ? $spot * $spot : 1.0;
             $gex = ($opt->gamma ?? 0) * $opt->open_interest * 100 * $spotSq;
@@ -347,10 +353,10 @@ class GexController extends Controller
             $s = $row['strike'];
 
             // current totals
-            $curCallOi = $todayData->where('strike', $s)->where('option_type', 'call')->sum('open_interest');
-            $curPutOi = $todayData->where('strike', $s)->where('option_type', 'put')->sum('open_interest');
-            $curCallVol = $todayData->where('strike', $s)->where('option_type', 'call')->sum('volume');
-            $curPutVol = $todayData->where('strike', $s)->where('option_type', 'put')->sum('volume');
+            $curCallOi = $currentTotals[$s]['call']['oi'] ?? 0;
+            $curPutOi = $currentTotals[$s]['put']['oi'] ?? 0;
+            $curCallVol = $currentTotals[$s]['call']['volume'] ?? 0;
+            $curPutVol = $currentTotals[$s]['put']['volume'] ?? 0;
 
             // prior day
             $pd = $dayAgo->get($s, collect());
