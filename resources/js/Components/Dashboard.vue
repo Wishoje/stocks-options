@@ -1111,13 +1111,23 @@ function ensureAllTabReadiness() {
 }
 
 // Data loaders
+let eodLoadGeneration = 0
+
 async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }) {
+  if (userSymbol.value !== sym || dataMode.value !== 'eod') return
+  const generation = ++eodLoadGeneration
+  const isCurrent = () => generation === eodLoadGeneration
+    && userSymbol.value === sym
+    && dataMode.value === 'eod'
   const key = `gex|${sym}|${tf}`
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.t < TTL_MS) {
+  if (hit && Array.isArray(hit.data?.strike_data) && Date.now() - hit.t < TTL_MS) {
+    eodError.value = ''
+    eodLoading.value = false
     eodLevels.value = hit.data
     lastUpdated.value = new Date().toISOString()
     preparing.value.active = false
+    if (opts?.applyTf && gexTf.value !== tf) gexTf.value = tf
 
     const startResponse = bootstrapStartResponses.get(sym) || null
     const startState = startResponse
@@ -1130,10 +1140,11 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
       && preparing.value.symbol !== sym
     ) {
       await startPreparingPoll(sym, tf, (event) => {
-        if (event.kind === 'full') refreshPreparedGex(sym, tf, event)
+        refreshPreparedGex(sym, tf, event)
       }, startResponse)
     }
 
+    if (!isCurrent()) return
     const keepFillingPoll = preparing.value.symbol === sym
       && !preparing.value.fullReady
       && !preparing.value.terminal
@@ -1141,6 +1152,7 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
     if (!keepFillingPoll) stopPreparingPoll()
     return
   }
+  cache.delete(key)
 
   eodLoading.value = true
   eodError.value = ''
@@ -1149,41 +1161,56 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
   const ctl = ensureController('gex_eod')
 
   try {
-    await withInflight(`gex:${key}`, async () => {
-      const { data } = await axios.get('/api/gex-levels', {
+    // Share only transport. Every caller must apply the response under its
+    // own generation, including a newer caller awaiting the same request.
+    const response = await withInflight(`gex:${key}`, () =>
+      axios.get('/api/gex-levels', {
         params: { symbol: sym, timeframe: tf },
         signal: ctl.signal
       })
-      if (userSymbol.value !== sym) return
+    )
+    if (!isCurrent()) return
 
-      eodLevels.value = data || {}
-      cache.set(key, { t: Date.now(), data: eodLevels.value })
-      uaExp.value = 'ALL'
-      lastUpdated.value = new Date().toISOString()
-      if (preparing.value.symbol === sym && preparing.value.fastReady) {
-        preparing.value.active = false
-      }
+    // Axios resolves 202. It is a preparation response, not a snapshot, and
+    // must never become the five-minute cached Strikes payload.
+    if (response.status === 202) {
+      const pending = new Error(response.data?.error || 'Initial data is preparing')
+      pending.response = response
+      throw pending
+    }
+    const { data } = response
+    eodError.value = ''
+    eodLevels.value = data || {}
+    cache.set(key, { t: Date.now(), data: eodLevels.value })
+    uaExp.value = 'ALL'
+    lastUpdated.value = new Date().toISOString()
+    if (preparing.value.symbol === sym && preparing.value.fastReady) {
+      preparing.value.active = false
+    }
 
-      const startResponse = bootstrapStartResponses.get(sym) || null
-      const startState = startResponse
-        ? symbolPreparationState(startResponse.data, startResponse.status)
-        : null
-      if (startResponse) bootstrapStartResponses.delete(sym)
-      if (
-        startState?.mode === 'bootstrap'
-        && startState.shouldPoll
-        && preparing.value.symbol !== sym
-      ) {
-        await startPreparingPoll(sym, tf, (event) => {
-          if (event.kind === 'full') refreshPreparedGex(sym, tf, event)
-        }, startResponse)
-      }
+    const responseState = symbolPreparationState(data, response.status)
+    const startResponse = responseState.mode === 'bootstrap'
+      ? response
+      : bootstrapStartResponses.get(sym) || null
+    const startState = startResponse
+      ? symbolPreparationState(startResponse.data, startResponse.status)
+      : null
+    if (startResponse) bootstrapStartResponses.delete(sym)
+    if (
+      startState?.mode === 'bootstrap'
+      && startState.shouldPoll
+      && preparing.value.symbol !== sym
+    ) {
+      await startPreparingPoll(sym, tf, (event) => {
+        refreshPreparedGex(sym, tf, event)
+      }, startResponse)
+    }
 
-      if (opts?.applyTf && gexTf.value !== tf) {
-        gexTf.value = tf
-      }
-    })
+    if (isCurrent() && opts?.applyTf && gexTf.value !== tf) {
+      gexTf.value = tf
+    }
   } catch (e) {
+    if (!isCurrent()) return
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
       const payload = e?.response?.data || {}
       const msg = payload?.error || e.message || ''
@@ -1198,7 +1225,7 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
       // If another timeframe has expirations, auto-switch to it
       if ((status === 404 || status === 202) && available.length) {
         const nextTf = available.includes('14d') ? '14d' : available[0]
-        if (nextTf && nextTf !== gexTf.value) {
+        if (nextTf && nextTf !== tf && nextTf !== gexTf.value) {
           return await fetchGexLevelsEOD(sym, nextTf, opts)
         }
       }
@@ -1206,14 +1233,13 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
       // If it looks like a first-time symbol, go into preparing mode
       if ((status === 404 || status === 202) && preparingLike) {
         eodError.value = ''
-        let startResponse = bootstrapStartResponses.get(sym) || null
-        if (!startResponse && responsePreparation.mode === 'bootstrap') {
-          startResponse = e.response
-        }
+        let startResponse = responsePreparation.mode === 'bootstrap'
+          ? e.response
+          : bootstrapStartResponses.get(sym) || null
         if (!startResponse) startResponse = await kickoffSymbolWarm(sym, tf)
         bootstrapStartResponses.delete(sym)
 
-        if (userSymbol.value !== sym) return
+        if (!isCurrent()) return
 
         // only start the poller if it's not already running
         if (!preparing.value.timer && !preparingPollController) {
@@ -1229,7 +1255,7 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
       }
     }
   } finally {
-    if (ctl === controllers.gex_eod) eodLoading.value = false
+    if (isCurrent() && ctl === controllers.gex_eod) eodLoading.value = false
   }
 }
 
@@ -1487,14 +1513,19 @@ let preparingLegacySafetyTimer = null
 const bootstrapStartResponses = new Map()
 
 function refreshPreparedGex(sym, timeframe, event) {
-  if (event?.kind === 'full') {
-    cache.delete(`gex|${sym}|${timeframe}`)
-  }
-
   // Give the successful publication transaction a short moment to become
   // visible through every database/cache connection before reading it.
   setTimeout(() => {
-    if (userSymbol.value === sym) fetchGexLevelsEOD(sym, timeframe)
+    // Both fast and full publication can replace an empty or partial view.
+    // Invalidate every local timeframe for this symbol, not unrelated data.
+    if (event?.kind === 'fast' || event?.kind === 'full') {
+      for (const key of cache.keys()) {
+        if (key.startsWith(`gex|${sym}|`)) cache.delete(key)
+      }
+    }
+    if (userSymbol.value === sym && dataMode.value === 'eod') {
+      fetchGexLevelsEOD(sym, gexTf.value)
+    }
   }, 750)
 }
 
