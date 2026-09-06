@@ -1,0 +1,22 @@
+{
+  "date": "2026-09-06",
+  "scope": "Full local regression after production-discovered JSON roundtrip and uncovered-symbol warm-cache fixes",
+  "tests": 1138,
+  "passed": 1129,
+  "skipped": 9,
+  "assertions": 12708,
+  "errors": 0,
+  "failures": 0,
+  "elapsed_seconds": 144.672,
+  "peak_memory_mib": 194,
+  "environment": "PHP 8.3.14, guarded local MySQL test DB, two disposable loopback-only Redis 7 instances; process-only 512M memory limit",
+  "skips": {
+    "disabled_email_verification": 3,
+    "pcntl_unavailable_windows": 2,
+    "registration_opposite_branch": 1,
+    "disabled_two_factor": 3
+  },
+  "formatting": "10 changed PHP files passed Pint",
+  "frontend": "No frontend changes in these fixes; earlier 105 JS tests and production build passed",
+  "production_gate": "Manifest reads remain disabled until fixed releases and post-storage integrity / endpoint parity checks pass"
+}

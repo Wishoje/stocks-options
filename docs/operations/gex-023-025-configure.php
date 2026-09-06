@@ -3,7 +3,8 @@
 declare(strict_types=1);
 
 // Run from the site's current release. This helper never deploys, drains jobs,
-// rebuilds manifests, clears caches, or prints environment values.
+// rebuilds manifests, clears caches, or prints environment values. The six
+// readiness symbols are a rollout smoke check, not proof of global coverage.
 final class Gex023025ConfigurationFailure extends RuntimeException {}
 
 final class Gex023025Configuration

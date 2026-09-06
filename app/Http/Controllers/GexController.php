@@ -104,6 +104,7 @@ class GexController extends Controller
         $manifest = null;
         $manifestSelection = null;
         $manifestCacheKey = null;
+        $compatibility = null;
         $health = EodSnapshotHealth::readsEnabled() && ! $this->skipSnapshotHealth
             ? app(EodSnapshotHealth::class) : null;
         $snapshotCache = app(GexSnapshotCache::class);
@@ -140,6 +141,31 @@ class GexController extends Controller
                 }
             }
             if ($manifest === null) {
+                $compatibility = $snapshotCache->compatibilityContext($symbol, $timeframe, $policy);
+                $warm = $compatibility !== null && ! $forceRefresh
+                    ? $snapshotCache->get($compatibility['key']) : null;
+                if ($warm !== null) {
+                    $after = $snapshotCache->compatibilityContext($symbol, $timeframe, $health->policy());
+                    if ($after === $compatibility) {
+                        $this->logPerf($symbol, $timeframe, $startedAt, [
+                            'status_code' => 200, 'result' => 'compatibility_cache_hit',
+                            'cache_hit' => true, 'force_refresh' => false,
+                            'expiration_count' => count($warm['expiration_dates'] ?? []),
+                            'strike_count' => count($warm['strike_data'] ?? []),
+                            'data_date' => $warm['data_date'] ?? null,
+                            'cache_version' => $compatibility['cache_version'],
+                        ]);
+                        if ($bootstrapPayload !== null) {
+                            $warm['run'] = $runPayload;
+                            $warm['bootstrap'] = $bootstrapPayload;
+                        }
+
+                        return response()->json($warm, 200);
+                    }
+                    // An eligibility/policy change cannot authorize a new
+                    // cache generation during this same racing request.
+                    $compatibility = null;
+                }
                 $health->requestRebuild($symbol, $policy);
             }
         }
@@ -215,7 +241,8 @@ class GexController extends Controller
         $cacheKey = $manifestCacheKey ?? "gex:levels:v4:{$symbol}:{$timeframe}:{$version}";
         // The manifest warm path already performed its one cache retrieval.
         // Legacy v4 entries carry no anchor, ratio or calendar identity. An
-        // enabled fallback must recompute rather than reuse an unproven entry.
+        // enabled fallback may use only the separately fenced compatibility
+        // envelope above, never one of these unproven v4 entries.
         $publishedPayload = $manifest === null && ! EodSnapshotHealth::readsEnabled()
             ? Cache::get($cacheKey) : null;
         $cacheHit = ! $forceRefresh && is_array($publishedPayload);
@@ -242,6 +269,14 @@ class GexController extends Controller
             }
             if ($payload) {
                 $snapshotCache->putIfMissing($cacheKey, $payload);
+            }
+        } elseif ($payload && $compatibility !== null) {
+            // A complete before/after identity includes raw state, publication
+            // version, selector policy, and both calendars. No certificate or
+            // old v4 generation is created from this legacy calculation.
+            $after = $snapshotCache->compatibilityContext($symbol, $timeframe, $health->policy());
+            if ($after === $compatibility) {
+                $snapshotCache->putCompatibilityIfMissing($compatibility['key'], $payload);
             }
         } elseif ($payload && $publishedPayload === null && ! EodSnapshotHealth::readsEnabled()) {
             // Rollback retains the legacy cache generation. An enabled but

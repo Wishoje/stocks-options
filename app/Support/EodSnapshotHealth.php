@@ -338,11 +338,17 @@ final class EodSnapshotHealth
                 'cache_version' => $cacheVersion,
                 'policy_hash' => EodSnapshotManifestBuilder::policyHash($policy),
                 'anchor_date' => $policy['anchor_date'],
-                'policy' => EodSnapshotManifestBuilder::canonicalJson($policy),
-                'facts' => $json,
+                'policy' => EodSnapshotManifestBuilder::encodeStorage($policy),
+                'facts' => EodSnapshotManifestBuilder::encodeStorage($facts),
                 'facts_sha256' => hash('sha256', $json),
                 'built_at' => $this->now(),
             ]);
+            // A successful rebuild must be readable after database storage,
+            // not merely valid in the worker's pre-insert PHP memory.
+            $stored = $query->first();
+            if ($stored === null || $this->validatedFacts($stored, $head, $policy) === null) {
+                throw new RuntimeException('EOD manifest failed its persisted integrity check.');
+            }
 
             return $facts;
         }, 3);
@@ -415,8 +421,8 @@ final class EodSnapshotHealth
     private function validatedFacts(object $row, array $head, array $policy): ?array
     {
         try {
-            $facts = json_decode((string) $row->facts, true, 64, JSON_THROW_ON_ERROR);
-            $savedPolicy = json_decode((string) $row->policy, true, 16, JSON_THROW_ON_ERROR);
+            $facts = EodSnapshotManifestBuilder::decodeStorage((string) $row->facts);
+            $savedPolicy = EodSnapshotManifestBuilder::decodeStorage((string) $row->policy);
             if (! is_array($facts) || ! is_array($savedPolicy)
                 || ! hash_equals((string) $row->facts_sha256, hash('sha256', EodSnapshotManifestBuilder::canonicalJson($facts)))
                 || EodSnapshotManifestBuilder::policyHash($savedPolicy) !== EodSnapshotManifestBuilder::policyHash($policy)

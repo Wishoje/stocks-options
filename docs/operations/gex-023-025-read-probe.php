@@ -8,11 +8,21 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 Illuminate\Support\Facades\Http::preventStrayRequests();
 Illuminate\Support\Facades\DB::statement('SET SESSION MAX_EXECUTION_TIME=5000');
 
+// Diagnostic override is process-local; it never edits the site's configuration.
+$readOverride = getenv('GEX_PROBE_SNAPSHOT_READS');
+if ($readOverride !== false) {
+    if (! in_array($readOverride, ['0', '1'], true)) {
+        throw new InvalidArgumentException('GEX_PROBE_SNAPSHOT_READS must be 0 or 1.');
+    }
+    config(['eod_snapshot_health.read_enabled' => $readOverride === '1']);
+}
+
 $clock = getenv('GEX_PROBE_CLOCK') ?: gmdate('c');
 Carbon\Carbon::setTestNow(Carbon\Carbon::parse($clock));
 Carbon\CarbonImmutable::setTestNow(Carbon\CarbonImmutable::parse($clock));
 $out = ['revision' => trim(shell_exec('git rev-parse HEAD')), 'clock' => $clock,
     'expiration_universe_enabled' => config('gex_performance.expiration_universe_enabled', false),
+    'snapshot_read_enabled' => config('eod_snapshot_health.read_enabled', false),
     'rows' => []];
 $queryCount = $catalogQueries = $chainQueries = 0;
 $queryMs = 0.0;

@@ -154,6 +154,41 @@ final class EodSnapshotManifestBuilder
         return json_encode(self::canonical($value), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
     }
 
+    /**
+     * MySQL's native JSON number parser can change a PHP double's final bit.
+     * Keep the canonical document as a JSON string so its exact bytes survive
+     * binary-JSON persistence. This does not round or change any business value.
+     */
+    public static function encodeStorage(array $value): string
+    {
+        return self::canonicalJson([
+            'encoding' => 'canonical-json-v1',
+            'payload' => self::canonicalJson($value),
+        ]);
+    }
+
+    /** Read valid legacy objects or an exact, versioned canonical document. */
+    public static function decodeStorage(string $json): array
+    {
+        $stored = json_decode($json, true, 64, JSON_THROW_ON_ERROR);
+        if (! is_array($stored)) {
+            throw new InvalidArgumentException('EOD manifest storage must contain an object.');
+        }
+        if (! array_key_exists('encoding', $stored)) {
+            return $stored;
+        }
+        if (count($stored) !== 2 || $stored['encoding'] !== 'canonical-json-v1'
+            || ! is_string($stored['payload'] ?? null)) {
+            throw new InvalidArgumentException('EOD manifest storage encoding is invalid.');
+        }
+        $decoded = json_decode($stored['payload'], true, 64, JSON_THROW_ON_ERROR);
+        if (! is_array($decoded) || self::canonicalJson($decoded) !== $stored['payload']) {
+            throw new InvalidArgumentException('EOD manifest storage payload is not canonical.');
+        }
+
+        return $decoded;
+    }
+
     private static function canonical(mixed $value): mixed
     {
         if (! is_array($value)) {

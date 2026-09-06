@@ -129,6 +129,104 @@ class EodSnapshotHealthTest extends MySqlTestCase
         $this->assertSame('v1', $after['cache_version']);
     }
 
+    public function test_mysql_manifest_roundtrip_preserves_fractional_side_ratios_bit_for_bit(): void
+    {
+        $id = $this->fractionalCertified();
+
+        foreach ([0.35, 0.5, 43 / 207] as $ratio) {
+            $policy = $this->policy($ratio);
+            $built = $this->health->rebuild('SPY', 1, 'v1', $policy);
+            $this->assertSame(0.20772946859903382, $built['expirations'][$id]['selected_side_ratio']);
+            $read = $this->health->read('SPY', $policy);
+            $this->assertNotNull($read, 'MySQL must not alter the checksum or any selector-summary float.');
+            $this->assertSame($built['expirations'][$id]['latest_any_side_ratio'], $read['expirations'][$id]['latest_any_side_ratio']);
+            $this->assertSame($built['expirations'][$id]['selected_side_ratio'], $read['expirations'][$id]['selected_side_ratio']);
+            $this->assertSame(EodSnapshotManifestBuilder::canonicalJson($built),
+                EodSnapshotManifestBuilder::canonicalJson(array_intersect_key($read, $built)));
+        }
+    }
+
+    public function test_mysql_altered_legacy_manifest_remains_rejected_until_normal_fenced_repair(): void
+    {
+        $id = $this->fractionalCertified();
+        $facts = $this->health->rebuild('SPY', 1, 'v1', $this->policy());
+        $before = $this->health->read('SPY', $this->policy());
+        $head = $this->health->head('SPY');
+        // Replay the exact altered leaves observed after MySQL parsed the
+        // previous writer format. Keep the original hash. This remains a
+        // corruption test even if a future MySQL release fixes its parser.
+        $altered = $facts;
+        $altered['expirations'][$id]['latest_any_side_ratio'] = 0.20772946859903385;
+        $altered['expirations'][$id]['selected_side_ratio'] = 0.20772946859903385;
+        DB::table('eod_snapshot_manifests')->update([
+            'facts' => EodSnapshotManifestBuilder::canonicalJson($altered),
+            'policy' => EodSnapshotManifestBuilder::canonicalJson($this->policy()),
+        ]);
+        $stored = json_decode(DB::table('eod_snapshot_manifests')->value('facts'), true, 64, JSON_THROW_ON_ERROR);
+        $this->assertNotSame($facts['expirations'][$id]['selected_side_ratio'], $stored['expirations'][$id]['selected_side_ratio']);
+        $this->assertNull($this->health->read('SPY', $this->policy()));
+        $run = $this->health->requestRebuild('SPY', $this->policy());
+        $this->assertNotNull($run);
+        $job = Bus::dispatched(RebuildEodSnapshotManifestJob::class)->first();
+        $job->handle($this->health, app(WorkRunCoordinator::class));
+        $after = $this->health->read('SPY', $this->policy());
+        $this->assertNotNull($after);
+        $this->assertSame('completed', $run->fresh()->status);
+        $this->assertNotSame($before['manifest_id'], $after['manifest_id']);
+        $this->assertSame($head, $this->health->head('SPY'));
+        $this->assertSame($facts['expirations'][$id]['selected_side_ratio'], $after['expirations'][$id]['selected_side_ratio']);
+        $this->health->rebuild('SPY', 1, 'v1', $this->policy());
+        $this->assertSame($after['manifest_id'], $this->health->read('SPY', $this->policy())['manifest_id']);
+    }
+
+    public function test_valid_legacy_native_json_manifest_remains_readable_and_immutable(): void
+    {
+        $this->certified();
+        $facts = $this->health->rebuild('SPY', 1, 'v1', $this->policy());
+        $before = $this->health->read('SPY', $this->policy());
+        DB::table('eod_snapshot_manifests')->update([
+            'facts' => EodSnapshotManifestBuilder::canonicalJson($facts),
+            'policy' => EodSnapshotManifestBuilder::canonicalJson($this->policy()),
+        ]);
+        $this->assertSame(EodSnapshotManifestBuilder::canonicalJson($before),
+            EodSnapshotManifestBuilder::canonicalJson($this->health->read('SPY', $this->policy())));
+        $this->health->rebuild('SPY', 1, 'v1', $this->policy());
+        $stored = json_decode(DB::table('eod_snapshot_manifests')->value('facts'), true, 64, JSON_THROW_ON_ERROR);
+        $this->assertArrayNotHasKey('encoding', $stored);
+        $this->assertSame($before['manifest_id'], $this->health->read('SPY', $this->policy())['manifest_id']);
+    }
+
+    public function test_tampering_with_an_enveloped_float_still_fails_the_original_checksum(): void
+    {
+        $id = $this->fractionalCertified();
+        $facts = $this->health->rebuild('SPY', 1, 'v1', $this->policy());
+        $facts['expirations'][$id]['selected_side_ratio'] = 0.20772946859903385;
+        DB::table('eod_snapshot_manifests')->update(['facts' => EodSnapshotManifestBuilder::encodeStorage($facts)]);
+        $this->assertNull($this->health->read('SPY', $this->policy()));
+    }
+
+    public function test_failed_post_insert_integrity_check_rolls_back_materialization(): void
+    {
+        $this->certified();
+        $head = $this->health->head('SPY');
+        $changed = false;
+        DB::listen(static function ($query) use (&$changed): void {
+            if (! $changed && str_starts_with(strtolower($query->sql), 'insert into '.chr(96).'eod_snapshot_manifests'.chr(96))) {
+                $changed = true;
+                DB::table('eod_snapshot_manifests')->update(['facts_sha256' => str_repeat('0', 64)]);
+            }
+        });
+        try {
+            $this->health->rebuild('SPY', 1, 'v1', $this->policy());
+            $this->fail('Unreadable stored facts must not complete a rebuild.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('EOD manifest failed its persisted integrity check.', $exception->getMessage());
+        }
+        $this->assertTrue($changed);
+        $this->assertSame(0, DB::table('eod_snapshot_manifests')->count());
+        $this->assertSame($head, $this->health->head('SPY'));
+    }
+
     public function test_fresh_service_reads_with_exactly_two_metadata_queries_and_no_schema_or_history_discovery(): void
     {
         $this->certified();
@@ -233,6 +331,23 @@ class EodSnapshotHealthTest extends MySqlTestCase
         $this->fixture();
         $this->health->complete($token);
         $this->assertTrue($this->health->certify('SPY', 'v1', 100));
+    }
+
+    private function fractionalCertified(): int
+    {
+        $token = $this->health->begin('SPY', 'fractional-ratio-fixture');
+        $id = $this->expiration();
+        $rows = [];
+        foreach (['call' => 43, 'put' => 207] as $side => $count) {
+            for ($strike = 1; $strike <= $count; $strike++) {
+                $rows[] = $this->chainRow($id, '2026-09-04', $side, $strike);
+            }
+        }
+        DB::table('option_chain_data')->insert($rows);
+        $this->health->complete($token);
+        $this->assertTrue($this->health->certify('SPY', 'v1', 100));
+
+        return $id;
     }
 
     private function fixture(): void

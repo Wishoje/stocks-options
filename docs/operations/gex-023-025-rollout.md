@@ -29,6 +29,8 @@ Do not remove duplicates in this release. Observe at least one full release and 
 
 ## Phase 2: expiration queries
 
+The guarded helper creates a protected environment backup and changes only the named flags. From each current release, run `php8.3 docs/operations/gex-023-025-configure.php universe-on`, then rebuild configuration. `universe-off` is the corresponding rollback mode.
+
 Set on both web and worker:
 
 ```dotenv
@@ -50,6 +52,8 @@ EOD_SNAPSHOT_HEALTH_READ_ENABLED=false
 ```
 
 For initial activation, drain this site's in-flight raw-data jobs before enabling tracking. Do not mix untracked old workers with tracked writers. Pause only the relevant site workers, let current jobs finish, confirm no old raw-writer CLI process remains, update both config caches, then start the site's workers. The website can remain available. Do not delete queued jobs.
+
+After verifying that drain, run `php8.3 docs/operations/gex-023-025-configure.php tracking-on --writers-drained` from each current release. The argument is an operator attestation, not an automatic process check. Rebuild both configuration caches before restarting the stopped workers.
 
 Wait for tracked successful EOD publication. Existing raw rows are not automatically certified by deployment. Keep request reads on the legacy path until the intended symbols have clean, verified manifests.
 
@@ -77,6 +81,10 @@ After old/new selector and payload checks pass for the intended symbols, set glo
 EOD_SNAPSHOT_HEALTH_READ_ENABLED=true
 ```
 
+Use `php8.3 docs/operations/gex-023-025-configure.php reads-on` on each release after readiness checks. Its six-symbol gate is a smoke check, not proof that every symbol has a manifest. Before global activation, also test uncovered symbols such as MSFT and NVDA: correct repeated requests must use the separately fenced compatibility cache rather than repeatedly rebuilding from raw rows. This short-lived response cache does not certify historical data. Dirty or present-but-uncertified mutations remain ineligible for it.
+
+The production deployment check found that native MySQL JSON numbers could change the final bit of a stored ratio. Deploy the lossless canonical-JSON envelope fix before activating reads. Existing invalid manifests are repaired through the normal command above; no new provider fetch or raw-data rewrite is required. A rebuild must pass its persisted integrity check before completing.
+
 Rebuild config caches and restart the site's workers. On the web release, warm the web-policy payloads:
 
 ```bash
@@ -101,6 +109,8 @@ For repeatable server measurements, use `docs/operations/gex-023-025-read-probe.
 ## Rollback and completion
 
 Rollback reads with `EOD_SNAPSHOT_HEALTH_READ_ENABLED=false`; leave tracking enabled. Roll back expiration resolution separately with `GEX_EXPIRATION_UNIVERSE_ENABLED=false`. Rebuild config caches and restart the relevant workers. Keep additive tables and indexes. Do not run destructive migration rollback or clear shared Redis.
+
+The guarded rollback commands are `php8.3 docs/operations/gex-023-025-configure.php reads-off` and `php8.3 docs/operations/gex-023-025-configure.php universe-off`. They do not require a working database and preserve unrelated environment values.
 
 If tracking must be disabled, record that interval as an unobserved-write gap. Do not re-enable reads against old heads without a reviewed fresh-publication check. Crashed active mutation receipts require proving the old writer is gone and validating the affected data; `--repair` intentionally cannot clear them.
 

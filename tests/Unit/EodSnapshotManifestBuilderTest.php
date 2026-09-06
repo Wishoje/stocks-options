@@ -130,6 +130,51 @@ class EodSnapshotManifestBuilderTest extends TestCase
         EodSnapshotManifestBuilder::policy('2026-02-30', 0.35);
     }
 
+    public function test_storage_envelope_preserves_exact_adjacent_floats_integer_types_and_canonical_bytes(): void
+    {
+        $facts = [
+            'ratio' => 43 / 207, 'adjacent_ratio' => 0.20772946859903385,
+            'integer' => 1, 'whole_float' => 1.0, 'zero_float' => 0.0,
+            'nested' => ['tiny' => PHP_FLOAT_MIN, 'large' => PHP_FLOAT_MAX],
+        ];
+        $encoded = EodSnapshotManifestBuilder::encodeStorage($facts);
+        $envelope = json_decode($encoded, true, 64, JSON_THROW_ON_ERROR);
+        $this->assertSame('canonical-json-v1', $envelope['encoding']);
+        $this->assertIsString($envelope['payload']);
+        $this->assertSame(EodSnapshotManifestBuilder::canonicalJson($facts), $envelope['payload']);
+        $decoded = EodSnapshotManifestBuilder::decodeStorage($encoded);
+        $this->assertSame($facts['ratio'], $decoded['ratio']);
+        $this->assertNotSame($decoded['ratio'], $decoded['adjacent_ratio']);
+        $this->assertSame(EodSnapshotManifestBuilder::canonicalJson($facts),
+            EodSnapshotManifestBuilder::canonicalJson($decoded));
+        $this->assertSame(EodSnapshotManifestBuilder::policyHash($this->storagePolicy()),
+            EodSnapshotManifestBuilder::policyHash(EodSnapshotManifestBuilder::decodeStorage(
+                EodSnapshotManifestBuilder::encodeStorage($this->storagePolicy()))));
+    }
+
+    public function test_storage_decoder_retains_legacy_objects_and_rejects_unknown_or_malformed_envelopes(): void
+    {
+        $this->assertSame(['value' => 0.5], EodSnapshotManifestBuilder::decodeStorage('{"value":0.5}'));
+        foreach ([
+            ['encoding' => 'future-v2', 'payload' => '{}'],
+            ['encoding' => 'canonical-json-v1', 'payload' => ['value' => 0.5]],
+            ['encoding' => 'canonical-json-v1', 'payload' => '{ "value": 0.5 }'],
+            ['encoding' => 'canonical-json-v1', 'payload' => '{"value":0.5}', 'extra' => true],
+        ] as $envelope) {
+            try {
+                EodSnapshotManifestBuilder::decodeStorage(json_encode($envelope, JSON_THROW_ON_ERROR));
+                $this->fail('Malformed storage envelope must not become readable facts.');
+            } catch (InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    private function storagePolicy(): array
+    {
+        return EodSnapshotManifestBuilder::policy('2026-09-04', 43 / 207);
+    }
+
     public function test_valid_checksum_does_not_make_a_structurally_incomplete_manifest_safe(): void
     {
         $policy = EodSnapshotManifestBuilder::policy('2026-09-04', 0.35);
