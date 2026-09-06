@@ -6,6 +6,8 @@ Each phase is deployed and checked on both production servers before the next ph
 
 The production checks below were performed on Sunday, September 6, 2026. They prove closed-session behavior, stored-data consistency and current request performance. They do not constitute a peak-market load test.
 
+All three phases are deployed and enabled on both servers. The activation helper has already set the required flags; no additional environment edits are needed for this rollout.
+
 ## GEX-020: source timestamps and ingestion freshness
 
 Commit: `b463d01`. Deployed and active on both servers.
@@ -64,6 +66,8 @@ If a shared cooldown write fails, the issuing process retains the deadline and l
 
 ## GEX-022: coalesced quote refreshes
 
+Commit: `b5d4a96`. Deployed and active on both servers.
+
 The additive `quote_refresh_states` table records successful quote collection separately from the published quote's source time. The scheduler creates stable per-symbol, session and phase WorkRuns before enqueueing. Repeated ticks reuse active intent. A new five-minute request-start bucket makes a completed symbol due again; a two-second response time cannot accidentally stretch the cadence to ten minutes.
 
 Each queue message contains at most four due symbols. The provider receives a bounded nonempty `tickers` filter. This uses the documented [Massive batch snapshot endpoint](https://massive.com/docs/rest/stocks/snapshots/full-market-snapshot), whose snapshot fields correspond to the [single-ticker endpoint](https://massive.com/docs/rest/stocks/snapshots/single-ticker-snapshot). Empty input makes no request; the implementation never falls through to an unfiltered whole-market fetch.
@@ -93,7 +97,23 @@ Window ends are excluded. A normal final window is 16:15-16:30 ET; an early-clos
 - Calendar tests include early closes, holidays, final-window boundaries, request-start buckets and old serialized payload compatibility.
 - The broader regression run passed 650 tests; seven optional Redis checks were then run successfully against explicitly marked disposable instances. Combined: 657 passing PHP tests / 8,825 assertions, with no remaining skipped checks in that selected set.
 - All 105 frontend tests and the production asset build passed. PHP syntax and changed-file whitespace checks passed.
-- Post-deployment results are recorded after the final phase's live checks.
+- The deployed methods returned exactly matching nonempty quotes for SPY, QQQ, IWM and TSLA. Four single-symbol requests took 171.95 ms; one four-symbol request took 42.46 ms. This was one live comparison, not a sustained-load percentile.
+- Repeating the scheduler twice and executing a scheduled four-symbol job during the closed session created zero quote intents, receipt states or queued jobs. The combined checks took 23.10 ms on web and 33.12 ms on worker, with provider HTTP explicitly blocked.
+- Both servers reported all three flags enabled, an empty quote queue, zero pending/running quote intents, no cooldown and the unchanged 3+3 provider allocation.
+- All eight EOD 1M/3M payload fingerprints and four calculator chain fingerprints matched their pre-deployment values. All 196 underlying quote rows and the four-symbol canonical totals retained their baseline fingerprints.
+- All 26 workers were running. No new failed jobs or warning/error entries appeared in the inspected application and worker logs after 09:10 UTC. The web error log recorded zero upstream timeouts in that window.
+- The public health endpoint returned HTTP 200. Both the dashboard page wrapper and the 103,230-byte shared Strikes component matched their deployed checksums.
+
+### Post-deployment server-side reads
+
+| Symbol | EOD 1M | EOD 3M | Calculator |
+| --- | ---: | ---: | ---: |
+| SPY | 75.41 ms | 62.45 ms | 11.96 ms |
+| QQQ | 49.75 ms | 59.55 ms | 9.04 ms |
+| IWM | 34.66 ms | 35.34 ms | 7.26 ms |
+| TSLA | 25.87 ms | 29.76 ms | 7.21 ms |
+
+Every response returned HTTP 200 with populated data. These are in-process production controller/service checks using available caches, not authenticated browser-to-server timings. The quote scheduling work does not claim a new EOD calculation speedup. Its purpose is to reduce duplicate provider work while preserving the existing fast read paths.
 
 ## Deployment and rollback
 
