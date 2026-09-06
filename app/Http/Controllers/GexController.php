@@ -332,9 +332,10 @@ class GexController extends Controller
         ?array $manifest = null
     ): ?array {
         $selector = app(EodSnapshotSelector::class);
-        $todayData = $manifest === null
-            ? $selector->selectedRows($expirationIds, ['option_chain_data.*'], $anchorDate)
-            : $selector->selectedRows($expirationIds, ['option_chain_data.*'], $anchorDate, null, $manifest);
+        // Preserve the legacy raw query on cold builds. A literal manifest-date
+        // join can change MySQL's row traversal and floating-point GEX sums.
+        // Manifests still bypass all market-table SQL on valid warm reads.
+        $todayData = $selector->selectedRows($expirationIds, ['option_chain_data.*'], $anchorDate);
 
         if ($todayData->isEmpty()) {
             return null;

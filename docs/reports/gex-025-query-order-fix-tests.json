@@ -1,0 +1,405 @@
+{
+  "date": "2026-09-06",
+  "scope": "Full local regression after preserving legacy cold-query order and moving manifest response cache to v6",
+  "tests": 1145,
+  "passed": 1136,
+  "skipped": 9,
+  "assertions": 12784,
+  "errors": 0,
+  "failures": 0,
+  "elapsed_seconds": 144.704,
+  "peak_memory_mib": 192,
+  "environment": "PHP 8.3.14, guarded local MySQL test DB, two disposable loopback-only Redis 7 instances; process-only 512M memory limit",
+  "red_first": "Six new SQL-order cases failed before controller fix, passed in final full suite.",
+  "initial_test_setup_failure": "Five Redis transport tests refused a newly recreated disposable instance lacking its required safety marker; marking that owned loopback instance resolved setup. No product code or test assertion was weakened.",
+  "skips": "3 disabled email verification, 3 disabled two-factor, 1 registration opposite branch, 2 Windows pcntl unavailable",
+  "formatting": "All five changed PHP files passed Pint",
+  "frontend": "No frontend changes; earlier 105 JS tests and production build passed",
+  "local_paired_benchmark": {
+    "scope": "local_synthetic_mysql_same_fixture",
+    "symbol": "AAPL",
+    "expiration_count": 1,
+    "strike_count": 25,
+    "history_days": 4,
+    "raw_rows": 200,
+    "selected_rows": 50,
+    "manifest_build_ms": 5.062,
+    "payload_sha256": "c5a35181f29ca314007753bd7a13843810b3bcf14db5cfcf4904a983f08ac236",
+    "cpu_clock": "process_user_plus_system",
+    "sql_logging": "enabled_equally_for_all_phases",
+    "phases": {
+      "legacy": {
+        "cold": {
+          "sample_count": 3,
+          "elapsed_p50_ms": 15.493,
+          "elapsed_p95_ms": 18.241,
+          "cpu_mean_ms": 15.625,
+          "memory_peak_delta_max_bytes": 318496,
+          "samples": [
+            {
+              "elapsed_ms": 18.241,
+              "cpu_ms": 15.625,
+              "memory_peak_bytes": 118761384,
+              "memory_peak_delta_bytes": 318216,
+              "sql": 15,
+              "market_sql": 14
+            },
+            {
+              "elapsed_ms": 15.213,
+              "cpu_ms": 15.625,
+              "memory_peak_bytes": 118851152,
+              "memory_peak_delta_bytes": 318496,
+              "sql": 15,
+              "market_sql": 14
+            },
+            {
+              "elapsed_ms": 15.493,
+              "cpu_ms": 15.625,
+              "memory_peak_bytes": 118908856,
+              "memory_peak_delta_bytes": 317216,
+              "sql": 15,
+              "market_sql": 14
+            }
+          ]
+        },
+        "warm": {
+          "sample_count": 10,
+          "elapsed_p50_ms": 5.027,
+          "elapsed_p95_ms": 11.226,
+          "cpu_mean_ms": 1.563,
+          "memory_peak_delta_max_bytes": 70632,
+          "samples": [
+            {
+              "elapsed_ms": 5.36,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118684664,
+              "memory_peak_delta_bytes": 70632,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 5.504,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118695056,
+              "memory_peak_delta_bytes": 69504,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 5.027,
+              "cpu_ms": 15.625,
+              "memory_peak_bytes": 118699296,
+              "memory_peak_delta_bytes": 67624,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 5.158,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118699672,
+              "memory_peak_delta_bytes": 67624,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 5.129,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118700048,
+              "memory_peak_delta_bytes": 67624,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 4.841,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118700424,
+              "memory_peak_delta_bytes": 67624,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 4.883,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118700800,
+              "memory_peak_delta_bytes": 67624,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 11.226,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118701176,
+              "memory_peak_delta_bytes": 67624,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 4.616,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118701552,
+              "memory_peak_delta_bytes": 67624,
+              "sql": 10,
+              "market_sql": 9
+            },
+            {
+              "elapsed_ms": 4.92,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118702088,
+              "memory_peak_delta_bytes": 67624,
+              "sql": 10,
+              "market_sql": 9
+            }
+          ]
+        }
+      },
+      "gex024": {
+        "cold": {
+          "sample_count": 3,
+          "elapsed_p50_ms": 10.131,
+          "elapsed_p95_ms": 10.199,
+          "cpu_mean_ms": 10.417,
+          "memory_peak_delta_max_bytes": 304432,
+          "samples": [
+            {
+              "elapsed_ms": 10.199,
+              "cpu_ms": 15.625,
+              "memory_peak_bytes": 118940776,
+              "memory_peak_delta_bytes": 304432,
+              "sql": 9,
+              "market_sql": 8
+            },
+            {
+              "elapsed_ms": 10.131,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118941368,
+              "memory_peak_delta_bytes": 304432,
+              "sql": 9,
+              "market_sql": 8
+            },
+            {
+              "elapsed_ms": 10.019,
+              "cpu_ms": 15.625,
+              "memory_peak_bytes": 118941744,
+              "memory_peak_delta_bytes": 304432,
+              "sql": 9,
+              "market_sql": 8
+            }
+          ]
+        },
+        "warm": {
+          "sample_count": 10,
+          "elapsed_p50_ms": 2.921,
+          "elapsed_p95_ms": 7.273,
+          "cpu_mean_ms": 0,
+          "memory_peak_delta_max_bytes": 61072,
+          "samples": [
+            {
+              "elapsed_ms": 2.617,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118698760,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 7.273,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118699352,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 2.965,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118699728,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 2.559,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118700104,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 3.007,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118700480,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 2.89,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118700856,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 2.974,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118701232,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 2.574,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118701608,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 3.075,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118701984,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            },
+            {
+              "elapsed_ms": 2.921,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118702520,
+              "memory_peak_delta_bytes": 61072,
+              "sql": 4,
+              "market_sql": 3
+            }
+          ]
+        }
+      },
+      "gex025": {
+        "cold": {
+          "sample_count": 3,
+          "elapsed_p50_ms": 11.155,
+          "elapsed_p95_ms": 11.228,
+          "cpu_mean_ms": 5.208,
+          "memory_peak_delta_max_bytes": 310368,
+          "samples": [
+            {
+              "elapsed_ms": 11.228,
+              "cpu_ms": 15.625,
+              "memory_peak_bytes": 118953320,
+              "memory_peak_delta_bytes": 310368,
+              "sql": 9,
+              "market_sql": 5
+            },
+            {
+              "elapsed_ms": 11.155,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118977152,
+              "memory_peak_delta_bytes": 310368,
+              "sql": 9,
+              "market_sql": 5
+            },
+            {
+              "elapsed_ms": 10.833,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118977528,
+              "memory_peak_delta_bytes": 310368,
+              "sql": 9,
+              "market_sql": 5
+            }
+          ]
+        },
+        "warm": {
+          "sample_count": 10,
+          "elapsed_p50_ms": 2.351,
+          "elapsed_p95_ms": 2.658,
+          "cpu_mean_ms": 1.563,
+          "memory_peak_delta_max_bytes": 65008,
+          "samples": [
+            {
+              "elapsed_ms": 2.289,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118732544,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.35,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118733136,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.482,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118733512,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.46,
+              "cpu_ms": 15.625,
+              "memory_peak_bytes": 118733888,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.285,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118734264,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.658,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118734640,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.396,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118735016,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.396,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118735392,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.351,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118735768,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            },
+            {
+              "elapsed_ms": 2.299,
+              "cpu_ms": 0,
+              "memory_peak_bytes": 118736304,
+              "memory_peak_delta_bytes": 65008,
+              "sql": 3,
+              "market_sql": 0
+            }
+          ]
+        }
+      }
+    }
+  }
+}

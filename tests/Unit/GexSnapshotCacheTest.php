@@ -45,6 +45,22 @@ class GexSnapshotCacheTest extends TestCase
         $this->assertSame('keep', Cache::get('unrelated'));
     }
 
+    public function test_v6_does_not_reuse_or_remove_v5_payloads_with_the_same_manifest_identity(): void
+    {
+        $cache = new GexSnapshotCache;
+        $key = $cache->key('SPY', '30d', $this->manifest());
+        $this->assertStringStartsWith('gex:levels:v6:', $key);
+        $oldKey = str_replace('gex:levels:v6:', 'gex:levels:v5:', $key);
+        $oldPayload = ['symbol' => 'SPY', 'strike_data' => [['strike' => 100.25, 'net_gex' => 10000000000.00003]]];
+        $freshPayload = ['symbol' => 'SPY', 'strike_data' => [['strike' => 100.25, 'net_gex' => 10000000000.0]]];
+        $cache->putIfMissing($oldKey, $oldPayload);
+
+        $this->assertNull($cache->get($key), 'An existing v5 envelope must not count as a v6 warm response.');
+        $cache->putIfMissing($key, $freshPayload);
+        $this->assertSame($freshPayload, $cache->get($key));
+        $this->assertSame($oldPayload, $cache->get($oldKey), 'Old payloads expire naturally without a shared cache clear.');
+    }
+
     public function test_calendar_policy_and_generation_changes_have_distinct_keys(): void
     {
         $cache = new GexSnapshotCache;

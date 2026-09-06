@@ -79,7 +79,9 @@ final class GexSnapshotCache
             'app_day' => $clock->copy()->setTimezone(date_default_timezone_get())->toDateString(),
         ];
 
-        return 'gex:levels:v5:'.hash('sha256', EodSnapshotManifestBuilder::canonicalJson($identity));
+        // v6 cold payloads retain legacy SQL traversal for exact floating-point
+        // accumulation parity. Never reuse diagnostic v5 reordered payloads.
+        return 'gex:levels:v6:'.hash('sha256', EodSnapshotManifestBuilder::canonicalJson($identity));
     }
 
     /** One cache retrieval; malformed payloads are misses, never HTTP 200 data. */

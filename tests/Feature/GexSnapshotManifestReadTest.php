@@ -89,6 +89,51 @@ class GexSnapshotManifestReadTest extends MySqlTestCase
         $this->assertNotEmpty($this->marketQueries($rollbackQueries), 'Flag-off retains the legacy v4 discovery path.');
     }
 
+    public static function coldOrderTimeframes(): array
+    {
+        return array_map(static fn (string $timeframe): array => [$timeframe],
+            ['0d', '1d', '7d', '14d', '30d', '90d']);
+    }
+
+    #[DataProvider('coldOrderTimeframes')]
+    public function test_manifest_cold_build_preserves_the_legacy_selected_row_query_and_exact_payload_order(string $timeframe): void
+    {
+        $manifest = $this->seedManifest();
+        config()->set('eod_snapshot_health.enabled', false);
+        [$legacy, $legacyQueries] = $this->queries(fn () => $this->response($timeframe, true));
+        $this->assertSame(200, $legacy->getStatusCode(), $legacy->getContent());
+
+        // Capture SQL and bindings, not timings. Replacing the legacy grouped
+        // selection with a literal UNION can change MySQL's raw row order and
+        // therefore floating-point sums even when the selected row set matches.
+        $selectedQueries = static fn (array $queries): array => array_values(array_map(
+            static fn (array $query): array => ['query' => $query['query'], 'bindings' => $query['bindings']],
+            array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'option_chain_data')
+                && str_contains($query['query'], 'inner join ('))
+        ));
+        $legacySelection = $selectedQueries($legacyQueries);
+        $this->assertCount(1, $legacySelection);
+
+        $selector = \Mockery::mock(EodSnapshotSelector::class)->makePartial();
+        $selector->shouldReceive('selectedRows')
+            ->with(\Mockery::type('array'), ['option_chain_data.*'], '2026-09-04')
+            ->once()->passthru();
+        $this->app->instance(EodSnapshotSelector::class, $selector);
+        config()->set('eod_snapshot_health.enabled', true);
+
+        [$cold, $coldQueries] = $this->queries(fn () => $this->response($timeframe));
+        $this->assertSame(200, $cold->getStatusCode(), $cold->getContent());
+        $this->assertSame($legacySelection, $selectedQueries($coldQueries),
+            'Cold manifest builds must retain the exact legacy row-selection SQL and bindings.');
+        $this->assertSame($legacy->getContent(), $cold->getContent(), 'No numeric tolerance or response reordering is allowed.');
+        $key = app(GexSnapshotCache::class)->key('SPY', $timeframe, $manifest);
+        $this->assertNotNull(app(GexSnapshotCache::class)->get($key));
+
+        [$warm, $warmQueries] = $this->queries(fn () => $this->response($timeframe));
+        $this->assertSame($cold->getContent(), $warm->getContent());
+        $this->assertSame([], $this->marketQueries($warmQueries), 'Warm hits must retain zero market-table SQL.');
+    }
+
     public function test_dirty_warm_keeps_last_good_but_dirty_cold_reads_new_catalog_and_never_seeds_old_generation(): void
     {
         $manifest = $this->seedManifest('complete', ['2026-09-04', '2026-09-11']);
