@@ -105,6 +105,29 @@ return [
             'after_commit' => false,
         ],
 
+        // Fixed old transport for lossless drain/rollback after redis and
+        // redis-long are switched to the dedicated queue process.
+        'redis-legacy' => [
+            'driver' => 'redis',
+            'connection' => 'default',
+            'queue' => env('REDIS_QUEUE', 'default'),
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 1080),
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+        'redis-legacy-long' => [
+            'driver' => 'redis',
+            'connection' => 'default',
+            'queue' => env('QUEUE_LONG_QUEUE', 'exports'),
+            'retry_after' => (int) env('REDIS_LONG_QUEUE_RETRY_AFTER', 1080),
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+    ],
+
+    'telemetry' => [
+        // Payload timestamps are always recorded. Sampling only limits logs.
+        'processing_sample_rate' => max(0.0, min(1.0, (float) env('QUEUE_PROCESSING_SAMPLE_RATE', 0.1))),
     ],
 
     /*

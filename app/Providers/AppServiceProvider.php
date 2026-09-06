@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Support\ProviderConcurrencyLimiter;
+use App\Support\QueueTelemetry;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Events\ScheduledTaskFailed;
@@ -13,9 +14,11 @@ use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\QueueBusy;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -133,6 +136,11 @@ class AppServiceProvider extends ServiceProvider
 
     protected function registerQueueMonitoring(): void
     {
+        Queue::createPayloadUsing(static fn (): array => app(QueueTelemetry::class)->payloadMetadata());
+        Event::listen(JobProcessing::class, static function (JobProcessing $event): void {
+            app(QueueTelemetry::class)->processing($event);
+        });
+
         Event::listen(QueueBusy::class, function (QueueBusy $event): void {
             Log::channel('queue_monitor')->warning('queue.busy', [
                 'connection' => $event->connection,

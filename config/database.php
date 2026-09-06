@@ -159,6 +159,17 @@ return [
             'database' => env('REDIS_DB', '0'),
         ],
 
+        // Queue transport only. Cache, locks, limiter and restart signals keep
+        // using their existing connections during cutover and rollback.
+        'queue' => [
+            'url' => env('REDIS_QUEUE_URL'),
+            'host' => env('REDIS_QUEUE_HOST', '127.0.0.1'),
+            'username' => env('REDIS_QUEUE_USERNAME'),
+            'password' => env('REDIS_QUEUE_PASSWORD'),
+            'port' => env('REDIS_QUEUE_PORT', '6380'),
+            'database' => env('REDIS_QUEUE_DB', '0'),
+        ],
+
         'cache' => [
             'url' => env('REDIS_URL'),
             'host' => env('REDIS_HOST', '127.0.0.1'),

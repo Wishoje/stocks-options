@@ -16,6 +16,9 @@ return [
     'failure_cooldown_seconds' => (int) env('WORK_RUN_FAILURE_COOLDOWN', 300),
     'dispatch_retry_seconds' => (int) env('WORK_RUN_DISPATCH_RETRY', 15),
     'dispatch_reservation_seconds' => (int) env('WORK_RUN_DISPATCH_RESERVATION', 120),
+    'running_recovery_enabled' => filter_var(env('WORK_RUN_RUNNING_RECOVERY_ENABLED', true), FILTER_VALIDATE_BOOL),
+    // Includes the original delivery; transport failures also consume the cap.
+    'running_recovery_max_dispatches' => (int) env('WORK_RUN_RUNNING_RECOVERY_MAX_DISPATCHES', 3),
     'abandon_after_seconds' => (int) env('WORK_RUN_ABANDON_AFTER', 86400),
     'status_poll_seconds' => (int) env('WORK_RUN_STATUS_POLL_SECONDS', 2),
 

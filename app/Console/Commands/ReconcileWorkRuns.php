@@ -33,6 +33,8 @@ class ReconcileWorkRuns extends Command
 
         $limit = max(1, min(1000, (int) $this->option('limit')));
         $abandoned = 0;
+        $recoveredRunning = 0;
+        $recoveryExhausted = 0;
         $dispatched = 0;
         $errors = 0;
         $bootstrapPhasesDispatched = 0;
@@ -44,7 +46,18 @@ class ReconcileWorkRuns extends Command
             ->orderBy('requested_at')
             ->limit($limit)
             ->pluck('id')
-            ->each(function (string $runId) use ($runs, &$abandoned): void {
+            ->each(function (string $runId) use ($runs, &$abandoned, &$recoveredRunning, &$recoveryExhausted): void {
+                $recovery = $runs->recoverExpiredRunning($runId);
+                if ($recovery === 'recovered') {
+                    $recoveredRunning++;
+
+                    return;
+                }
+                if ($recovery === 'exhausted') {
+                    $recoveryExhausted++;
+
+                    return;
+                }
                 if ($runs->markAbandoned($runId)) {
                     $abandoned++;
                 }
@@ -72,6 +85,8 @@ class ReconcileWorkRuns extends Command
             'dispatched' => $dispatched,
             'bootstrap_phases_dispatched' => $bootstrapPhasesDispatched,
             'abandoned' => $abandoned,
+            'recovered_running' => $recoveredRunning,
+            'recovery_exhausted' => $recoveryExhausted,
             'errors' => $errors,
         ], JSON_THROW_ON_ERROR));
 

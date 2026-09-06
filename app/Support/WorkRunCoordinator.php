@@ -491,6 +491,89 @@ final class WorkRunCoordinator
             ->get();
     }
 
+    /**
+     * Recover a lost refresh delivery only after both its lease and heartbeat
+     * expire. Bootstrap orchestration owns its separate phase recovery.
+     *
+     * @return 'recovered'|'exhausted'|null
+     */
+    public function recoverExpiredRunning(string $runId, ?CarbonInterface $at = null): ?string
+    {
+        if (! config('work_runs.running_recovery_enabled', true)) {
+            return null;
+        }
+
+        $at = $this->at($at);
+
+        return DB::transaction(function () use ($runId, $at): ?string {
+            $run = WorkRun::query()->lockForUpdate()->find($runId);
+            if (! $run
+                || $run->status !== WorkRun::STATUS_RUNNING
+                || ! in_array($run->kind, ['intraday_refresh', 'calculator_refresh'], true)
+                || $run->lease_expires_at === null
+                || $run->lease_expires_at->isAfter($at)) {
+                return null;
+            }
+
+            $jobClass = $run->kind === 'intraday_refresh'
+                ? \App\Jobs\FetchPolygonIntradayOptionsJob::class
+                : \App\Jobs\FetchCalculatorChainJob::class;
+            // A misconfigured short TTL must never replay an ordinary live
+            // worker before its hard timeout and transport lease have elapsed.
+            $runningTtl = max(
+                300,
+                (int) config('work_runs.running_ttl_seconds.'.$run->kind, 3600),
+                (int) config('queue.connections.'.$run->queue_connection.'.retry_after', 1080) + 60,
+                (int) config('queue_contracts.'.$jobClass.'.max_timeout', 960) + 60
+            );
+            $lastActivity = $run->heartbeat_at ?? $run->started_at ?? $run->dispatched_at ?? $run->requested_at;
+            if (! $lastActivity || $lastActivity->addSeconds($runningTtl)->isAfter($at)) {
+                return null;
+            }
+            if (! WorkRunSlot::query()->whereKey($run->slot_key)->where('current_run_id', $run->id)->exists()) {
+                return null;
+            }
+
+            // Revoke the old delivery before exposing the pending replacement.
+            // Late callbacks and redelivered old queue payloads then fail fencing.
+            $run->delivery_token = null;
+            $run->dispatching_at = null;
+            $run->orchestration_token = null;
+            $run->orchestration_attempt = 0;
+            $run->orchestration_reserved_at = null;
+            $run->orchestration_dispatched_at = null;
+            $maximum = max(1, min(10, (int) config('work_runs.running_recovery_max_dispatches', 3)));
+            if ($run->dispatch_attempts >= $maximum) {
+                $run->status = WorkRun::STATUS_FAILED;
+                $run->failed_at = $at;
+                $run->lease_expires_at = null;
+                $run->next_dispatch_at = null;
+                $run->retry_not_before = $at->addSeconds(
+                    max(0, (int) config('work_runs.failure_cooldown_seconds', 300))
+                );
+                $run->error_category = 'recovery_exhausted';
+                $run->error_code = 'running_delivery_limit';
+                $run->save();
+
+                return 'exhausted';
+            }
+
+            $run->status = WorkRun::STATUS_PENDING;
+            $run->attempt = 0;
+            $run->dispatched_at = null;
+            $run->heartbeat_at = null;
+            $run->next_dispatch_at = $at;
+            $run->lease_expires_at = $at->addSeconds(
+                max(3600, (int) config('work_runs.pending_ttl_seconds', 43200))
+            );
+            $run->error_category = 'delivery_recovery';
+            $run->error_code = 'running_lease_expired';
+            $run->save();
+
+            return 'recovered';
+        }, 3);
+    }
+
     public function markAbandoned(string $runId, ?CarbonInterface $at = null): bool
     {
         $at = $this->at($at);
