@@ -30,6 +30,8 @@ final class ProviderDeferred extends RuntimeException
 
     public const BACKPRESSURE = 'queue_backpressure';
 
+    public const QUOTE_PENDING = 'quote_refresh_pending';
+
     public readonly CarbonImmutable $notBefore;
 
     public function __construct(
@@ -39,7 +41,7 @@ final class ProviderDeferred extends RuntimeException
     ) {
         if (! in_array($reason, [
             self::CAPACITY, self::RATE_WINDOW, self::COOLDOWN, self::COORDINATION, self::RATE_LIMITED,
-            self::SERVER_ERROR, self::TIMEOUT, self::NETWORK, self::BACKPRESSURE,
+            self::SERVER_ERROR, self::TIMEOUT, self::NETWORK, self::BACKPRESSURE, self::QUOTE_PENDING,
         ], true)) {
             throw new InvalidArgumentException('Provider deferral reason is not recognized.');
         }
@@ -81,7 +83,7 @@ final class ProviderDeferred extends RuntimeException
     public function isAdmissionDeferral(): bool
     {
         return in_array($this->reason, [
-            self::CAPACITY, self::RATE_WINDOW, self::COOLDOWN, self::COORDINATION, self::BACKPRESSURE,
+            self::CAPACITY, self::RATE_WINDOW, self::COOLDOWN, self::COORDINATION, self::BACKPRESSURE, self::QUOTE_PENDING,
         ], true);
     }
 }

@@ -5,6 +5,7 @@ namespace App\Jobs\Middleware;
 use App\Exceptions\ProviderDeferred;
 use App\Jobs\FetchCalculatorChainJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Jobs\FetchUnderlyingQuotesJob;
 use App\Jobs\RunSymbolBootstrapPhaseJob;
 use App\Support\ProviderRequestReplay;
 use App\Support\SymbolBootstrapCoordinator;
@@ -49,6 +50,15 @@ final class DeferProviderWork
                             'orchestration_token' => $job->workRunOrchestrationToken,
                         ]
                     );
+                } elseif ($job instanceof FetchUnderlyingQuotesJob && $job->workRunDeliveries !== []) {
+                    // Quote batches normally persist per-symbol outcomes inside
+                    // handle(). This protects a deferral escaping that adapter;
+                    // never release the batch as an unrelated legacy payload.
+                    foreach ($job->workRunDeliveries as $delivery) {
+                        app(WorkRunCoordinator::class)->deferProvider(
+                            $delivery['run_id'], $delivery['delivery_token'], $attempt, $exception, $physical
+                        );
+                    }
                 } elseif (($job instanceof FetchCalculatorChainJob || $job instanceof FetchPolygonIntradayOptionsJob)
                     && $job->workRunId !== null) {
                     app(WorkRunCoordinator::class)->deferProvider(
@@ -90,6 +100,12 @@ final class DeferProviderWork
         if (($job->workRunId ?? null) !== null) {
             return 'work-run:'.$job->workRunId.':'.$job::class;
         }
+        if ($job instanceof FetchUnderlyingQuotesJob && $job->workRunDeliveries !== []) {
+            $ids = array_column($job->workRunDeliveries, 'run_id');
+            sort($ids, SORT_STRING);
+
+            return 'quote-runs:'.hash('sha256', implode('|', $ids));
+        }
         if (($job->schedulerGeneration ?? null) !== null) {
             return 'scheduled-calculator:'.$job->symbol.':'.$job->schedulerGeneration;
         }
@@ -104,6 +120,11 @@ final class DeferProviderWork
 
     private function completed(object $job): bool
     {
+        if ($job instanceof FetchUnderlyingQuotesJob && $job->workRunDeliveries !== []) {
+            return ! \App\Models\WorkRun::query()
+                ->whereIn('id', array_column($job->workRunDeliveries, 'run_id'))
+                ->whereIn('status', \App\Models\WorkRun::ACTIVE_STATUSES)->exists();
+        }
         if ($job instanceof RunSymbolBootstrapPhaseJob) {
             return \App\Models\SymbolBootstrapPhase::query()->where('work_run_id', $job->workRunId)
                 ->where('phase', $job->phase)->where('status', 'completed')->exists();

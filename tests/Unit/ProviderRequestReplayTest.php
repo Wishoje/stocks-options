@@ -163,6 +163,35 @@ class ProviderRequestReplayTest extends TestCase
         $this->addToAssertionCount(1);
     }
 
+    public function test_nested_fresh_reads_bypass_memo_but_keep_physical_counts_and_restore_after_failure(): void
+    {
+        [$replay, $connection] = $this->replay();
+        $key = str_repeat('a', 64);
+        $response = new Response(new PsrResponse(200, [], '{"status":"OK","tickers":[]}'));
+        $connection->shouldNotReceive('eval');
+        $connection->shouldNotReceive('hget');
+        $connection->shouldReceive('hstrlen')->once()->andReturn(0);
+        $replay->withExecution('quotes', function () use ($replay, $key, $response): void {
+            try {
+                $replay->withoutReplay(function () use ($replay, $key, $response): void {
+                    $this->assertNull($replay->lookup($key));
+                    $replay->remember($key, $response);
+                    $replay->recordPhysicalRequest();
+                    $replay->withoutReplay(function () use ($replay, $key, $response): void {
+                        $this->assertNull($replay->lookup($key));
+                        $replay->remember($key, $response);
+                        $replay->recordPhysicalRequest();
+                        throw new RuntimeException('fixture');
+                    });
+                });
+            } catch (RuntimeException) {
+                $this->assertSame(2, $replay->executedRequestCount());
+            }
+            // This lookup reaches Redis, proving both suppression frames unwind.
+            $this->assertNull($replay->lookup($key));
+        });
+    }
+
     private function replay(): array
     {
         $config = new Repository([

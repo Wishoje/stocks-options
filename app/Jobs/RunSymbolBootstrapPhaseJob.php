@@ -158,7 +158,7 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
         }
 
         try {
-            (new FetchUnderlyingQuotesJob([$manifest->symbol]))
+            (new FetchUnderlyingQuotesJob([$manifest->symbol], scheduled: false))
                 ->onConnection((string) $this->connection)
                 ->onQueue((string) $this->queue)
                 ->handle();

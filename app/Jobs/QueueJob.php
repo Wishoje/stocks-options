@@ -31,7 +31,9 @@ abstract class QueueJob implements ShouldQueue
     /** Laravel stores this deadline in the payload once, not on each release. */
     public function retryUntil(): ?\DateTimeInterface
     {
-        if (! config('provider_backpressure.enabled', false) || ($this->workRunId ?? null) !== null) {
+        if (! config('provider_backpressure.enabled', false)
+            || ($this->workRunId ?? null) !== null
+            || ($this->workRunDeliveries ?? []) !== []) {
             return null;
         }
 

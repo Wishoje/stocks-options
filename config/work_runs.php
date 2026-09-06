@@ -6,11 +6,13 @@ return [
     'running_ttl_seconds' => [
         'calculator_refresh' => (int) env('WORK_RUN_CALCULATOR_RUNNING_TTL', 3600),
         'intraday_refresh' => (int) env('WORK_RUN_INTRADAY_RUNNING_TTL', 1800),
+        'quote_refresh' => (int) env('WORK_RUN_QUOTE_RUNNING_TTL', 300),
         'symbol_bootstrap' => (int) env('WORK_RUN_BOOTSTRAP_RUNNING_TTL', 10800),
     ],
     'reusable_seconds' => [
         'calculator_refresh' => (int) env('WORK_RUN_CALCULATOR_REUSE', 600),
         'intraday_refresh' => (int) env('WORK_RUN_INTRADAY_REUSE', 90),
+        'quote_refresh' => (int) env('WORK_RUN_QUOTE_REUSE', 300),
         'symbol_bootstrap' => (int) env('WORK_RUN_BOOTSTRAP_REUSE', 600),
     ],
     'failure_cooldown_seconds' => (int) env('WORK_RUN_FAILURE_COOLDOWN', 300),

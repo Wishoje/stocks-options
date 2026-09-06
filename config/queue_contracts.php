@@ -133,8 +133,8 @@ return [
     FetchUnderlyingQuotesJob::class => [
         'connection' => 'redis', 'queues' => ['quotes'], 'max_timeout' => 90,
         'isolated_queues' => ['quotes'],
-        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'sorted symbols',
-        'write_strategy' => 'one current row per symbol',
+        'tries' => 3, 'backoff' => $standardBackoff, 'identity' => 'sorted symbols + frozen session/phase + per-symbol durable delivery',
+        'write_strategy' => 'one current row per symbol, source-ordering and durable-owner fences; bounded four-symbol HTTP batch',
         'provider_timeout' => 10,
     ],
     PricesBackfillJob::class => [

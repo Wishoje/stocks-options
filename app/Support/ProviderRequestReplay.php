@@ -21,6 +21,8 @@ class ProviderRequestReplay
 
     private bool $cacheFailureLogged = false;
 
+    private int $replaySuppressionDepth = 0;
+
     public function __construct(
         private readonly Repository $config,
         private readonly Factory $redis
@@ -65,6 +67,17 @@ class ProviderRequestReplay
             return $callback();
         } finally {
             array_pop($this->contexts);
+        }
+    }
+
+    /** Volatile snapshots must be fetched again when a partial response retries. */
+    public function withoutReplay(callable $callback): mixed
+    {
+        $this->replaySuppressionDepth++;
+        try {
+            return $callback();
+        } finally {
+            $this->replaySuppressionDepth--;
         }
     }
 
@@ -114,7 +127,7 @@ LUA,
     public function lookup(string $requestKey): ?Response
     {
         $context = $this->context();
-        if (! $context || ! $this->enabled() || ! $this->validKey($requestKey)) {
+        if ($this->replaySuppressionDepth > 0 || ! $context || ! $this->enabled() || ! $this->validKey($requestKey)) {
             return null;
         }
         try {
@@ -164,7 +177,7 @@ LUA,
     public function remember(string $requestKey, Response $response): void
     {
         $context = $this->context();
-        if (! $context || ! $this->enabled() || ! $this->validKey($requestKey)) {
+        if ($this->replaySuppressionDepth > 0 || ! $context || ! $this->enabled() || ! $this->validKey($requestKey)) {
             return;
         }
         if ($response->status() !== 200) {

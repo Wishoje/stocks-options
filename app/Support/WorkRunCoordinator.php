@@ -697,15 +697,17 @@ final class WorkRunCoordinator
             $run = WorkRun::query()->lockForUpdate()->find($runId);
             if (! $run
                 || $run->status !== WorkRun::STATUS_RUNNING
-                || ! in_array($run->kind, ['intraday_refresh', 'calculator_refresh'], true)
+                || ! in_array($run->kind, ['intraday_refresh', 'calculator_refresh', 'quote_refresh'], true)
                 || $run->lease_expires_at === null
                 || $run->lease_expires_at->isAfter($at)) {
                 return null;
             }
 
-            $jobClass = $run->kind === 'intraday_refresh'
-                ? \App\Jobs\FetchPolygonIntradayOptionsJob::class
-                : \App\Jobs\FetchCalculatorChainJob::class;
+            $jobClass = match ($run->kind) {
+                'intraday_refresh' => \App\Jobs\FetchPolygonIntradayOptionsJob::class,
+                'quote_refresh' => \App\Jobs\FetchUnderlyingQuotesJob::class,
+                default => \App\Jobs\FetchCalculatorChainJob::class,
+            };
             // A misconfigured short TTL must never replay an ordinary live
             // worker before its hard timeout and transport lease have elapsed.
             $runningTtl = max(

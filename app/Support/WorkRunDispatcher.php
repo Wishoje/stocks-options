@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Jobs\BootstrapUserSymbolJob;
 use App\Jobs\FetchCalculatorChainJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
+use App\Jobs\FetchUnderlyingQuotesJob;
 use App\Models\WorkRun;
 use Illuminate\Support\Facades\Bus;
 use RuntimeException;
@@ -67,6 +68,16 @@ final class WorkRunDispatcher
                 tradeDate: $parameters['trade_date'] ?? null,
                 workRunId: $run->id,
                 workRunDeliveryToken: $deliveryToken
+            ))->onConnection($run->queue_connection)->onQueue($run->queue),
+            'quote_refresh' => (new FetchUnderlyingQuotesJob(
+                [$run->symbol],
+                scheduled: true,
+                sessionDate: $parameters['session_date'] ?? null,
+                workRunDeliveries: [$run->symbol => [
+                    'run_id' => $run->id,
+                    'delivery_token' => $deliveryToken,
+                ]],
+                phase: $parameters['phase'] ?? 'regular',
             ))->onConnection($run->queue_connection)->onQueue($run->queue),
             'symbol_bootstrap' => (new BootstrapUserSymbolJob(
                 $run->symbol,

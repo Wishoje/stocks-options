@@ -6,6 +6,7 @@ use App\Http\Controllers\IntradayController;
 use App\Support\IntradayFreshness;
 use App\Support\MarketSession;
 use App\Support\OptionLiveTotalsRepository;
+use App\Support\QuoteRefreshStatus;
 use App\Support\ScheduledFillBackpressure;
 use App\Support\Symbols;
 use Carbon\CarbonImmutable;
@@ -18,7 +19,7 @@ class MarketDataRefreshStatus extends Command
 {
     protected $signature = 'market-data:refresh-status {--symbols=SPY,QQQ,IWM,TSLA}';
 
-    protected $description = 'Inspect intraday freshness, provider coordination and fill backpressure without fetching data.';
+    protected $description = 'Inspect intraday and quote freshness, provider coordination and queue pressure without fetching data.';
 
     public function handle(): int
     {
@@ -58,6 +59,7 @@ class MarketDataRefreshStatus extends Command
                 'configured_request_window' => config('provider_backpressure.rate.requests'),
             ],
             'fill_pressure' => app(ScheduledFillBackpressure::class)->inspect(),
+            'quotes' => app(QuoteRefreshStatus::class)->inspect($symbols),
             'intraday' => $intraday,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
 

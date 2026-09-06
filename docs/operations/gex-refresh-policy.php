@@ -4,9 +4,9 @@
 if (PHP_SAPI !== 'cli') { exit(1); }
 $card = $argv[1] ?? '';
 $mode = $argv[2] ?? '';
-$keys = ['020' => 'INTRADAY_FRESHNESS_ENABLED', '021' => 'PROVIDER_BACKPRESSURE_ENABLED'];
+$keys = ['020' => 'INTRADAY_FRESHNESS_ENABLED', '021' => 'PROVIDER_BACKPRESSURE_ENABLED', '022' => 'QUOTE_REFRESH_ENABLED'];
 if (! isset($keys[$card]) || ! in_array($mode, ['enable', 'disable'], true)) {
-    fwrite(STDERR, "Usage: php docs/operations/gex-refresh-policy.php 020 enable|disable\n"); exit(1);
+    fwrite(STDERR, "Usage: php docs/operations/gex-refresh-policy.php 020|021|022 enable|disable\n"); exit(1);
 }
 $release = realpath(getcwd());
 $target = realpath(getcwd().'/.env');
@@ -21,7 +21,7 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 if ($mode === 'enable' && ! Illuminate\Support\Facades\Schema::hasTable('intraday_refresh_states')) {
     fwrite(STDERR, "The phase020 additive migration must run first.\n"); exit(1);
 }
-if ($card === '021' && $mode === 'enable') {
+if (in_array($card, ['021', '022'], true) && $mode === 'enable') {
     foreach (['work_runs', 'symbol_bootstrap_phases'] as $table) {
         if (! Illuminate\Support\Facades\Schema::hasColumn($table, 'provider_admission_deferrals')) {
             fwrite(STDERR, "The phase021 additive migration must run first.\n"); exit(1);
@@ -30,6 +30,12 @@ if ($card === '021' && $mode === 'enable') {
     if (! config('services.massive.concurrency.enabled') || (int) config('services.massive.concurrency.limit') < 2
         || config('queue.connections.redis.connection') !== 'queue') {
         fwrite(STDERR, "Verified provider concurrency and dedicated queue transport are required.\n"); exit(1);
+    }
+}
+if ($card === '022' && $mode === 'enable') {
+    if (! config('provider_backpressure.enabled')
+        || ! Illuminate\Support\Facades\Schema::hasTable('quote_refresh_states')) {
+        fwrite(STDERR, "The phase022 additive migration and active phase021 policy are required.\n"); exit(1);
     }
 }
 $original = file_get_contents($target);

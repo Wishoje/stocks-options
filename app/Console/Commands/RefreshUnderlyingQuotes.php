@@ -3,10 +3,12 @@
 namespace App\Console\Commands;
 
 use App\Jobs\FetchUnderlyingQuotesJob;
-use App\Support\Market;
+use App\Support\QuoteRefreshDispatcher;
+use App\Support\QuoteRefreshPolicy;
 use App\Support\Symbols;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class RefreshUnderlyingQuotes extends Command
 {
@@ -16,23 +18,30 @@ class RefreshUnderlyingQuotes extends Command
 
     protected $description = 'Queue refresh of underlying quotes for the current symbol universe';
 
-    public function handle(): int
+    public function handle(QuoteRefreshPolicy $policy, QuoteRefreshDispatcher $dispatcher): int
     {
-        $nowEt = now('America/New_York');
-        // if ($nowEt->isWeekend() || !Market::isRthOpen($nowEt)) {
-        //     $this->info('Market is closed; skipping price refresh.');
-        //     return self::SUCCESS;
-        // }
+        $durable = $policy->enabled();
+        if ($durable && ! ($window = $policy->window())['eligible']) {
+            $this->info('Scheduled quote refresh skipped: '.$window['reason'].'.');
+
+            return self::SUCCESS;
+        }
 
         $source = (string) $this->option('source');
-        $limit  = (int) $this->option('limit');
-        $limit  = max(1, min($limit, 1000));
+        $limit = (int) $this->option('limit');
+        $limit = max(1, min($limit, 1000));
 
         $symbols = collect();
 
         if (in_array($source, ['watchlist', 'both'], true)) {
             $symbols = $symbols->merge(
-                DB::table('watchlists')->pluck('symbol')
+                $durable
+                    ? DB::table('watchlists')
+                        ->whereNotNull('symbol')
+                        ->whereRaw("TRIM(symbol) <> ''")
+                        ->selectRaw('UPPER(TRIM(symbol)) as symbol')
+                        ->distinct()->orderBy('symbol')->pluck('symbol')
+                    : DB::table('watchlists')->pluck('symbol')
             );
         }
 
@@ -63,7 +72,16 @@ class RefreshUnderlyingQuotes extends Command
 
         if ($symbols->isEmpty()) {
             $this->warn('No symbols to refresh.');
+
             return self::SUCCESS;
+        }
+
+        if ($durable) {
+            $result = $dispatcher->dispatch($symbols);
+            Log::channel('scheduler')->info('quotes.scheduled_dispatch', $result);
+            $this->line(json_encode($result, JSON_THROW_ON_ERROR));
+
+            return $result['failed'] > 0 ? self::FAILURE : self::SUCCESS;
         }
 
         // Four bounded requests fit under the 90-second job ceiling even when

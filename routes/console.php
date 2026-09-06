@@ -218,7 +218,10 @@ Schedule::command('prices:refresh --source=both --limit=400')
     ->everyFiveMinutes()
     ->weekdays()
     ->timezone('America/New_York')
-    ->between('09:35', '15:55')
+    ->between(
+        config('quote_refresh.enabled', false) ? '09:30' : '09:35',
+        config('quote_refresh.enabled', false) ? '16:30' : '15:55',
+    )
     ->withoutOverlapping(2)
     ->onOneServer()
     ->name('prices:refresh:intraday');

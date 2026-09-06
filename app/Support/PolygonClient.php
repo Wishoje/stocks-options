@@ -480,6 +480,93 @@ class PolygonClient
         // }
         $results = (array)($json['ticker'] ?? []);
 
+        return $this->normalizeUnderlyingQuote($uSym, $results, strlen($resp->body()));
+    }
+
+    /**
+     * Fetch at most four explicitly named stocks. An empty ticker filter would
+     * request the whole market, so empty input never reaches the transport.
+     * https://massive.com/docs/rest/stocks/snapshots/full-market-snapshot
+     *
+     * @return array<string,array{symbol:string,last_price:float,prev_close:?float,asof:mixed,source:string}|null>
+     */
+    public function underlyingQuotes(array $symbols): array
+    {
+        $quotes = [];
+        foreach ($symbols as $raw) {
+            if (! is_string($raw) || ! Symbols::isValid($raw)) {
+                throw new \InvalidArgumentException('Quote batches require valid symbol strings.');
+            }
+            $quotes[Symbols::canon($raw)] = null;
+            if (count($quotes) > 4) {
+                throw new \InvalidArgumentException('Quote batches support at most four unique symbols.');
+            }
+        }
+        if ($quotes === []) {
+            return [];
+        }
+
+        $requested = array_keys($quotes);
+        sort($requested, SORT_STRING);
+        $url = rtrim(config('services.massive.base', 'https://api.massive.com'), '/')
+            .'/v2/snapshot/locale/us/markets/stocks/tickers';
+        $params = ['tickers' => implode(',', $requested)];
+        if (config('services.massive.mode', 'header') === 'query') {
+            $qparam = (string) config('services.massive.qparam', 'apiKey');
+            if ($qparam === 'tickers') {
+                throw new \InvalidArgumentException('Quote query authentication cannot replace the ticker filter.');
+            }
+            $params[$qparam] = config('services.massive.key');
+        }
+        $resp = app(ProviderConcurrencyLimiter::class)->massive(
+            fn () => $this->http()->get($url, $params),
+            requestKey: ProviderRequestReplay::fingerprint($url, $params)
+        );
+
+        if (in_array($resp->status(), [401, 403], true)) {
+            throw new \RuntimeException('Massive underlying quote batch unauthorized');
+        }
+        if ($resp->status() === 429) {
+            throw new \RuntimeException('Massive underlying quote batch rate_limited');
+        }
+        if (! $resp->ok()) {
+            // A batch endpoint failure does not establish that individual
+            // symbols have no quotes, and must not trigger N single requests.
+            throw new \RuntimeException('Massive underlying quote batch http_error');
+        }
+        $json = $resp->json();
+        if (! is_array($json) || ! is_array($json['tickers'] ?? null)
+            || ! array_is_list($json['tickers'])
+            || (isset($json['status']) && ! in_array($json['status'], ['OK', 'DELAYED'], true))) {
+            throw new \RuntimeException('Massive underlying quote batch invalid_payload');
+        }
+
+        $seen = [];
+        $bytes = strlen($resp->body());
+        foreach ($json['tickers'] as $ticker) {
+            if (! is_array($ticker) || ! is_string($ticker['ticker'] ?? null)) {
+                continue;
+            }
+            $symbol = Symbols::canon($ticker['ticker']);
+            if (! array_key_exists($symbol, $quotes)) {
+                continue;
+            }
+            if (isset($seen[$symbol])) {
+                // Conflicting or repeated rows are ambiguous. Keep that
+                // symbol missing; never let response ordering select a quote.
+                $quotes[$symbol] = null;
+                continue;
+            }
+            $seen[$symbol] = true;
+            $quotes[$symbol] = $this->normalizeUnderlyingQuote($symbol, $ticker, $bytes);
+        }
+
+        return $quotes;
+    }
+
+    /** Keep single-stock and batch snapshots byte-compatible at normalization. */
+    private function normalizeUnderlyingQuote(string $uSym, array $results, int $responseBytes): ?array
+    {
         $day     = (array)($results['day']     ?? []);
         $prevDay = (array)($results['prevDay'] ?? []);
         $last    = (array)($results['lastTrade'] ?? []);
@@ -508,7 +595,7 @@ class PolygonClient
         if ($lastPrice === null || $lastPrice <= 0) {
             Log::warning('PolygonClient.underlying.noPrice', [
                 'symbol' => $uSym,
-                'response_bytes' => strlen($resp->body()),
+                'response_bytes' => $responseBytes,
             ]);
             return null;
         }
