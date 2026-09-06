@@ -6,6 +6,7 @@ use App\Models\OptionExpiration;
 use App\Support\EodHealth;
 use App\Support\EodSnapshotSelector;
 use App\Support\ProviderConcurrencyLimiter;
+use App\Support\ProviderRequestReplay;
 use App\Support\QueueLanes;
 use Carbon\Carbon;
 use Illuminate\Bus\Batchable;
@@ -581,7 +582,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $client = Http::acceptJson()
             ->connectTimeout(5)
             ->timeout(20)
-            ->retry(2, 300, throw: false);
+            ->retry(config('provider_backpressure.enabled', false) ? 1 : 2, 300, throw: false);
         if ($mode === 'bearer') {
             $client = $client->withToken($key);
         } elseif ($mode === 'header') {
@@ -824,7 +825,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         $client = Http::acceptJson()
             ->connectTimeout(5)
             ->timeout(20)
-            ->retry(2, 300, throw: false);
+            ->retry(config('provider_backpressure.enabled', false) ? 1 : 2, 300, throw: false);
         if ($mode === 'bearer') {
             $client = $client->withToken($key);
         } elseif ($mode === 'header') {
@@ -1590,7 +1591,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
             $pages++;
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $client->get($url, $params)
+                fn () => $client->get($url, $params),
+                requestKey: ProviderRequestReplay::fingerprint($url, $params)
             );
 
             if ($resp->status() === 401) {
@@ -1768,7 +1770,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
             $pages++;
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $client->get($url, $requestParams)
+                fn () => $client->get($url, $requestParams),
+                requestKey: ProviderRequestReplay::fingerprint($url, $requestParams)
             );
             if ($resp->status() === 401) {
                 return [[], [
@@ -1942,7 +1945,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
 
             $pages++;
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $client->get($url, $requestParams)
+                fn () => $client->get($url, $requestParams),
+                requestKey: ProviderRequestReplay::fingerprint($url, $requestParams)
             );
 
             if ($resp->status() === 401) {

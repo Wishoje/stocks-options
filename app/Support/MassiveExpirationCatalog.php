@@ -418,7 +418,8 @@ final class MassiveExpirationCatalog
         }
 
         return app(ProviderConcurrencyLimiter::class)->massive(
-            fn (): Response => $client->get($endpoint, $params)
+            fn (): Response => $client->get($endpoint, $params),
+            requestKey: ProviderRequestReplay::fingerprint($endpoint, $params)
         );
     }
 
@@ -568,7 +569,7 @@ final class MassiveExpirationCatalog
         $client = Http::acceptJson()
             ->connectTimeout(5)
             ->timeout(20)
-            ->retry(2, 300, throw: false);
+            ->retry(config('provider_backpressure.enabled', false) ? 1 : 2, 300, throw: false);
         if ($mode === 'bearer') {
             $client = $client->withToken($key);
         } elseif ($mode === 'header') {

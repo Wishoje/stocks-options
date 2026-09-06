@@ -42,6 +42,9 @@ class WorkRun extends Model
         'orchestration_reserved_at',
         'orchestration_dispatched_at',
         'dispatch_attempts',
+        'provider_deferrals',
+        'provider_admission_deferrals',
+        'provider_deferral_deadline_at',
         'attempt',
         'orchestration_attempt',
         'requested_at',
@@ -78,6 +81,9 @@ class WorkRun extends Model
             'failed_at' => 'immutable_datetime',
             'generation' => 'integer',
             'dispatch_attempts' => 'integer',
+            'provider_deferrals' => 'integer',
+            'provider_admission_deferrals' => 'integer',
+            'provider_deferral_deadline_at' => 'immutable_datetime',
             'attempt' => 'integer',
             'orchestration_attempt' => 'integer',
         ];
@@ -91,6 +97,11 @@ class WorkRun extends Model
     public function isActive(): bool
     {
         return in_array($this->status, self::ACTIVE_STATUSES, true);
+    }
+
+    public function effectiveDispatchAttempts(): int
+    {
+        return max(0, (int) $this->dispatch_attempts - (int) $this->provider_admission_deferrals);
     }
 
     /** Work-run control-plane timestamps are stored and interpreted as UTC. */

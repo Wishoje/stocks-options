@@ -118,6 +118,8 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
                         ])
                         ->save();
                 }, 3);
+            } catch (\App\Exceptions\ProviderDeferred $exception) {
+                throw $exception;
             } catch (ProviderConcurrencyUnavailable $exception) {
                 // Capacity pressure must retry the job immediately. Continuing
                 // through a batch could spend the whole 90-second job timeout

@@ -49,7 +49,7 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
     /** @return array<int,object> */
     public function middleware(): array
     {
-        return [
+        return array_merge(parent::middleware(), [
             new EnsureWorkRunOrchestrationCurrent(
                 $this->workRunId,
                 $this->workRunDeliveryToken,
@@ -61,7 +61,7 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
                 $this->phase,
                 $this->phaseToken
             ),
-        ];
+        ]);
     }
 
     public function handle(
@@ -240,6 +240,9 @@ final class RunSymbolBootstrapPhaseJob extends QueueJob implements ShouldQueue
         string $scope,
         bool $mergeOnly
     ): array {
+        if ($scope === 'fill' && ($deferred = app(\App\Support\ScheduledFillBackpressure::class)->deferral(admission: false))) {
+            throw $deferred;
+        }
         $manifest = $this->manifest();
         // The fill phase is the final parity pass. Revisit the fast subset too,
         // because its merge-only publication may have preserved stale rows.

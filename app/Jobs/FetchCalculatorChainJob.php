@@ -2,10 +2,13 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\ProviderDeferred;
+use App\Support\CalculatorExecutionFreshness;
 use App\Support\CalculatorPublicationRepository;
 use App\Support\CalculatorRefreshState;
 use App\Support\CalculatorUnderlyingResolver;
 use App\Support\ProviderConcurrencyLimiter;
+use App\Support\ProviderRequestReplay;
 use App\Support\QueueLanes;
 use App\Support\UnderlyingQuoteRecorder;
 use App\Support\WorkRunCoordinator;
@@ -113,6 +116,10 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 fn (): string => $this->fetch(),
                 10
             );
+        } catch (ProviderDeferred $exception) {
+            // Durable/middleware deferral owns the retry deadline. Do not
+            // record an incomplete attempt or publish a failure meanwhile.
+            throw $exception;
         } catch (Throwable $exception) {
             $state?->markAttemptException(
                 $this->symbol,
@@ -234,7 +241,16 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
     {
         $symbol = strtoupper($this->symbol);
         $targetExpiry = $this->expiry ? substr((string) $this->expiry, 0, 10) : null;
+        if (config('provider_backpressure.enabled', false)
+            && app(CalculatorExecutionFreshness::class)->isFresh($symbol, $targetExpiry)) {
+            return 'ok';
+        }
         $publications = app(CalculatorPublicationRepository::class);
+        if (config('provider_backpressure.enabled', false)
+            && QueueLanes::providerPriority($this->queue) === QueueLanes::PRIORITY_BACKGROUND
+            && ($deferred = app(\App\Support\ScheduledFillBackpressure::class)->deferral(admission: false))) {
+            throw $deferred;
+        }
         $publicationRun = $this->publicationRun($publications);
         $publicationRunId = (string) $publicationRun['id'];
         if (in_array((string) $publicationRun['status'], ['complete', 'superseded'], true)) {
@@ -320,7 +336,11 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                     'ticker.any_of' => $symbol,
                     'limit' => 1,
                 ])
-            )
+            ),
+            requestKey: ProviderRequestReplay::fingerprint("{$base}/v3/snapshot", $authParams([
+                'ticker.any_of' => $symbol,
+                'limit' => 1,
+            ]))
         );
 
         // Log::debug('CalculatorChain.underlying.response', [
@@ -440,7 +460,8 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             // ]);
 
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $request->get($endpointUrl, $authParams($params))
+                fn () => $request->get($endpointUrl, $authParams($params)),
+                requestKey: ProviderRequestReplay::fingerprint($endpointUrl, $authParams($params))
             );
 
             // limit fallback for page 1
@@ -458,7 +479,8 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
                 $scopeParams['limit'] = $perPage;
                 $params = $scopeParams;
                 $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                    fn () => $request->get($endpointUrl, $authParams($params))
+                    fn () => $request->get($endpointUrl, $authParams($params)),
+                    requestKey: ProviderRequestReplay::fingerprint($endpointUrl, $authParams($params))
                 );
 
                 // Log::debug('CalculatorChain.limitRetry', [

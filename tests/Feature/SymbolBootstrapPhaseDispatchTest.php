@@ -10,6 +10,7 @@ use App\Jobs\ComputeUAJob;
 use App\Jobs\ComputeVolMetricsJob;
 use App\Jobs\ConfirmWorkRunOrchestrationJob;
 use App\Jobs\FetchOptionChainDataJob;
+use App\Jobs\Middleware\DeferProviderWork;
 use App\Jobs\PricesBackfillJob;
 use App\Jobs\PricesDailyJob;
 use App\Jobs\PrimeSymbolJob;
@@ -93,7 +94,11 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
         $this->assertSame('bootstrap-fast', $phaseJob->queue);
         $this->assertSame(120, $phaseJob->timeout);
         $this->assertSame(1, $phaseJob->tries);
-        $this->assertCount(2, $phaseJob->middleware());
+        $this->assertCount(3, $phaseJob->middleware());
+        $this->assertCount(1, array_filter(
+            $phaseJob->middleware(),
+            static fn (object $middleware): bool => $middleware instanceof DeferProviderWork,
+        ));
 
         $manifest = SymbolBootstrapRun::query()->findOrFail($run->id);
         $this->assertSame('2026-08-14', $manifest->session_date->toDateString());
@@ -195,7 +200,7 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
                 return $callback();
             }
 
-            public function massive(callable $callback, ?int $blockForSeconds = null): mixed
+            public function massive(callable $callback, ?int $blockForSeconds = null, ?string $requestKey = null): mixed
             {
                 return $callback();
             }
@@ -249,7 +254,7 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
                 return $callback();
             }
 
-            public function massive(callable $callback, ?int $blockForSeconds = null): mixed
+            public function massive(callable $callback, ?int $blockForSeconds = null, ?string $requestKey = null): mixed
             {
                 return $callback();
             }
@@ -419,7 +424,7 @@ class SymbolBootstrapPhaseDispatchTest extends TestCase
                 return $callback();
             }
 
-            public function massive(callable $callback, ?int $blockForSeconds = null): mixed
+            public function massive(callable $callback, ?int $blockForSeconds = null, ?string $requestKey = null): mixed
             {
                 return $callback();
             }

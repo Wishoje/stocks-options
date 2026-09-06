@@ -45,6 +45,9 @@ final class CalculatorPrimeScheduler
 
         $source = $configured === [] ? 'fallback' : 'watchlist';
         $symbols = $configured === [] ? $this->fallbackSymbols() : $configured;
+        if (config('provider_backpressure.enabled', false)) {
+            return $this->dispatchDurable($symbols, $configured, $source, $at, $generation);
+        }
         $states = $this->states->many($symbols);
         $cutoff = $at->subMinutes(max(1, (int) config('calculator.scheduler.fresh_minutes', 10)));
         $sortKeys = [];
@@ -118,6 +121,57 @@ final class CalculatorPrimeScheduler
             'dispatched' => $dispatched,
             'coalesced' => $coalesced,
             'dispatch_failures' => $dispatchFailures,
+        ];
+    }
+
+    private function dispatchDurable(array $symbols, array $configured, string $source, CarbonInterface $at, ?string $generation): array
+    {
+        $lastRequested = DB::table('work_runs')->where('kind', 'calculator_refresh')
+            ->whereIn('symbol', $symbols)->select('symbol')->selectRaw('MAX(requested_at) as last_requested')
+            ->groupBy('symbol')->pluck('last_requested', 'symbol')->all();
+        usort($symbols, static fn (string $a, string $b): int => [$lastRequested[$a] ?? '', $a] <=> [$lastRequested[$b] ?? '', $b]);
+        $cutoff = CarbonImmutable::instance($at)->subMinutes(max(1, (int) config('calculator.scheduler.fresh_minutes', 10)));
+        $fresh = DB::table('calculator_catalog_heads as head')
+            ->join('calculator_publication_runs as publication', 'publication.id', '=', 'head.current_run_id')
+            ->whereIn('head.symbol', $symbols)->where('publication.status', 'complete')
+            ->where('publication.completed_at', '>', $cutoff)->pluck('head.symbol')->all();
+        $eligible = array_values(array_diff($symbols, $fresh));
+        $runs = app(WorkRunCoordinator::class);
+        $dispatcher = app(WorkRunDispatcher::class);
+        $dispatched = $coalesced = $deferred = $failures = [];
+        $created = 0;
+        foreach ($eligible as $symbol) {
+            if ($created >= max(1, (int) config('calculator.scheduler.max_symbols', 75))) {
+                break;
+            }
+            try {
+                // A stable scope coalesces repeated ticks with pending full-catalog reads.
+                $claim = $runs->claim('calculator_refresh', $symbol, ['expiry' => null], QueueLanes::calculator($symbol),
+                    at: $at, deferWhenRateLimited: true);
+                $created += (int) $claim['created'];
+                if ($dispatcher->dispatch($claim['run'])) {
+                    $dispatched[] = $symbol;
+                } elseif ($claim['created']) {
+                    $deferred[] = $symbol;
+                } else {
+                    $coalesced[] = $symbol;
+                }
+            } catch (Throwable $exception) {
+                // If transport fails after the DB claim, reconciliation retains ownership.
+                $failures[$symbol] = $exception::class;
+            }
+        }
+
+        return [
+            'status' => $failures === [] ? 'ok' : 'dispatch_failed',
+            'source' => $source,
+            'generation' => $generation ?? $this->generation($at),
+            'configured_count' => count($configured),
+            'eligible_count' => count($eligible),
+            'dispatched' => $dispatched,
+            'coalesced' => $coalesced,
+            'deferred' => $deferred,
+            'dispatch_failures' => $failures,
         ];
     }
 

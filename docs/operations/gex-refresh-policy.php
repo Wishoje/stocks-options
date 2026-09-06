@@ -4,7 +4,7 @@
 if (PHP_SAPI !== 'cli') { exit(1); }
 $card = $argv[1] ?? '';
 $mode = $argv[2] ?? '';
-$keys = ['020' => 'INTRADAY_FRESHNESS_ENABLED'];
+$keys = ['020' => 'INTRADAY_FRESHNESS_ENABLED', '021' => 'PROVIDER_BACKPRESSURE_ENABLED'];
 if (! isset($keys[$card]) || ! in_array($mode, ['enable', 'disable'], true)) {
     fwrite(STDERR, "Usage: php docs/operations/gex-refresh-policy.php 020 enable|disable\n"); exit(1);
 }
@@ -20,6 +20,17 @@ $app = require getcwd().'/bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 if ($mode === 'enable' && ! Illuminate\Support\Facades\Schema::hasTable('intraday_refresh_states')) {
     fwrite(STDERR, "The phase020 additive migration must run first.\n"); exit(1);
+}
+if ($card === '021' && $mode === 'enable') {
+    foreach (['work_runs', 'symbol_bootstrap_phases'] as $table) {
+        if (! Illuminate\Support\Facades\Schema::hasColumn($table, 'provider_admission_deferrals')) {
+            fwrite(STDERR, "The phase021 additive migration must run first.\n"); exit(1);
+        }
+    }
+    if (! config('services.massive.concurrency.enabled') || (int) config('services.massive.concurrency.limit') < 2
+        || config('queue.connections.redis.connection') !== 'queue') {
+        fwrite(STDERR, "Verified provider concurrency and dedicated queue transport are required.\n"); exit(1);
+    }
 }
 $original = file_get_contents($target);
 if ($original === false) { exit(1); }

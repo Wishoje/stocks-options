@@ -21,7 +21,9 @@ class SymbolSearchConcurrencyTest extends TestCase
             ->once()
             ->andReturnUsing(fn (string $priority, callable $callback): mixed => $callback());
         $limiter->shouldReceive('massive')
-            ->with(Mockery::type('callable'), 2)
+            ->with(Mockery::type('callable'), 2, Mockery::on(
+                static fn (string $key): bool => preg_match('/^[a-f0-9]{64}$/', $key) === 1
+            ))
             ->once()
             ->andThrow(new ProviderConcurrencyUnavailable('test capacity pressure'));
         app()->instance(ProviderConcurrencyLimiter::class, $limiter);

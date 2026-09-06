@@ -47,5 +47,13 @@ return Application::configure(basePath: dirname(__DIR__))
         // $middleware->appendToGroup('web', AuthenticateSession::class);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+        $exceptions->render(function (\App\Exceptions\ProviderDeferred $exception, \Illuminate\Http\Request $request) {
+            $delay = max(1, $exception->retryAfterSeconds(now('UTC')));
+
+            return response()->json([
+                'message' => 'Market-data refresh is temporarily deferred. Please retry after the indicated delay.',
+                'code' => $exception->reason,
+                'retry_after_seconds' => $delay,
+            ], 503, ['Retry-After' => (string) $delay]);
+        });
     })->create();

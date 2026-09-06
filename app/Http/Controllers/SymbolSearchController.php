@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\ProviderConcurrencyUnavailable;
+use App\Exceptions\ProviderDeferred;
 use App\Support\ProviderConcurrencyLimiter;
+use App\Support\ProviderRequestReplay;
 use App\Support\QueueLanes;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -34,6 +36,10 @@ class SymbolSearchController extends Controller
                 // 2) Fallback to Massive if Finnhub missing or empty
                 return $this->searchWithMassive($q);
             });
+        } catch (ProviderDeferred $exception) {
+            // The global renderer supplies a bounded 503 and Retry-After.
+            // Throw before Cache::remember can save pressure as empty results.
+            throw $exception;
         } catch (ProviderConcurrencyUnavailable) {
             // Do not cache temporary capacity pressure as an empty search.
             return response()->json([
@@ -95,7 +101,7 @@ class SymbolSearchController extends Controller
         $client = Http::acceptJson()
             ->connectTimeout(3)
             ->timeout(10)
-            ->retry(2, 250, throw: false);
+            ->retry(config('provider_backpressure.enabled', false) ? 1 : 2, 250, throw: false);
 
         if ($mode === 'bearer') {
             $client = $client->withToken($key);
@@ -120,7 +126,8 @@ class SymbolSearchController extends Controller
             QueueLanes::PRIORITY_INTERACTIVE,
             fn () => $limiter->massive(
                 fn () => $client->get($url, $params),
-                (int) config('services.massive.concurrency.web_block_for', 2)
+                (int) config('services.massive.concurrency.web_block_for', 2),
+                ProviderRequestReplay::fingerprint($url, $params)
             )
         );
         if (!$resp->ok()) {

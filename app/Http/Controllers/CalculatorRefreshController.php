@@ -52,7 +52,7 @@ class CalculatorRefreshController extends Controller
         $run = $claim['run'];
         $queued = false;
 
-        if ($claim['created']) {
+        if ($claim['created'] || (config('provider_backpressure.enabled', false) && $run->status === 'pending')) {
             try {
                 $queued = $dispatcher->dispatch($run);
             } catch (Throwable $exception) {

@@ -21,6 +21,23 @@ abstract class QueueJob implements ShouldQueue
 
     public int $tries = 3;
 
+    public int $maxExceptions = 3;
+
+    public function middleware(): array
+    {
+        return [new \App\Jobs\Middleware\DeferProviderWork];
+    }
+
+    /** Laravel stores this deadline in the payload once, not on each release. */
+    public function retryUntil(): ?\DateTimeInterface
+    {
+        if (! config('provider_backpressure.enabled', false) || ($this->workRunId ?? null) !== null) {
+            return null;
+        }
+
+        return now('UTC')->addHours(12);
+    }
+
     /** @var int[] */
     public array $backoff = [15, 60, 180];
 

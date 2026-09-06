@@ -93,6 +93,11 @@ class HistoricalEodRecoveryService
                     $runDirectory,
                 );
                 $manifest['symbol_results'][$symbol] = $result;
+            } catch (\App\Exceptions\ProviderDeferred $exception) {
+                $manifest['status'] = 'capture_deferred';
+                $manifest['retry_not_before'] = $exception->notBefore->toIso8601String();
+                $this->writeJson($runDirectory.'/manifest.json', $manifest);
+                throw $exception;
             } catch (\Throwable $exception) {
                 $manifest['errors'][$symbol] = [
                     'exception' => $exception::class,

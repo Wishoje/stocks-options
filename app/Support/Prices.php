@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Exceptions\ProviderConcurrencyUnavailable;
+use App\Exceptions\ProviderDeferred;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -52,7 +53,7 @@ class Prices
         $client = Http::acceptJson()
             ->connectTimeout(3)
             ->timeout(10)
-            ->retry(2, 250, throw: false);
+            ->retry(config('provider_backpressure.enabled', false) ? 1 : 2, 250, throw: false);
 
         if ($mode === 'bearer') {
             $client = $client->withToken($key);
@@ -69,8 +70,13 @@ class Prices
 
         try {
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $client->get($url, $params)
+                fn () => $client->get($url, $params),
+                requestKey: ProviderRequestReplay::fingerprint($url, $params)
             );
+        } catch (ProviderDeferred $exception) {
+            // A shared provider deadline is pending work, not missing data or
+            // permission to query another vendor and publish a different bar.
+            throw $exception;
         } catch (ProviderConcurrencyUnavailable) {
             Log::warning('Prices.massiveDailyConcurrencyUnavailable', [
                 'symbol' => $symbol,

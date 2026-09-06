@@ -31,6 +31,9 @@ class SymbolBootstrapPhase extends Model
         'orchestration_reserved_at',
         'orchestration_dispatched_at',
         'dispatch_attempts',
+        'provider_deferrals',
+        'provider_admission_deferrals',
+        'provider_deferral_deadline_at',
         'attempt',
         'dispatching_at',
         'dispatched_at',
@@ -62,6 +65,9 @@ class SymbolBootstrapPhase extends Model
             'failed_at' => 'immutable_datetime',
             'outcome' => 'array',
             'dispatch_attempts' => 'integer',
+            'provider_deferrals' => 'integer',
+            'provider_admission_deferrals' => 'integer',
+            'provider_deferral_deadline_at' => 'immutable_datetime',
             'attempt' => 'integer',
             'orchestration_attempt' => 'integer',
         ];
@@ -70,6 +76,11 @@ class SymbolBootstrapPhase extends Model
     public function bootstrapRun(): BelongsTo
     {
         return $this->belongsTo(SymbolBootstrapRun::class, 'work_run_id', 'work_run_id');
+    }
+
+    public function effectiveDispatchAttempts(): int
+    {
+        return max(0, (int) $this->dispatch_attempts - (int) $this->provider_admission_deferrals);
     }
 
     protected function asDateTime($value)

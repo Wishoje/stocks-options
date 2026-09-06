@@ -18,6 +18,8 @@ class ProviderConcurrencyLimiterRedisTest extends TestCase
     {
         parent::setUp();
 
+        config()->set('provider_backpressure.enabled', false);
+
         if (! extension_loaded('redis')) {
             $this->redisUnavailable('The phpredis extension is required.');
         }

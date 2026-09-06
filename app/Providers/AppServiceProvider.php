@@ -32,6 +32,7 @@ class AppServiceProvider extends ServiceProvider
         // One process-local priority stack supplies context to every Massive
         // request made beneath a queued or interactive operation.
         $this->app->singleton(ProviderConcurrencyLimiter::class);
+        $this->app->singleton(\App\Support\ProviderRequestReplay::class);
     }
 
     /**

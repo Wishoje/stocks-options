@@ -2,11 +2,13 @@
 
 namespace App\Support;
 
+use App\Exceptions\ProviderDeferred;
 use App\Models\SymbolBootstrapExpiration;
 use App\Models\SymbolBootstrapHead;
 use App\Models\SymbolBootstrapPhase;
 use App\Models\SymbolBootstrapRun;
 use App\Models\WorkRun;
+use App\Models\WorkRunSlot;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection;
@@ -377,6 +379,22 @@ final class SymbolBootstrapCoordinator
             $parentDeliveryToken = (string) $parent->delivery_token;
             $parentAttempt = (int) $parent->attempt;
             $parentOrchestrationToken = (string) $parent->orchestration_token;
+            if ($parentDeliveryToken === ''
+                || $parentAttempt < 1
+                || $parentOrchestrationToken === ''
+                || (int) $parent->orchestration_attempt !== $parentAttempt) {
+                return null;
+            }
+            if ($expectedParentFence !== null
+                && (! hash_equals($parentDeliveryToken, (string) ($expectedParentFence['delivery_token'] ?? ''))
+                    || $parentAttempt !== (int) ($expectedParentFence['attempt'] ?? 0)
+                    || ! hash_equals(
+                        $parentOrchestrationToken,
+                        (string) ($expectedParentFence['orchestration_token'] ?? '')
+                    ))) {
+                return null;
+            }
+
             $phase = SymbolBootstrapPhase::query()
                 ->where('work_run_id', $workRunId)
                 ->where('phase', $phaseName)
@@ -407,8 +425,10 @@ final class SymbolBootstrapCoordinator
             }
 
             $maxAttempts = max(1, (int) config('symbol_bootstrap.max_phase_attempts', 5));
-            if ($phase->dispatch_attempts >= $maxAttempts) {
+            if ($phase->effectiveDispatchAttempts() >= $maxAttempts
+                || ($phase->provider_deferral_deadline_at && ! $phase->provider_deferral_deadline_at->isAfter($at))) {
                 $abandonedCode = match (true) {
+                    $phase->provider_deferral_deadline_at && ! $phase->provider_deferral_deadline_at->isAfter($at) => 'provider_wait_deadline',
                     $phase->status === SymbolBootstrapPhase::STATUS_RUNNING => 'running_lease_expired',
                     $phase->dispatched_at !== null => 'pending_lease_expired',
                     $phase->dispatching_at !== null => 'dispatch_reservation_expired',
@@ -443,22 +463,6 @@ final class SymbolBootstrapCoordinator
                 $parent->save();
                 $terminalized = true;
 
-                return null;
-            }
-
-            if ($parentDeliveryToken === ''
-                || $parentAttempt < 1
-                || $parentOrchestrationToken === ''
-                || (int) $parent->orchestration_attempt !== $parentAttempt) {
-                return null;
-            }
-            if ($expectedParentFence !== null
-                && (! hash_equals($parentDeliveryToken, (string) ($expectedParentFence['delivery_token'] ?? ''))
-                    || $parentAttempt !== (int) ($expectedParentFence['attempt'] ?? 0)
-                    || ! hash_equals(
-                        $parentOrchestrationToken,
-                        (string) ($expectedParentFence['orchestration_token'] ?? '')
-                    ))) {
                 return null;
             }
 
@@ -652,6 +656,195 @@ final class SymbolBootstrapCoordinator
         return true;
     }
 
+    /** @param array{delivery_token:string,attempt:int,orchestration_token:string}|null $expectedParentFence */
+    public function deferProvider(
+        string $workRunId,
+        string $phaseName,
+        string $token,
+        int $attempt,
+        ProviderDeferred $exception,
+        int $physicalHttpRequests,
+        ?CarbonInterface $at = null,
+        ?array $expectedParentFence = null
+    ): bool {
+        if (! config('provider_backpressure.enabled', false) || $expectedParentFence === null) {
+            return false;
+        }
+        if ($physicalHttpRequests < 0) {
+            throw new InvalidArgumentException('Physical HTTP request count cannot be negative.');
+        }
+        $at = $this->at($at);
+        $updated = DB::transaction(function () use ($workRunId, $phaseName, $token, $attempt, $exception, $physicalHttpRequests, $at, $expectedParentFence): bool {
+            $parent = $this->providerParentLocked($workRunId, $expectedParentFence);
+            if (! $parent) {
+                return false;
+            }
+            $phase = SymbolBootstrapPhase::query()->where('work_run_id', $workRunId)
+                ->where('phase', $phaseName)->lockForUpdate()->first();
+            if (! $phase || $phase->status !== SymbolBootstrapPhase::STATUS_RUNNING
+                || $token === '' || ! hash_equals((string) $phase->delivery_token, $token)
+                || $phase->attempt !== $attempt) {
+                return false;
+            }
+            $this->applyPhaseProviderDeferral($parent, $phase, $exception, $at,
+                $physicalHttpRequests === 0 && $exception->isAdmissionDeferral());
+
+            return true;
+        }, 3);
+        if ($updated) {
+            $this->refreshRunState($workRunId, $at);
+        }
+
+        return $updated;
+    }
+
+    /** Delay an unreserved background phase without consuming an attempt. */
+    public function deferPendingPhase(
+        string $workRunId,
+        string $phaseName,
+        CarbonInterface $notBefore,
+        string $reason,
+        ?CarbonInterface $at = null,
+        ?array $expectedParentFence = null
+    ): bool {
+        if (! config('provider_backpressure.enabled', false)) {
+            return false;
+        }
+        $exception = new ProviderDeferred($reason, CarbonImmutable::instance($notBefore));
+        if (! $exception->isAdmissionDeferral()) {
+            throw new InvalidArgumentException('An undispatched phase can only have an admission deferral.');
+        }
+        $at = $this->at($at);
+        $updated = DB::transaction(function () use ($workRunId, $phaseName, $exception, $at, $expectedParentFence): bool {
+            $parent = $this->providerParentLocked($workRunId, $expectedParentFence);
+            if (! $parent) {
+                return false;
+            }
+            $phase = SymbolBootstrapPhase::query()->where('work_run_id', $workRunId)
+                ->where('phase', $phaseName)->lockForUpdate()->first();
+            if (! $phase || $phase->status !== SymbolBootstrapPhase::STATUS_PENDING
+                || $phase->delivery_token !== null || $phase->dispatching_at !== null || $phase->dispatched_at !== null) {
+                return false;
+            }
+            $this->applyPhaseProviderDeferral($parent, $phase, $exception, $at, false);
+
+            return true;
+        }, 3);
+        if ($updated) {
+            $this->refreshRunState($workRunId, $at);
+        }
+
+        return $updated;
+    }
+
+    private function providerParentLocked(string $workRunId, ?array $expectedFence): ?WorkRun
+    {
+        $slotKey = WorkRun::query()->whereKey($workRunId)->value('slot_key');
+        $slot = $slotKey ? WorkRunSlot::query()->lockForUpdate()->find($slotKey) : null;
+        if (! $slot || $slot->current_run_id !== $workRunId) {
+            return null;
+        }
+        $parent = WorkRun::query()->lockForUpdate()->find($workRunId);
+        if (! $parent || $parent->kind !== 'symbol_bootstrap'
+            || $parent->status !== WorkRun::STATUS_RUNNING
+            || (int) $parent->generation !== (int) $slot->generation
+            || ! $parent->delivery_token || ! $parent->orchestration_token
+            || $parent->attempt < 1 || $parent->orchestration_attempt !== $parent->attempt) {
+            return null;
+        }
+        if ($expectedFence !== null
+            && (! hash_equals((string) $parent->delivery_token, (string) ($expectedFence['delivery_token'] ?? ''))
+                || $parent->attempt !== (int) ($expectedFence['attempt'] ?? 0)
+                || ! hash_equals((string) $parent->orchestration_token, (string) ($expectedFence['orchestration_token'] ?? '')))) {
+            return null;
+        }
+
+        return $parent;
+    }
+
+    private function applyPhaseProviderDeferral(
+        WorkRun $parent,
+        SymbolBootstrapPhase $phase,
+        ProviderDeferred $exception,
+        CarbonImmutable $at,
+        bool $credit
+    ): void {
+        $notBefore = $exception->notBefore->isAfter($at) ? $exception->notBefore : $at->addSecond();
+        if ($notBefore->micro > 0) {
+            $notBefore = $notBefore->startOfSecond()->addSecond();
+        }
+        foreach ([$phase->retry_not_before, $phase->next_dispatch_at] as $existing) {
+            if ($existing?->isAfter($notBefore)) {
+                $notBefore = $existing;
+            }
+        }
+        $pendingTtl = max(300, (int) config('symbol_bootstrap.pending_lease_seconds', 3600));
+        $lease = $notBefore->addSeconds($pendingTtl);
+        $parentLease = $notBefore->addSeconds(max($pendingTtl,
+            (int) config('work_runs.running_ttl_seconds.symbol_bootstrap', 10800)));
+        $deadline = $phase->provider_deferral_deadline_at;
+        if (! $deadline) {
+            $deadline = $at->addSeconds(max(3600, (int) config('work_runs.abandon_after_seconds', 86400)));
+            if ($lease->isAfter($deadline)) {
+                $deadline = $lease;
+            }
+        }
+        foreach ([$notBefore, $lease, $parentLease, $deadline] as $time) {
+            if ($time->greaterThan(CarbonImmutable::parse('2038-01-19 03:14:07', 'UTC'))) {
+                throw new InvalidArgumentException('Provider retry deadline exceeds the durable timestamp range.');
+            }
+        }
+        $phase->provider_deferrals = (int) $phase->provider_deferrals + 1;
+        if ($credit && (int) $phase->dispatch_attempts > (int) $phase->provider_admission_deferrals) {
+            $phase->provider_admission_deferrals = (int) $phase->provider_admission_deferrals + 1;
+        }
+        $phase->provider_deferral_deadline_at = $deadline;
+        $phase->delivery_token = null;
+        $phase->dispatching_at = null;
+        $phase->dispatched_at = null;
+        $phase->orchestration_token = null;
+        $phase->orchestration_attempt = 0;
+        $phase->orchestration_reserved_at = null;
+        $phase->orchestration_dispatched_at = null;
+        $phase->heartbeat_at = $at;
+        $phase->retry_not_before = $notBefore;
+        $exhausted = $phase->effectiveDispatchAttempts() >= max(1, (int) config('symbol_bootstrap.max_phase_attempts', 5));
+        $expired = ! $deadline->isAfter($at) || ! $deadline->isAfter($notBefore);
+        if ($exhausted || $expired) {
+            $reason = $expired ? 'provider_wait_deadline' : 'provider_retry_exhausted';
+            $cooldown = $at->addSeconds(max(0, (int) config('symbol_bootstrap.failure_cooldown_seconds', 300)));
+            $phase->status = SymbolBootstrapPhase::STATUS_FAILED;
+            $phase->failed_at = $at;
+            $phase->lease_expires_at = null;
+            $phase->next_dispatch_at = null;
+            if ($cooldown->isAfter($notBefore)) {
+                $phase->retry_not_before = $cooldown;
+            }
+            $phase->error_category = 'provider_retry_exhausted';
+            $phase->error_code = $reason;
+            $parent->status = WorkRun::STATUS_FAILED;
+            $parent->failed_at = $at;
+            $parent->lease_expires_at = null;
+            $parent->retry_not_before = $phase->retry_not_before;
+            $parent->reusable_until = null;
+            $parent->error_category = 'bootstrap_provider_retry_exhausted';
+            $parent->error_code = $phase->phase.':'.$reason;
+        } else {
+            $phase->status = SymbolBootstrapPhase::STATUS_PENDING;
+            $phase->attempt = 0;
+            $phase->next_dispatch_at = $notBefore;
+            $phase->lease_expires_at = $lease;
+            $phase->error_category = 'provider_deferred';
+            $phase->error_code = $exception->reason;
+            if (! $parent->lease_expires_at || $parentLease->isAfter($parent->lease_expires_at)) {
+                $parent->lease_expires_at = $parentLease;
+            }
+        }
+        $phase->save();
+        $parent->heartbeat_at = $at;
+        $parent->save();
+    }
+
     public function markPhaseFailed(
         string $workRunId,
         string $phaseName,
@@ -696,18 +889,19 @@ final class SymbolBootstrapCoordinator
             }
 
             $backoffs = array_values((array) config('symbol_bootstrap.retry_backoff_seconds', [15, 60, 180]));
-            $backoff = (int) ($backoffs[min(max(0, $phase->dispatch_attempts - 1), count($backoffs) - 1)] ?? 180);
+            $effectiveAttempts = $phase->effectiveDispatchAttempts();
+            $backoff = (int) ($backoffs[min(max(0, $effectiveAttempts - 1), count($backoffs) - 1)] ?? 180);
             $maxAttempts = max(1, (int) config('symbol_bootstrap.max_phase_attempts', 5));
             $terminalCategory = in_array($category, [
                 'provider_authentication',
                 'configuration',
                 'validation',
             ], true);
-            $terminal = $terminalCategory || $phase->dispatch_attempts >= $maxAttempts;
+            $terminal = $terminalCategory || $effectiveAttempts >= $maxAttempts;
             $cooldown = max(0, (int) config('symbol_bootstrap.failure_cooldown_seconds', 300));
 
             $phase->status = SymbolBootstrapPhase::STATUS_FAILED;
-            if (! $terminal && $phase->dispatch_attempts === 1 && $intradayFallbackQueue !== null) {
+            if (! $terminal && $effectiveAttempts === 1 && $intradayFallbackQueue !== null) {
                 $phase->queue = $intradayFallbackQueue;
             }
             $phase->delivery_token = null;
@@ -1025,6 +1219,12 @@ final class SymbolBootstrapCoordinator
                 'queue' => $phase->queue,
                 'attempt' => $phase->attempt,
                 'dispatch_attempts' => $phase->dispatch_attempts,
+                'provider_deferrals' => (int) $phase->provider_deferrals,
+                'provider_admission_deferrals' => (int) $phase->provider_admission_deferrals,
+                'effective_dispatch_attempts' => $phase->effectiveDispatchAttempts(),
+                'provider_deferral_deadline_at' => $phase->provider_deferral_deadline_at?->toIso8601String(),
+                'next_dispatch_at' => $phase->next_dispatch_at?->toIso8601String(),
+                'retry_not_before' => $phase->retry_not_before?->toIso8601String(),
                 'started_at' => $phase->started_at?->toIso8601String(),
                 'completed_at' => $phase->completed_at?->toIso8601String(),
                 'failed_at' => $phase->failed_at?->toIso8601String(),

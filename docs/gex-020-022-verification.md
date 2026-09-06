@@ -38,6 +38,40 @@ At2026-09-06T07:53:29Z, both servers ran8c808b2. SPY,QQQ,IWM and TSLA canonical 
 
 Live verification is performed during a closed Sunday session. Market-hours and failure behavior are also exercised with controlled tests; this does not substitute for a later peak-market traffic measurement.
 
-## GEX-021 and GEX-022
+### GEX-020 results
 
-Implementation, activation and measured results are recorded here after their preceding phase has passed verification.
+Commit `b463d01` is deployed and active on both servers. Targeted checks passed 208 PHP tests / 4,362 assertions, all 105 frontend tests, and the production build. Eight live closed-session job/summary probes returned HTTP 200 in 3.22–20.21 ms with zero provider calls and the unchanged baseline total-row fingerprint. All 26 workers were running; the public dashboard bundle matched the release.
+
+## GEX-021: provider backoff and fill pressure
+
+All 12 Massive HTTP boundaries retain the shared semaphore. Admissions no longer block workers, and HTTP clients make one transport attempt. HTTP 429/5xx, timeouts and network failures become typed deferrals. Numeric and HTTP-date Retry-After values are respected with positive jitter. Concurrent cooldown responses can extend, but not shorten, the shared deadline. A local fallback also protects the current process if writing the shared cooldown fails. Coordination failure is observable; distributed communication failures cannot guarantee delivery of a cooldown to another process.
+
+WorkRuns and bootstrap phases persist retry deadlines and revoke old delivery tokens. Zero-HTTP admission waits do not consume the real failure budget. Wait lifetimes are bounded and stale callbacks are rejected. Legacy queued chains retain their original payload and use a fixed 12-hour retry deadline. Synchronous commands propagate the deferral instead of reporting success without fetching data.
+
+Successful pages can be reused within the same generation or queue UUID. Checkpoints expire after 20 minutes, with a 2 MiB uncompressed page cap and 16 MiB stored cap per execution. They use cache Redis, not queue Redis, and do not store authentication data. Expiration, eviction or size limits can cause repeat reads; they never authorize partial publication. A measured two-page whole-job retry used 3 provider calls with reuse versus 4 without, with identical final data. This does not claim fewer calls than the former sleeping page-level retry.
+
+Scheduled calculator fills now persist stable WorkRuns before queueing and recheck completed publication freshness at execution. Fill admission pauses at interactive ready depth 6, interactive ready-head/due-intent age 30 seconds, fill depth 50, or fill ready-head/due-intent age 120 seconds. Existing fill consumers check only interactive pressure to avoid deadlocking on their own backlog. Sampling uses a bounded Redis pipeline and one grouped DB query. Ready-head age and oldest due durable intent are labelled separately.
+
+The optional request-window allowance remains unset because no plan-specific numeric rate is verified. Concurrency stays at six, divided 3+3; this is not a requests-per-second limit.
+
+Activation after both releases, the additive migration, and draining old provider jobs:
+
+```bash
+php8.3 docs/operations/gex-refresh-policy.php 021 enable
+php8.3 artisan config:cache
+php8.3 artisan queue:restart
+php8.3 artisan market-data:refresh-status --symbols=SPY,QQQ,IWM,TSLA
+```
+
+Run on both servers. The helper changes only PROVIDER_BACKPRESSURE_ENABLED and makes a protected backup. Old legacy payloads lack the new fixed retry deadline, so inspect their queues before activation. Rollback uses `021 disable`; retain the additive metadata. Do not flush Redis or raise the provider ceiling to clear a cooldown.
+
+### Manual checks
+
+1. Run the status command. Check enabled flags, the unchanged 3+3 split, cooldown, queue depth and due-intent age. It makes no provider calls or market-data writes.
+2. Open calculator expirations for SPY, QQQ, IWM and TSLA. Existing published chains should remain usable while fills wait. Repeated scheduling should reuse pending intent.
+3. If the provider throttles naturally, inspect the WorkRun or bootstrap phase deadline. It should wait and resume. Do not deliberately generate real provider 429s.
+4. Check worker status and logs for new terminal errors, comparing their timestamps with the release rather than treating historical failures as new regressions.
+
+## GEX-022
+
+Implementation and results are recorded after GEX-021 passes live verification.

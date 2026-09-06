@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\ProviderDeferred;
 use Illuminate\Bus\Queueable;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -60,6 +61,8 @@ class PricesDailyJob extends QueueJob implements ShouldQueue
                     \Log::warning("PricesDailyJob: no EOD for {$symbol} {$date}");
                     $failed++;
                 }
+            } catch (ProviderDeferred $exception) {
+                throw $exception;
             } catch (\Throwable $e) {
                 $failed++;
                 \Log::error('PricesDailyJob.error', [

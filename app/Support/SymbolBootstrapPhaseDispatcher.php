@@ -36,6 +36,15 @@ final class SymbolBootstrapPhaseDispatcher
                 'attempt' => $parentConfirmation->workRunAttempt,
                 'orchestration_token' => $parentConfirmation->orchestrationToken,
             ];
+            if (in_array($candidate->phase, [SymbolBootstrapCoordinator::PHASE_FILL, SymbolBootstrapCoordinator::PHASE_ENRICHMENT], true)
+                && ($deferred = app(ScheduledFillBackpressure::class)->deferral())) {
+                $this->coordinator->deferPendingPhase(
+                    $workRunId, $candidate->phase, $deferred->notBefore, $deferred->reason,
+                    expectedParentFence: $expectedParentFence
+                );
+
+                continue;
+            }
             $reservation = $this->coordinator->reservePhase(
                 $workRunId,
                 $candidate->phase,

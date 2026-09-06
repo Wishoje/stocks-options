@@ -21,6 +21,16 @@ final class WorkRunDispatcher
     public function dispatch(WorkRun|string $workRun): bool
     {
         $runId = $workRun instanceof WorkRun ? $workRun->id : $workRun;
+        if (config('provider_backpressure.enabled', false)) {
+            $candidate = $workRun instanceof WorkRun ? $workRun : WorkRun::query()->find($runId);
+            if ($candidate?->kind === 'calculator_refresh'
+                && QueueLanes::providerPriority($candidate->queue) === QueueLanes::PRIORITY_BACKGROUND
+                && ($deferred = app(ScheduledFillBackpressure::class)->deferral())) {
+                $this->runs->deferPendingProvider($runId, $deferred);
+
+                return false;
+            }
+        }
         $reservation = $this->runs->reserveDispatch($runId);
         if (! $reservation) {
             return false;

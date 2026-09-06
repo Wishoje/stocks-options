@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Exceptions\ProviderDeferred;
 use App\Exceptions\WorkRunRateLimited;
 use App\Models\User;
 use App\Models\WorkRun;
@@ -12,6 +13,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use Throwable;
 
 final class WorkRunCoordinator
@@ -63,6 +65,29 @@ final class WorkRunCoordinator
                 : null;
 
             if ($current && $this->isReusable($current, $at, $reuseCompleted)) {
+                if (config('provider_backpressure.enabled', false)
+                    && $requestedBy !== null
+                    && $current->status === WorkRun::STATUS_PENDING
+                    && $current->delivery_token === null
+                    && $current->dispatching_at === null
+                    && $current->dispatched_at === null
+                    && QueueLanes::providerPriority($queue) === QueueLanes::PRIORITY_INTERACTIVE
+                    && QueueLanes::providerPriority($current->queue) === QueueLanes::PRIORITY_BACKGROUND) {
+                    $current->queue = $queue;
+                    $current->requested_by_user_id ??= $requestedBy->getKey();
+                    $current->next_dispatch_at = $current->retry_not_before?->isAfter($at)
+                        ? $current->retry_not_before : $at;
+                    // An accepted-start admission budget is not queue pressure.
+                    if ($current->error_category === 'admission_deferred'
+                        && $current->getOriginal('next_dispatch_at')) {
+                        $originalDeadline = CarbonImmutable::parse($current->getOriginal('next_dispatch_at'), 'UTC');
+                        if ($originalDeadline->isAfter($current->next_dispatch_at)) {
+                            $current->next_dispatch_at = $originalDeadline;
+                        }
+                    }
+                    $current->save();
+                }
+
                 return ['run' => $current, 'created' => false, 'deferred' => false];
             }
 
@@ -119,6 +144,15 @@ final class WorkRunCoordinator
                 return null;
             }
             if ($run->next_dispatch_at && $run->next_dispatch_at->isAfter($at)) {
+                return null;
+            }
+            if ((int) $run->provider_deferrals > 0
+                && (($run->provider_deferral_deadline_at && ! $run->provider_deferral_deadline_at->isAfter($at))
+                    || $run->effectiveDispatchAttempts() >= $this->providerAttemptLimit())) {
+                $this->exhaustProviderWait($run, $at,
+                    $run->provider_deferral_deadline_at && ! $run->provider_deferral_deadline_at->isAfter($at)
+                        ? 'provider_wait_deadline' : 'provider_retry_exhausted');
+
                 return null;
             }
 
@@ -396,11 +430,165 @@ final class WorkRunCoordinator
 
             $runningTtl = max(300, (int) config("work_runs.running_ttl_seconds.{$run->kind}", 3600));
             $run->heartbeat_at = $at;
-            $run->lease_expires_at = $at->addSeconds($runningTtl);
+            $extendedLease = $at->addSeconds($runningTtl);
+            if (! $run->lease_expires_at || $extendedLease->isAfter($run->lease_expires_at)) {
+                $run->lease_expires_at = $extendedLease;
+            }
             $run->save();
 
             return true;
         });
+    }
+
+    /** Revoke the current delivery before exposing a durable provider retry. */
+    public function deferProvider(
+        string $runId,
+        string $deliveryToken,
+        int $attempt,
+        ProviderDeferred $exception,
+        int $physicalHttpRequests,
+        ?CarbonInterface $at = null
+    ): bool {
+        if (! config('provider_backpressure.enabled', false)) {
+            return false;
+        }
+        if ($physicalHttpRequests < 0) {
+            throw new InvalidArgumentException('Physical HTTP request count cannot be negative.');
+        }
+        $at = $this->at($at);
+
+        return DB::transaction(function () use ($runId, $deliveryToken, $attempt, $exception, $physicalHttpRequests, $at): bool {
+            $run = $this->currentProviderRunLocked($runId);
+            if (! $run || $run->status !== WorkRun::STATUS_RUNNING
+                || $deliveryToken === '' || ! hash_equals((string) $run->delivery_token, $deliveryToken)
+                || $run->attempt !== $attempt) {
+                return false;
+            }
+            $this->applyProviderDeferral($run, $exception, $at,
+                $physicalHttpRequests === 0 && $exception->isAdmissionDeferral());
+
+            return true;
+        }, 3);
+    }
+
+    /** Backpressure before a queue reservation consumes no physical delivery. */
+    public function deferPendingProvider(string $runId, ProviderDeferred $exception, ?CarbonInterface $at = null): bool
+    {
+        if (! config('provider_backpressure.enabled', false)) {
+            return false;
+        }
+        if (! $exception->isAdmissionDeferral()) {
+            throw new InvalidArgumentException('An undispatched run can only have an admission deferral.');
+        }
+        $at = $this->at($at);
+
+        return DB::transaction(function () use ($runId, $exception, $at): bool {
+            $run = $this->currentProviderRunLocked($runId);
+            if (! $run || $run->status !== WorkRun::STATUS_PENDING
+                || $run->delivery_token !== null || $run->dispatching_at !== null || $run->dispatched_at !== null) {
+                return false;
+            }
+            $this->applyProviderDeferral($run, $exception, $at, false);
+
+            return true;
+        }, 3);
+    }
+
+    /** Slot-before-run lock order matches claim(), preventing ownership races. */
+    private function currentProviderRunLocked(string $runId): ?WorkRun
+    {
+        $slotKey = WorkRun::query()->whereKey($runId)->value('slot_key');
+        $slot = $slotKey ? WorkRunSlot::query()->lockForUpdate()->find($slotKey) : null;
+        if (! $slot || $slot->current_run_id !== $runId) {
+            return null;
+        }
+        $run = WorkRun::query()->lockForUpdate()->find($runId);
+
+        return $run && (int) $slot->generation === (int) $run->generation ? $run : null;
+    }
+
+    private function applyProviderDeferral(WorkRun $run, ProviderDeferred $exception, CarbonImmutable $at, bool $credit): void
+    {
+        $notBefore = $exception->notBefore->isAfter($at) ? $exception->notBefore : $at->addSecond();
+        if ($notBefore->micro > 0) {
+            $notBefore = $notBefore->startOfSecond()->addSecond();
+        }
+        foreach ([$run->retry_not_before, $run->next_dispatch_at] as $existing) {
+            if ($existing?->isAfter($notBefore)) {
+                $notBefore = $existing;
+            }
+        }
+        $pendingTtl = max(3600, (int) config('work_runs.pending_ttl_seconds', 43200));
+        $lease = $notBefore->addSeconds($pendingTtl);
+        $deadline = $run->provider_deferral_deadline_at;
+        if (! $deadline) {
+            $deadline = $at->addSeconds(max(3600, (int) config('work_runs.abandon_after_seconds', 86400)));
+            if ($lease->isAfter($deadline)) {
+                $deadline = $lease;
+            }
+        }
+        foreach ([$notBefore, $lease, $deadline] as $time) {
+            if ($time->greaterThan(CarbonImmutable::parse('2038-01-19 03:14:07', 'UTC'))) {
+                throw new InvalidArgumentException('Provider retry deadline exceeds the durable timestamp range.');
+            }
+        }
+        $run->provider_deferrals = (int) $run->provider_deferrals + 1;
+        if ($credit && (int) $run->dispatch_attempts > (int) $run->provider_admission_deferrals) {
+            $run->provider_admission_deferrals = (int) $run->provider_admission_deferrals + 1;
+        }
+        $run->provider_deferral_deadline_at = $deadline;
+        $run->retry_not_before = $notBefore;
+        $run->delivery_token = null;
+        $run->dispatching_at = null;
+        $run->dispatched_at = null;
+        $run->orchestration_token = null;
+        $run->orchestration_attempt = 0;
+        $run->orchestration_reserved_at = null;
+        $run->orchestration_dispatched_at = null;
+        $run->heartbeat_at = $at;
+        if (! $deadline->isAfter($at) || ! $deadline->isAfter($notBefore)
+            || $run->effectiveDispatchAttempts() >= $this->providerAttemptLimit()) {
+            $this->exhaustProviderWait($run, $at,
+                ! $deadline->isAfter($at) || ! $deadline->isAfter($notBefore)
+                    ? 'provider_wait_deadline' : 'provider_retry_exhausted');
+
+            return;
+        }
+        $run->status = WorkRun::STATUS_PENDING;
+        $run->attempt = 0;
+        $run->next_dispatch_at = $notBefore;
+        $run->lease_expires_at = $lease;
+        $run->error_category = 'provider_deferred';
+        $run->error_code = $exception->reason;
+        $run->save();
+    }
+
+    private function providerAttemptLimit(): int
+    {
+        return max(1, min(10, (int) config('work_runs.running_recovery_max_dispatches', 3)));
+    }
+
+    private function exhaustProviderWait(WorkRun $run, CarbonImmutable $at, string $reason): void
+    {
+        $cooldown = $at->addSeconds(max(0, (int) config('work_runs.failure_cooldown_seconds', 300)));
+        $run->status = WorkRun::STATUS_FAILED;
+        $run->delivery_token = null;
+        $run->dispatching_at = null;
+        $run->orchestration_token = null;
+        $run->orchestration_attempt = 0;
+        $run->orchestration_reserved_at = null;
+        $run->orchestration_dispatched_at = null;
+        $run->failed_at = $at;
+        $run->heartbeat_at = $at;
+        $run->next_dispatch_at = null;
+        $run->lease_expires_at = null;
+        if (! $run->retry_not_before || $cooldown->isAfter($run->retry_not_before)) {
+            $run->retry_not_before = $cooldown;
+        }
+        $run->reusable_until = null;
+        $run->error_category = 'provider_retry_exhausted';
+        $run->error_code = $reason;
+        $run->save();
     }
 
     public function markCompleted(
@@ -543,7 +731,7 @@ final class WorkRunCoordinator
             $run->orchestration_reserved_at = null;
             $run->orchestration_dispatched_at = null;
             $maximum = max(1, min(10, (int) config('work_runs.running_recovery_max_dispatches', 3)));
-            if ($run->dispatch_attempts >= $maximum) {
+            if ($run->effectiveDispatchAttempts() >= $maximum) {
                 $run->status = WorkRun::STATUS_FAILED;
                 $run->failed_at = $at;
                 $run->lease_expires_at = null;
@@ -619,6 +807,12 @@ final class WorkRunCoordinator
             'queue' => $run->queue,
             'parameters' => $run->parameters ?? [],
             'attempt' => $run->attempt,
+            'dispatch_attempts' => (int) $run->dispatch_attempts,
+            'provider_deferrals' => (int) $run->provider_deferrals,
+            'provider_admission_deferrals' => (int) $run->provider_admission_deferrals,
+            'effective_dispatch_attempts' => $run->effectiveDispatchAttempts(),
+            'provider_deferral_deadline_at' => $run->provider_deferral_deadline_at?->toIso8601String(),
+            'next_dispatch_at' => $run->next_dispatch_at?->toIso8601String(),
             'requested_at' => $run->requested_at?->toIso8601String(),
             'dispatched_at' => $run->dispatched_at?->toIso8601String(),
             'started_at' => $run->started_at?->toIso8601String(),

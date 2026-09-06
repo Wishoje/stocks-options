@@ -38,7 +38,7 @@ class PolygonClient
             ->connectTimeout(3)
             ->timeout(10)
             // Don’t aggressively retry auth failures; keep general retry for others
-            ->retry(2, fn () => random_int(250, 600), throw: false);
+            ->retry(config('provider_backpressure.enabled', false) ? 1 : 2, fn () => random_int(250, 600), throw: false);
 
         if ($mode === 'bearer') {
             $client = $client->withToken($key); // sets Authorization: Bearer <key>
@@ -353,7 +353,8 @@ class PolygonClient
             }
 
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
-                fn () => $this->http()->get($url)
+                fn () => $this->http()->get($url),
+                requestKey: ProviderRequestReplay::fingerprint($url, [])
             );
 
             // If unauthorized, don’t keep retrying needlessly
@@ -431,7 +432,8 @@ class PolygonClient
         }
 
         $resp = app(ProviderConcurrencyLimiter::class)->massive(
-            fn () => $this->http()->get($url)
+            fn () => $this->http()->get($url),
+            requestKey: ProviderRequestReplay::fingerprint($url, [])
         );
 
         if (in_array($resp->status(), [401, 403], true)) {
