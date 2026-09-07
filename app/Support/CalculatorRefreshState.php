@@ -37,7 +37,7 @@ final class CalculatorRefreshState
             $keyToSymbol[$this->stateKey($symbol)] = $symbol;
         }
 
-        $values = $keyToSymbol === [] ? [] : Cache::many(array_keys($keyToSymbol));
+        $values = $keyToSymbol === [] ? [] : CoordinationCache::store()->many(array_keys($keyToSymbol));
         $states = [];
 
         foreach ($keyToSymbol as $key => $symbol) {
@@ -51,7 +51,7 @@ final class CalculatorRefreshState
     /** @return array<string, mixed>|null */
     public function get(string $symbol): ?array
     {
-        $state = Cache::get($this->stateKey($symbol));
+        $state = CoordinationCache::store()->get($this->stateKey($symbol));
 
         return is_array($state) ? $state : null;
     }
@@ -136,7 +136,7 @@ final class CalculatorRefreshState
                 'claim_token' => $claimToken,
             ];
 
-            if (! Cache::add($this->activeKey($symbol), $claim, $activeUntil)) {
+            if (! CoordinationCache::store()->add($this->activeKey($symbol), $claim, $activeUntil)) {
                 return null;
             }
 
@@ -164,9 +164,9 @@ final class CalculatorRefreshState
             ];
 
             try {
-                Cache::put($this->stateKey($symbol), $state, $this->stateExpiresAt($at));
+                CoordinationCache::store()->put($this->stateKey($symbol), $state, $this->stateExpiresAt($at));
             } catch (\Throwable $exception) {
-                Cache::forget($this->activeKey($symbol));
+                CoordinationCache::store()->forget($this->activeKey($symbol));
 
                 throw $exception;
             }
@@ -283,7 +283,7 @@ final class CalculatorRefreshState
             $at,
             $keepActive
         ): bool {
-            $active = Cache::get($this->activeKey($symbol));
+            $active = CoordinationCache::store()->get($this->activeKey($symbol));
             if (! is_array($active)
                 || ! hash_equals((string) ($active['generation'] ?? ''), $generation)
                 || ! hash_equals((string) ($active['claim_token'] ?? ''), $claimToken)) {
@@ -311,16 +311,16 @@ final class CalculatorRefreshState
                     ->addSeconds($this->startedTtlSeconds())
                     ->toIso8601String();
             }
-            Cache::put($this->stateKey($symbol), $state, $this->stateExpiresAt($at));
+            CoordinationCache::store()->put($this->stateKey($symbol), $state, $this->stateExpiresAt($at));
 
             if ($keepActive) {
-                Cache::put(
+                CoordinationCache::store()->put(
                     $this->activeKey($symbol),
                     $active,
                     $this->immutable($at)->addSeconds($this->startedTtlSeconds())
                 );
             } else {
-                Cache::forget($this->activeKey($symbol));
+                CoordinationCache::store()->forget($this->activeKey($symbol));
             }
 
             return true;

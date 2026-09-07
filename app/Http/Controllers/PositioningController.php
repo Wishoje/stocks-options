@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\CoordinationCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
 
 class PositioningController extends Controller
 {
@@ -68,7 +68,7 @@ class PositioningController extends Controller
 
         $total = DB::table('dex_by_expiry')
             ->where('symbol', $symbol)->where('data_date', $date)->sum('dex_total');
-        $gammaStrength = $date ? Cache::get("gamma_strength:{$symbol}:{$date}") : null;
+        $gammaStrength = $date ? CoordinationCache::store()->get("gamma_strength:{$symbol}:{$date}") : null;
 
         return response()->json([
             'symbol'    => $symbol,

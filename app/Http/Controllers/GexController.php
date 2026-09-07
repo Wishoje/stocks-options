@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\OptionChainData;
 use App\Models\OptionExpiration;
+use App\Support\CoordinationCache;
 use App\Support\EodCacheVersion;
 use App\Support\EodSnapshotHealth;
 use App\Support\EodSnapshotSelector;
@@ -505,7 +506,7 @@ class GexController extends Controller
         $totalOiDelta = $totCallOiDelta + $totPutOiDelta;
         $totalVolDelta = $totCallVolDelta + $totPutVolDelta;
 
-        $gs = Cache::get("gamma_strength:{$symbol}:{$latestDate}");
+        $gs = CoordinationCache::store()->get("gamma_strength:{$symbol}:{$latestDate}");
 
         return [
             'symbol' => $symbol,

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Support\EodCacheVersion;
+use App\Support\ExpiryPressureBatch;
 use App\Support\Symbols;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -118,10 +119,15 @@ class ExpiryController extends Controller
             EodCacheVersion::DOMAIN_EXPIRY_PRESSURE,
             $symbols
         );
-        $cacheKey = 'expiry_pressure_batch:v2:'.md5($symbols->join(',').":{$days}:{$version}");
+        $batchEnabled = (bool) config('expiry_performance.batch_enabled', false);
+        $cacheKey = ($batchEnabled ? 'expiry_pressure_batch:v3:' : 'expiry_pressure_batch:v2:')
+            .md5($symbols->join(',').":{$days}:{$version}");
         $anchor = $this->completedSessionDate();
 
-        return \Cache::remember($cacheKey, now()->addHour(), function () use ($symbols, $days, $anchor) {
+        return \Cache::remember($cacheKey, now()->addHour(), function () use ($symbols, $days, $anchor, $batchEnabled) {
+            if ($batchEnabled && $symbols->count() > 1) {
+                return response()->json(['items' => app(ExpiryPressureBatch::class)->read($symbols->all(), $days, $anchor)], 200);
+            }
 
             // latest data_date per symbol
             $latest = \DB::table('expiry_pressure')

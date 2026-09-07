@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\ActivityPricingBatch;
 use App\Support\EodCacheVersion;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -34,12 +35,13 @@ class ActivityController extends Controller
             EodCacheVersion::DOMAIN_ACTIVITY,
             $symbol
         );
-        $key = 'ua:v2:'.md5(json_encode([
+        $batchPricing = (bool) config('activity_performance.batch_pricing_enabled', false);
+        $key = ($batchPricing ? 'ua:v3:' : 'ua:v2:').md5(json_encode([
             $symbol, $exp, $minZ, $minVolOI, $minVol, $minPremium, $limit, $perExp, $sideFilter, $withPrem, $nearPct, $sort, $useIntraday, $cacheVersion,
         ]));
 
         return Cache::remember($key, $ttl, function () use (
-            $symbol, $exp, $minZ, $minVolOI, $minVol, $minPremium, $limit, $perExp, $sideFilter, $withPrem, $nearPct, $sort, $useIntraday
+            $symbol, $exp, $minZ, $minVolOI, $minVol, $minPremium, $limit, $perExp, $sideFilter, $withPrem, $nearPct, $sort, $useIntraday, $batchPricing
         ) {
             $latest = DB::table('unusual_activity')->where('symbol', $symbol)->max('data_date');
             if (! $latest) {
@@ -202,8 +204,20 @@ class ActivityController extends Controller
 
             $picked = array_slice($picked, 0, max(1, $limit));
 
+            $pricing = null;
+            if ($withPrem && $batchPricing) {
+                $needsPricing = array_values(array_filter($picked, static function ($row): bool {
+                    $meta = json_decode($row->meta ?? '[]', true) ?: [];
+
+                    return ! isset($meta['premium_usd']) || $meta['premium_usd'] === null;
+                }));
+                if ($needsPricing !== []) {
+                    $pricing = ActivityPricingBatch::load($symbol, $needsPricing);
+                }
+            }
+
             // attach premium if requested (prefer stored/live meta)
-            $items = array_map(function ($r) use ($withPrem, $symbol) {
+            $items = array_map(function ($r) use ($withPrem, $symbol, $pricing) {
                 $meta = json_decode($r->meta ?? '[]', true) ?: [];
 
                 if ($withPrem && (! isset($meta['premium_usd']) || $meta['premium_usd'] === null)) {
@@ -213,7 +227,8 @@ class ActivityController extends Controller
                         $r->exp_date,
                         (float) $r->strike,
                         $callVol,
-                        $putVol
+                        $putVol,
+                        $pricing
                     );
                     $meta['call_prem'] = round($callPrem, 2);
                     $meta['put_prem'] = round($putPrem, 2);
@@ -300,11 +315,11 @@ class ActivityController extends Controller
 
     // fallback estimator if meta lacks premium
 
-    private function estimatePremiumUSD(string $symbol, string $exp, float $strike, int $callVol, int $putVol): array
+    private function estimatePremiumUSD(string $symbol, string $exp, float $strike, int $callVol, int $putVol, ?ActivityPricingBatch $pricing = null): array
     {
         // 1) If you *do* have an option_quotes table, keep using it first
-        if (\Schema::hasTable('option_quotes')) {
-            $rows = DB::table('option_quotes')
+        if ($pricing ? $pricing->source === 'option_quotes' : \Schema::hasTable('option_quotes')) {
+            $rows = $pricing ? $pricing->rows($exp, $strike) : DB::table('option_quotes')
                 ->where('symbol', $symbol)
                 ->whereDate('expiration_date', $exp)
                 ->where('strike', $strike)
@@ -338,7 +353,7 @@ class ActivityController extends Controller
         }
 
         // 2) Try direct mid from columns if you added any later (safe-select)
-        $ocdCols = array_values(array_filter([
+        $ocdCols = $pricing ? $pricing->directColumns : array_values(array_filter([
             \Schema::hasColumn('option_chain_data', 'mid_price') ? 'o.mid_price' : null,
             \Schema::hasColumn('option_chain_data', 'last_price') ? 'o.last_price' : null,
             \Schema::hasColumn('option_chain_data', 'close') ? 'o.close' : null,
@@ -368,7 +383,7 @@ class ActivityController extends Controller
         };
 
         if (! empty($ocdCols)) {
-            $rows = DB::table('option_chain_data as o')
+            $rows = $pricing ? $pricing->rows($exp, $strike) : DB::table('option_chain_data as o')
                 ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
                 ->where('e.symbol', $symbol)
                 ->whereDate('e.expiration_date', $exp)
@@ -388,7 +403,7 @@ class ActivityController extends Controller
         }
 
         // 3) Theoretical price from IV if no quotes stored
-        $rows = DB::table('option_chain_data as o')
+        $rows = $pricing ? $pricing->rows($exp, $strike) : DB::table('option_chain_data as o')
             ->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
             ->where('e.symbol', $symbol)
             ->whereDate('e.expiration_date', $exp)
@@ -398,7 +413,7 @@ class ActivityController extends Controller
             ->get();
 
         // Figure T in years from now to $exp
-        $T = max(0.0, (strtotime($exp) - time()) / (365.0 * 24 * 3600));
+        $T = max(0.0, (strtotime($exp) - $this->premiumTimestamp()) / (365.0 * 24 * 3600));
         $S = null; // spot from rows if provided
         foreach ($rows as $r) {
             if ($r->underlying_price !== null) {
@@ -408,7 +423,10 @@ class ActivityController extends Controller
         }
         if ($S === null) {
             // As a last resort, try EOD close or chain-average for today
-            $S = $this->getSpot($symbol, date('Y-m-d'));
+            $spotDate = $this->premiumSpotDate();
+            $S = $pricing
+                ? $pricing->fallbackSpot($spotDate, fn (): ?float => $this->getSpot($symbol, $spotDate))
+                : $this->getSpot($symbol, $spotDate);
         }
 
         $mid = ['call' => null, 'put' => null];
@@ -423,6 +441,16 @@ class ActivityController extends Controller
         $putPrem = max(0.0, (float) ($mid['put'] ?? 0)) * max(0, $putVol) * 100.0;
 
         return [$callPrem, $putPrem];
+    }
+
+    protected function premiumTimestamp(): int
+    {
+        return time();
+    }
+
+    protected function premiumSpotDate(): string
+    {
+        return date('Y-m-d');
     }
 
     private function normCdf(float $x): float

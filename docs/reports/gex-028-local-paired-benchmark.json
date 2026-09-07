@@ -1,0 +1,481 @@
+{
+  "scope": "Local synthetic data only. Not a production performance claim.",
+  "runtime": "PHP 8.3.14 on Windows; guarded MySQL test database; array cache",
+  "validation": {
+    "mysql_tests": 21,
+    "mysql_assertions": 1971,
+    "mysql_elapsed_seconds": 35.723,
+    "mysql_peak_memory_mib": 88,
+    "pure_tests": 6,
+    "pure_assertions": 39,
+    "stored_case_followup_tests": 1,
+    "stored_case_followup_assertions": 5,
+    "stored_case_followup_note": "Added after the captured benchmark: canonicalize returned pressure keys and require current-request membership. Red reproduction and corrected oracle comparison passed."
+  },
+  "benchmark": {
+    "scope": "local_synthetic_mysql_array_cache",
+    "symbols": 500,
+    "pressure_rows": 3000,
+    "chain_rows": 3000,
+    "legacy_source_sha256": "23814e2c2d821690873ec90d4d8bf639f6bcb26f2b44b3a06f8e110ec69f69ad",
+    "payload_sha256": "980f1b410398bff0c070ea11edd927af8edca07a82e000cf1e645ebda15b0862",
+    "samples": {
+      "cold_per_phase": 5,
+      "warm_per_phase": 10
+    },
+    "measurement_notes": "SQL logging is enabled equally. Small-sample p95 uses nearest rank. Handler counters are read operations, not rows examined. Optional performance-schema rows include counter-query overhead. Plan rows are optimizer estimates.",
+    "phases": {
+      "legacy": {
+        "cold": {
+          "p50_ms": 451.849,
+          "p95_ms": 453.034,
+          "samples": [
+            {
+              "elapsed_ms": 434.049,
+              "market_sql": 1001,
+              "total_sql": 1001,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 7505,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 428.179,
+              "market_sql": 1001,
+              "total_sql": 1001,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 7505,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 452.885,
+              "market_sql": 1001,
+              "total_sql": 1001,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 7505,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 451.849,
+              "market_sql": 1001,
+              "total_sql": 1001,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 7505,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 453.034,
+              "market_sql": 1001,
+              "total_sql": 1001,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 7505,
+              "statement_rows_examined_delta": null
+            }
+          ]
+        },
+        "warm": {
+          "p50_ms": 1.349,
+          "p95_ms": 1.984,
+          "samples": [
+            {
+              "elapsed_ms": 1.349,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.368,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.984,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.26,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.356,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.322,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.308,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.366,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.427,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.329,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            }
+          ]
+        },
+        "work_by_query_category": {
+          "dates": {
+            "sql": 1,
+            "returned_rows": 500,
+            "handler_read_operations": 3005
+          },
+          "spot": {
+            "sql": 500,
+            "returned_rows": 500,
+            "handler_read_operations": 1003
+          },
+          "headlines": {
+            "sql": 500,
+            "returned_rows": 1500,
+            "handler_read_operations": 3503
+          }
+        },
+        "representative_plans": [
+          {
+            "sql_sha256": "a991a3561a3abc40fb71143674f30b574eae576d12010cb5e4d90468eb5fb5f8",
+            "bindings": 501,
+            "tables": [
+              {
+                "table": "expiry_pressure",
+                "access": "index",
+                "index": "expiry_pressure_symbol_data_date_exp_date_unique",
+                "join_buffer": null,
+                "nodes": 1,
+                "estimated_rows_per_scan_sum": 11265
+              }
+            ]
+          },
+          {
+            "sql_sha256": "fdc0280dbd5ffa2d26e781e919a56baeede5fed937edbff4d7ef86b3a485fbae",
+            "bindings": 3,
+            "tables": [
+              {
+                "table": "e",
+                "access": "ref",
+                "index": "symbol_expiration_unique",
+                "join_buffer": null,
+                "nodes": 1,
+                "estimated_rows_per_scan_sum": 1
+              },
+              {
+                "table": "o",
+                "access": "ref",
+                "index": "ocd_exp_date_type_strike_unique",
+                "join_buffer": null,
+                "nodes": 1,
+                "estimated_rows_per_scan_sum": 6009
+              }
+            ]
+          },
+          {
+            "sql_sha256": "77fbf3dc4b59f260023157dc2a5ed3e87a426f542ea1f655eef873c3ba3ff1b2",
+            "bindings": 4,
+            "tables": [
+              {
+                "table": "expiry_pressure",
+                "access": "ref",
+                "index": "expiry_pressure_symbol_index",
+                "join_buffer": null,
+                "nodes": 1,
+                "estimated_rows_per_scan_sum": 6
+              }
+            ]
+          }
+        ]
+      },
+      "set_based": {
+        "cold": {
+          "p50_ms": 189.826,
+          "p95_ms": 209.207,
+          "samples": [
+            {
+              "elapsed_ms": 209.207,
+              "market_sql": 3,
+              "total_sql": 4,
+              "schema_capability_sql": 1,
+              "handler_read_operations": 6134,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 181.626,
+              "market_sql": 3,
+              "total_sql": 4,
+              "schema_capability_sql": 1,
+              "handler_read_operations": 6134,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 176.106,
+              "market_sql": 3,
+              "total_sql": 4,
+              "schema_capability_sql": 1,
+              "handler_read_operations": 6134,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 202.673,
+              "market_sql": 3,
+              "total_sql": 4,
+              "schema_capability_sql": 1,
+              "handler_read_operations": 6134,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 189.826,
+              "market_sql": 3,
+              "total_sql": 4,
+              "schema_capability_sql": 1,
+              "handler_read_operations": 6134,
+              "statement_rows_examined_delta": null
+            }
+          ]
+        },
+        "warm": {
+          "p50_ms": 1.304,
+          "p95_ms": 1.476,
+          "samples": [
+            {
+              "elapsed_ms": 1.317,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.332,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.278,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.277,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.476,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.296,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.304,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.325,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.302,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            },
+            {
+              "elapsed_ms": 1.365,
+              "market_sql": 0,
+              "total_sql": 0,
+              "schema_capability_sql": 0,
+              "handler_read_operations": 3,
+              "statement_rows_examined_delta": null
+            }
+          ]
+        },
+        "work_by_query_category": {
+          "dates": {
+            "sql": 1,
+            "returned_rows": 500,
+            "handler_read_operations": 3005
+          },
+          "capability": {
+            "sql": 1,
+            "returned_rows": 9,
+            "handler_read_operations": 131
+          },
+          "spot": {
+            "sql": 1,
+            "returned_rows": 1,
+            "handler_read_operations": 1003
+          },
+          "headlines": {
+            "sql": 1,
+            "returned_rows": 1500,
+            "handler_read_operations": 2004
+          }
+        },
+        "representative_plans": [
+          {
+            "sql_sha256": "f3428182f7ed50d14b67bad313c0213056877d1832113743947e36731c7b348f",
+            "bindings": 501,
+            "tables": [
+              {
+                "table": "expiry_pressure",
+                "access": "index",
+                "index": "expiry_pressure_symbol_data_date_exp_date_unique",
+                "join_buffer": null,
+                "nodes": 1,
+                "estimated_rows_per_scan_sum": 11265
+              }
+            ]
+          },
+          {
+            "sql_sha256": "d6a556e5583ea33e5a01df623ac1432f533ed088dda41e5a481c91ed8ccbd2ab",
+            "bindings": 1500,
+            "tables": [
+              {
+                "table": "e",
+                "access": "ref",
+                "index": "symbol_expiration_unique",
+                "join_buffer": null,
+                "nodes": 500,
+                "estimated_rows_per_scan_sum": 500
+              },
+              {
+                "table": "o",
+                "access": "ref",
+                "index": "ocd_exp_date_type_strike_idx",
+                "join_buffer": null,
+                "nodes": 500,
+                "estimated_rows_per_scan_sum": 3260000
+              }
+            ]
+          },
+          {
+            "sql_sha256": "aaaef4152e32e07b892d5711b208c20200aca8144334ffbb97c31feaf8c074c5",
+            "bindings": 503,
+            "tables": [
+              {
+                "table": "expiry_pressure",
+                "access": "ref",
+                "index": "expiry_pressure_data_date_index",
+                "join_buffer": null,
+                "nodes": 1,
+                "estimated_rows_per_scan_sum": 2000
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "heavy": {
+    "scope": "local_synthetic_mysql_array_cache",
+    "additional_historical_chain_rows": 19200,
+    "additional_expirations": 6,
+    "additional_history_dates": 4,
+    "measurements": {
+      "one_heavy": {
+        "legacy": {
+          "elapsed_ms": 2.505,
+          "market_sql": 3,
+          "total_sql": 3,
+          "schema_capability_sql": 0,
+          "handler_read_operations": 35
+        },
+        "set_based": {
+          "elapsed_ms": 2.102,
+          "market_sql": 3,
+          "total_sql": 3,
+          "schema_capability_sql": 0,
+          "handler_read_operations": 35
+        }
+      },
+      "mixed_15": {
+        "legacy": {
+          "elapsed_ms": 14.105,
+          "market_sql": 31,
+          "total_sql": 31,
+          "schema_capability_sql": 0,
+          "handler_read_operations": 860
+        },
+        "set_based": {
+          "elapsed_ms": 7.186,
+          "market_sql": 3,
+          "total_sql": 4,
+          "schema_capability_sql": 1,
+          "handler_read_operations": 327
+        }
+      }
+    }
+  }
+}

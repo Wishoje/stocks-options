@@ -7,10 +7,10 @@ use App\Jobs\FetchCalculatorChainJob;
 use App\Jobs\FetchPolygonIntradayOptionsJob;
 use App\Jobs\FetchUnderlyingQuotesJob;
 use App\Jobs\RunSymbolBootstrapPhaseJob;
+use App\Support\CoordinationCache;
 use App\Support\ProviderRequestReplay;
 use App\Support\SymbolBootstrapCoordinator;
 use App\Support\WorkRunCoordinator;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /** Queue waits preserve intent and never complete an unfinished chained job. */
@@ -29,7 +29,7 @@ final class DeferProviderWork
                 $result = $next($job);
                 if (! ($job->job?->isReleased() ?? false) && $this->completed($job)) {
                     $replay->forgetExecution($scope);
-                    Cache::forget($this->failureKey($scope));
+                    CoordinationCache::store()->forget($this->failureKey($scope));
                 }
 
                 return $result;
@@ -69,8 +69,8 @@ final class DeferProviderWork
                     // Count attempted-provider failures, not zero-HTTP admission waits.
                     $failures = 0;
                     if (! $exception->isAdmissionDeferral() || $physical > 0) {
-                        Cache::add($this->failureKey($scope), 0, now()->addDay());
-                        $failures = (int) Cache::increment($this->failureKey($scope));
+                        CoordinationCache::store()->add($this->failureKey($scope), 0, now()->addDay());
+                        $failures = (int) CoordinationCache::store()->increment($this->failureKey($scope));
                     }
                     if ($failures >= max(1, (int) ($job->tries ?? 3))) {
                         $job->fail($exception);

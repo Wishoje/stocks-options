@@ -171,12 +171,30 @@ return [
         ],
 
         'cache' => [
+            // An inherited URL otherwise overrides an explicitly isolated host
+            // or port. An explicit cache URL always takes precedence.
+            'url' => env('REDIS_CACHE_URL',
+                \Illuminate\Support\Env::getRepository()->has('REDIS_CACHE_HOST')
+                || \Illuminate\Support\Env::getRepository()->has('REDIS_CACHE_PORT')
+                || \Illuminate\Support\Env::getRepository()->has('REDIS_CACHE_USERNAME')
+                || \Illuminate\Support\Env::getRepository()->has('REDIS_CACHE_PASSWORD')
+                    ? null : env('REDIS_URL')),
+            'host' => env('REDIS_CACHE_HOST', env('REDIS_HOST', '127.0.0.1')),
+            'username' => env('REDIS_CACHE_USERNAME', env('REDIS_USERNAME')),
+            'password' => env('REDIS_CACHE_PASSWORD', env('REDIS_PASSWORD')),
+            'port' => env('REDIS_CACHE_PORT', env('REDIS_PORT', '6379')),
+            'database' => env('REDIS_CACHE_DB', '1'),
+        ],
+
+        // Frozen legacy cache namespace for claims, counters and derived facts.
+        // Do not inherit REDIS_CACHE_*: payload cache can move independently.
+        'coordination' => [
             'url' => env('REDIS_URL'),
             'host' => env('REDIS_HOST', '127.0.0.1'),
             'username' => env('REDIS_USERNAME'),
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', '6379'),
-            'database' => env('REDIS_CACHE_DB', '1'),
+            'database' => env('REDIS_COORDINATION_DB', '1'),
         ],
 
     ],

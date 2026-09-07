@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\CoordinationCache;
 use App\Support\EodSnapshotSelector;
 use Carbon\Carbon;
 use Illuminate\Bus\Batchable;
@@ -11,7 +12,6 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class ComputePositioningJob extends QueueJob implements ShouldQueue
@@ -109,7 +109,7 @@ class ComputePositioningJob extends QueueJob implements ShouldQueue
 
             $strength = $absGamma > 0 ? min(1.0, max(0.0, abs($netGamma) / $absGamma)) : null;
 
-            Cache::put("gamma_strength:{$symbol}:{$date}", [
+            CoordinationCache::store()->put("gamma_strength:{$symbol}:{$date}", [
                 'date' => $date,
                 'strength' => $strength,
                 'sign' => ($netGamma >= 0 ? +1 : -1),

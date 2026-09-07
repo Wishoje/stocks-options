@@ -45,7 +45,18 @@ final class EodCacheVersion
             return self::INITIAL_VERSION;
         }
 
-        return $this->versionFrom(Cache::get($this->publicationKey($domain, $symbol)));
+        if (EodPublicationRepository::readsEnabled()) {
+            return app(EodPublicationRepository::class)->currentMany($domain, [$symbol])[$symbol];
+        }
+
+        $version = $this->versionFrom(Cache::get($this->publicationKey($domain, $symbol)));
+        if ($version === self::INITIAL_VERSION && EodPublicationRepository::writesEnabled()) {
+            // A temporary mirror-read rollback must not resurrect old initial
+            // payloads for symbols that never had a completed legacy head.
+            return app(EodPublicationRepository::class)->currentMany($domain, [$symbol])[$symbol];
+        }
+
+        return $version;
     }
 
     /**
@@ -74,6 +85,13 @@ final class EodCacheVersion
         $domains = $this->domains($domains);
         $publicationToken = trim((string) $publicationToken) ?: (string) Str::orderedUuid();
         $issuedAtMicroseconds ??= (int) floor(microtime(true) * 1_000_000);
+
+        EodPublicationRepository::readsEnabled(); // Reject an unsafe read-on/write-off configuration.
+        if (EodPublicationRepository::writesEnabled()) {
+            return app(EodPublicationRepository::class)->publish(
+                $canonical->all(), $domains, $publicationToken, $issuedAtMicroseconds
+            );
+        }
 
         $published = [];
         foreach ($domains as $domain) {
@@ -129,7 +147,8 @@ final class EodCacheVersion
     }
 
     /**
-     * Fetch a group of publication versions in one cache-store round trip.
+     * Legacy reads use one cache round trip. Durable reads use one metadata
+     * query per internal 1,000-symbol unit, without changing request admission.
      *
      * @param  iterable<int, string>  $symbols
      * @return array<string, string>
@@ -144,14 +163,26 @@ final class EodCacheVersion
             ->sort()
             ->values();
 
+        if (EodPublicationRepository::readsEnabled()) {
+            return app(EodPublicationRepository::class)->currentMany($domain, $canonical->all());
+        }
+
         $publicationKeys = $canonical->mapWithKeys(
             fn (string $symbol): array => [$symbol => $this->publicationKey($domain, $symbol)]
         );
         $publications = Cache::many($publicationKeys->values()->all());
 
-        return $publicationKeys->mapWithKeys(fn (string $key, string $symbol): array => [
+        $versions = $publicationKeys->mapWithKeys(fn (string $key, string $symbol): array => [
             $symbol => $this->versionFrom($publications[$key] ?? null),
         ])->all();
+        if (EodPublicationRepository::writesEnabled()) {
+            $missing = array_keys(array_filter($versions, static fn (string $version): bool => $version === self::INITIAL_VERSION));
+            if ($missing !== []) {
+                $versions = array_replace($versions, app(EodPublicationRepository::class)->currentMany($domain, $missing));
+            }
+        }
+
+        return $versions;
     }
 
     public function publicationKey(string $domain, string $symbol): string

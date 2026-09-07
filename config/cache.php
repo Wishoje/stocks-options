@@ -17,6 +17,12 @@ return [
 
     'default' => env('CACHE_STORE', 'database'),
 
+    // Enable on both nodes before moving the default payload cache. Keep this
+    // enabled during cache rollback so the original shared state stays visible.
+    'coordination_enabled' => filter_var(env('CACHE_COORDINATION_ENABLED', false), FILTER_VALIDATE_BOOL),
+    'limiter' => filter_var(env('CACHE_COORDINATION_ENABLED', false), FILTER_VALIDATE_BOOL)
+        ? 'coordination' : null,
+
     /*
     |--------------------------------------------------------------------------
     | Cache Stores
@@ -75,6 +81,12 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_CACHE_CONNECTION', 'cache'),
             'lock_connection' => env('REDIS_CACHE_LOCK_CONNECTION', 'default'),
+        ],
+
+        'coordination' => [
+            'driver' => 'redis',
+            'connection' => 'coordination',
+            'lock_connection' => 'default',
         ],
 
         'dynamodb' => [
