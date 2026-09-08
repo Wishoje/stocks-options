@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services;
+namespace Tests\Fixtures;
 
 use App\Models\UnderlyingQuote;
 use Illuminate\Support\Facades\DB;
@@ -9,8 +9,11 @@ use App\Http\Controllers\GexController;
 use App\Http\Controllers\IntradayController;
 use Carbon\Carbon;
 
-class WallService
+class Gex029LegacyWallService
 {
+    // Frozen pre-GEX-029 service; only its namespace and class name changed.
+    public const SOURCE_SHA256 = 'a2e7804f1dbe87c5bc5132239b54403ac1a898ac82b45dfea0ff27424aa631cc';
+
     /**
      * Simple per-request cache for intraday composites.
      *
@@ -55,14 +58,45 @@ class WallService
     }
 
     /**
-     * Read the current quote with the existing age-limited snapshot fallback.
-     *
-     * The strikes composite has no spot field. Building its option aggregates
-     * here only discarded that payload before making this same quote lookup.
+     * Preferred current price accessor:
+     *  1) intraday composite (age-limited if $maxAgeMinutes given)
+     *  2) fallback to option_snapshots (also age-limited)
      */
     public function currentPrice(string $symbol, ?int $maxAgeMinutes = null): ?float
     {
-        return $this->latestSpot($symbol, $maxAgeMinutes);
+        $sym = strtoupper($symbol);
+
+        // Try intraday first
+        [$spot, $asof] = $this->intradaySpotWithAsOf($sym);
+
+        if ($spot !== null) {
+            // If we care about age, enforce it
+            if ($maxAgeMinutes !== null && $asof instanceof Carbon) {
+                $age = $asof->diffInMinutes(now('America/New_York'));
+                if ($age > $maxAgeMinutes) {
+                    $spot = null; // too stale
+                }
+            }
+        }
+
+        // If intraday looks okay, sanity-check it against last known snapshot
+        if ($spot !== null) {
+            $snap = $this->latestSpot($sym, null); // no age limit, just for comparison
+            if ($snap !== null) {
+                $diffPct = $this->distancePct($snap, $spot);
+                $diffPts = abs($snap - $spot);
+
+                // if intraday is wildly off vs last snapshot, trust snapshot instead
+                if ($diffPct > 25 && $diffPts > 10) {
+                    return $snap;
+                }
+            }
+
+            return $spot;
+        }
+
+        // Otherwise fall back to snapshot with age limit
+        return $this->latestSpot($sym, $maxAgeMinutes);
     }
 
 
@@ -233,3 +267,4 @@ class WallService
         return $this->intradayCache[$sym] = ($data ?: null);
     }
 }
+
