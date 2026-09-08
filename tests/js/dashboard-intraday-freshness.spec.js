@@ -148,7 +148,7 @@ describe('Dashboard intraday ingestion freshness', () => {
     summaryResponse = () => Promise.resolve(response(summary({ refresh_eligible: true })))
     const wrapper = await mountIntraday()
 
-    expect(pulls()).toEqual([['/api/intraday/pull', { symbols: ['SPY'] }]])
+    expect(pulls()).toEqual([['/api/intraday/pull', { symbols: ['SPY'] }, { signal: expect.any(AbortSignal) }]])
     const summaryIndex = axios.get.mock.calls.findIndex(([url]) => url === '/api/intraday/summary')
     expect(axios.get.mock.invocationCallOrder[summaryIndex]).toBeLessThan(axios.post.mock.invocationCallOrder[0])
     await wrapper.vm.refreshIntraday()

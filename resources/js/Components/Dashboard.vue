@@ -176,14 +176,13 @@
         <button
           v-for="t in tabMeta"
           :key="t.key"
-          :disabled="t.state !== 'ready'"
-          @click="t.state === 'ready' && activate(t.key)"
+          @click="activate(t.key)"
           class="flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition sm:gap-2 sm:px-5 sm:text-sm"
-          :class="activeTab === t.key && t.state === 'ready'
+          :class="activeTab === t.key
             ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-500/20'
-            : t.state === 'ready'
+            : t.state === 'ready' || t.state === 'idle'
               ? 'text-gray-400 hover:text-white hover:bg-gray-800'
-              : 'text-gray-500 bg-gray-800/60 cursor-not-allowed'"
+              : 'text-gray-500 bg-gray-800/60'"
         >
           <component :is="t.icon" class="h-4 w-4" />
           {{ t.label }}
@@ -353,9 +352,9 @@
                 <h4 class="font-semibold">Term Structure</h4>
                 <span v-if="term?.date" class="text-xs text-gray-400">as of {{ term.date }}</span>
               </div>
-              <ui-error-block v-if="errors.volatility" :message="'Failed to load volatility data'"
-                            :detail="errors.volatility" :onRetry="ensureVolatility" />
-              <ui-skeleton-card v-else-if="!loaded.volatility" />
+              <ui-error-block v-if="volErrors.term" :message="'Failed to load volatility data'"
+                            :detail="volErrors.term" :onRetry="ensureVolatility" />
+              <ui-skeleton-card v-else-if="volState.term === 'loading' || volState.term === 'pending'" />
               <TermTile v-else :items="term.items || []" :date="term.date" />
             </div>
 
@@ -364,25 +363,25 @@
                 <h4 class="font-semibold">Variance Risk Premium</h4>
                 <span v-if="vrp?.date" class="text-xs text-gray-400">as of {{ vrp.date }}</span>
               </div>
-              <ui-error-block v-if="errors.volatility" :message="'Failed to load volatility data'"
-                            :detail="errors.volatility" :onRetry="ensureVolatility" />
-              <ui-skeleton-card v-else-if="!loaded.volatility" />
+              <ui-error-block v-if="volErrors.vrp" :message="'Failed to load volatility data'"
+                            :detail="volErrors.vrp" :onRetry="ensureVolatility" />
+              <ui-skeleton-card v-else-if="volState.vrp === 'loading' || volState.vrp === 'pending'" />
               <VRPTile v-else :date="vrp.date" :iv1m="vrp.iv1m" :rv20="vrp.rv20" :vrp="vrp.vrp" :z="vrp.z" />
             </div>
           </div>
 
           <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
             <h4 class="font-semibold mb-2">Seasonality (5D)</h4>
-            <ui-error-block v-if="errors.volatility" :message="'Failed to load seasonality'"
-                          :detail="errors.volatility" :onRetry="ensureVolatility" />
-            <ui-skeleton-card v-else-if="!loaded.volatility" />
+            <ui-error-block v-if="volErrors.season" :message="'Failed to load seasonality'"
+                          :detail="volErrors.season" :onRetry="ensureVolatility" />
+            <ui-skeleton-card v-else-if="volState.season === 'loading' || volState.season === 'pending'" />
             <template v-else>
               <Seasonality5Tile
                 v-if="season"
                 :date="season.date"
                 :d1="season.d1" :d2="season.d2" :d3="season.d3" :d4="season.d4" :d5="season.d5"
                 :cum5="season.cum5" :z="season.z" :note="seasonNote" />
-              <div v-else class="text-sm text-gray-400">No seasonality data.</div>
+              <div v-else class="text-sm text-gray-400">{{ seasonNote || 'No seasonality data.' }}</div>
             </template>
             <div v-if="volErr" class="text-red-400 text-sm mt-2">Vol metrics error: {{ volErr }}</div>
           </div>
@@ -661,6 +660,7 @@ import {
   h, defineComponent, defineAsyncComponent
 } from 'vue'
 import axios from 'axios'
+import { coalesceDashboardRequest } from '@/Support/dashboard-request-scope.js'
 import {
   bootstrapPollDelayMs,
   bootstrapPreparationNotice,
@@ -718,9 +718,9 @@ const tabsIntraday = [
 
 const currentTabs = computed(() => dataMode.value === 'eod' ? tabsEOD : tabsIntraday)
 const tabStatus = reactive({
-  positioning: { state: 'pending', err: '' },
-  volatility:  { state: 'pending', err: '' },
-  ua:          { state: 'pending', err: '' },
+  positioning: { state: 'idle', err: '' },
+  volatility:  { state: 'idle', err: '' },
+  ua:          { state: 'idle', err: '' },
 })
 const tabPollers = { positioning: null, volatility: null, ua: null }
 let volRetryTimer = null
@@ -821,7 +821,8 @@ const uaSide = ref('')
 const uaSort = ref('z_score')
 const uaMinPrem = ref(0)
 const showAdvanced = ref(false)
-const symbol = ref('SPY')
+const initialSymbol = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('symbol')
+const symbol = ref(initialSymbol?.trim().toUpperCase() || 'SPY')
 const gexTf = ref('14d')
 const userSymbol = symbol
 const showOnboarding = ref(false)
@@ -834,6 +835,19 @@ const cacheSeas = new Map()
 const cacheUA = new Map()
 const TTL_MS = 300_000
 const volErr = ref(null)
+const volErrors = reactive({ term: '', vrp: '', season: '' })
+const volState = reactive({ term: 'idle', vrp: 'idle', season: 'idle' })
+let disposed = false
+let pageGeneration = 0
+let tabGeneration = 0
+let uaLoadGeneration = 0
+let uaActiveKey = null
+let volatilityLoad = null
+let preparedRefreshTimer = null
+let positioningFrame = null
+let positioningTimer = null
+const bootstrapControllers = new Map()
+const bootstrapInflight = new Map()
 const inflight = new Map()
 const marketOpen = ref(false)
 const inflightIntraday = new Map()
@@ -888,14 +902,60 @@ function pickSymbol(sym) {
 }
 
 // Controllers
-const controllers = { gex_eod: null, gex_intraday: null, term: null, vrp: null, season: null, ua: null }
+const controllers = { gex_eod: null, gex_intraday: null, term: null, vrp: null, season: null, ua: null, readiness: null }
 
 function withInflight(key, fn) {
-  const hit = inflight.get(key)
-  if (hit) return hit
-  const p = fn().finally(() => inflight.delete(key))
-  inflight.set(key, p)
-  return p
+  return coalesceDashboardRequest(inflight, key, fn)
+}
+
+function ownsTab(sym, mode, tab, generation = tabGeneration) {
+  return !disposed && userSymbol.value === sym && dataMode.value === mode
+    && activeTab.value === tab && generation === tabGeneration
+}
+
+function stopAuxiliaryWork() {
+  tabGeneration += 1
+  uaLoadGeneration += 1
+  uaActiveKey = null
+  volatilityLoad = null
+  if (volRetryTimer) clearTimeout(volRetryTimer)
+  volRetryTimer = null
+  Object.keys(tabPollers).forEach(stopTabPoll)
+  for (const type of ['term', 'vrp', 'season', 'ua', 'readiness']) {
+    controllers[type]?.abort()
+    controllers[type] = null
+  }
+  for (const key of inflight.keys()) {
+    if (!key.startsWith('gex:')) inflight.delete(key)
+  }
+}
+
+function stopPageWork() {
+  pageGeneration += 1
+  eodLoadGeneration += 1
+  stopAuxiliaryWork()
+  stopRefresh()
+  stopPreparingPoll({ reset: true })
+  clearTimeout(symbolTimer)
+  clearTimeout(preparedRefreshTimer)
+  preparedRefreshTimer = null
+  if (positioningFrame !== null) cancelAnimationFrame(positioningFrame)
+  clearTimeout(positioningTimer)
+  positioningFrame = positioningTimer = null
+  busy.value.positioning = false
+  for (const type of Object.keys(controllers)) {
+    controllers[type]?.abort()
+    controllers[type] = null
+  }
+  inflight.clear()
+  inflightIntraday.clear()
+  for (const [key, entry] of bootstrapControllers) {
+    if (disposed || entry.symbol !== userSymbol.value) {
+      entry.controller.abort()
+      bootstrapControllers.delete(key)
+      bootstrapInflight.delete(key)
+    }
+  }
 }
 
 // Watchers
@@ -906,16 +966,15 @@ function withInflight(key, fn) {
 
 watch(tabMeta, (tabs) => {
   const active = tabs.find(t => t.key === activeTab.value)
-  if (!active || active.state !== 'ready') {
-    const firstReady = tabs.find(t => t.state === 'ready')
-    if (firstReady) activeTab.value = firstReady.key
-  }
+  if (!active) activeTab.value = getDefaultTab(dataMode.value)
 })
 
 function activate(key) {
+  if (activeTab.value === key) {
+    ensureActiveTab()
+    return
+  }
   activeTab.value = key
-  if (key === 'volatility' && dataMode.value === 'eod' && !loaded.value.volatility) ensureVolatility()
-  if (key === 'ua' && !loaded.value.ua) ensureUA()
 }
 
 const preferredTf = (target) => {
@@ -929,7 +988,7 @@ const preferredTf = (target) => {
 
 function scrollToNetGex() {
   nextTick(() => {
-    if (netGexSection.value) {
+    if (!disposed && netGexSection.value) {
       netGexSection.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   })
@@ -944,7 +1003,10 @@ function startGuidedView() {
   activeTab.value = 'strikes'
 
   // force a fresh load for SPY / 0d, then scroll to Net GEX
-  fetchGexLevelsEOD(userSymbol.value, '0d', { applyTf: true }).then(() => scrollToNetGex())
+  const owner = pageGeneration
+  fetchGexLevelsEOD(userSymbol.value, '0d', { applyTf: true }).then(() => {
+    if (!disposed && owner === pageGeneration) scrollToNetGex()
+  })
 }
 
 function dismissOnboarding() {
@@ -963,30 +1025,29 @@ function setMode(mode) {
   if (dataMode.value === mode) return
   dataMode.value = mode
   activeTab.value = getDefaultTab(mode)
-  resetTabReadiness()
-  ensureAllTabReadiness()
 }
 
 // Data refresh on mode/tab change
-watch([dataMode, activeTab], async ([mode, tab], [oldMode, oldTab]) => {
+watch([dataMode, activeTab], ([mode, tab], [oldMode, oldTab]) => {
+  if (disposed) return
+  stopAuxiliaryWork()
+  ensureActiveTab()
   // Mode change
   if (mode !== oldMode) {
     if (mode === 'intraday') {
-      await refreshIntraday()
+      refreshIntraday()
       startAutoRefresh()
     } else {
       stopRefresh()
-      await fetchGexLevelsEOD(userSymbol.value, gexTf.value)
+      fetchGexLevelsEOD(userSymbol.value, gexTf.value)
     }
   }
 
   // Tab change - only refresh if data might be stale
-  if (tab !== oldTab) {
-    if (tab === 'ua' && !loaded.value.ua) ensureUA()
-    if (tab === 'volatility' && mode === 'eod' && !loaded.value.volatility) ensureVolatility()
+  if (tab !== oldTab && mode === oldMode) {
     if (tab === 'strikes') {
-      if (mode === 'intraday') await refreshIntraday()
-      if (mode === 'eod') await fetchGexLevelsEOD(userSymbol.value, gexTf.value)
+      if (mode === 'intraday') refreshIntraday()
+      if (mode === 'eod') fetchGexLevelsEOD(userSymbol.value, gexTf.value)
     }
   }
 }, { immediate: false })
@@ -1049,7 +1110,7 @@ function stopTabPoll(key) {
 }
 
 function resetTabReadiness() {
-  Object.keys(tabStatus).forEach(k => { tabStatus[k].state = 'pending'; tabStatus[k].err = '' })
+  Object.keys(tabStatus).forEach(k => { tabStatus[k].state = 'idle'; tabStatus[k].err = '' })
   Object.keys(tabPollers).forEach(stopTabPoll)
 }
 
@@ -1059,62 +1120,65 @@ function isPreparing(err) {
   return status === 404 || status === 202 || /preparing|queued|no data|no expirations/i.test(msg)
 }
 
-function readinessProbeFor(key) {
-  switch (key) {
-    case 'positioning':
-      if (dataMode.value !== 'eod') return null
-      return () => axios.get('/api/dex', { params: { symbol: userSymbol.value } })
-    case 'volatility':
-      if (dataMode.value !== 'eod') return null
-      return () => axios.get('/api/iv/term', { params: { symbol: userSymbol.value }, paramsSerializer: { indexes: false } })
-    case 'ua': {
-      const url = dataMode.value === 'intraday' ? '/api/intraday/ua' : '/api/ua'
-      return () => axios.get(url, { params: { symbol: userSymbol.value, per_expiry: 1, limit: 1, sort: 'z_score', with_premium: false } })
-    }
-    default:
-      return null
-  }
+function pendingResponse(response) {
+  if (response?.status !== 202) return response
+  const error = new Error(response.data?.error || 'Data is preparing')
+  error.response = response
+  throw error
 }
 
-function ensureTabReady(key) {
-  const probe = readinessProbeFor(key)
-  if (!probe) {
-    tabStatus[key].state = 'ready'
-    tabStatus[key].err = ''
-    stopTabPoll(key)
-    return
-  }
+function pollActiveTab(key, retry, isCurrent) {
+  stopTabPoll(key)
+  if (!isCurrent()) return
+  tabPollers[key] = setTimeout(() => {
+    tabPollers[key] = null
+    if (isCurrent()) retry()
+  }, 5000)
+}
 
+async function ensureTabReady(key) {
+  if (key !== 'positioning' || activeTab.value !== key || dataMode.value !== 'eod' || disposed) return
+  if (tabStatus[key].state === 'ready') return
+  const sym = userSymbol.value
+  const generation = tabGeneration
+  const ctl = ensureController('readiness')
+  const isCurrent = () => ownsTab(sym, 'eod', key, generation) && !ctl.signal.aborted
+  tabStatus[key].state = 'pending'
   tabStatus[key].err = ''
-  probe()
-    .then(() => {
-      tabStatus[key].state = 'ready'
+  try {
+    const response = await withInflight(`readiness:${key}:${sym}`, () =>
+      axios.get('/api/dex', { params: { symbol: sym }, signal: ctl.signal }))
+    if (!isCurrent()) return
+    pendingResponse(response)
+    tabStatus[key].state = 'ready'
+    stopTabPoll(key)
+  } catch (e) {
+    if (!isCurrent()) return
+    if (isPreparing(e)) {
+      tabStatus[key].state = 'pending'
+      pollActiveTab(key, () => ensureTabReady(key), isCurrent)
+    } else {
+      tabStatus[key].state = 'error'
+      tabStatus[key].err = e?.response?.data?.error || e.message || 'Unavailable'
       stopTabPoll(key)
-    })
-    .catch((e) => {
-      if (isPreparing(e)) {
-        tabStatus[key].state = 'pending'
-        stopTabPoll(key)
-        tabPollers[key] = setTimeout(() => ensureTabReady(key), 5000)
-      } else {
-        tabStatus[key].state = 'error'
-        tabStatus[key].err = e?.response?.data?.error || e.message || 'Unavailable'
-        stopTabPoll(key)
-      }
-    })
+    }
+  }
 }
 
-function ensureAllTabReadiness() {
-  ['positioning', 'volatility', 'ua'].forEach(ensureTabReady)
+function ensureActiveTab() {
+  if (disposed) return
+  if (activeTab.value === 'volatility' && dataMode.value === 'eod') ensureVolatility()
+  if (activeTab.value === 'ua') ensureUA()
+  if (activeTab.value === 'positioning') ensureTabReady('positioning')
 }
 
 // Data loaders
 let eodLoadGeneration = 0
 
 async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }) {
-  if (userSymbol.value !== sym || dataMode.value !== 'eod') return
+  if (disposed || userSymbol.value !== sym || dataMode.value !== 'eod') return
   const generation = ++eodLoadGeneration
-  const isCurrent = () => generation === eodLoadGeneration
+  const isCurrent = () => !disposed && generation === eodLoadGeneration
     && userSymbol.value === sym
     && dataMode.value === 'eod'
   const key = `gex|${sym}|${tf}`
@@ -1238,120 +1302,191 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
   }
 }
 
-async function loadTermAndVRP(sym) {
-  errors.value.volatility = ''
+async function loadTermAndVRP(sym, isCurrent) {
   const termCtl = ensureController('term')
   const vrpCtl = ensureController('vrp')
   const tKey = `term|${sym}`; const vKey = `vrp|${sym}`
   const tHit = getCache(cacheTerm, tKey, 60_000)
   const vHit = getCache(cacheVRP, vKey, 60_000)
-  if (tHit && vHit) { term.value = tHit; vrp.value = vHit; return }
-  try {
-    const tResp = await withInflight(`term:${sym}`, () =>
-      axios.get('/api/iv/term', { params: { symbol: sym }, signal: termCtl.signal, validateStatus: () => true })
-    )
-    if (tResp.status === 200) {
-      term.value = { date: tResp.data?.date ?? null, items: Array.isArray(tResp.data?.items) ? tResp.data.items : [] }
-      setCache(cacheTerm, tKey, term.value)
-    } else {
-      term.value = { date: null, items: [] }
-    }
-
-    const vResp = await withInflight(`vrp:${sym}`, () =>
-      axios.get('/api/vrp', { params: { symbol: sym }, signal: vrpCtl.signal, validateStatus: () => true })
-    )
-    if (vResp.status === 200) {
-      vrp.value = { date: vResp.data?.date ?? null, iv1m: vResp.data?.iv1m ?? null, rv20: vResp.data?.rv20 ?? null, vrp: vResp.data?.vrp ?? null, z: vResp.data?.z ?? null }
-      setCache(cacheVRP, vKey, vrp.value)
-    } else {
-      vrp.value = { date: null, iv1m: null, rv20: null, vrp: null, z: null }
-    }
-  } catch (e) {
-    if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
-      errors.value.volatility = e?.response?.data || e.message
-      volErr.value = errors.value.volatility
-    }
-  }
+  // Independent requests start together. A failed term response must not
+  // prevent VRP from loading, and each tile keeps its own freshness clock.
+  return Promise.all([
+    (async () => {
+      if (tHit?.date) {
+        if (isCurrent()) { term.value = tHit; volState.term = 'ready' }
+        return
+      }
+      cacheTerm.delete(tKey)
+      volState.term = 'loading'
+      try {
+        const response = await withInflight(`term:${sym}`, () =>
+          axios.get('/api/iv/term', { params: { symbol: sym }, signal: termCtl.signal }))
+        if (!isCurrent() || termCtl.signal.aborted) return
+        pendingResponse(response)
+        term.value = { date: response.data?.date ?? null, items: Array.isArray(response.data?.items) ? response.data.items : [] }
+        volState.term = term.value.date ? 'ready' : 'pending'
+        if (volState.term === 'ready') setCache(cacheTerm, tKey, term.value)
+      } catch (e) {
+        if (!isCurrent() || termCtl.signal.aborted) return
+        volState.term = isPreparing(e) ? 'pending' : 'error'
+        if (!isPreparing(e)) volErrors.term = e?.response?.data?.error || e.message
+      }
+    })(),
+    (async () => {
+      if (vHit?.date) {
+        if (isCurrent()) { vrp.value = vHit; volState.vrp = 'ready' }
+        return
+      }
+      cacheVRP.delete(vKey)
+      volState.vrp = 'loading'
+      try {
+        const response = await withInflight(`vrp:${sym}`, () =>
+          axios.get('/api/vrp', { params: { symbol: sym }, signal: vrpCtl.signal }))
+        if (!isCurrent() || vrpCtl.signal.aborted) return
+        pendingResponse(response)
+        vrp.value = { date: response.data?.date ?? null, iv1m: response.data?.iv1m ?? null, rv20: response.data?.rv20 ?? null, vrp: response.data?.vrp ?? null, z: response.data?.z ?? null }
+        volState.vrp = vrp.value.date ? 'ready' : 'pending'
+        if (volState.vrp === 'ready') setCache(cacheVRP, vKey, vrp.value)
+      } catch (e) {
+        if (!isCurrent() || vrpCtl.signal.aborted) return
+        volState.vrp = isPreparing(e) ? 'pending' : 'error'
+        if (!isPreparing(e)) volErrors.vrp = e?.response?.data?.error || e.message
+      }
+    })(),
+  ])
 }
 
-async function loadSeasonality(sym) {
+function seasonalityState(data) {
+  if (data?.variant) return 'ready'
+  // SeasonalityController explicitly returns 200 + variant:null + a note
+  // when historical coverage is unavailable. That is a completed empty
+  // result, unlike 202 or an incomplete/malformed response.
+  if (data && Object.prototype.hasOwnProperty.call(data, 'variant') && data.variant === null) return 'empty'
+  return 'pending'
+}
+
+async function loadSeasonality(sym, isCurrent) {
   const ctl = ensureController('season')
   const sKey = `seas|${sym}`
   const sHit = getCache(cacheSeas, sKey, 300_000)
-  if (sHit) { season.value = sHit.variant; seasonNote.value = sHit.note; return }
+  if (sHit && seasonalityState(sHit) !== 'pending') {
+    if (isCurrent()) { season.value = sHit.variant; seasonNote.value = sHit.note; volState.season = seasonalityState(sHit) }
+    return
+  }
+  cacheSeas.delete(sKey)
+  volState.season = 'loading'
   try {
-    const { data } = await withInflight(`season:${sym}`, () =>
+    const response = await withInflight(`season:${sym}`, () =>
       axios.get('/api/seasonality/5d', { params: { symbol: sym }, signal: ctl.signal })
     )
+    if (!isCurrent() || ctl.signal.aborted) return
+    const { data } = pendingResponse(response)
     season.value = data?.variant || null
     seasonNote.value = data?.note || ''
-    setCache(cacheSeas, sKey, data || {})
+    volState.season = seasonalityState(data)
+    if (volState.season !== 'pending') setCache(cacheSeas, sKey, data)
   } catch (e) {
-    if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
-      errors.value.volatility = errors.value.volatility || e.message
-    }
+    if (!isCurrent() || ctl.signal.aborted) return
+    volState.season = isPreparing(e) ? 'pending' : 'error'
+    if (!isPreparing(e)) volErrors.season = e?.response?.data?.error || e.message
   }
 }
 
 async function loadUA(sym, exp = null) {
-  const ctl = ensureController('ua')
+  const mode = dataMode.value
+  const owner = tabGeneration
+  const generation = ++uaLoadGeneration
+  const uaUrl = mode === 'intraday' ? '/api/intraday/ua' : '/api/ua'
+  const k = ['ua', mode, sym, (exp || 'ALL'), uaTop.value, uaMinZ.value, uaMinVolOI.value, uaMinVol.value, uaMinPrem.value, uaNearPct.value || 0, uaSide.value || '', uaSort.value, uaLimit.value].join('|')
+  const ctl = uaActiveKey === k ? ensureController('ua') : cancel('ua')
+  if (uaActiveKey !== k) {
+    for (const key of inflight.keys()) if (key.startsWith('ua:')) inflight.delete(key)
+  }
+  uaActiveKey = k
+  const isCurrent = () => ownsTab(sym, mode, 'ua', owner) && generation === uaLoadGeneration && !ctl.signal.aborted
   uaLoading.value = true
   errors.value.ua = ''
-  const uaUrl = dataMode.value === 'intraday' ? '/api/intraday/ua' : '/api/ua'
-  const k = ['ua', sym, (exp || 'ALL'), uaTop.value, uaMinZ.value, uaMinVolOI.value, uaMinVol.value, uaMinPrem.value, uaNearPct.value || 0, uaSide.value || '', uaSort.value, uaLimit.value].join('|')
+  loaded.value.ua = false
+  tabStatus.ua.state = 'ready'
+  stopTabPoll('ua')
   const hit = getCache(cacheUA, k, 60_000)
   if (hit) {
     uaDate.value = hit.data_date || null
     uaRows.value = hit.items || []
+    loaded.value.ua = true
     uaLoading.value = false
     return
   }
+  const params = {
+    symbol: sym, exp, per_expiry: uaTop.value, limit: uaLimit.value,
+    min_z: uaMinZ.value, min_vol_oi: uaMinVolOI.value, min_vol: uaMinVol.value,
+    min_premium: uaMinPrem.value, near_spot_pct: uaNearPct.value || 0,
+    only_side: uaSide.value || null, with_premium: true, sort: uaSort.value,
+  }
   try {
-    const { data } = await withInflight(`ua:${k}`, () =>
+    const response = await withInflight(`ua:${k}`, () =>
       axios.get(uaUrl, {
-        params: {
-          symbol: sym, exp, per_expiry: uaTop.value, limit: uaLimit.value,
-          min_z: uaMinZ.value, min_vol_oi: uaMinVolOI.value, min_vol: uaMinVol.value,
-          min_premium: uaMinPrem.value, near_spot_pct: uaNearPct.value || 0,
-          only_side: uaSide.value || null, with_premium: true, sort: uaSort.value
-        },
+        params,
         signal: ctl.signal
       })
     )
+    if (!isCurrent()) return
+    const { data } = pendingResponse(response)
     uaDate.value = data?.data_date || null
     uaRows.value = data?.items || []
+    loaded.value.ua = true
     setCache(cacheUA, k, data || {})
   } catch (e) {
-    if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
+    if (!isCurrent()) return
+    if (isPreparing(e)) {
+      tabStatus.ua.state = 'pending'
+      pollActiveTab('ua', ensureUA, isCurrent)
+    } else {
       errors.value.ua = e?.response?.data || e.message
       uaDate.value = null
       uaRows.value = []
     }
   } finally {
-    if (!ctl.signal.aborted) uaLoading.value = false
+    if (isCurrent()) uaLoading.value = false
   }
 }
 
 // Lazy triggers
 async function ensureVolatility() {
+  if (disposed || activeTab.value !== 'volatility' || dataMode.value !== 'eod') return
+  if (volatilityLoad) return volatilityLoad
+  const sym = userSymbol.value
+  const generation = tabGeneration
+  const isCurrent = () => ownsTab(sym, 'eod', 'volatility', generation)
   errors.value.volatility = ''
+  Object.keys(volErrors).forEach(key => { volErrors[key] = '' })
+  volErr.value = null
   loaded.value.volatility = false
+  tabStatus.volatility.state = 'ready'
   if (volRetryTimer) { clearTimeout(volRetryTimer); volRetryTimer = null }
-  await Promise.all([loadTermAndVRP(userSymbol.value), loadSeasonality(userSymbol.value)])
-  const hasData = !!(term.value?.date || vrp.value?.date || season.value)
-  if (!errors.value.volatility && hasData) {
-    loaded.value.volatility = true
-  } else if (!errors.value.volatility) {
-    volRetryTimer = setTimeout(() => {
-      if (activeTab.value === 'volatility' && dataMode.value === 'eod') ensureVolatility()
-    }, 5000)
-  }
+  const request = Promise.all([loadTermAndVRP(sym, isCurrent), loadSeasonality(sym, isCurrent)]).then(() => {
+    if (!isCurrent()) return
+    const hasData = Object.values(volState).some(state => state === 'ready' || state === 'empty')
+    const hasError = Object.values(volErrors).some(Boolean)
+    loaded.value.volatility = hasData || hasError
+    if (!hasData && !hasError) {
+      tabStatus.volatility.state = 'pending'
+    }
+    if (Object.values(volState).includes('pending')) {
+      volRetryTimer = setTimeout(() => {
+        volRetryTimer = null
+        if (isCurrent()) ensureVolatility()
+      }, 5000)
+    }
+  }).finally(() => {
+    if (volatilityLoad === request) volatilityLoad = null
+  })
+  volatilityLoad = request
+  return request
 }
 async function ensureUA() {
-  errors.value.ua = ''
-  loaded.value.ua = false
-  await loadUA(userSymbol.value, uaExp.value === 'ALL' ? null : uaExp.value)
-  loaded.value.ua = true
+  if (disposed || activeTab.value !== 'ua') return
+  return loadUA(userSymbol.value, uaExp.value === 'ALL' ? null : uaExp.value)
 }
 
 // Presets / paging
@@ -1418,12 +1553,6 @@ function onboardingState() {
 }
 
 onMounted(() => {
-  const startSym = new URLSearchParams(window.location.search).get('symbol')
-  if (startSym) {
-    const cleaned = startSym.trim().toUpperCase()
-    if (cleaned) userSymbol.value = cleaned
-  }
-
   const onboarding = onboardingState()
   const checklistDismissed = !!localStorage.getItem('gex_checklist_v1_dismissed')
   showOnboarding.value = onboarding === 'new'
@@ -1434,7 +1563,6 @@ onMounted(() => {
   const initialTf = showOnboarding.value ? '0d' : gexTf.value
   if (showOnboarding.value) gexTf.value = '0d'
   fetchGexLevelsEOD(userSymbol.value, initialTf, { applyTf: true })
-  ensureAllTabReadiness()
 
   // listen for watchlist / scanner clicks
   window.addEventListener('select-symbol', handleSelectSymbolEvent)
@@ -1442,12 +1570,9 @@ onMounted(() => {
 
 
 onUnmounted(() => {
+  disposed = true
   window.removeEventListener('select-symbol', handleSelectSymbolEvent)
-  Object.keys(tabPollers).forEach(stopTabPoll)
-  clearTimeout(symbolTimer)
-  clearIntradayPendingRetry()
-  cancel('gex_eod')
-  stopPreparingPoll({ reset: true })
+  stopPageWork()
   bootstrapStartResponses.clear()
 })
 
@@ -1471,6 +1596,7 @@ function clearIntradayPendingRetry() {
 }
 
 function scheduleIntradayPendingRetry(sym) {
+  if (disposed) return
   if (intradayPendingSymbol !== sym) {
     clearIntradayPendingRetry()
     intradayPendingSymbol = sym
@@ -1480,7 +1606,7 @@ function scheduleIntradayPendingRetry(sym) {
   intradayPendingAttempts += 1
   intradayPendingTimer = setTimeout(() => {
     intradayPendingTimer = null
-    if (dataMode.value === 'intraday' && userSymbol.value === sym) {
+    if (!disposed && dataMode.value === 'intraday' && userSymbol.value === sym) {
       refreshIntraday({ force: true })
     }
   }, INTRADAY_PENDING_RETRY_MS)
@@ -1516,7 +1642,7 @@ function applyPreparationState(sym, state, statusUrl = state.statusUrl) {
 }
 
 async function syncPreparationResponse(sym, timeframe, response, { cached = false } = {}) {
-  if (userSymbol.value !== sym || dataMode.value !== 'eod') return
+  if (disposed || userSymbol.value !== sym || dataMode.value !== 'eod') return
   const state = symbolPreparationState(response?.data, response?.status)
   if (state.mode !== 'bootstrap') return
   const current = preparing.value
@@ -1539,9 +1665,16 @@ async function syncPreparationResponse(sym, timeframe, response, { cached = fals
 }
 
 function refreshPreparedGex(sym, timeframe, event) {
+  const owner = pageGeneration
+  const runId = preparing.value.runId
+  const runGeneration = preparing.value.runGeneration
   // Give the successful publication transaction a short moment to become
   // visible through every database/cache connection before reading it.
-  setTimeout(() => {
+  clearTimeout(preparedRefreshTimer)
+  preparedRefreshTimer = setTimeout(() => {
+    preparedRefreshTimer = null
+    if (disposed || owner !== pageGeneration || userSymbol.value !== sym || dataMode.value !== 'eod'
+      || runId !== preparing.value.runId || runGeneration !== preparing.value.runGeneration) return
     // Both fast and full publication can replace an empty or partial view.
     // Invalidate every local timeframe for this symbol, not unrelated data.
     if (event?.kind === 'fast' || event?.kind === 'full') {
@@ -1594,6 +1727,7 @@ function stopPreparingPoll({ reset = false } = {}) {
 }
 
 async function startPreparingPoll(sym, timeframe, onReady, initialResponse = null) {
+  if (disposed || userSymbol.value !== sym || dataMode.value !== 'eod') return
   if (
     preparing.value.symbol === sym
     && (preparing.value.timer || preparingPollController)
@@ -1629,7 +1763,7 @@ async function startPreparingPoll(sym, timeframe, onReady, initialResponse = nul
     coverage: null,
   })
 
-  const isCurrent = () => ownsPreparationPoll(
+  const isCurrent = () => !disposed && dataMode.value === 'eod' && ownsPreparationPoll(
     owner,
     userSymbol.value,
     preparingPollGeneration,
@@ -1726,26 +1860,34 @@ async function startPreparingPoll(sym, timeframe, onReady, initialResponse = nul
 }
 
 async function kickoffSymbolWarm(sym, timeframe = '14d') {
-  if (!sym) return null
+  if (!sym || disposed) return null
+  const key = `${sym}|${timeframe}`
+  if (bootstrapInflight.has(key)) return bootstrapInflight.get(key)
+  const controller = new AbortController()
+  bootstrapControllers.set(key, { symbol: sym, controller })
 
-  try {
-    const response = await axios.post('/api/prime', { symbol: sym, timeframe })
-    if (userSymbol.value === sym) {
-      bootstrapStartResponses.set(sym, response)
+  return coalesceDashboardRequest(bootstrapInflight, key, async () => {
+    try {
+      if (controller.signal.aborted) return null
+      const response = await axios.post('/api/prime', { symbol: sym, timeframe }, { signal: controller.signal })
+      if (!disposed && !controller.signal.aborted && userSymbol.value === sym) bootstrapStartResponses.set(sym, response)
+      return controller.signal.aborted ? null : response
+    } catch {
+      return null
+    } finally {
+      if (bootstrapControllers.get(key)?.controller === controller) bootstrapControllers.delete(key)
     }
-
-    return response
-  } catch {
-    return null
-  }
+  })
 }
 
 function startAutoRefresh() {
+  if (disposed || dataMode.value !== 'intraday') return
   if (refreshTimer.value) clearInterval(refreshTimer.value)
   refreshTimer.value = setInterval(refreshIntraday, 30_000)
 }
 
 async function refreshIntraday({ force = false } = {}) {
+  if (disposed || dataMode.value !== 'intraday') return
   const sym = userSymbol.value
   const now = Date.now()
 
@@ -1796,8 +1938,9 @@ async function refreshIntraday({ force = false } = {}) {
         ? sumData.refresh_eligible
         : !isFresh && (marketOpen.value || !asofMs)
       if (refreshEligible) {
-        await axios.post('/api/intraday/pull', { symbols: [sym] }).catch(() => {})
+        await axios.post('/api/intraday/pull', { symbols: [sym] }, { signal: ctl.signal }).catch(() => {})
       }
+      if (disposed || userSymbol.value !== sym || dataMode.value !== 'intraday' || ctl.signal.aborted) return
 
       // Step C: get composite strikes snapshot
       const comp = await axios.get('/api/intraday/strikes', {
@@ -1877,7 +2020,7 @@ async function refreshIntraday({ force = false } = {}) {
       }
     }
   })().finally(() => {
-    inflightIntraday.delete(sym)
+    if (inflightIntraday.get(sym) === p) inflightIntraday.delete(sym)
   })
 
   inflightIntraday.set(sym, p)
@@ -1897,25 +2040,61 @@ async function manualRefresh() {
 }
 
 let symbolTimer
+function resetAuxiliaryData() {
+  resetTabReadiness()
+  loaded.value = { volatility: false, ua: false }
+  errors.value = { volatility: '', ua: '' }
+  Object.keys(volErrors).forEach(key => { volErrors[key] = '' })
+  Object.keys(volState).forEach(key => { volState[key] = 'idle' })
+  volErr.value = null
+  term.value = { date: null, items: [] }
+  vrp.value = { date: null, iv1m: null, rv20: null, vrp: null, z: null }
+  season.value = null
+  seasonNote.value = ''
+  uaRows.value = []
+  uaDate.value = null
+  uaLoading.value = false
+}
+
+watch(dataMode, () => {
+  stopPageWork()
+  resetAuxiliaryData()
+}, { flush: 'sync' })
+
 watch(userSymbol, (s) => {
-  if (preparing.value.symbol && preparing.value.symbol !== s) {
-    stopPreparingPoll({ reset: true })
-  }
+  stopPageWork()
+  resetAuxiliaryData()
+  uaExp.value = 'ALL'
+  eodLevels.value = null
+  eodLoading.value = false
+  intradayLoading.value = false
+  intradayRefreshing.value = false
   for (const candidate of bootstrapStartResponses.keys()) {
     if (candidate !== s) bootstrapStartResponses.delete(candidate)
   }
 
-  clearTimeout(symbolTimer)
+  const owner = pageGeneration
+  busy.value.positioning = true
+  positioningFrame = requestAnimationFrame(() => {
+    positioningFrame = null
+    positioningTimer = setTimeout(() => {
+      positioningTimer = null
+      if (!disposed && owner === pageGeneration) busy.value.positioning = false
+    }, 250)
+  })
   symbolTimer = setTimeout(() => {
+    symbolTimer = null
+    if (disposed || owner !== pageGeneration || userSymbol.value !== s) return
     if (dataMode.value === 'eod') {
       fetchGexLevelsEOD(s, gexTf.value)
     } else {
       // smart intraday load, reuse cache when possible
       refreshIntraday({ force: false })
+      startAutoRefresh()
     }
-    if (loaded.value.ua && activeTab.value === 'ua') ensureUA()
+    ensureActiveTab()
   }, 250)
-})
+}, { flush: 'sync' })
 
 watch(userSymbol, (s) => {
   if (typeof window !== 'undefined') {
@@ -1923,34 +2102,7 @@ watch(userSymbol, (s) => {
   }
 })
 
-watch(userSymbol, () => {
-  resetTabReadiness()
-  ensureAllTabReadiness()
-})
-
-watch(uaExp, () => { if (activeTab.value === 'ua') ensureUA() })
-watch([userSymbol], () => {
-  busy.value.positioning = true
-  requestAnimationFrame(() => setTimeout(() => { busy.value.positioning = false }, 250))
-})
-
-watch(userSymbol, () => {
-  // force volatility to refresh per symbol
-  errors.value.volatility = ''
-  loaded.value.volatility = false
-  if (activeTab.value === 'volatility' && dataMode.value === 'eod') {
-    ensureVolatility()
-  }
-})
-
-watch(userSymbol, () => {
-  // reset UA when switching symbols so tab pulls fresh data
-  errors.value.ua = ''
-  loaded.value.ua = false
-  uaRows.value = []
-  uaDate.value = null
-  if (activeTab.value === 'ua') ensureUA()
-})
+watch(uaExp, () => { if (!symbolTimer && activeTab.value === 'ua') ensureUA() })
 
 watch(gexTf, tf => {
   if (dataMode.value === 'eod')
