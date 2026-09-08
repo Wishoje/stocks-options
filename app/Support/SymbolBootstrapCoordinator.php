@@ -1260,6 +1260,11 @@ final class SymbolBootstrapCoordinator
             ->pluck('expiration_date')->map(fn ($date): string => $date->toDateString())->values()->all();
         $filledDates = $expirations->filter(fn (SymbolBootstrapExpiration $expiration): bool => $expiration->fast_scope ? $expiration->fast_ready_at !== null : $expiration->fill_ready_at !== null
         )->pluck('expiration_date')->map(fn ($date): string => $date->toDateString())->values()->all();
+        $eodReady = $fastReady
+            && $manifest->catalog_frozen_at !== null
+            && ($phasePayload[self::PHASE_FILL]['status'] ?? null) === SymbolBootstrapPhase::STATUS_COMPLETED
+            && $manifest->fill_ready_count === $manifest->expected_count
+            && count($filledDates) === $manifest->expected_count;
 
         return [
             'run_id' => $manifest->work_run_id,
@@ -1271,6 +1276,10 @@ final class SymbolBootstrapCoordinator
             'state' => $state,
             'fast_ready' => $fastReady,
             'full_ready' => $fullReady,
+            // Expiration coverage and optional analytics are separate facts.
+            // Neither advances the durable full-ready publication by itself.
+            'eod_ready' => $eodReady,
+            'enrichment_ready' => ($phasePayload[self::PHASE_ENRICHMENT]['status'] ?? null) === SymbolBootstrapPhase::STATUS_COMPLETED,
             // EOD completion does not promise a first live snapshot while the exchange is closed.
             'intraday_ready' => ($phasePayload[self::PHASE_INTRADAY]['status'] ?? null) === SymbolBootstrapPhase::STATUS_COMPLETED
                 && ($phasePayload[self::PHASE_INTRADAY]['outcome']['intraday_ready'] ?? true),

@@ -609,6 +609,86 @@ class SymbolBootstrapCoordinatorTest extends TestCase
         $this->assertSame(1, SymbolBootstrapHead::query()->count());
     }
 
+    public function test_eod_coverage_remains_ready_when_analytics_fail_without_claiming_full_success(): void
+    {
+        $run = $this->eodReadyRun();
+        $pending = $this->bootstraps->payload($run);
+        $this->assertTrue($pending['eod_ready']);
+        $this->assertFalse($pending['enrichment_ready']);
+        $this->assertFalse($pending['full_ready']);
+        $this->assertFalse($pending['terminal']);
+        $this->assertSame(11, $pending['coverage']['completed_expirations']);
+        $this->assertSame(11, $pending['coverage']['expected_expirations']);
+
+        SymbolBootstrapPhase::query()->where('work_run_id', $run->id)->where('phase', SymbolBootstrapCoordinator::PHASE_ENRICHMENT)
+            ->update(['status' => SymbolBootstrapPhase::STATUS_FAILED, 'failed_at' => $this->at(), 'error_code' => 'prices_daily_failed']);
+        $retrying = $this->bootstraps->payload($run);
+        $this->assertTrue($retrying['eod_ready']);
+        $this->assertTrue($retrying['retryable']);
+        $this->assertFalse($retrying['terminal']);
+        $this->assertFalse($retrying['full_ready']);
+
+        WorkRun::query()->whereKey($run->id)->update(['status' => WorkRun::STATUS_FAILED, 'failed_at' => $this->at()]);
+        $failed = $this->bootstraps->payload($run);
+        $this->assertSame('fill_failed', $failed['state']);
+        $this->assertTrue($failed['eod_ready']);
+        $this->assertTrue($failed['fast_ready']);
+        $this->assertTrue($failed['terminal']);
+        $this->assertFalse($failed['retryable']);
+        $this->assertFalse($failed['enrichment_ready']);
+        $this->assertFalse($failed['full_ready']);
+        $this->assertNull($failed['retry_after_seconds']);
+        $this->assertFalse(SymbolBootstrapHead::query()->exists());
+        $this->assertFalse($this->bootstraps->completeIfReady($run->id, $this->at()));
+    }
+
+    public function test_eod_readiness_requires_frozen_catalog_phase_completion_and_every_coverage_receipt(): void
+    {
+        $run = $this->eodReadyRun();
+        $this->assertTrue($this->bootstraps->payload($run)['eod_ready']);
+        SymbolBootstrapPhase::query()->where('work_run_id', $run->id)->where('phase', SymbolBootstrapCoordinator::PHASE_FILL)
+            ->update(['status' => SymbolBootstrapPhase::STATUS_RUNNING]);
+        $this->assertFalse($this->bootstraps->payload($run)['eod_ready']);
+        SymbolBootstrapPhase::query()->where('work_run_id', $run->id)->where('phase', SymbolBootstrapCoordinator::PHASE_FILL)
+            ->update(['status' => SymbolBootstrapPhase::STATUS_COMPLETED]);
+        SymbolBootstrapExpiration::query()->where('work_run_id', $run->id)->where('fast_scope', false)->limit(1)
+            ->update(['fill_ready_at' => null]);
+        $this->assertFalse($this->bootstraps->payload($run)['eod_ready']);
+        SymbolBootstrapExpiration::query()->where('work_run_id', $run->id)->update(['fill_ready_at' => $this->at()]);
+        SymbolBootstrapRun::query()->whereKey($run->id)->update(['catalog_frozen_at' => null]);
+        $this->assertFalse($this->bootstraps->payload($run)['eod_ready']);
+    }
+
+    private function eodReadyRun(): WorkRun
+    {
+        [$run] = $this->runningParent(symbol: 'AMD');
+        $this->bootstraps->initialize($run, $this->at());
+        SymbolBootstrapRun::query()->whereKey($run->id)->update([
+            'catalog_frozen_at' => $this->at(),
+            'expected_expirations_hash' => hash('sha256', 'synthetic-coverage'),
+            'expected_count' => 11,
+            'fast_expected_count' => 2,
+            'fast_ready_count' => 2,
+            'fill_ready_count' => 11,
+        ]);
+        foreach (range(0, 10) as $index) {
+            SymbolBootstrapExpiration::query()->create([
+                'work_run_id' => $run->id,
+                'expiration_date' => $this->at()->addDays(4 + 7 * $index)->toDateString(),
+                'fast_scope' => $index < 2,
+                'fast_ready_at' => $index < 2 ? $this->at() : null,
+                'fill_ready_at' => $index >= 2 ? $this->at() : null,
+            ]);
+        }
+        SymbolBootstrapPhase::query()->where('work_run_id', $run->id)->update([
+            'status' => SymbolBootstrapPhase::STATUS_COMPLETED, 'completed_at' => $this->at(),
+        ]);
+        SymbolBootstrapPhase::query()->where('work_run_id', $run->id)->where('phase', SymbolBootstrapCoordinator::PHASE_ENRICHMENT)
+            ->update(['status' => SymbolBootstrapPhase::STATUS_RUNNING, 'completed_at' => null]);
+
+        return $run;
+    }
+
     /** @return array{WorkRun,string} */
     private function runningParent(
         ?CarbonImmutable $at = null,

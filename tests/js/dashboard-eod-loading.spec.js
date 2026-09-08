@@ -147,6 +147,99 @@ describe('Dashboard EOD loading', () => {
     window.history.replaceState({}, '', '/')
   })
 
+  function eodBootstrap(state, { terminal = false, generation = 1 } = {}) {
+    return {
+      state,
+      terminal,
+      retryable: false,
+      run_id: 'amd-run-' + generation,
+      status_url: '/api/work-runs/amd-run-' + generation,
+      fast_ready: true,
+      full_ready: state === 'full_ready',
+      eod_ready: true,
+      enrichment_ready: state === 'full_ready',
+      catalog: { generation },
+      coverage: { completed_expirations: 11, expected_expirations: 11 },
+      phases: {
+        fill: { status: 'completed' },
+        intraday: { status: 'completed' },
+        enrichment: { status: state === 'fill_failed' ? 'failed' : state === 'full_ready' ? 'completed' : 'running' },
+      },
+    }
+  }
+
+  it('shows complete AMD EOD data with failed analytics without a filling spinner or terminal polling', async () => {
+    const wrapper = await mountDashboard('AMD')
+    gexResponse = (symbol, timeframe) => Promise.resolve({
+      ...snapshot(symbol, timeframe, 225),
+      data: { ...snapshot(symbol, timeframe, 225).data, bootstrap: eodBootstrap('fill_failed', { terminal: true }) },
+    })
+
+    await selectTimeframe(wrapper, '30d')
+    expect(chartRows(wrapper)).toHaveLength(225)
+    expect(wrapper.vm.preparing).toMatchObject({ fullReady: false, eodReady: true, terminal: true, filling: false })
+    expect(wrapper.text()).toContain('EOD data ready for AMD')
+    expect(wrapper.text()).toContain('Additional analytics could not be prepared.')
+    expect(wrapper.text()).toContain('11 of 11 expirations complete.')
+    expect(wrapper.text()).not.toContain('Filling full data for AMD')
+    expect(wrapper.find('[role="status"] .animate-spin').exists()).toBe(false)
+    await advance(10_000)
+    expect(axios.get.mock.calls.some(([url]) => url.startsWith('/api/work-runs/'))).toBe(false)
+  })
+
+  it('applies a fresh terminal response to an already filling same-symbol banner and stops its poll', async () => {
+    const wrapper = await mountDashboard('AMD')
+    gexResponse = (symbol, timeframe) => Promise.resolve({
+      ...snapshot(symbol, timeframe),
+      data: { ...snapshot(symbol, timeframe).data, bootstrap: eodBootstrap(timeframe === '90d' ? 'fill_failed' : 'filling', { terminal: timeframe === '90d' }) },
+    })
+    await selectTimeframe(wrapper, '30d')
+    expect(wrapper.text()).toContain('Additional analytics are still being prepared.')
+    expect(wrapper.vm.preparing.timer).not.toBeNull()
+
+    await selectTimeframe(wrapper, '90d')
+    expect(wrapper.vm.preparing).toMatchObject({ fullReady: false, terminal: true, partialFailed: true, filling: false })
+    expect(wrapper.vm.preparing.timer).toBeNull()
+    expect(wrapper.text()).toContain('Additional analytics could not be prepared.')
+    await advance(5_000)
+    expect(axios.get.mock.calls.some(([url]) => url.startsWith('/api/work-runs/'))).toBe(false)
+  })
+
+  it('clears a filling banner on fresh full readiness and does not resurrect it from an older cached timeframe', async () => {
+    const wrapper = await mountDashboard('AMD')
+    gexResponse = (symbol, timeframe) => Promise.resolve({
+      ...snapshot(symbol, timeframe),
+      data: { ...snapshot(symbol, timeframe).data, bootstrap: eodBootstrap(timeframe === '90d' ? 'full_ready' : 'filling', { terminal: timeframe === '90d' }) },
+    })
+    await selectTimeframe(wrapper, '30d')
+    expect(wrapper.vm.preparing.partial).toBe(true)
+    await selectTimeframe(wrapper, '90d')
+    expect(wrapper.vm.preparing).toMatchObject({ fullReady: true, partial: false, terminal: true })
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
+
+    await selectTimeframe(wrapper, '30d')
+    expect(gexCalls('30d')).toHaveLength(1)
+    expect(wrapper.vm.preparing).toMatchObject({ fullReady: true, partial: false, terminal: true })
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
+    expect(wrapper.vm.preparing.timer).toBeNull()
+  })
+
+  it('accepts a new bootstrap generation after a terminal one but rejects an older live response', async () => {
+    const wrapper = await mountDashboard('AMD')
+    gexResponse = (symbol, timeframe) => {
+      const bootstrap = timeframe === '30d' ? eodBootstrap('fill_failed', { terminal: true })
+        : timeframe === '90d' ? eodBootstrap('filling', { generation: 2 })
+          : eodBootstrap('full_ready', { terminal: true })
+      return Promise.resolve({ ...snapshot(symbol, timeframe), data: { ...snapshot(symbol, timeframe).data, bootstrap } })
+    }
+    await selectTimeframe(wrapper, '30d')
+    expect(wrapper.vm.preparing.terminal).toBe(true)
+    await selectTimeframe(wrapper, '90d')
+    expect(wrapper.vm.preparing).toMatchObject({ terminal: false, runGeneration: 2, runId: 'amd-run-2' })
+    await selectTimeframe(wrapper, '7d')
+    expect(wrapper.vm.preparing).toMatchObject({ terminal: false, fullReady: false, runGeneration: 2, runId: 'amd-run-2' })
+  })
+
   it.each(['fast_ready', 'fill_failed'])(
     'does not cache HTTP 202 and renders IWM 1M strikes when polling reaches %s',
     async state => {

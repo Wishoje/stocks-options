@@ -221,15 +221,15 @@
           </div>
         </div>
         <div
-          v-if="dataMode==='eod' && preparing.partial && levels"
+          v-if="dataMode==='eod' && preparationNotice && levels"
           role="status"
           aria-live="polite"
           class="flex items-start gap-2 rounded-lg border px-4 py-3 text-sm"
-          :class="preparing.partialFailed
+          :class="preparationNotice.warning
             ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
             : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-100'"
         >
-          <svg v-if="!preparing.partialFailed" class="mt-0.5 h-4 w-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg v-if="preparationNotice.spinning" class="mt-0.5 h-4 w-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
           <svg v-else class="mt-0.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -237,16 +237,11 @@
           </svg>
           <div>
             <div class="font-semibold">
-              {{ preparing.partialFailed ? `Partial data for ${userSymbol}` : `Filling full data for ${userSymbol}` }}
+              {{ preparationNotice.title }}
             </div>
-            <div :class="preparing.partialFailed ? 'text-amber-200/80' : 'text-cyan-200/80'">
-              <template v-if="preparing.partialFailed">
-                Fast data remains available, but the full expiration and analytics fill did not complete.
-              </template>
-              <template v-else>
-                Fast data is ready and usable. Remaining expirations and analytics will appear as they finish.
-              </template>
-              <span v-if="preparationCoverageLabel"> {{ preparationCoverageLabel }}</span>
+            <div :class="preparationNotice.warning ? 'text-amber-200/80' : 'text-cyan-200/80'">
+              {{ preparationNotice.message }}
+              <span v-if="preparationNotice.coverageLabel"> {{ preparationNotice.coverageLabel }}</span>
             </div>
           </div>
         </div>
@@ -668,6 +663,7 @@ import {
 import axios from 'axios'
 import {
   bootstrapPollDelayMs,
+  bootstrapPreparationNotice,
   ownsPreparationPoll,
   symbolPreparationState,
 } from '@/Support/symbol-bootstrap-state.js'
@@ -783,6 +779,13 @@ const preparing = ref({
   statusUrl: null,
   fastReady: false,
   fullReady: false,
+  eodReady: false,
+  enrichmentReady: false,
+  enrichmentStatus: '',
+  intradayReady: false,
+  intradayStatus: '',
+  runId: null,
+  runGeneration: null,
   partial: false,
   partialFailed: false,
   filling: false,
@@ -790,24 +793,7 @@ const preparing = ref({
   retryable: false,
   coverage: null,
 })
-const preparationCoverageLabel = computed(() => {
-  const coverage = preparing.value.coverage
-  if (!coverage || typeof coverage !== 'object') return ''
-
-  const completed = Number(
-    coverage.completed_expirations
-      ?? coverage.expirations_completed
-      ?? coverage.published_expirations?.length,
-  )
-  const expected = Number(
-    coverage.expected_expirations
-      ?? coverage.expirations_expected,
-  )
-
-  return Number.isFinite(completed) && Number.isFinite(expected) && expected > 0
-    ? `${completed} of ${expected} expirations complete.`
-    : ''
-})
+const preparationNotice = computed(() => bootstrapPreparationNotice(preparing.value, userSymbol.value))
 const topError = computed(() => dataMode.value === 'eod' ? eodError.value : intradayError.value)
 
 const lastUpdated = ref(null)
@@ -1142,19 +1128,8 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
     if (opts?.applyTf && gexTf.value !== tf) gexTf.value = tf
 
     const startResponse = bootstrapStartResponses.get(sym) || null
-    const startState = startResponse
-      ? symbolPreparationState(startResponse.data, startResponse.status)
-      : null
     if (startResponse) bootstrapStartResponses.delete(sym)
-    if (
-      startState?.mode === 'bootstrap'
-      && startState.shouldPoll
-      && preparing.value.symbol !== sym
-    ) {
-      await startPreparingPoll(sym, tf, (event) => {
-        refreshPreparedGex(sym, tf, event)
-      }, startResponse)
-    }
+    await syncPreparationResponse(sym, tf, startResponse || { data: hit.data, status: 200 }, { cached: !startResponse })
 
     if (!isCurrent()) return
     const keepFillingPoll = preparing.value.symbol === sym
@@ -1204,19 +1179,8 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
     const startResponse = responseState.mode === 'bootstrap'
       ? response
       : bootstrapStartResponses.get(sym) || null
-    const startState = startResponse
-      ? symbolPreparationState(startResponse.data, startResponse.status)
-      : null
     if (startResponse) bootstrapStartResponses.delete(sym)
-    if (
-      startState?.mode === 'bootstrap'
-      && startState.shouldPoll
-      && preparing.value.symbol !== sym
-    ) {
-      await startPreparingPoll(sym, tf, (event) => {
-        refreshPreparedGex(sym, tf, event)
-      }, startResponse)
-    }
+    if (startResponse) await syncPreparationResponse(sym, tf, startResponse)
 
     if (isCurrent() && opts?.applyTf && gexTf.value !== tf) {
       gexTf.value = tf
@@ -1228,6 +1192,9 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
       const msg = payload?.error || e.message || ''
       const status = e?.response?.status
       const responsePreparation = symbolPreparationState(payload, status)
+      if (responsePreparation.mode === 'bootstrap' && responsePreparation.terminal) {
+        await syncPreparationResponse(sym, tf, e.response)
+      }
       const preparingLike = /No data|No expirations|queued|fetching|preparing/i.test(String(msg))
         || (responsePreparation.mode === 'bootstrap' && responsePreparation.shouldPoll)
       const available = Array.isArray(payload?.available_timeframes)
@@ -1524,6 +1491,53 @@ let preparingPollController = null
 let preparingLegacySafetyTimer = null
 const bootstrapStartResponses = new Map()
 
+function applyPreparationState(sym, state, statusUrl = state.statusUrl) {
+  Object.assign(preparing.value, {
+    active: (!state.fastReady || !levels.value) && !state.terminal,
+    symbol: sym,
+    phase: state.state,
+    statusUrl,
+    fastReady: state.fastReady,
+    fullReady: state.fullReady,
+    eodReady: state.eodReady,
+    enrichmentReady: state.enrichmentReady,
+    enrichmentStatus: state.enrichmentStatus,
+    intradayReady: state.intradayReady,
+    intradayStatus: state.intradayStatus,
+    runId: state.runId,
+    runGeneration: state.runGeneration,
+    partial: state.partial,
+    partialFailed: state.partialFailed,
+    filling: state.filling,
+    terminal: state.terminal,
+    retryable: state.retryable,
+    coverage: state.coverage,
+  })
+}
+
+async function syncPreparationResponse(sym, timeframe, response, { cached = false } = {}) {
+  if (userSymbol.value !== sym || dataMode.value !== 'eod') return
+  const state = symbolPreparationState(response?.data, response?.status)
+  if (state.mode !== 'bootstrap') return
+  const current = preparing.value
+  if (current.symbol === sym) {
+    // A five-minute response cache cannot overwrite a newer poll result.
+    if (cached) return
+    if (state.runGeneration !== null && current.runGeneration !== null && state.runGeneration < current.runGeneration) return
+    const sameRun = !state.runId || !current.runId || state.runId === current.runId
+    if (sameRun && ((current.terminal && !state.terminal) || (current.fullReady && !state.fullReady))) return
+    if (!sameRun) stopPreparingPoll()
+  }
+  applyPreparationState(sym, state)
+  if (!state.shouldPoll) {
+    stopPreparingPoll()
+    return
+  }
+  if (!preparing.value.timer && !preparingPollController) {
+    await startPreparingPoll(sym, timeframe, event => refreshPreparedGex(sym, timeframe, event), response)
+  }
+}
+
 function refreshPreparedGex(sym, timeframe, event) {
   // Give the successful publication transaction a short moment to become
   // visible through every database/cache connection before reading it.
@@ -1562,6 +1576,13 @@ function stopPreparingPoll({ reset = false } = {}) {
       statusUrl: null,
       fastReady: false,
       fullReady: false,
+      eodReady: false,
+      enrichmentReady: false,
+      enrichmentStatus: '',
+      intradayReady: false,
+      intradayStatus: '',
+      runId: null,
+      runGeneration: null,
       partial: false,
       partialFailed: false,
       filling: false,
@@ -1593,6 +1614,13 @@ async function startPreparingPoll(sym, timeframe, onReady, initialResponse = nul
     statusUrl: null,
     fastReady: false,
     fullReady: false,
+    eodReady: false,
+    enrichmentReady: false,
+    enrichmentStatus: '',
+    intradayReady: false,
+    intradayStatus: '',
+    runId: null,
+    runGeneration: null,
     partial: false,
     partialFailed: false,
     filling: false,
@@ -1652,19 +1680,7 @@ async function startPreparingPoll(sym, timeframe, onReady, initialResponse = nul
         preparingLegacySafetyTimer = null
       }
 
-      Object.assign(preparing.value, {
-        active: (!state.fastReady || !levels.value) && !state.terminal,
-        phase: state.state,
-        statusUrl,
-        fastReady: state.fastReady,
-        fullReady: state.fullReady,
-        partial: state.partial,
-        partialFailed: state.partialFailed,
-        filling: state.filling,
-        terminal: state.terminal,
-        retryable: state.retryable,
-        coverage: state.coverage,
-      })
+      applyPreparationState(sym, state, statusUrl)
 
       if (state.fullReady && !fullRendered) {
         fastRendered = true
