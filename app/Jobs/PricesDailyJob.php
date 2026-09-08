@@ -14,6 +14,7 @@ use Carbon\Carbon;
 use RuntimeException;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\QueueLanes;
+use App\Support\MarketSession;
 
 class PricesDailyJob extends QueueJob implements ShouldQueue
 {
@@ -24,6 +25,7 @@ class PricesDailyJob extends QueueJob implements ShouldQueue
         $this->targetDate = $targetDate
             ? substr($targetDate, 0, 10)
             : $this->tradingDate(now());
+        $this->targetDate = MarketSession::tradingDateOnOrBefore(Carbon::parse($this->targetDate, 'America/New_York'));
     }
 
     public function handle(): void
@@ -38,7 +40,9 @@ class PricesDailyJob extends QueueJob implements ShouldQueue
 
     private function fetchAndPersist(): void
     {
-        $date = (string) $this->targetDate;
+        // Also normalize jobs serialized before holiday-aware planning was deployed.
+        // Store the provider bar under its real session date, never the holiday anchor.
+        $date = MarketSession::tradingDateOnOrBefore(Carbon::parse((string) $this->targetDate, 'America/New_York'));
         $failed = 0;
 
         foreach ($this->symbols as $symbol) {

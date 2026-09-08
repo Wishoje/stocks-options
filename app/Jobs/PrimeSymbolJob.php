@@ -63,12 +63,16 @@ class PrimeSymbolJob extends QueueJob implements ShouldQueue
             ? substr($frozenSessionDate, 0, 10)
             : $selector->completedSessionDate(now('America/New_York'));
         $tradeDate = $completedSessionDate;
+        // Option snapshot anchors remain frozen. Equity bars only exist on trading days.
+        $priceSessionDate = \App\Support\MarketSession::tradingDateOnOrBefore(
+            \Carbon\CarbonImmutable::parse($completedSessionDate, 'America/New_York')
+        );
         $anchorDate = $frozenSessionDate
             ? $completedSessionDate
             : $selector->resolvedAnchorDate();
 
         $hasPrices = DB::table('prices_daily')
-            ->where('symbol', $s)->where('trade_date', $completedSessionDate)->exists();
+            ->where('symbol', $s)->where('trade_date', $priceSessionDate)->exists();
 
         $priceRows = (int) DB::table('prices_daily')
             ->where('symbol', $s)
@@ -117,7 +121,7 @@ class PrimeSymbolJob extends QueueJob implements ShouldQueue
         }
         if (! $hasPrices) {
             $jobs[] = $frozenSessionDate !== null
-                ? new \App\Jobs\PricesDailyJob([$s], $completedSessionDate)
+                ? new \App\Jobs\PricesDailyJob([$s], $priceSessionDate)
                 : new \App\Jobs\PricesDailyJob([$s]);
         }
         if (! $hasChainsForTradeDate) {

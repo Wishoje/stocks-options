@@ -77,6 +77,14 @@ final class MarketSession
             && ! in_array($date->toDateString(), self::EXTRA_CLOSED_DATES, true);
     }
 
+    /** Resolve a calendar anchor for daily equity bars without inventing a holiday bar. */
+    public static function tradingDateOnOrBefore(CarbonInterface $at): string
+    {
+        $date = CarbonImmutable::instance($at)->setTimezone(self::TIMEZONE)->startOfDay();
+
+        return (self::isTradingDay($date) ? $date : self::adjacentTradingDay($date, -1))->toDateString();
+    }
+
     private static function adjacentTradingDay(CarbonImmutable $date, int $direction): CarbonImmutable
     {
         do {
