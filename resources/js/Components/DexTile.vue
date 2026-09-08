@@ -123,7 +123,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import DexByExpiryDiverging from './DexByExpiryDiverging.vue'
 import axios from 'axios'
 
@@ -138,6 +138,8 @@ const strength = ref(null)
 const gammaSign = ref(null)
 const open = ref(false)
 let retryTimer = null
+let activeLoad = null
+let componentUnmounted = false
 
 function fmt(x){
   const n = Number(x)
@@ -180,37 +182,70 @@ const regimeHint = computed(() => {
   }
 })
 
+function stopLoad() {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
+  activeLoad?.controller.abort()
+  activeLoad = null
+}
+
+function isCurrentLoad(request) {
+  return !componentUnmounted
+    && activeLoad === request
+    && props.symbol === request.symbol
+    && !request.controller.signal.aborted
+}
+
 async function load() {
-  const { data } = await axios.get('/api/dex', { params: { symbol: props.symbol } })
-  dex.value = data?.total ?? null
-  byExpiry.value = Array.isArray(data?.by_expiry) ? data.by_expiry : []
-  dataDate.value = data?.data_date ?? null
+  if (componentUnmounted) return
+  stopLoad()
+  const request = { symbol: props.symbol, controller: new AbortController() }
+  activeLoad = request
+  const { symbol, controller } = request
 
-  // pull regime_strength + gamma sign from your /gex-levels payload
   try {
-    const g = await axios.get('/api/gex-levels', { params: { symbol: props.symbol, timeframe: '14d' } })
-    strength.value = g?.data?.regime_strength ?? null
-    gammaSign.value = g?.data?.gamma_sign ?? null
-  } catch {}
+    const { data } = await axios.get('/api/dex', { params: { symbol }, signal: controller.signal })
+    if (!isCurrentLoad(request)) return
+    dex.value = data?.total ?? null
+    byExpiry.value = Array.isArray(data?.by_expiry) ? data.by_expiry : []
+    dataDate.value = data?.data_date ?? null
 
-  // If data_date is still null, schedule a retry so the card auto-populates when ready
-  if (!dataDate.value && !retryTimer) {
-    retryTimer = setTimeout(() => {
-      retryTimer = null
-      load().catch(() => { retryTimer = null })
-    }, 4000)
+    // Both reads belong to the same captured symbol, including their follow-up.
+    try {
+      const g = await axios.get('/api/gex-levels', {
+        params: { symbol, timeframe: '14d' },
+        signal: controller.signal,
+      })
+      if (!isCurrentLoad(request)) return
+      strength.value = g?.data?.regime_strength ?? null
+      gammaSign.value = g?.data?.gamma_sign ?? null
+    } catch {}
+
+    // Keep the existing retry cadence only while this symbol still owns the tile.
+    if (isCurrentLoad(request) && !dataDate.value && !retryTimer) {
+      retryTimer = setTimeout(() => {
+        if (!isCurrentLoad(request)) return
+        retryTimer = null
+        load().catch(() => {})
+      }, 4000)
+    }
+  } catch (error) {
+    if (isCurrentLoad(request)) throw error
   }
 }
 
 onMounted(load)
 
 watch(() => props.symbol, () => {
-  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
   dex.value = null
   byExpiry.value = []
   dataDate.value = null
   strength.value = null
   gammaSign.value = null
-  load()
+  return load()
+})
+
+onUnmounted(() => {
+  componentUnmounted = true
+  stopLoad()
 })
 </script>

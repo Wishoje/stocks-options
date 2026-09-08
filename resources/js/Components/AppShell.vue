@@ -124,6 +124,7 @@ const showMobileWatchlist = ref(false)
 let activeReloadController = null
 let reloadSequence = 0
 let componentUnmounted = false
+let activeSelection = null
 
 function pinBadgeClass(score) {
   if (score >= 70) return 'bg-yellow-400/20 text-yellow-300 ring-1 ring-yellow-400/30'
@@ -208,19 +209,42 @@ async function loadPinsAndUA(items, sequence, controller) {
   }
 }
 
-async function handleSelectSymbol(symbol) {
+function handleSelectSymbol(symbol) {
+  if (componentUnmounted) return Promise.resolve()
   showMobileWatchlist.value = false
 
+  if (activeSelection?.symbol === symbol) return activeSelection.promise
+
+  activeSelection?.controller.abort()
+  const selection = { symbol, controller: new AbortController(), promise: null }
+  activeSelection = selection
+  selection.promise = selectSymbol(selection).finally(() => {
+    if (activeSelection === selection) activeSelection = null
+  })
+  return selection.promise
+}
+
+function isCurrentSelection(selection) {
+  return !componentUnmounted
+    && activeSelection === selection
+    && !selection.controller.signal.aborted
+}
+
+async function selectSymbol(selection) {
+  const { symbol, controller } = selection
   let statusResponse = null
   try {
     statusResponse = await axios.get('/api/symbol/status', {
       params: { symbol, timeframe: '14d' },
       validateStatus: () => true,
+      signal: controller.signal,
     })
   } catch {
     // A status transport failure is treated as not ready. Priming is the
     // bounded, durable fallback and intraday waits for the server handoff.
   }
+
+  if (!isCurrentSelection(selection)) return
 
   const plan = selectionWarmupPlan(
     statusResponse?.data || { status: 'missing' },
@@ -241,6 +265,10 @@ async function handleSelectSymbol(symbol) {
   }
 
   await Promise.allSettled(requests)
+
+  // Accepted warmup POSTs may finish after selection changes; only their
+  // current owner may emit the navigation event.
+  if (!isCurrentSelection(selection)) return
 
   window.dispatchEvent(new CustomEvent('select-symbol', {
     detail: {
@@ -268,6 +296,8 @@ onUnmounted(() => {
   reloadSequence += 1
   activeReloadController?.abort()
   activeReloadController = null
+  activeSelection?.controller.abort()
+  activeSelection = null
   window.removeEventListener('watchlist-updated', handleWatchlistUpdated)
 })
 </script>

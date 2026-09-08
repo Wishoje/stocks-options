@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import axios from 'axios'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AppShell from '@/Components/AppShell.vue'
 
@@ -21,6 +21,13 @@ vi.mock('@/Components/LeftPanel.vue', () => ({
 
 function statusResponse(data, status) {
   return { data, status, headers: {} }
+}
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
 }
 
 async function mountShell(status, prime = null) {
@@ -95,5 +102,160 @@ describe('AppShell symbol selection', () => {
       bootstrapStart: prime.data,
     })
     wrapper.unmount()
+  })
+})
+
+describe('AppShell selection request ownership', () => {
+  let wrapper
+  let dispatch
+
+  beforeEach(() => {
+    axios.get.mockReset()
+    axios.post.mockReset()
+    axios.post.mockResolvedValue({ data: {} })
+    dispatch = vi.spyOn(window, 'dispatchEvent')
+  })
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+  })
+
+  async function prepare(status = () => Promise.resolve(statusResponse({ status: 'ready' }, 200))) {
+    axios.get.mockImplementation((url, options) => {
+      if (url === '/api/watchlist') return Promise.resolve({ data: [] })
+      if (url === '/api/symbol/status') return status(options)
+      throw new Error(`Unexpected GET ${url}`)
+    })
+    wrapper = mount(AppShell)
+    await flushPromises()
+  }
+
+  function selections() {
+    return dispatch.mock.calls.filter(([event]) => event.type === 'select-symbol')
+      .map(([event]) => event.detail.symbol)
+  }
+
+  function statusCalls() {
+    return axios.get.mock.calls.filter(([url]) => url === '/api/symbol/status')
+  }
+
+  it('coalesces duplicate pending selections but checks readiness again after completion', async () => {
+    const status = deferred()
+    await prepare(() => status.promise)
+
+    const first = wrapper.vm.handleSelectSymbol('AAPL')
+    const duplicate = wrapper.vm.handleSelectSymbol('AAPL')
+    expect(statusCalls()).toHaveLength(1)
+    expect(axios.post).not.toHaveBeenCalled()
+
+    status.resolve(statusResponse({ status: 'ready' }, 200))
+    await Promise.all([first, duplicate])
+    expect(axios.post).toHaveBeenCalledTimes(2)
+    expect(selections()).toEqual(['AAPL'])
+
+    await wrapper.vm.handleSelectSymbol('AAPL')
+    expect(statusCalls()).toHaveLength(2)
+    expect(axios.post).toHaveBeenCalledTimes(4)
+    expect(selections()).toEqual(['AAPL', 'AAPL'])
+  })
+
+  it('also coalesces duplicate selection while its warmup POST is pending', async () => {
+    const warmup = deferred()
+    axios.post.mockImplementation((url) => url === '/api/prime-calculator'
+      ? warmup.promise : Promise.resolve({ data: {} }))
+    await prepare()
+
+    const first = wrapper.vm.handleSelectSymbol('AAPL')
+    await flushPromises()
+    const duplicate = wrapper.vm.handleSelectSymbol('AAPL')
+    await flushPromises()
+    expect(statusCalls()).toHaveLength(1)
+    expect(axios.post).toHaveBeenCalledTimes(2)
+
+    warmup.resolve({ data: {} })
+    await Promise.all([first, duplicate])
+    expect(selections()).toEqual(['AAPL'])
+  })
+
+  it.each(['resolve', 'reject'])('does not prime or select an obsolete status response that later %ss', async (settlement) => {
+    const stale = deferred()
+    await prepare(({ params }) => params.symbol === 'AAPL'
+      ? stale.promise : Promise.resolve(statusResponse({ status: 'ready' }, 200)))
+
+    const first = wrapper.vm.handleSelectSymbol('AAPL')
+    const oldSignal = statusCalls()[0][1].signal
+    await wrapper.vm.handleSelectSymbol('QQQ')
+    expect(oldSignal?.aborted).toBe(true)
+
+    if (settlement === 'resolve') stale.resolve(statusResponse({ status: 'missing' }, 404))
+    else stale.reject(new Error('request canceled'))
+    await first
+
+    expect(axios.post).toHaveBeenCalledTimes(2)
+    expect(axios.post).toHaveBeenCalledWith('/api/prime-calculator', { symbol: 'QQQ' })
+    expect(axios.post).toHaveBeenCalledWith('/api/intraday/pull', { symbols: ['QQQ'] })
+    expect(selections()).toEqual(['QQQ'])
+  })
+
+  it('does not emit an obsolete selection after its already-started warmup finishes', async () => {
+    const warmup = deferred()
+    axios.post.mockImplementation((url, data) => url === '/api/prime-calculator' && data.symbol === 'AAPL'
+      ? warmup.promise : Promise.resolve({ data: {} }))
+    await prepare()
+
+    const first = wrapper.vm.handleSelectSymbol('AAPL')
+    await flushPromises()
+    expect(axios.post).toHaveBeenCalledTimes(2)
+    await wrapper.vm.handleSelectSymbol('QQQ')
+    warmup.resolve({ data: {} })
+    await first
+
+    expect(axios.post).toHaveBeenCalledTimes(4)
+    expect(selections()).toEqual(['QQQ'])
+  })
+
+  it('aborts the pending status GET on unmount without starting fallback warmups', async () => {
+    const status = deferred()
+    await prepare(() => status.promise)
+    const select = wrapper.vm.handleSelectSymbol
+    const pending = select('AAPL')
+    const signal = statusCalls()[0][1].signal
+
+    wrapper.unmount()
+    wrapper = null
+    expect(signal?.aborted).toBe(true)
+    status.resolve(statusResponse({ status: 'missing' }, 404))
+    await pending
+    await select('QQQ')
+
+    expect(statusCalls()).toHaveLength(1)
+    expect(axios.post).not.toHaveBeenCalled()
+    expect(selections()).toEqual([])
+  })
+
+  it('does not emit after unmount when a warmup POST was already accepted', async () => {
+    const warmup = deferred()
+    axios.post.mockReturnValue(warmup.promise)
+    await prepare()
+    const pending = wrapper.vm.handleSelectSymbol('AAPL')
+    await flushPromises()
+    expect(axios.post).toHaveBeenCalledTimes(2)
+
+    wrapper.unmount()
+    wrapper = null
+    warmup.resolve({ data: {} })
+    await pending
+    expect(selections()).toEqual([])
+  })
+
+  it('retains bounded prime fallback for a current status transport failure', async () => {
+    await prepare(() => Promise.reject(new Error('status unavailable')))
+    await wrapper.vm.handleSelectSymbol('AAPL')
+
+    expect(axios.post).toHaveBeenCalledTimes(2)
+    expect(axios.post).toHaveBeenCalledWith('/api/prime-calculator', { symbol: 'AAPL' })
+    expect(axios.post).toHaveBeenCalledWith('/api/prime', { symbol: 'AAPL', timeframe: '14d' })
+    expect(selections()).toEqual(['AAPL'])
   })
 })
