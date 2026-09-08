@@ -6,6 +6,23 @@ const finiteNumber = (value) => {
     return Number.isFinite(number) ? number : null
 }
 
+/** A user scenario must be a complete, positive finite number, never a prefix. */
+export const positiveCalculatorPrice = (value) => {
+    if (!['number', 'string'].includes(typeof value)) return null
+    if (typeof value === 'string' && value.trim() === '') return null
+
+    const price = Number(value)
+
+    return Number.isFinite(price) && price > 0 ? price : null
+}
+
+/** Manual scenarios are explicit; invalid input must not fall back to a quote. */
+export const calculatorUnderlyingPrice = (underlying, manual, manualPrice) => {
+    if (manual) return positiveCalculatorPrice(manualPrice)
+
+    return underlying?.usable === true ? positiveCalculatorPrice(underlying.price) : null
+}
+
 /**
  * Normalize the server's underlying quote contract without inventing a price.
  *
@@ -15,8 +32,7 @@ const finiteNumber = (value) => {
  */
 export const normalizeUnderlying = (underlying) => {
     const value = underlying && typeof underlying === 'object' ? underlying : {}
-    const rawPrice = finiteNumber(value.price)
-    const price = rawPrice !== null && rawPrice > 0 ? rawPrice : null
+    const price = positiveCalculatorPrice(value.price)
     const status = String(value.status ?? (price === null ? 'unavailable' : 'live')).toLowerCase()
     const structured = Object.hasOwn(value, 'status')
         || Object.hasOwn(value, 'usable')

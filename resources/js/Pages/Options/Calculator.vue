@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick  } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import Chart from 'chart.js/auto'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import AppShell from '@/Components/AppShell.vue'
@@ -15,7 +15,13 @@ import {
   selectContractState,
   switchContractType,
 } from '@/Support/calculator-contracts.js'
-import { attachServerDte, normalizeUnderlying } from '@/Support/calculator-market-state.js'
+import {
+  attachServerDte,
+  calculatorUnderlyingPrice,
+  normalizeUnderlying,
+  positiveCalculatorPrice,
+} from '@/Support/calculator-market-state.js'
+import { createCalculatorChartScheduler } from '@/Support/calculator-chart-scheduler.js'
 import {
   abortableDelay,
   calculatorProgress,
@@ -35,6 +41,11 @@ const initialSymbol =
 const symbol         = ref(initialSymbol)
 const underlyingQuote = ref(normalizeUnderlying(null))
 const stockPrice     = ref(null)
+const manualUnderlying = ref(false)
+const manualUnderlyingPrice = ref('')
+const calculationUnderlyingPrice = computed(() => calculatorUnderlyingPrice(
+  underlyingQuote.value, manualUnderlying.value, manualUnderlyingPrice.value,
+))
 const optionType     = ref('call') // 'call' | 'put'
 const selectedOption = ref(null)
 const contracts      = ref(1)
@@ -78,12 +89,7 @@ const safeNumber = (val) => {
   return isNaN(num) ? 0 : num
 }
 
-const positiveNumber = (val) => {
-  if (val === null || val === undefined || val === '') return null
-  const number = typeof val === 'string' ? Number.parseFloat(val) : Number(val)
-
-  return Number.isFinite(number) && number > 0 ? number : null
-}
+const positiveNumber = positiveCalculatorPrice
 
 const safePremium = (opt) => contractPremium(opt)
 // ----- Black–Scholes helpers -----
@@ -290,7 +296,8 @@ const formatMoney = (val) => {
 }
 
 const priceRange = computed(() => {
-  const center = underlyingQuote.value.usable ? stockPrice.value : null
+  // Expiration payoff is a function of a hypothetical future price, not a quote.
+  const center = calculationUnderlyingPrice.value ?? positiveNumber(selectedOption.value?.strike)
   if (center === null) return []
   const width = center * 0.4
   const prices = []
@@ -312,9 +319,9 @@ const profitData = computed(() => {
 })
 
 const moveNeeded = computed(() => {
-  if (!calculationReady.value || stockPrice.value === null) return 'N/A'
+  if (!calculationReady.value || calculationUnderlyingPrice.value === null) return 'N/A'
   const be = breakeven.value
-  const pct = ((be / stockPrice.value) - 1) * 100
+  const pct = ((be / calculationUnderlyingPrice.value) - 1) * 100
   return (pct > 0 ? '+' : '') + Number(pct).toFixed(1) + '%'
 })
 
@@ -343,22 +350,19 @@ const daysToExpiration = computed(() => {
 })
 
 const decayUnderlying = computed(() => {
-  if (!calculationReady.value || stockPrice.value === null) return null
+  const underlying = calculationUnderlyingPrice.value
+  if (!calculationReady.value || underlying === null) return null
 
   if (decayMode.value === 'flat') {
-    return stockPrice.value
+    return underlying
   }
 
   if (decayMode.value === 'breakeven') {
-    return breakeven.value > 0 ? breakeven.value : stockPrice.value
+    return breakeven.value > 0 ? breakeven.value : underlying
   }
 
   // 'target'
-  const t = safeNumber(targetPrice.value)
-  if (t > 0) return t
-
-  // fallback to spot if target is not set
-  return stockPrice.value
+  return positiveNumber(targetPrice.value)
 })
 
 const timeDecayTitle = computed(() => {
@@ -366,7 +370,7 @@ const timeDecayTitle = computed(() => {
   if (!selectedOption.value || !S) return 'Time Decay'
 
   if (decayMode.value === 'flat') {
-    return `Flat @ Spot ($${S.toFixed(2)})`
+    return `Flat @ ${manualUnderlying.value ? 'Manual Underlying' : 'Spot'} ($${S.toFixed(2)})`
   }
   if (decayMode.value === 'breakeven') {
     return `Flat @ Breakeven ($${S.toFixed(2)})`
@@ -391,7 +395,7 @@ const timeDecayRows = computed(() => {
   const dte = daysToExpiration.value
   if (dte === null || dte <= 0) return []
 
-  const Sspot = stockPrice.value
+  const Sspot = calculationUnderlyingPrice.value
   const S = decayUnderlying.value
   if (!S || S <= 0 || !Sspot || Sspot <= 0) return []
 
@@ -669,13 +673,6 @@ const loadChain = async (opts = {}) => {
     if (currentRequest(context) && refreshState.value !== 'starting' && refreshState.value !== 'running') {
       loading.value = false
     }
-
-    await nextTick()
-
-    if (currentRequest(context)) {
-      renderChart()
-      renderDecayChart()
-    }
   }
 }
 
@@ -698,9 +695,6 @@ const selectOption = (opt) => {
   if (entryAuto.value) {
     entryPrice.value = next.entryPrice
   }
-
-  renderChart()
-  renderDecayChart()
 }
 
 const switchOptionType = (targetType) => {
@@ -808,25 +802,33 @@ const renderDecayChart = () => {
   })
 }
 
-// ---------- watchers ----------
-watch(
-  [
-    selectedOption,
-    optionType,
-    contracts,
-    () => stockPrice.value,
-    entryPrice,
-    decayMode,
-    targetPrice,
-  ],
-  () => {
+const chartScheduler = createCalculatorChartScheduler(() => {
+  if (mounted) {
     renderChart()
     renderDecayChart()
   }
+})
+
+// The derived series include every calculation dependency. Canvas refs cover
+// loading/empty-state transitions; post-flush ensures the DOM is ready first.
+watch(
+  [profitData, timeDecayRows, chartRef, decayChartRef],
+  () => chartScheduler.schedule(),
+  { flush: 'post' },
 )
 
 const onEntryPriceInput = () => {
   entryAuto.value = false
+}
+
+const onUnderlyingPriceInput = (event) => {
+  manualUnderlying.value = true
+  manualUnderlyingPrice.value = event.target.value
+}
+
+const useQuotedUnderlying = () => {
+  manualUnderlying.value = false
+  manualUnderlyingPrice.value = ''
 }
 // NO watcher on selectedExpiry – we control it via handleExpiryClick + loadChain
 
@@ -1050,6 +1052,7 @@ const handleSelectSymbol = async (e) => {
   targetPrice.value    = null
   underlyingQuote.value = normalizeUnderlying(null)
   stockPrice.value     = null
+  useQuotedUnderlying()
   entryAuto.value      = true   // ✅ reset auto on symbol change
   error.value          = ''
   loading.value        = true
@@ -1068,10 +1071,13 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   mounted = false
+  chartScheduler.dispose()
   resetRefreshObserver({ clearReadiness: true })
   window.removeEventListener('select-symbol', handleSelectSymbol)
   chart?.destroy()
   decayChart?.destroy()
+  chart = null
+  decayChart = null
 })
 </script>
 
@@ -1146,13 +1152,20 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <div
-              v-if="!underlyingQuote.usable"
-              class="rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200"
+              v-if="manualUnderlying && calculationUnderlyingPrice !== null"
+              class="rounded-xl border border-cyan-500/40 bg-cyan-950/30 px-4 py-3 text-sm text-cyan-100"
+              data-testid="calculator-manual-underlying"
             >
-              A trustworthy underlying quote is unavailable. Contract cost, maximum loss, and breakeven remain available, but spot-dependent payoff and time-decay charts are paused.
+              Using your manual underlying scenario price of ${{ formatPrice(calculationUnderlyingPrice) }}. This is a hypothetical input, not a live quote.
             </div>
             <div
-              v-else-if="underlyingQuote.status === 'stale'"
+              v-else-if="!underlyingQuote.usable"
+              class="rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200"
+            >
+              A trustworthy underlying quote is unavailable. Expiration payoffs remain available using hypothetical stock prices. Enter an underlying scenario price to enable time-decay calculations.
+            </div>
+            <div
+              v-else-if="!manualUnderlying && underlyingQuote.status === 'stale'"
               class="rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-xs text-amber-200"
             >
               Using a stale quote from {{ underlyingQuote.source || 'the market-data provider' }}
@@ -1302,7 +1315,8 @@ onBeforeUnmount(() => {
                 >
                   <h3 class="text-xl font-bold mb-4">
                     {{ symbol }} @
-                    <span v-if="underlyingQuote.usable">${{ formatPrice(stockPrice) }}</span>
+                    <span v-if="calculationUnderlyingPrice !== null">${{ formatPrice(calculationUnderlyingPrice) }}<span v-if="manualUnderlying" class="ml-1 text-xs text-cyan-300">(manual scenario)</span></span>
+                    <span v-else-if="manualUnderlying" class="text-amber-300">Invalid manual scenario</span>
                     <span v-else class="text-amber-300">Quote unavailable</span>
                   </h3>
                   <div class="space-y-4">
@@ -1379,6 +1393,38 @@ onBeforeUnmount(() => {
                     >
                       Use live mid for entry price
                     </button>
+                    <div>
+                      <label for="calculator-underlying-price" class="text-sm text-gray-300">
+                        Underlying scenario price
+                        <span class="ml-1 text-xs" :class="manualUnderlying ? 'text-amber-300' : 'text-cyan-300'">
+                          ({{ manualUnderlying ? 'manual' : 'quote' }})
+                        </span>
+                      </label>
+                      <input
+                        id="calculator-underlying-price"
+                        data-testid="calculator-underlying-price"
+                        :value="manualUnderlying ? manualUnderlyingPrice : (stockPrice ?? '')"
+                        @input="onUnderlyingPriceInput"
+                        type="number"
+                        min="0"
+                        step="any"
+                        class="w-full mt-2 px-4 py-3 bg-gray-800/70 border border-gray-600 rounded-lg text-white"
+                        placeholder="Enter a hypothetical stock price"
+                        :aria-invalid="manualUnderlying && calculationUnderlyingPrice === null"
+                      />
+                      <p v-if="manualUnderlying && calculationUnderlyingPrice === null" class="mt-2 text-xs text-amber-300" data-testid="calculator-underlying-invalid">
+                        Enter a finite price greater than zero. No automatic quote is used while this manual input is invalid.
+                      </p>
+                      <button
+                        v-if="manualUnderlying"
+                        type="button"
+                        class="mt-2 text-xs text-cyan-400 hover:text-cyan-300"
+                        data-testid="calculator-use-quoted-underlying"
+                        @click="useQuotedUnderlying"
+                      >
+                        Use automatic underlying quote
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1414,15 +1460,15 @@ onBeforeUnmount(() => {
               <div class="lg:col-span-2 space-y-6">
                 <!-- charts -->
                 <div class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6">
-                  <p v-if="!underlyingQuote.usable" class="text-sm text-amber-300" data-testid="calculator-charts-paused">
-                    Spot-dependent charts are paused until a trustworthy underlying quote is available.
-                  </p>
-                  <p v-else-if="!calculationReady" class="mb-4 text-sm text-amber-300">
+                  <p v-if="!calculationReady" class="mb-4 text-sm text-amber-300">
                     Select a priced contract to view calculations.
                   </p>
                   <div v-else class="grid lg:grid-cols-2 gap-6">
                     <div>
                       <h3 class="text-xl font-bold mb-4">P&L vs Price (at Expiration)</h3>
+                      <p v-if="calculationUnderlyingPrice === null" class="mb-3 text-xs text-amber-300" data-testid="calculator-hypothetical-payoff">
+                        Hypothetical range centered on the selected strike (${{ formatPrice(selectedOption.strike) }}), not a current stock quote.
+                      </p>
                       <canvas ref="chartRef" class="w-full h-80"></canvas>
                     </div>
 
@@ -1431,7 +1477,13 @@ onBeforeUnmount(() => {
                       <p class="text-xs text-gray-400 mb-3">
                         Scenario: {{ timeDecayTitle }} • DTE: {{ daysToExpiration ?? 'Unavailable' }}
                       </p>
-                      <canvas ref="decayChartRef" class="w-full h-80"></canvas>
+                      <p v-if="calculationUnderlyingPrice === null" class="text-sm text-amber-300" data-testid="calculator-charts-paused">
+                        Time-decay calculations require an accepted underlying quote or a valid manual underlying scenario price.
+                      </p>
+                      <p v-else-if="decayMode === 'target' && decayUnderlying === null" class="text-sm text-amber-300">
+                        Enter a finite target price greater than zero.
+                      </p>
+                      <canvas v-else ref="decayChartRef" class="w-full h-80"></canvas>
                     </div>
                   </div>
                 </div>
@@ -1525,7 +1577,7 @@ onBeforeUnmount(() => {
                           <th class="text-left py-2">ROI (%)</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody data-testid="calculator-time-decay-rows">
                         <tr
                           v-for="row in visibleTimeDecayRows"
                           :key="row.dte"
@@ -1568,6 +1620,9 @@ onBeforeUnmount(() => {
                   class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6"
                 >
                   <h3 class="text-lg font-bold mb-4">Payoff Table (at Expiration)</h3>
+                  <p v-if="calculationReady && calculationUnderlyingPrice === null" class="mb-3 text-xs text-amber-300">
+                    Hypothetical prices centered on the selected strike; a live underlying quote is not required for expiration payoff.
+                  </p>
                   <div class="max-h-80 overflow-y-auto">
                     <table class="w-full text-sm">
                       <thead>
@@ -1577,7 +1632,7 @@ onBeforeUnmount(() => {
                           <th class="text-left py-2">ROI (%)</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody data-testid="calculator-payoff-rows">
                         <tr
                           v-for="row in payoffTableRows"
                           :key="row.price"

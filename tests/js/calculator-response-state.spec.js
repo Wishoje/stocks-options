@@ -347,14 +347,15 @@ describe('calculator API response states', () => {
         await flushPromises()
 
         expect(wrapper.text()).toContain('SPY @ Quote unavailable')
-        expect(wrapper.text()).toContain('spot-dependent payoff and time-decay charts are paused')
+        expect(wrapper.text()).toContain('Expiration payoffs remain available using hypothetical stock prices')
         expect(wrapper.text()).not.toContain('SPY @ $0.00')
         expect(wrapper.text()).not.toContain('SPY @ $100.00')
         expect(wrapper.text()).toContain('Breakeven$600.00')
         expect(wrapper.text()).toContain('Max Loss$500')
         expect(wrapper.text()).toContain('Cost$500')
         expect(wrapper.find('[data-testid="calculator-charts-paused"]').exists()).toBe(true)
-        expect(chartMock).not.toHaveBeenCalled()
+        expect(wrapper.findAll('[data-testid="calculator-payoff-rows"] tr')).toHaveLength(51)
+        expect(wrapper.findAll('[data-testid="calculator-time-decay-rows"] tr')).toHaveLength(0)
     })
 
     it('accepts an exact real $100 spot and chooses the closest requested-type contract', async () => {

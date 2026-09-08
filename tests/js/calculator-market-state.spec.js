@@ -2,11 +2,26 @@ import { describe, expect, it } from 'vitest'
 
 import {
     attachServerDte,
+    calculatorUnderlyingPrice,
     normalizeUnderlying,
+    positiveCalculatorPrice,
     serverDte,
 } from '@/Support/calculator-market-state.js'
 
 describe('calculator market state', () => {
+    it.each([null, undefined, '', ' ', 0, -1, Infinity, NaN, 'Infinity', '12oops', true, [], {}])('rejects invalid scenario price %s', (price) => {
+        expect(positiveCalculatorPrice(price)).toBeNull()
+        expect(calculatorUnderlyingPrice({ usable: true, price: 100 }, true, price)).toBeNull()
+        expect(normalizeUnderlying({ status: 'live', usable: true, price }).usable).toBe(false)
+    })
+
+    it('requires explicit manual input to bypass a rejected automatic quote', () => {
+        const stale = normalizeUnderlying({ status: 'stale', usable: false, price: 110 })
+        expect(calculatorUnderlyingPrice(stale, false, 125)).toBeNull()
+        expect(calculatorUnderlyingPrice(stale, true, '125.50')).toBe(125.5)
+        expect(calculatorUnderlyingPrice({ usable: true, price: 100 }, false, 125)).toBe(100)
+    })
+
     it('accepts an explicitly usable exact $100 quote', () => {
         expect(normalizeUnderlying({
             symbol: 'spy',
