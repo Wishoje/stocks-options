@@ -10,6 +10,7 @@ const selected = computed(() => props.posts.find(post => post.id === selectedId.
 const generation = useForm({ session_date: props.defaultDate, slot: 'primary' })
 const preferences = useForm({ second_symbol: props.settings.second_symbol, paused: props.settings.paused })
 const editor = useForm({ body: '', alt_text: '' })
+const acknowledgeInputs = ref(false)
 const confirming = ref(false)
 const busy = ref(false)
 const errors = computed(() => Object.values(page.props.errors ?? {}))
@@ -18,9 +19,15 @@ watch(() => [selected.value?.id, selected.value?.updated_at], () => {
   editor.alt_text = selected.value?.alt_text ?? ''
   editor.defaults({ body: editor.body, alt_text: editor.alt_text })
   confirming.value = false
+  acknowledgeInputs.value = false
 }, { immediate: true })
 watch(() => props.posts, posts => {
   if (!posts.some(post => post.id === selectedId.value)) selectedId.value = posts[0]?.id ?? null
+})
+const canAcknowledge = computed(() => selected.value?.can_acknowledge_missing_inputs && ['draft', 'blocked'].includes(selected.value?.status))
+const missingRowPercent = computed(() => {
+  const q = selected.value?.snapshot?.social_quality
+  return q?.source_rows ? (100 * q.missing_input_rows / q.source_rows).toFixed(2) : null
 })
 const editable = computed(() => ['draft', 'approved'].includes(selected.value?.status))
 const imageUrl = computed(() => selected.value?.image_path ? `/admin/social/${selected.value.id}/image?v=${selected.value.image_sha256}` : null)
@@ -29,9 +36,9 @@ const weightedLength = computed(() => {
   const plain = editor.body.replace(/https?:\/\/[^\s]+/gu, () => { links++; return '' })
   return links * 23 + [...plain].reduce((n, ch) => n + (ch.codePointAt(0) < 128 ? 1 : 2), 0)
 })
-function action(url) {
+function action(url, payload = {}) {
   busy.value = true
-  router.post(url, {}, { preserveScroll: true, onFinish: () => { busy.value = false; confirming.value = false } })
+  router.post(url, payload, { preserveScroll: true, onFinish: () => { busy.value = false; confirming.value = false } })
 }
 function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], preserveScroll: true }) }
 </script>
@@ -79,7 +86,7 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
           </button>
         </aside>
         <section v-if="selected" class="draft-detail" aria-label="Selected draft">
-          <div v-if="selected.issue" class="notice error" role="status">{{ selected.issue }}</div>
+          <div v-if="selected.issue" class="notice" :class="{ error: !selected.quality_acknowledgment }" role="status">{{ selected.issue }}</div>
           <div class="panel preview">
             <div class="panel-heading"><div><p class="eyebrow">{{ selected.symbol }} · {{ selected.session_date }}</p><h2>The image your audience will see</h2></div><a v-if="imageUrl" class="button" :href="imageUrl+'&download=1'">Download PNG</a></div>
             <img v-if="imageUrl" :src="imageUrl" :alt="selected.alt_text" width="1600" height="1000">
@@ -91,9 +98,10 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
             <label for="post-body" class="sr-only">Post text</label><textarea id="post-body" v-model="editor.body" rows="8" :disabled="!editable" />
             <label for="post-alt">Image description</label><textarea id="post-alt" v-model="editor.alt_text" rows="3" maxlength="1000" :disabled="!editable" />
             <p class="muted small">Links use campaign tracking. Editing a draft removes its previous approval. Downloaded images can also be posted manually.</p>
+            <label v-if="canAcknowledge" class="check"><input v-model="acknowledgeInputs" type="checkbox"> I acknowledge {{ selected.snapshot.social_quality.missing_input_rows }} rows with missing inputs<span v-if="missingRowPercent"> ({{ missingRowPercent }}% of contract rows)</span> and approve this available-data chart. This is not the percentage of missing GEX.</label>
             <div class="editor-actions">
               <button type="submit" :disabled="!editable || editor.processing || !editor.isDirty || weightedLength > 280">Save draft</button>
-              <button type="button" class="primary" :disabled="selected.status !== 'draft' || !imageUrl || editor.isDirty || busy" @click="action(`/admin/social/${selected.id}/approve`)">Approve draft</button>
+              <button type="button" class="primary" :disabled="(canAcknowledge ? !acknowledgeInputs : selected.status !== 'draft') || !imageUrl || editor.isDirty || busy" @click="action(`/admin/social/${selected.id}/approve`, { acknowledge_missing_inputs: canAcknowledge && acknowledgeInputs, review_token: selected.review_token })">Approve draft</button>
               <button v-if="selected.status === 'approved'" type="button" :disabled="editor.processing" @click="editor.put(`/admin/social/${selected.id}`, { preserveScroll: true })">Return to draft</button>
               <button v-if="publishingEnabled && selected.status === 'approved'" type="button" :disabled="settings.paused || busy || editor.isDirty" @click="confirming = !confirming">Publish in time slot</button>
               <a v-if="selected.x_post_id" class="button" :href="`https://x.com/GexOptions/status/${selected.x_post_id}`" target="_blank" rel="noopener noreferrer">View on X</a>

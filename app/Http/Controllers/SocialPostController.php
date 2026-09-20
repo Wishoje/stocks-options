@@ -28,7 +28,10 @@ class SocialPostController extends Controller
         return Inertia::render('Admin/SocialPosts', [
             'posts' => SocialPost::orderByDesc('session_date')->orderBy('slot')->limit(30)->get()->map(function ($post) {
                 $data = $post->toArray();
-                $data['snapshot'] = $post->snapshot ? array_intersect_key($post->snapshot, array_flip(['data_date', 'expiration_dates'])) : null;
+                $workflow = app(SocialWorkflow::class);
+                $data['can_acknowledge_missing_inputs'] = $workflow->canAcknowledgeMissingInputs($post);
+                $data['review_token'] = $workflow->reviewToken($post);
+                $data['snapshot'] = $post->snapshot ? array_intersect_key($post->snapshot, array_flip(['data_date', 'expiration_dates', 'social_quality'])) : null;
 
                 return $data;
             }),
@@ -62,7 +65,8 @@ class SocialPostController extends Controller
 
     public function approve(Request $request, SocialPost $post, SocialWorkflow $workflow)
     {
-        $this->run(fn () => $workflow->approve($post, $request->user()->id));
+        $request->validate(['acknowledge_missing_inputs' => 'sometimes|boolean', 'review_token' => 'nullable|string|size:64']);
+        $this->run(fn () => $workflow->approve($post, $request->user()->id, $request->boolean('acknowledge_missing_inputs'), $request->input('review_token')));
 
         return back()->with('status', 'Approved. Publishing still requires the server publishing switch and the scheduled time window.');
     }
@@ -82,7 +86,7 @@ class SocialPostController extends Controller
         $settings = SocialSetting::current();
         if ($settings->second_symbol !== $data['second_symbol']) {
             SocialPost::where('slot', 'secondary')->where('session_date', '>=', now('America/New_York')->toDateString())
-                ->whereIn('status', ['draft', 'approved'])->update(['status' => 'blocked', 'approved_at' => null, 'approved_by' => null,
+                ->whereIn('status', ['draft', 'approved'])->update(['status' => 'blocked', 'approved_at' => null, 'approved_by' => null, 'quality_acknowledgment' => null,
                     'issue' => 'Second symbol changed. Regenerate the draft to use the new selection.']);
         }
         $settings->update($data);

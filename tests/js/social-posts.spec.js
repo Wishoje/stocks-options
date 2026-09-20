@@ -43,4 +43,18 @@ describe('social publishing review', () => {
     expect(wrapper.get('#post-body').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
+  it('requires explicit acknowledgment for available-data approval and resets it when content changes', async () => {
+    const partial = { ...post, status: 'blocked', can_acknowledge_missing_inputs: true, review_token: 'review',
+      snapshot: { ...post.snapshot, social_quality: { missing_input_rows: 2, source_rows: 100 } } }
+    const wrapper = render({ posts: [partial] })
+    const approve = wrapper.findAll('button').find(button => button.text() === 'Approve draft')
+    expect(approve.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('2.00% of contract rows')
+    await wrapper.get('.editor input[type="checkbox"]').setValue(true)
+    expect(approve.attributes('disabled')).toBeUndefined()
+    await wrapper.setProps({ posts: [{ ...partial, updated_at: '2026-09-20T11:00:00Z' }] })
+    expect(approve.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
 })

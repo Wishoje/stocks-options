@@ -16,14 +16,14 @@ Choose the target trading session. A Monday premarket draft uses Friday's comple
 
 The scope is the dashboard 2W window, resolved for the target session. Social drafts consume the same published `next_session` GEX response as the dashboard. Total net GEX and the largest positive and negative exposures use every returned numeric strike. The signed chart keeps individual strikes, trimming at most 1% of absolute exposure from each tail. Its caption discloses the displayed range and coverage. The source JSON retains all rows.
 
-Incomplete nonzero or unknown open-interest rows produce a blocked draft with diagnostics in the admin page and JSON. The PNG omits internal diagnostics; approval remains blocked. Missing gamma, underlying price, or open interest must be repaired upstream; the social feature does not manufacture inputs. Zero-open-interest rows can safely contribute zero without gamma.
+Incomplete nonzero or unknown open-interest rows produce a blocked draft with diagnostics in the admin page and JSON. The PNG omits internal diagnostics. An owner may explicitly acknowledge missing inputs in the admin page and approve the available-data chart. Missing expirations, mixed source dates, absent snapshots, and invalid images remain blocked. Approval records the owner, time, missing-row count, and snapshot/image hashes in `quality_acknowledgment`. It does not change source quality flags or automatically approve future drafts. Editing or regenerating revokes the acknowledgment. Missing gamma, underlying price, or open interest must be repaired upstream; the social feature does not manufacture inputs. Zero-open-interest rows can safely contribute zero without gamma.
 
 ## Review workflow
 
 1. Generate SPY and the selected secondary symbol for the next trading session.
 2. Compare the snapshot date, expiry scope, total, positive peak, and negative peak with the matching dashboard source. Download the PNG and source JSON.
 3. Review the caption and image description. Saving an edit revokes approval. Return an approved post to draft before regenerating it.
-4. Approve only a complete image and caption. Approval does not enable posting when the server publishing switch is off.
+4. Review the image and caption, and explicitly acknowledge disclosed input gaps when accepting an available-data chart. Approval does not enable posting when the server publishing switch is off.
 
 Changing QQQ to TSLA revokes existing future secondary approvals. Refresh the list after background generation. Local review can use the existing historical review clock; production publishing always uses the actual clock.
 

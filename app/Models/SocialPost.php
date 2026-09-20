@@ -12,6 +12,6 @@ class SocialPost extends Model
 
     protected function casts(): array
     {
-        return ['snapshot' => 'array', 'approved_at' => 'datetime', 'published_at' => 'datetime'];
+        return ['snapshot' => 'array', 'quality_acknowledgment' => 'array', 'approved_at' => 'datetime', 'published_at' => 'datetime'];
     }
 }

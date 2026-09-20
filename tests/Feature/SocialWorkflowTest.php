@@ -34,6 +34,7 @@ class SocialWorkflowTest extends TestCase
         DB::purge('social_test');
         DB::setDefaultConnection('social_test');
         (require database_path('migrations/2026_09_20_100000_create_social_posts_tables.php'))->up();
+        (require database_path('migrations/2026_09_20_180000_add_quality_acknowledgment_to_social_posts.php'))->up();
         Storage::fake('local');
         Http::preventStrayRequests();
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-21 08:45', 'America/New_York'));
@@ -265,6 +266,104 @@ class SocialWorkflowTest extends TestCase
         $this->assertStringContainsString('review only', $post->alt_text);
         $this->expectException(DomainException::class);
         $workflow->approve($post, 3);
+    }
+
+    private function incompleteWorkflow(?XPublisher $x = null): SocialWorkflow
+    {
+        $source = Mockery::mock(SocialGexSource::class);
+        $source->shouldReceive('capture')->andReturn([...$this->snapshot(), 'social_quality' => [
+            'publishable' => false, 'missing_input_rows' => 2, 'source_rows' => 100,
+            'missing_expiration_count' => 0, 'source_dates' => ['2026-09-18'],
+        ]]);
+
+        return new SocialWorkflow($source, new SocialCard, $x ?? new XPublisher);
+    }
+
+    public function test_acknowledged_gaps_preserve_quality_and_permit_scheduled_publish(): void
+    {
+        config(['social.publishing_enabled' => true]);
+        $x = Mockery::mock(XPublisher::class);
+        $x->shouldReceive('verifyAccount')->once()->andReturn('GexOptions');
+        $x->shouldReceive('upload')->once()->andReturn('123');
+        $x->shouldReceive('publish')->once()->andReturn('456');
+        $workflow = $this->incompleteWorkflow($x);
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $snapshot = $post->snapshot;
+        $workflow->approve($post, 3, true, $workflow->reviewToken($post));
+        $post->refresh();
+        $this->assertSame('approved', $post->status);
+        $this->assertSame($snapshot, $post->snapshot);
+        $this->assertFalse($post->snapshot['social_quality']['publishable']);
+        $this->assertSame(3, $post->quality_acknowledgment['approved_by']);
+        $this->assertStringNotContainsString('do not publish', $post->alt_text);
+        $workflow->publish($post);
+        $this->assertSame('published', $post->refresh()->status);
+    }
+
+    public function test_edit_revokes_acknowledgment(): void
+    {
+        $workflow = $this->incompleteWorkflow();
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $workflow->approve($post, 3, true, $workflow->reviewToken($post));
+        $workflow->edit($post, 'Updated $SPY', 'Updated chart');
+        $this->assertNull($post->refresh()->quality_acknowledgment);
+        $this->expectException(DomainException::class);
+        $workflow->approve($post, 3);
+    }
+
+    public function test_acknowledgment_cannot_override_missing_expirations(): void
+    {
+        $workflow = $this->incompleteWorkflow();
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $snapshot = $post->snapshot;
+        $snapshot['social_quality']['missing_expiration_count'] = 1;
+        $post->update(['snapshot' => $snapshot]);
+        $this->expectException(DomainException::class);
+        $workflow->approve($post, 3, true, $workflow->reviewToken($post));
+    }
+
+    public function test_changed_snapshot_invalidates_acknowledgment(): void
+    {
+        config(['social.publishing_enabled' => true]);
+        $workflow = $this->incompleteWorkflow();
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $workflow->approve($post, 3, true, $workflow->reviewToken($post));
+        $post->refresh();
+        $snapshot = $post->snapshot;
+        $snapshot['strike_data'][0]['net_gex'] = 1;
+        $post->update(['snapshot' => $snapshot]);
+        $this->expectException(DomainException::class);
+        try {
+            $workflow->publish($post);
+        } finally {
+            Http::assertNothingSent();
+        }
+    }
+
+    public function test_admin_route_requires_explicit_acknowledgment_and_current_token(): void
+    {
+        $workflow = $this->incompleteWorkflow();
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $user = new User;
+        $user->id = 3;
+        $user->setRelation('subscriptions', collect());
+        $this->actingAs($user);
+        $url = '/admin/social/'.$post->id.'/approve';
+        $this->post($url)->assertSessionHasErrors('post');
+        $this->assertSame('blocked', $post->refresh()->status);
+        $this->post($url, ['acknowledge_missing_inputs' => true, 'review_token' => $workflow->reviewToken($post)])->assertRedirect();
+        $this->assertSame('approved', $post->refresh()->status);
+        Http::assertNothingSent();
+    }
+
+    public function test_stale_review_token_cannot_approve_a_replaced_draft(): void
+    {
+        $workflow = $this->incompleteWorkflow();
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $token = $workflow->reviewToken($post);
+        $post->update(['body' => 'Changed caption']);
+        $this->expectException(DomainException::class);
+        $workflow->approve($post, 3, true, $token);
     }
 
     public function test_source_rejects_mixed_expiry_dates_before_calculating(): void
