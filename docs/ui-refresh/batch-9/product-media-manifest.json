@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "source_revision": "11416bda964b7e629a340779584700075d50f32c",
+  "source_revision": "a211f19af7fa484c2b59f8fd88d968f53da07fb0",
   "original_capture_revision": "703bf52b0286af3510a887e3b4dc6311782b2036",
-  "presentation_review": "2026-09-20: Marketing copy, pricing, and homepage chart framing reviewed at desktop, 768px, and 390px widths. Screenshot assets and the depicted dashboard views are unchanged. The homepage labels its chart-detail crop and retains the full original in Expand. No new capture is claimed. Social draft release review: the new owner-only page and navigation link do not change these marketing assets or their depicted dashboard panels. EOD view release review: Latest EOD and Next-session preparation controls were reviewed locally at desktop and 390px, including source dates, expiry badges, and AI Export handoff. Existing marketing images remain dated recorded examples and do not show the new selector. No new capture is claimed.",
+  "presentation_review": "2026-09-20: Marketing copy, pricing, and homepage chart framing reviewed at desktop, 768px, and 390px widths. Screenshot assets and the depicted dashboard views are unchanged. The homepage labels its chart-detail crop and retains the full original in Expand. No new capture is claimed. Social draft release review: the new owner-only page and navigation link do not change these marketing assets or their depicted dashboard panels. EOD view release review: Latest EOD and Next-session preparation controls were reviewed locally at desktop and 390px, including source dates, expiry badges, and AI Export handoff. Existing marketing images remain dated recorded examples and do not show the new selector. No new capture is claimed. Social approval update: acknowledgment controls are covered by component and endpoint tests; marketing assets and depicted charts are unchanged. No new capture is claimed.",
   "capture_policy": {
     "real_delivered_ui_only": true,
     "synthetic_product_images_allowed": false,
