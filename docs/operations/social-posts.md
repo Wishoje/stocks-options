@@ -45,3 +45,7 @@ Only one record exists for each session and slot. An atomic status claim prevent
 - Downloads return PNG and complete JSON. Preview images are private and not indexed.
 - Caption edits, approval, and return to draft behave consistently; changing the secondary symbol revokes its old approval.
 - Publishing and scheduling remain off during draft review. No X post is sent by generation, downloads, or approval.
+
+## Owner-requested early publication
+
+The service method `publishNextSessionNow` lets the approving owner explicitly publish preparation for the next opening session outside regular trading hours. It validates the target session, previous EOD source, accepted input quality, and saved image, then uses the same atomic publication claim as scheduled posts. It does not change the recurring schedule. A post published on Sunday for Monday is skipped by Monday's scheduler. No public endpoint automatically invokes this exception.

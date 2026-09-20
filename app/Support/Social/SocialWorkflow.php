@@ -157,6 +157,31 @@ class SocialWorkflow
         if ($now->lt($start) || $now->gte($start->addMinutes(10))) {
             throw new DomainException('This draft is outside its 10-minute publishing window.');
         }
+
+        return $this->submitApproved($post);
+    }
+
+    public function publishNextSessionNow(SocialPost $post, int $ownerId, ?CarbonImmutable $at = null): SocialPost
+    {
+        $now = ($at ?? CarbonImmutable::now('America/New_York'))->setTimezone('America/New_York');
+        $session = \App\Support\EodViewContext::defaults($now)['next_session'];
+        if (! in_array($ownerId, config('social.admin_ids', []), true) || (int) $post->approved_by !== $ownerId) {
+            throw new DomainException('The approving owner must authorize early publication.');
+        }
+        if (! config('social.publishing_enabled') || SocialSetting::current()->paused) {
+            throw new DomainException('Publishing is disabled or paused.');
+        }
+        if (MarketSession::describe($now)['state'] === 'rth' || $post->session_date !== $session
+            || ! $this->hasAcceptedInputs($post)
+            || substr((string) ($post->snapshot['data_date'] ?? ''), 0, 10) !== SocialGexSource::expectedDate($session)) {
+            throw new DomainException('Early publication requires the upcoming session and its previous completed EOD snapshot.');
+        }
+
+        return $this->submitApproved($post);
+    }
+
+    private function submitApproved(SocialPost $post): SocialPost
+    {
         // Atomic status claim prevents simultaneous manual/scheduled workers from posting twice.
         if (! SocialPost::whereKey($post->id)->where('status', 'approved')->update(['status' => 'publishing', 'updated_at' => now()])) {
             return $post->refresh();

@@ -162,6 +162,43 @@ class SocialWorkflowTest extends TestCase
         $this->assertSame('456', $post->x_post_id);
     }
 
+    public function test_owner_can_publish_monday_preparation_on_sunday_without_monday_duplicate(): void
+    {
+        config(['social.publishing_enabled' => true]);
+        $x = Mockery::mock(XPublisher::class);
+        $x->shouldReceive('verifyAccount')->once()->andReturn('GexOptions');
+        $x->shouldReceive('upload')->once()->andReturn('123');
+        $x->shouldReceive('publish')->once()->andReturn('456');
+        $workflow = $this->incompleteWorkflow($x);
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $workflow->approve($post, 3, true, $workflow->reviewToken($post));
+        $workflow->publishNextSessionNow($post->refresh(), 3, CarbonImmutable::parse('2026-09-20 13:00', 'America/New_York'));
+        $this->assertSame('published', $post->refresh()->status);
+        $workflow->publish($post, CarbonImmutable::parse('2026-09-21 08:45', 'America/New_York'));
+        $this->assertSame('456', $post->refresh()->x_post_id);
+        Queue::fake();
+        config(['social.schedule_enabled' => true]);
+        $this->artisan('social:tick')->assertSuccessful();
+        Queue::assertNotPushed(PublishSocialPost::class);
+    }
+
+    public function test_early_publication_rejects_wrong_owner_and_wrong_session(): void
+    {
+        config(['social.publishing_enabled' => true]);
+        $workflow = $this->workflow();
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $workflow->approve($post, 3);
+        foreach ([[99, '2026-09-20 13:00'], [3, '2026-09-21 17:00'], [3, '2026-09-21 10:00']] as [$owner, $time]) {
+            try {
+                $workflow->publishNextSessionNow($post->refresh(), $owner, CarbonImmutable::parse($time, 'America/New_York'));
+                $this->fail('Must reject mismatched owner/session or active trading session.');
+            } catch (DomainException) {
+                $this->assertSame('approved', $post->refresh()->status);
+            }
+        }
+        Http::assertNothingSent();
+    }
+
     public function test_ambiguous_submission_is_held_for_manual_review_and_never_retried(): void
     {
         config(['social.publishing_enabled' => true]);
