@@ -202,6 +202,7 @@ class EodCacheVersionTest extends TestCase
 
     public function test_force_refresh_cannot_replace_existing_published_payload(): void
     {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-08-14 21:00:00', 'UTC'));
         $this->ensureGexTables();
         DB::table('option_expirations')->insert([
             'id' => 1,

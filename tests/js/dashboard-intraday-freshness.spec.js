@@ -144,6 +144,28 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(pulls()).toHaveLength(0)
   })
 
+  it('keeps market-session state unknown while the first intraday summary is pending', async () => {
+    let resolveSummary
+    summaryResponse = () => new Promise(resolve => { resolveSummary = resolve })
+    const wrapper = shallowMount(Dashboard)
+    wrappers.push(wrapper)
+    await flushPromises()
+    await advance(300)
+
+    wrapper.vm.setMode('intraday')
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper.vm.marketOpen).toBeNull()
+    expect(wrapper.vm.intradaySourceLabel).toBe('Loading session state')
+    expect(wrapper.get('.gex-dashboard-freshness').attributes('data-state')).toBe('loading')
+    expect(wrapper.text()).not.toContain('Market Closed')
+
+    resolveSummary(response(summary()))
+    await flushPromises()
+    expect(wrapper.vm.marketOpen).toBe(true)
+  })
+
   it('queues once after the eligibility read instead of also posting on the mode switch', async () => {
     summaryResponse = () => Promise.resolve(response(summary({ refresh_eligible: true })))
     const wrapper = await mountIntraday()
@@ -188,6 +210,173 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(calls('/api/intraday/summary')).toHaveLength(1)
     expect(wrapper.vm.lastUpdated).toBeNull()
     expect(wrapper.vm.intradayLevels.strike_data).toHaveLength(1)
+  })
+
+  it('uses the explicit provider source clock and preserves raw null and zero fields', async () => {
+    const providerTime = '2026-09-04T14:40:00Z'
+    const receiptTime = '2026-09-04T14:59:59Z'
+    summaryResponse = () => Promise.resolve(response(summary({
+      asof: receiptTime,
+      source_asof: providerTime,
+      received_at: receiptTime,
+      ingestion_completed_at: receiptTime,
+    })))
+    strikesResponse = () => Promise.resolve(response(strikes({
+      asof: receiptTime,
+      source_asof: providerTime,
+      received_at: receiptTime,
+      ingestion_completed_at: receiptTime,
+      totals: { call_vol: null, put_vol: 0, premium: null, pcr_vol: null },
+      items: [{
+        strike: 500,
+        call_vol: null,
+        put_vol: 0,
+        oi_call_eod: null,
+        oi_put_eod: 0,
+        vol_oi: null,
+        pcr: null,
+        call_prem: null,
+        put_prem: 0,
+        net_gex_live: null,
+        net_gex_delta: 0,
+        provider_contract_count: 17,
+      }],
+    })))
+
+    const wrapper = await mountIntraday()
+
+    expect(wrapper.vm.intradaySnapshotAsOf).toBe(providerTime)
+    expect(wrapper.vm.lastUpdated).toBe(providerTime)
+    expect(wrapper.vm.intradayReceivedAt).toBe(receiptTime)
+    expect(wrapper.vm.intradayIngestionCompletedAt).toBe(receiptTime)
+    expect(wrapper.vm.intradayLevels.call_volume_total).toBeNull()
+    expect(wrapper.vm.intradayLevels.put_volume_total).toBe(0)
+    expect(wrapper.vm.intradayLevels.premium_total).toBeNull()
+    expect(wrapper.vm.intradayLevels.strike_data[0]).toMatchObject({
+      call_vol: null,
+      put_vol: 0,
+      net_gex_live: null,
+      net_gex_delta: 0,
+      provider_contract_count: 17,
+    })
+    expect(wrapper.vm.intradayLevels.strike_data[0]).not.toHaveProperty('call_vol_delta')
+    expect(wrapper.vm.intradayLevels.strike_data[0]).not.toHaveProperty('put_vol_delta')
+    expect(wrapper.vm.intradayLevels.strike_data[0]).not.toHaveProperty('premium_call')
+    expect(wrapper.vm.intradayLevels.strike_data[0]).not.toHaveProperty('premium_put')
+    expect(wrapper.vm.intradayLevels.intraday_snapshot_meta.items).toBeUndefined()
+  })
+
+  it('does not relabel a receipt clock as provider time when the source contract reports unknown', async () => {
+    const receiptTime = '2026-09-04T14:59:59Z'
+    const unknownSource = {
+      asof: receiptTime,
+      source_asof: null,
+      source_timestamp_complete: false,
+      source_timestamp_status: 'unknown',
+      received_at: receiptTime,
+    }
+    summaryResponse = () => Promise.resolve(response(summary(unknownSource)))
+    strikesResponse = () => Promise.resolve(response(strikes(unknownSource)))
+
+    const wrapper = await mountIntraday()
+
+    expect(wrapper.vm.intradaySnapshotAvailable).toBe(true)
+    expect(wrapper.vm.intradaySnapshotAsOf).toBeNull()
+    expect(wrapper.vm.lastUpdated).toBeNull()
+    expect(wrapper.vm.intradayReceivedAt).toBe(receiptTime)
+    expect(wrapper.vm.intradaySourceTimestampStatus).toBe('unknown')
+    expect(wrapper.text()).toContain('Provider update time unavailable')
+    expect(wrapper.text()).not.toContain('Source as of')
+  })
+
+  it('treats an explicitly missing composite source clock as authoritative', async () => {
+    const summarySource = '2026-09-04T14:40:00Z'
+    summaryResponse = () => Promise.resolve(response(summary({ source_asof: summarySource })))
+    strikesResponse = () => Promise.resolve(response(strikes({
+      source_asof: null,
+      source_timestamp_complete: false,
+      source_timestamp_status: 'unknown',
+    })))
+
+    const wrapper = await mountIntraday()
+
+    expect(wrapper.vm.intradaySnapshotAvailable).toBe(true)
+    expect(wrapper.vm.intradaySnapshotAsOf).toBeNull()
+    expect(wrapper.vm.lastUpdated).toBeNull()
+    expect(wrapper.vm.intradaySourceTimestampStatus).toBe('unknown')
+    expect(wrapper.text()).toContain('Provider update time unavailable')
+    expect(wrapper.text()).not.toContain('Delayed (20m)')
+  })
+
+  it('keeps an explicitly available all-zero snapshot available', async () => {
+    const emptyTotals = { call_vol: 0, put_vol: 0, total: 0, premium: 0, pcr_vol: null }
+    summaryResponse = () => Promise.resolve(response(summary({ totals: emptyTotals })))
+    strikesResponse = () => Promise.resolve(response(strikes({ items: [], totals: emptyTotals })))
+
+    const wrapper = await mountIntraday()
+
+    expect(wrapper.vm.intradaySnapshotAvailable).toBe(true)
+    expect(wrapper.vm.intradayHasData).toBe(true)
+    expect(wrapper.vm.intradayLevels.strike_data).toEqual([])
+    expect(wrapper.vm.intradayLevels.call_volume_total).toBe(0)
+    expect(wrapper.vm.intradayLevels.put_volume_total).toBe(0)
+    expect(wrapper.vm.topError).toBe('')
+  })
+
+  it('lets composite snapshot_available=false override the summary availability', async () => {
+    summaryResponse = () => Promise.resolve(response(summary({ snapshot_available: true })))
+    strikesResponse = () => Promise.resolve(response(strikes({
+      snapshot_available: false,
+      source_asof: null,
+      source_timestamp_complete: false,
+      items: [{
+        strike: 500,
+        call_vol: 0,
+        put_vol: 0,
+        oi_call_eod: 123,
+        oi_put_eod: 456,
+        scaffold_marker: 'retained exactly',
+      }],
+      totals: { call_vol: 0, put_vol: 0, total: 0, premium: 0, pcr_vol: null },
+    })))
+
+    const wrapper = await mountIntraday()
+
+    expect(wrapper.vm.intradaySnapshotAvailable).toBe(false)
+    expect(wrapper.vm.intradayHasData).toBe(false)
+    expect(wrapper.vm.cacheIntraday.has('SPY')).toBe(false)
+    expect(wrapper.vm.intradayLevels.strike_data).toEqual([{
+      strike: 500,
+      call_vol: 0,
+      put_vol: 0,
+      oi_call_eod: 123,
+      oi_put_eod: 456,
+      scaffold_marker: 'retained exactly',
+    }])
+
+    wrapper.vm.activate('strikes')
+    await nextTick()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'VolOverOiChart' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'PcrByStrikeChart' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'PremiumByStrikeChart' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'UiPanel' }).props('title')).toBe('Live strikes')
+  })
+
+  it('hides the previous symbol payload immediately during an intraday symbol change', async () => {
+    const wrapper = await mountIntraday()
+    expect(wrapper.vm.intradayDataSymbol).toBe('SPY')
+    expect(wrapper.vm.levels.strike_data).toHaveLength(1)
+
+    wrapper.vm.userSymbol = 'QQQ'
+    await nextTick()
+
+    expect(wrapper.vm.intradayTransition).toBe(true)
+    expect(wrapper.vm.levels).toBeNull()
+    const loadingStatus = wrapper.findAllComponents({ name: 'UiStatus' })
+      .find(component => component.props('title') === 'Loading QQQ intraday data')
+    expect(loadingStatus).toBeTruthy()
+    expect(loadingStatus.props('message')).toBe('The previous symbol is hidden while its replacement snapshot is verified.')
   })
 
   it('retains a closed-session unknown-time snapshot across mode/cache changes', async () => {
@@ -270,6 +459,25 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(wrapper.vm.intradayLevels.strike_data).toHaveLength(1)
   })
 
+  it('uses the zoned legacy summary time instead of parsing unzoned composite text in the browser timezone', async () => {
+    vi.setSystemTime(new Date('2026-09-04T20:00:00Z'))
+    const oldSummary = summary({ asof: '2026-09-04T19:59:00Z' })
+    const oldStrikes = strikes({ asof: '2026-09-04 14:59:00' })
+    for (const data of [oldSummary, oldStrikes]) {
+      for (const key of ['refresh_eligible', 'snapshot_available', 'market_session', 'source_asof', 'source_timestamp_complete', 'source_timestamp_status', 'received_at', 'ingestion_completed_at']) {
+        delete data[key]
+      }
+    }
+    summaryResponse = () => Promise.resolve(response(oldSummary))
+    strikesResponse = () => Promise.resolve(response(oldStrikes))
+
+    const wrapper = await mountIntraday()
+
+    expect(wrapper.vm.intradaySnapshotAsOf).toBe('2026-09-04T19:59:00Z')
+    expect(wrapper.vm.intradaySourceAge).toBe(60)
+    expect(wrapper.vm.intradaySourceTimestampStatus).toBe('legacy')
+  })
+
   it('polls a pending open-session snapshot without creating more work', async () => {
     let strikeReads = 0
     const missing = { asof: null, source_asof: null, snapshot_available: false, refresh_eligible: false }
@@ -308,5 +516,52 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(wrapper.vm.lastUpdated).toBe(source)
     expect(calls('/api/intraday/summary')).toHaveLength(1)
     expect(pulls()).toHaveLength(0)
+  })
+
+  it('keeps an aligned snapshot visible when a soft refresh fails', async () => {
+    const wrapper = await mountIntraday()
+    const retained = wrapper.vm.intradayLevels
+    summaryResponse = () => Promise.reject(new Error('temporary provider failure'))
+
+    await wrapper.vm.manualRefresh()
+    await flushPromises()
+
+    expect(wrapper.vm.intradayLevels).toBe(retained)
+    expect(wrapper.vm.intradayHasData).toBe(true)
+    expect(wrapper.vm.intradayError).toBe('temporary provider failure')
+    expect(wrapper.vm.topError).toBe('')
+  })
+
+  it('does not refresh symbol-scoped intraday endpoints when the hidden EOD timeframe changes', async () => {
+    const wrapper = await mountIntraday()
+    const summaryCalls = calls('/api/intraday/summary').length
+    const strikeCalls = calls('/api/intraday/strikes').length
+
+    wrapper.vm.gexTf = '30d'
+    await nextTick()
+    await flushPromises()
+
+    expect(calls('/api/intraday/summary')).toHaveLength(summaryCalls)
+    expect(calls('/api/intraday/strikes')).toHaveLength(strikeCalls)
+  })
+
+  it('unmounts the three live-strike charts when the user returns to Flow', async () => {
+    const wrapper = await mountIntraday()
+    expect(wrapper.findComponent({ name: 'IntradayFlowPanel' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'VolOverOiChart' }).exists()).toBe(false)
+
+    wrapper.vm.activate('strikes')
+    await nextTick()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'VolOverOiChart' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'PcrByStrikeChart' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'PremiumByStrikeChart' }).exists()).toBe(true)
+
+    wrapper.vm.activate('flow')
+    await nextTick()
+    expect(wrapper.findComponent({ name: 'VolOverOiChart' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'PcrByStrikeChart' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'PremiumByStrikeChart' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'IntradayFlowPanel' }).exists()).toBe(true)
   })
 })

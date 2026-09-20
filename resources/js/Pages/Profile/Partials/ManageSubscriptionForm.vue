@@ -1,132 +1,223 @@
 <script setup>
-import { computed } from 'vue'
-import { useForm, usePage } from '@inertiajs/vue3'
-import FormSection from '@/Components/FormSection.vue'
-import ActionMessage from '@/Components/ActionMessage.vue'
-import PrimaryButton from '@/Components/PrimaryButton.vue'
-import SecondaryButton from '@/Components/SecondaryButton.vue'
+import { computed, ref } from 'vue'
+import { Link, useForm, usePage } from '@inertiajs/vue3'
+import DialogModal from '@/Components/DialogModal.vue'
 
 const page = usePage()
 
 const props = defineProps({
-  subscription: { type: Object, default: null },
+  subscription: { type: Object, required: true },
 })
 
+const confirmingCancellation = ref(false)
 const cancelForm = useForm({})
 const resumeForm = useForm({})
 
 const flashStatus = computed(() => page.props.flash?.status)
 
-const onGracePeriod = computed(() => !!props.subscription?.on_grace_period)
-const isActive = computed(() => !!props.subscription?.active)
+const statusTone = computed(() => {
+  if (['active', 'trialing', 'generic_trial'].includes(props.subscription.state)) return 'positive'
+  if (['grace_period', 'past_due', 'incomplete', 'paused', 'status_conflict'].includes(props.subscription.state)) return 'warning'
+  if (['ended', 'canceled', 'unpaid', 'incomplete_expired'].includes(props.subscription.state)) return 'negative'
+  return 'neutral'
+})
+
+const formattedProviderStatus = computed(() => {
+  const status = props.subscription.status
+  if (!status) return null
+  return status.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase())
+})
+
+const formatDate = value => {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date)
+}
+
+const trialEnd = computed(() => formatDate(props.subscription.trial_ends_at))
+const accessEnd = computed(() => formatDate(props.subscription.ends_at))
+const nextCharge = computed(() => formatDate(props.subscription.next_charge_at))
+
+const closeCancellation = () => {
+  if (cancelForm.processing) return
+  confirmingCancellation.value = false
+  cancelForm.clearErrors()
+}
 
 const cancel = () => {
-  if (!confirm('Cancel your subscription at period end?')) return
-
   cancelForm.post(route('billing.cancel'), {
     preserveScroll: true,
+    onSuccess: () => { confirmingCancellation.value = false },
   })
 }
 
 const resume = () => {
-  resumeForm.post(route('billing.resume'), {
-    preserveScroll: true,
-  })
+  resumeForm.post(route('billing.resume'), { preserveScroll: true })
 }
-
-const statusLabel = computed(() => {
-  if (!props.subscription) return 'None'
-  if (onGracePeriod.value) return 'Canceling (grace period)'
-  if (isActive.value) return 'Active'
-  return props.subscription.status || 'Unknown'
-})
 </script>
 
 <template>
-  <FormSection>
-    <template #title>Subscription</template>
-    <template #description>
-      Manage your plan, billing status, and cancellation.
-    </template>
+  <section class="account-settings-card account-settings-card--featured" aria-labelledby="plan-settings-heading">
+    <header class="account-settings-card__header">
+      <div>
+        <p class="account-settings-card__eyebrow">Membership</p>
+        <h2 id="plan-settings-heading">Plan and billing</h2>
+        <p>Review the subscription state saved for this account and manage billing securely through Stripe.</p>
+      </div>
+      <span class="account-status-pill" :data-tone="statusTone">
+        <span aria-hidden="true" />
+        {{ subscription.status_label }}
+      </span>
+    </header>
 
-    <template #form>
-      <div class="col-span-6 sm:col-span-4">
-        <div class="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 p-4">
-          <div class="flex items-start justify-between gap-4">
-            <div class="space-y-1">
-              <div class="text-sm font-semibold text-gray-900 dark:text-white">
-                {{ props.subscription?.plan_name ?? 'Early Bird' }}
-              </div>
+    <div class="account-settings-card__body">
+      <div class="account-plan-hero">
+        <div>
+          <span class="account-plan-hero__label">Current plan</span>
+          <strong>{{ subscription.plan_name || 'No subscription' }}</strong>
+          <span v-if="subscription.billing_interval">{{ subscription.billing_interval }} billing</span>
+          <span v-else-if="subscription.on_generic_trial">Trial without a saved Stripe subscription</span>
+          <span v-else-if="!subscription.exists">Choose a plan to begin checkout</span>
+        </div>
 
-              <div class="text-sm text-gray-600 dark:text-white/70">
-                Status:
-                <span
-                  class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                  :class="onGracePeriod
-                    ? 'bg-amber-100 text-amber-900 dark:bg-amber-400/20 dark:text-amber-200'
-                    : isActive
-                      ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-400/20 dark:text-emerald-200'
-                      : 'bg-gray-100 text-gray-800 dark:bg-white/10 dark:text-white/70'"
-                >
-                  {{ statusLabel }}
-                </span>
-              </div>
+        <div class="account-plan-actions">
+          <a
+            v-if="subscription.can_open_portal"
+            :href="route('billing.portal')"
+            class="account-button account-button--secondary"
+          >
+            Open billing portal
+            <span class="sr-only"> in Stripe</span>
+          </a>
+          <Link
+            v-else-if="subscription.needs_checkout"
+            :href="route('pricing')"
+            class="account-button account-button--primary"
+          >
+            View plans
+          </Link>
 
-              <div v-if="props.subscription?.next_charge_at" class="text-sm text-gray-600 dark:text-white/70">
-                Next charge: <span class="font-medium text-gray-900 dark:text-white">{{ props.subscription.next_charge_at }}</span>
-              </div>
-
-              <div v-else class="text-sm text-gray-500 dark:text-white/50">
-                Next charge: —
-              </div>
-            </div>
-
-            <div class="flex items-center gap-2">
-              <SecondaryButton
-                type="button"
-                @click="() => window.location.assign(route('billing.portal'))"
-              >
-                Billing Portal
-              </SecondaryButton>
-
-              <PrimaryButton
-                v-if="props.subscription && !onGracePeriod"
-                type="button"
-                class="bg-red-600 hover:bg-red-700 focus:ring-red-500"
-                :disabled="cancelForm.processing"
-                @click.prevent.stop="cancel"
-              >
-                <span v-if="!cancelForm.processing">Cancel</span>
-                <span v-else>Cancelling…</span>
-              </PrimaryButton>
-
-              <PrimaryButton
-                v-else-if="props.subscription && onGracePeriod"
-                type="button"
-                :disabled="resumeForm.processing"
-                @click.prevent.stop="resume"
-              >
-                <span v-if="!resumeForm.processing">Resume</span>
-                <span v-else>Resuming…</span>
-              </PrimaryButton>
-            </div>
-          </div>
-
-          <div class="mt-3 text-xs text-gray-500 dark:text-white/50">
-            Cancellation takes effect at the end of the current billing period.
-          </div>
+          <button
+            v-if="subscription.can_cancel"
+            type="button"
+            class="account-button account-button--danger-quiet"
+            @click="confirmingCancellation = true"
+          >
+            Cancel subscription
+          </button>
+          <button
+            v-else-if="subscription.can_resume"
+            type="button"
+            class="account-button account-button--primary"
+            :disabled="resumeForm.processing"
+            @click="resume"
+          >
+            {{ resumeForm.processing ? 'Resuming…' : 'Resume subscription' }}
+          </button>
         </div>
       </div>
-    </template>
 
-    <template #actions>
-      <ActionMessage :on="flashStatus === 'subscription-canceled'" class="me-3">
-        Subscription will cancel at period end.
-      </ActionMessage>
+      <dl class="account-plan-facts">
+        <div>
+          <dt>Product access</dt>
+          <dd>{{ subscription.has_access ? 'Available' : 'Unavailable' }}</dd>
+        </div>
+        <div v-if="trialEnd">
+          <dt>Trial ends</dt>
+          <dd><time :datetime="subscription.trial_ends_at">{{ trialEnd }}</time></dd>
+        </div>
+        <div v-if="accessEnd">
+          <dt>Access ends</dt>
+          <dd><time :datetime="subscription.ends_at">{{ accessEnd }}</time></dd>
+        </div>
+        <div v-if="nextCharge">
+          <dt>Next billing date</dt>
+          <dd><time :datetime="subscription.next_charge_at">{{ nextCharge }}</time></dd>
+        </div>
+        <div v-if="formattedProviderStatus">
+          <dt>Provider state</dt>
+          <dd>{{ formattedProviderStatus }}</dd>
+        </div>
+      </dl>
 
-      <ActionMessage :on="flashStatus === 'subscription-resumed'" class="me-3">
-        Subscription resumed.
-      </ActionMessage>
-    </template>
-  </FormSection>
+      <div v-if="subscription.state === 'grace_period'" class="account-inline-notice" data-tone="warning">
+        <p>
+          Cancellation is scheduled. Product access remains available through
+          <strong>{{ accessEnd || 'the saved period end' }}</strong>.
+        </p>
+      </div>
+      <div v-else-if="['past_due', 'incomplete'].includes(subscription.state)" class="account-inline-notice" data-tone="warning">
+        <p>Billing needs attention. Open the billing portal to review the latest provider details.</p>
+      </div>
+      <div v-else-if="subscription.state === 'paused'" class="account-inline-notice" data-tone="warning">
+        <p>Billing is paused. Open the billing portal to review the saved provider state.</p>
+      </div>
+      <div v-else-if="['unpaid', 'incomplete_expired'].includes(subscription.state)" class="account-inline-notice" data-tone="negative">
+        <p>This subscription cannot renew in its current state. Open the billing portal or choose a new plan.</p>
+      </div>
+      <div v-else-if="subscription.state === 'canceled'" class="account-inline-notice" data-tone="warning">
+        <p>The provider reports cancellation, but a confirmed local end date has not been saved yet.</p>
+      </div>
+      <div v-else-if="subscription.state === 'unknown'" class="account-inline-notice" data-tone="warning">
+        <p>The saved provider status is not recognized. Open the billing portal before changing this account.</p>
+      </div>
+      <div v-else-if="subscription.state === 'status_conflict'" class="account-inline-notice" data-tone="warning">
+        <p>The provider status and saved end date conflict. Review billing before changing this account.</p>
+      </div>
+      <div v-else-if="subscription.can_open_portal && !nextCharge" class="account-inline-notice">
+        <p>The next invoice date is available in Stripe's billing portal; it is not guessed from the plan cadence.</p>
+      </div>
+
+      <div aria-live="polite">
+        <p v-if="flashStatus === 'subscription-canceled'" class="account-save-status" role="status">
+          Cancellation scheduled for the end of the current billing period.
+        </p>
+        <p v-if="flashStatus === 'subscription-resumed'" class="account-save-status" role="status">
+          Subscription resumed.
+        </p>
+      </div>
+    </div>
+
+    <DialogModal
+      :show="confirmingCancellation"
+      max-width="md"
+      labelledby="cancel-subscription-dialog-title"
+      :closeable="!cancelForm.processing"
+      @close="closeCancellation"
+    >
+      <template #title>
+        <span id="cancel-subscription-dialog-title">Cancel subscription?</span>
+      </template>
+      <template #content>
+        <p>
+          Your plan will stop renewing. You will keep access until the end of the current billing period.
+        </p>
+        <p v-if="accessEnd" class="account-dialog-note">
+          The saved access end date is <strong>{{ accessEnd }}</strong>.
+        </p>
+        <p v-if="cancelForm.hasErrors" class="account-form-error" role="alert">
+          We could not schedule the cancellation. Review the page and try again.
+        </p>
+      </template>
+      <template #footer>
+        <button
+          type="button"
+          class="account-button account-button--quiet"
+          :disabled="cancelForm.processing"
+          @click="closeCancellation"
+        >
+          Keep subscription
+        </button>
+        <button
+          type="button"
+          class="account-button account-button--danger"
+          :disabled="cancelForm.processing"
+          @click="cancel"
+        >
+          {{ cancelForm.processing ? 'Scheduling…' : 'Confirm cancellation' }}
+        </button>
+      </template>
+    </DialogModal>
+  </section>
 </template>

@@ -1,24 +1,21 @@
 <script setup>
-import { Head } from '@inertiajs/vue3';
-import AuthenticationCardLogo from '@/Components/AuthenticationCardLogo.vue';
+import LegalDocument from '@/Components/Marketing/LegalDocument.vue'
+import MarketingSeo from '@/Components/Marketing/MarketingSeo.vue'
 
 defineProps({
-    terms: String,
-});
+  terms: { type: String, required: true },
+})
 </script>
 
 <template>
-    <Head title="Terms of Service" />
-
-    <div class="font-sans text-gray-900 dark:text-gray-100 antialiased">
-        <div class="pt-4 bg-gray-100 dark:bg-gray-900">
-            <div class="min-h-screen flex flex-col items-center pt-6 sm:pt-0">
-                <div>
-                    <AuthenticationCardLogo />
-                </div>
-
-                <div class="w-full sm:max-w-2xl mt-6 p-6 bg-white dark:bg-gray-800 shadow-md overflow-hidden sm:rounded-lg prose dark:prose-invert" v-html="terms" />
-            </div>
-        </div>
-    </div>
+  <MarketingSeo
+    :title="$page.props.seo?.title || 'GexOptions Terms of Service'"
+    :description="$page.props.seo?.description || 'Read the GexOptions terms of service document.'"
+    :canonical="$page.props.seo?.canonical || 'https://gexoptions.com/terms-of-service'"
+    :image="$page.props.seo?.image"
+    :image-alt="$page.props.seo?.image_alt"
+    :image-width="$page.props.seo?.image_width"
+    :image-height="$page.props.seo?.image_height"
+  />
+  <LegalDocument title="Terms of Service" :content="terms" />
 </template>

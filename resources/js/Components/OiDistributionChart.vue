@@ -1,37 +1,21 @@
-<template>
-  <Pie :data="chartData" :options="chartOptions" />
-</template>
+<script setup>
+import OptionDistributionDonut from './OptionDistributionDonut.vue'
 
-<script>
-import { Pie } from 'vue-chartjs'
-import {
-  Chart, ArcElement, Tooltip, Legend
-} from 'chart.js'
-Chart.register(ArcElement, Tooltip, Legend)
+defineProps({
+  callOi: { type: [Number, String], default: null },
+  putOi: { type: [Number, String], default: null },
+})
 
-export default {
-  name: 'OiDistributionChart',
-  components: { Pie },
-  props: {
-    callOi: { type: Number, required: true },
-    putOi:  { type: Number, required: true },
-  },
-  computed: {
-    chartData() {
-      return {
-        labels: ['Call OI', 'Put OI'],
-        datasets: [{
-          data: [this.callOi, this.putOi],
-          backgroundColor: ['rgba(75,192,192,0.6)', 'rgba(255,99,132,0.6)']
-        }]
-      }
-    },
-    chartOptions() {
-      return {
-        responsive: true,
-        plugins: { legend: { position: 'bottom' } }
-      }
-    }
-  }
-}
+const emit = defineEmits(['reading-inspected'])
 </script>
+
+<template>
+  <OptionDistributionDonut
+    title="Open-interest distribution"
+    subtitle="Call and put contracts across the selected expiration scope."
+    total-label="Total OI"
+    :call-value="callOi"
+    :put-value="putOi"
+    @reading-inspected="emit('reading-inspected')"
+  />
+</template>

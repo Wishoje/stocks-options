@@ -45,51 +45,8 @@ Route::get('/user', function (Request $request): User {
     return $request->user();
 })->middleware('auth:sanctum');
 
-Route::get('/gex-levels', [GexController::class, 'getGexLevels'])
-    ->middleware(['auth:sanctum', 'feature:app.access,strict', 'throttle:market-data-read']);
-Route::get('/intraday/summary', [IntradayController::class, 'summary']);
-Route::get('/intraday/volume-by-strike', [IntradayController::class, 'volumeByStrike']);
-Route::get('/intraday/ua', [IntradayController::class, 'ua']);
-
-Route::middleware(['auth:sanctum'])->group(function () {
-    // Watchlist
-    Route::get('/watchlist', [WatchlistController::class, 'index']);
-    Route::get('/watchlist/universe', [WatchlistController::class, 'universe']);
-    Route::get('/watchlist/eod-exports', [AiExportController::class, 'index'])->name('api.ai-export.index');
-    Route::post('/watchlist/eod-export', [AiExportController::class, 'queue'])->name('api.ai-export.queue');
-    Route::get('/watchlist/eod-export/{export}', [AiExportController::class, 'show'])->name('api.ai-export.show');
-    Route::get('/watchlist/eod-export/{export}/download', [AiExportController::class, 'download'])->name('api.ai-export.download');
-    Route::post('/watchlist', [WatchlistController::class, 'store'])
-        ->middleware(['feature:app.access,strict', 'throttle:work-start']);
-    Route::delete('/watchlist/{id}', [WatchlistController::class, 'destroy']);
-
-    // Prime a symbol on-demand
-    Route::post('/prime', [SymbolPrimeController::class, 'store'])
-        ->middleware(['feature:app.access,strict', 'throttle:work-start']);
-
-    Route::get('/eod/health', [EodHealthController::class, 'index'])
-        ->middleware('eodhealth');
-});
-Route::get('/symbols', [SymbolSearchController::class, 'lookup'])
-    ->middleware(['auth:sanctum', 'feature:app.access,strict', 'throttle:market-data-read']);
-Route::get('/iv/term', [VolController::class, 'term']);
-Route::get('/vrp', [VolController::class, 'vrp']);
-Route::get('/qscore', [QScoreController::class, 'show']);
-Route::get('/seasonality/5d', [SeasonalityController::class, 'fiveDay']);
-Route::get('/iv/skew', [VolController::class, 'skew']);
 Route::get('/iv/skew/debug', [VolController::class, 'skewDebug'])
     ->middleware(['auth:sanctum', 'eodhealth', 'throttle:market-data-read']);
-Route::get('/iv/skew/by-bucket', [VolController::class, 'skewByBucket']);
-Route::get('/iv/skew/history', [VolController::class, 'skewHistory']);
-Route::get('/iv/skew/history/bucket', [VolController::class, 'skewHistoryBucket']);
-Route::get('/dex', [PositioningController::class, 'dex']);
-Route::get('/expiry-pressure', [ExpiryController::class, 'pressure']);
-Route::get('/expiry-pressure/batch', [ExpiryController::class, 'pressureBatch']);
-Route::get('/ua', [ActivityController::class, 'index']);
-Route::get('/intraday/strikes', [IntradayController::class, 'strikesComposite']);
-Route::get('/intraday/repriced-gex-by-strike', [IntradayController::class, 'repricedGexByStrike']);
-Route::get('/symbol/status', [\App\Http\Controllers\SymbolStatusController::class, 'show'])
-    ->middleware(['auth:sanctum', 'feature:app.access,strict', 'throttle:market-data-read']);
 
 Route::get('/ua/debug', function (Request $req) {
     $symbol = \App\Support\Symbols::canon($req->query('symbol', 'spy'));
@@ -107,15 +64,6 @@ Route::get('/ua/debug', function (Request $req) {
     return response()->json(compact('symbol', 'latest', 'expiries'));
 })->middleware(['auth:sanctum', 'eodhealth', 'throttle:market-data-read']);
 
-Route::post('/intraday/pull', [IntradayController::class, 'pull'])
-    ->middleware(['auth:sanctum', 'feature:intraday.access,strict', 'throttle:work-start']);
-Route::get('/hot-options', [\App\Http\Controllers\HotOptionsController::class, 'index']);
-Route::post('/scanner/walls', [WallScannerController::class, 'scan'])
-    ->middleware(['auth:sanctum', 'feature:scanner.access,strict', 'throttle:market-data-read']);
-
-Route::get('/option-chain', [CalculatorChainController::class, 'show'])
-    ->middleware(['auth:sanctum', 'feature:calculator.access,strict', 'throttle:market-data-read']);
-
 Route::get('/debug/market', function () {
     $nowNy = \Carbon\Carbon::now('America/New_York');
 
@@ -125,9 +73,75 @@ Route::get('/debug/market', function () {
     ]);
 })->middleware(['auth:sanctum', 'eodhealth', 'throttle:market-data-read']);
 
-Route::post('/prime-calculator', [CalculatorRefreshController::class, 'store'])
-    ->middleware(['auth:sanctum', 'feature:calculator.access,strict', 'throttle:work-start']);
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/eod/health', [EodHealthController::class, 'index'])
+        ->middleware(['eodhealth', 'throttle:market-data-read']);
 
-Route::get('/work-runs/{runId}', [WorkRunController::class, 'show'])
-    ->middleware(['auth:sanctum', 'work-run-feature', 'throttle:work-status'])
-    ->name('api.work-runs.show');
+    Route::middleware('feature:app.access,strict')->group(function () {
+        Route::middleware('throttle:market-data-read')->group(function () {
+            Route::get('/gex-levels', [GexController::class, 'getGexLevels']);
+            Route::get('/symbols', [SymbolSearchController::class, 'lookup']);
+            Route::get('/symbol/status', [\App\Http\Controllers\SymbolStatusController::class, 'show']);
+
+            Route::get('/watchlist', [WatchlistController::class, 'index']);
+            Route::get('/watchlist/universe', [WatchlistController::class, 'universe']);
+            Route::get('/watchlist/eod-exports', [AiExportController::class, 'index'])
+                ->name('api.ai-export.index');
+            Route::get('/watchlist/eod-export/{export}', [AiExportController::class, 'show'])
+                ->name('api.ai-export.show');
+            Route::get('/watchlist/eod-export/{export}/download', [AiExportController::class, 'download'])
+                ->name('api.ai-export.download');
+
+            Route::get('/iv/term', [VolController::class, 'term']);
+            Route::get('/vrp', [VolController::class, 'vrp']);
+            Route::get('/qscore', [QScoreController::class, 'show']);
+            Route::get('/seasonality/5d', [SeasonalityController::class, 'fiveDay']);
+            Route::get('/iv/skew', [VolController::class, 'skew']);
+            Route::get('/iv/skew/by-bucket', [VolController::class, 'skewByBucket']);
+            Route::get('/iv/skew/history', [VolController::class, 'skewHistory']);
+            Route::get('/iv/skew/history/bucket', [VolController::class, 'skewHistoryBucket']);
+            Route::get('/dex', [PositioningController::class, 'dex']);
+            Route::get('/expiry-pressure', [ExpiryController::class, 'pressure']);
+            Route::get('/expiry-pressure/batch', [ExpiryController::class, 'pressureBatch']);
+            Route::get('/ua', [ActivityController::class, 'index']);
+        });
+
+        Route::middleware('throttle:work-start')->group(function () {
+            Route::post('/watchlist', [WatchlistController::class, 'store']);
+            Route::delete('/watchlist/{id}', [WatchlistController::class, 'destroy']);
+            Route::post('/watchlist/eod-export', [AiExportController::class, 'queue'])
+                ->name('api.ai-export.queue');
+            Route::post('/prime', [SymbolPrimeController::class, 'store']);
+        });
+    });
+
+    Route::middleware('feature:intraday.access,strict')->group(function () {
+        Route::middleware('throttle:market-data-read')->group(function () {
+            Route::get('/intraday/summary', [IntradayController::class, 'summary']);
+            Route::get('/intraday/volume-by-strike', [IntradayController::class, 'volumeByStrike']);
+            Route::get('/intraday/ua', [IntradayController::class, 'ua']);
+            Route::get('/intraday/strikes', [IntradayController::class, 'strikesComposite']);
+            Route::get('/intraday/repriced-gex-by-strike', [IntradayController::class, 'repricedGexByStrike']);
+        });
+
+        Route::post('/intraday/pull', [IntradayController::class, 'pull'])
+            ->middleware('throttle:work-start');
+    });
+
+    Route::middleware(['feature:scanner.access,strict', 'throttle:market-data-read'])->group(function () {
+        Route::get('/hot-options', [\App\Http\Controllers\HotOptionsController::class, 'index']);
+        Route::post('/scanner/walls', [WallScannerController::class, 'scan']);
+    });
+
+    Route::middleware('feature:calculator.access,strict')->group(function () {
+        Route::get('/option-chain', [CalculatorChainController::class, 'show'])
+            ->middleware('throttle:market-data-read');
+        Route::post('/prime-calculator', [CalculatorRefreshController::class, 'store'])
+            ->middleware('throttle:work-start');
+    });
+
+    // Check account access before resolving a user-supplied work-run ID.
+    Route::get('/work-runs/{runId}', [WorkRunController::class, 'show'])
+        ->middleware(['subscribed', 'work-run-feature', 'throttle:work-status'])
+        ->name('api.work-runs.show');
+});

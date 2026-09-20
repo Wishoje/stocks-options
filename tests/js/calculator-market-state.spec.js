@@ -58,6 +58,29 @@ describe('calculator market state', () => {
         })
     })
 
+    it('retains additive provider provenance while enforcing normalized calculation fields', () => {
+        const quote = normalizeUnderlying({
+            symbol: 'spy',
+            price: 101.25,
+            status: 'stale',
+            usable_for_calculation: true,
+            reason: 'outside_live_window',
+            live_max_age_seconds: 900,
+            stale_usable_max_age_seconds: 3600,
+            provider_request_id: 'quote-42',
+        })
+
+        expect(quote).toMatchObject({
+            symbol: 'SPY',
+            price: 101.25,
+            usable: true,
+            reason: 'outside_live_window',
+            live_max_age_seconds: 900,
+            stale_usable_max_age_seconds: 3600,
+            provider_request_id: 'quote-42',
+        })
+    })
+
     it('uses only server-provided DTE values', () => {
         const contract = { expiry: '2026-09-18' }
         const expirations = [{ value: '2026-09-18', dte: 33 }]

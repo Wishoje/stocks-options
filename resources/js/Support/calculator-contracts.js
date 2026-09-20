@@ -6,31 +6,51 @@ const finiteNumber = (value) => {
     return Number.isFinite(number) ? number : null
 }
 
-export const contractPremium = (contract) => {
+const strictFiniteNumber = (value) => {
+    if (!['number', 'string'].includes(typeof value)) return null
+    if (value === null || value === undefined || value === '') return null
+    if (typeof value === 'string' && value.trim() === '') return null
+
+    const number = Number(value)
+
+    return Number.isFinite(number) ? number : null
+}
+
+export const validContractQuantity = (value) => {
+    const quantity = strictFiniteNumber(value)
+
+    return Number.isInteger(quantity) && quantity > 0 ? quantity : null
+}
+
+export const contractPremiumQuote = (contract) => {
     if (!contract) return null
 
-    for (const candidate of [
-        contract.mid,
-        contract.mark,
-        contract.mid_price,
-        contract.midPrice,
-        contract.price,
-        contract.last,
-        contract.fmv,
+    for (const [source, candidate] of [
+        ['mid', contract.mid],
+        ['mark', contract.mark],
+        ['mid_price', contract.mid_price],
+        ['mid_price', contract.midPrice],
+        ['price', contract.price],
+        ['last', contract.last],
+        ['fmv', contract.fmv],
     ]) {
         const value = finiteNumber(candidate)
-        if (value !== null && value > 0) return value
+        if (value !== null && value > 0) return { value, source }
     }
 
     const bid = finiteNumber(contract.bid ?? contract.bid_price ?? contract.b)
     const ask = finiteNumber(contract.ask ?? contract.ask_price ?? contract.a)
 
-    if (bid !== null && bid > 0 && ask !== null && ask > 0) return (bid + ask) / 2
-    if (bid !== null && bid > 0) return bid
-    if (ask !== null && ask > 0) return ask
+    if (bid !== null && bid > 0 && ask !== null && ask > 0) {
+        return { value: (bid + ask) / 2, source: 'bid_ask_midpoint' }
+    }
+    if (bid !== null && bid > 0) return { value: bid, source: 'bid' }
+    if (ask !== null && ask > 0) return { value: ask, source: 'ask' }
 
     return null
 }
+
+export const contractPremium = (contract) => contractPremiumQuote(contract)?.value ?? null
 
 export const contractIdentity = (contract) => {
     if (!contract) return null
@@ -140,7 +160,8 @@ export const normalizeContract = (contract) => {
     const expiration = String(contract.expiration_date ?? contract.expiry ?? '').slice(0, 10)
     if (!['call', 'put'].includes(type) || strike === null || strike <= 0 || !expiration) return null
 
-    const premium = contractPremium(contract)
+    const premiumQuote = contractPremiumQuote(contract)
+    const premium = premiumQuote?.value ?? null
     const iv = finiteNumber(contract.iv ?? contract.implied_volatility)
     const rawDte = finiteNumber(contract.dte)
     const normalized = {
@@ -151,6 +172,7 @@ export const normalizeContract = (contract) => {
         strike,
         type,
         premium,
+        premium_source: premiumQuote?.source ?? null,
         iv: iv !== null && iv > 0 ? iv : null,
         dte: rawDte !== null && rawDte >= 0 ? Math.trunc(rawDte) : null,
     }
@@ -274,7 +296,7 @@ export const selectContractState = ({ contract, entryMode = 'auto', entryPrice =
         optionType: selectedOption?.type ?? null,
         selectedOption,
         entryMode: manual ? 'manual' : 'auto',
-        entryPrice: manual ? finiteNumber(entryPrice) : selectedOption?.premium ?? null,
+        entryPrice: manual ? entryPrice : selectedOption?.premium ?? null,
     }
 }
 
@@ -300,9 +322,9 @@ export const switchContractType = ({
 
 export const calculateLongOption = ({ selectedContract, entryPrice, contracts = 1 }) => {
     const selected = normalizeContract(selectedContract)
-    const premium = finiteNumber(entryPrice)
-    const quantity = Math.max(1, Math.trunc(finiteNumber(contracts) ?? 1))
-    if (!selected || premium === null || premium <= 0) return null
+    const premium = strictFiniteNumber(entryPrice)
+    const quantity = validContractQuantity(contracts)
+    if (!selected || premium === null || premium <= 0 || quantity === null) return null
 
     const cost = premium * 100 * quantity
     const breakeven = selected.type === 'call'
@@ -320,6 +342,36 @@ export const calculateLongOption = ({ selectedContract, entryPrice, contracts = 
         cost,
         max_loss: -cost,
         breakeven,
+    }
+}
+
+/**
+ * Expiration profit potential for a long option. Calls have unbounded upside;
+ * puts reach their best expiration outcome when the underlying reaches zero.
+ */
+export const longOptionProfitPotential = ({ selectedContract, entryPrice, contracts = 1 }) => {
+    const summary = calculateLongOption({ selectedContract, entryPrice, contracts })
+    if (!summary) return null
+
+    if (summary.type === 'call') {
+        return {
+            unlimited: true,
+            maximum_profit: null,
+            reward_to_risk: null,
+        }
+    }
+
+    const maximumProfit = Math.max(
+        0,
+        (summary.strike - summary.premium) * 100 * summary.contracts,
+    )
+
+    return {
+        unlimited: false,
+        maximum_profit: maximumProfit,
+        reward_to_risk: summary.cost > 0 && maximumProfit > 0
+            ? maximumProfit / summary.cost
+            : null,
     }
 }
 

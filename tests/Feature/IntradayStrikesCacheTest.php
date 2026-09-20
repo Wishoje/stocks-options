@@ -20,7 +20,10 @@ class IntradayStrikesCacheTest extends MySqlTestCase
 
         Carbon::setTestNow(Carbon::parse(MarketDataScenario::NOW, 'America/New_York'));
         Cache::flush();
-        MarketDataScenario::seed();
+        $scenario = MarketDataScenario::seed();
+        // Keep access valid while the cache test advances through the weekend.
+        $scenario['user']->forceFill(['trial_ends_at' => now()->addWeeks(2)])->save();
+        $this->actingAs($scenario['user']);
     }
 
     protected function tearDown(): void

@@ -1,122 +1,324 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import axios from 'axios'
-import InfoTooltip from './InfoTooltip.vue'   // ← add this import
+import UiBadge from './UI/UiBadge.vue'
+import UiDataTable from './UI/UiDataTable.vue'
+import UiHelpDialog from './UI/UiHelpDialog.vue'
+import UiMetric from './UI/UiMetric.vue'
+import UiPanel from './UI/UiPanel.vue'
+import UiSelect from './UI/UiSelect.vue'
+import UiStatus from './UI/UiStatus.vue'
+import { numeric } from './UI/numbers.js'
 
 const props = defineProps({
   symbol: { type: String, default: 'SPY' },
-  days:   { type: Number, default: 3 }
+  days: { type: Number, default: 3 },
+  active: { type: Boolean, default: true },
 })
 
+const emit = defineEmits(['reading-inspected'])
+
 const data = ref(null)
-const error = ref(null)
+const error = ref('')
 const loading = ref(false)
-const showMore = ref(false)                   // ← new: controls the long help
+const selectedExpiry = ref('')
 
-const pinPct = computed(() => Number(data.value?.headline_pin ?? 0))
+let activeLoad = null
+let componentUnmounted = false
+let retryTimer = null
+let autoRetryCount = 0
+const MAX_AUTO_RETRIES = 3
 
-async function load() {
+const entries = computed(() => Array.isArray(data.value?.entries) ? data.value.entries : [])
+const headlinePin = computed(() => numeric(data.value?.headline_pin))
+const selectedEntry = computed(() => entries.value.find(entry => entry?.exp_date === selectedExpiry.value) ?? null)
+const selectedClusters = computed(() => Array.isArray(selectedEntry.value?.clusters) ? selectedEntry.value.clusters : [])
+const selectedClusterRows = computed(() => selectedClusters.value.map((cluster, index) => ({
+  ...cluster,
+  cluster_key: `${selectedExpiry.value}-${cluster?.strike ?? 'missing'}-${index}`,
+})))
+
+function formatScore(value) {
+  const score = numeric(value)
+  return score == null ? null : score.toFixed(1)
+}
+
+const expiryOptions = computed(() => entries.value.map(entry => ({
+  value: entry.exp_date,
+  label: `${entry.exp_date} · score ${formatScore(entry.pin_score) ?? 'unavailable'}`,
+})))
+
+const expiryRows = computed(() => entries.value.map(entry => ({
+  ...entry,
+  cluster_count: Array.isArray(entry?.clusters) ? entry.clusters.length : 0,
+})))
+const expiryColumns = [
+  { key: 'exp_date', label: 'Expiry', sortable: true },
+  { key: 'pin_score', label: 'Pin score (0–100)', numeric: true, sortable: true, format: formatScore },
+  { key: 'max_pain', label: 'Max pain', numeric: true, sortable: true },
+  { key: 'cluster_count', label: 'Clusters', numeric: true, sortable: true },
+  { key: 'source_chain_date', label: 'Source chain date', sortable: true },
+]
+const clusterColumns = [
+  { key: 'strike', label: 'Strike', numeric: true, sortable: true },
+  { key: 'density', label: 'Density', numeric: true, sortable: true },
+  { key: 'distance', label: 'Distance', numeric: true, sortable: true },
+  { key: 'score', label: 'Cluster score (0–100)', numeric: true, sortable: true, format: formatScore },
+]
+const allClusterColumns = [
+  { key: 'exp_date', label: 'Expiry', sortable: true },
+  ...clusterColumns,
+]
+const allClusterRows = computed(() => entries.value.flatMap(entry => {
+  const clusters = Array.isArray(entry?.clusters) ? entry.clusters : []
+  return clusters.map((cluster, index) => ({
+    ...cluster,
+    exp_date: entry.exp_date,
+    cluster_key: `${entry.exp_date}-${cluster?.strike ?? 'missing'}-${index}`,
+  }))
+}))
+
+function chooseExpiry() {
+  if (entries.value.some(entry => entry?.exp_date === selectedExpiry.value)) return
+  selectedExpiry.value = entries.value[0]?.exp_date ?? ''
+}
+
+function inspectExpiry(value) {
+  const entry = entries.value.find(item => item?.exp_date === value)
+  selectedExpiry.value = value
+  if (!entry) return
+  const clusters = Array.isArray(entry.clusters) ? entry.clusters : []
+  const hasReading = numeric(entry.pin_score) != null
+    || numeric(entry.max_pain) != null
+    || clusters.some(cluster => ['strike', 'density', 'distance', 'score'].some(field => numeric(cluster?.[field]) != null))
+  if (hasReading) emit('reading-inspected')
+}
+
+function formatError(value) {
+  if (!value) return 'Expiry pressure is unavailable.'
+  if (typeof value === 'string') return value
+  return value?.message || value?.error || 'Expiry pressure is unavailable.'
+}
+
+function stopLoad() {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  activeLoad?.controller.abort()
+  activeLoad = null
+  loading.value = false
+}
+
+function isCurrentLoad(request) {
+  return !componentUnmounted
+    && activeLoad === request
+    && props.symbol === request.symbol
+    && Number(props.days) === request.days
+    && props.active
+    && !request.controller.signal.aborted
+}
+
+function isCurrentRetryScope(request) {
+  return !componentUnmounted
+    && props.active
+    && props.symbol === request.symbol
+    && Number(props.days) === request.days
+}
+
+function resetData() {
+  data.value = null
+  error.value = ''
+  selectedExpiry.value = ''
+  autoRetryCount = 0
+}
+
+async function load(options = {}) {
+  if (componentUnmounted || !props.active) return
+  const automatic = options?.automatic === true
+  if (!automatic) autoRetryCount = 0
+  stopLoad()
+  const request = {
+    symbol: props.symbol,
+    days: Number(props.days),
+    controller: new AbortController(),
+  }
+  activeLoad = request
   loading.value = true
+  error.value = ''
+
   try {
-    const { data:resp } = await axios.get('/api/expiry-pressure', {
-      params: { symbol: props.symbol, days: props.days }
+    const { data: response } = await axios.get('/api/expiry-pressure', {
+      params: { symbol: request.symbol, days: request.days },
+      signal: request.controller.signal,
     })
-    data.value = resp
-  } catch (e) {
-    error.value = e?.response?.data || e.message
+    if (!isCurrentLoad(request)) return
+    data.value = response && typeof response === 'object' ? response : {}
+    chooseExpiry()
+    if (!data.value?.data_date && autoRetryCount < MAX_AUTO_RETRIES) {
+      autoRetryCount += 1
+      retryTimer = setTimeout(() => {
+        if (!isCurrentRetryScope(request)) return
+        retryTimer = null
+        load({ automatic: true }).catch(() => {})
+      }, 4000)
+    }
+  } catch (requestError) {
+    if (isCurrentLoad(request)) {
+      error.value = formatError(requestError?.response?.data || requestError?.message)
+    }
   } finally {
-    loading.value = false
+    if (isCurrentLoad(request)) {
+      loading.value = false
+      activeLoad = null
+    }
   }
 }
-onMounted(load)
+
+onMounted(() => {
+  if (props.active) load()
+})
+
+watch(() => [props.symbol, props.days], () => {
+  stopLoad()
+  resetData()
+  if (props.active) return load()
+})
+
+watch(() => props.active, (active) => {
+  if (!active) {
+    stopLoad()
+    return
+  }
+  if (!data.value?.data_date) load()
+})
+
+onUnmounted(() => {
+  componentUnmounted = true
+  stopLoad()
+})
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-2xl p-4 space-y-3">
-    <!-- Header w/ tooltip + Learn more -->
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <h4 class="font-semibold">Expiry Pressure / Pin Risk</h4>
+  <UiPanel
+    title="Expiry pressure"
+    :subtitle="`Pin risk across the next ${days} trading days`"
+    tone="warning"
+    data-testid="expiry-pressure"
+  >
+    <template #actions>
+      <div class="gex-row">
+        <UiBadge v-if="data?.data_date" tone="data">Snapshot {{ data.data_date }}</UiBadge>
+        <UiHelpDialog id="expiry-pressure-guide" title="How to read expiry pressure">
+          <p><strong>Pin score:</strong> a 0–100 score combining open-interest density near spot and proximity. Higher scores indicate stronger pinning conditions. The score is not a probability.</p>
+          <p><strong>Clusters:</strong> open-interest concentrations near spot that can behave like magnets into expiry. Density, distance, and the calculated cluster score remain available in the cluster detail table.</p>
+          <p><strong>Max pain:</strong> the classical payoff-minimizing price. Treat it as a reference rather than a target.</p>
+          <p>Scores of 70 or higher indicate stronger pin risk; 40–69 is mixed; below 40 is weaker and should be read with trend and volatility context.</p>
+        </UiHelpDialog>
+      </div>
+    </template>
 
-        <!-- Tiny 3-line cheatsheet -->
-        <InfoTooltip label="Pin risk quick help">
-          <div class="font-semibold mb-1">Pin risk (0–100)</div>
-          <ul class="list-disc pl-4 space-y-1">
-            <li><b>High</b> = big OI cluster near spot → price tends to pin.</li>
-            <li><b>40–69</b> = mixed; clusters influence but can break.</li>
-            <li><b>&lt;40</b> = weak; rely on other signals (trend/VRP).</li>
-          </ul>
-        </InfoTooltip>
-
-        <button
-          class="px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
-          @click="showMore = !showMore"
-        >
-          How to use
-        </button>
+    <UiStatus
+      v-if="loading && !data"
+      state="loading"
+      title="Loading expiry pressure"
+      :message="`Reading ${symbol} across ${days} trading days.`"
+    />
+    <UiStatus
+      v-else-if="error"
+      state="error"
+      title="Expiry pressure unavailable"
+      :message="error"
+      retry
+      @retry="load"
+    />
+    <template v-else>
+      <div class="gex-grid">
+        <UiMetric
+          label="Headline pin score"
+          :value="formatScore(headlinePin)"
+          unit="of 100"
+          :tone="headlinePin == null ? 'warning' : headlinePin >= 70 ? 'warning' : 'data'"
+          prominence="primary"
+          context="0–100 score combining open-interest density and distance from spot; not a probability"
+        />
+        <UiMetric
+          label="Expiry readings"
+          :value="entries.length"
+          unit="returned"
+          :context="`${allClusterRows.length} total cluster readings`"
+          tone="data"
+        />
+        <UiMetric
+          label="Dataset scope"
+          :value="`${days} trading days`"
+          :context="data?.data_date ? `Starting from snapshot ${data.data_date}` : 'Snapshot unavailable'"
+          tone="data"
+        />
       </div>
 
-      <span v-if="data?.data_date" class="text-xs text-gray-400">{{ data.data_date }}</span>
-    </div>
+      <div v-if="entries.length" class="gex-stack" style="margin-top: 20px">
+        <UiSelect
+          :model-value="selectedExpiry"
+          label="Inspect expiry"
+          :options="expiryOptions"
+          data-testid="pressure-expiry-select"
+          @update:model-value="inspectExpiry"
+        />
 
-    <!-- Pin score bar -->
-    <div class="flex items-center gap-3">
-      <div class="text-sm text-gray-300">Pin-risk score:</div>
-      <div class="flex-1 h-2 bg-gray-700 rounded">
-        <div class="h-2 rounded bg-yellow-400" :style="{ width: pinPct + '%' }"></div>
-      </div>
-      <div class="w-10 text-right text-sm text-gray-200">{{ pinPct.toFixed(0) }}%</div>
-    </div>
-
-    <!-- Entries -->
-    <div v-if="data?.entries?.length" class="space-y-3">
-      <div v-for="e in data.entries" :key="e.exp_date" class="bg-gray-700/50 rounded p-3">
-        <div class="flex items-center justify-between mb-2">
-          <div class="text-sm text-gray-300">
-            <span class="text-gray-400">Expiry:</span> {{ e.exp_date }}
+        <section v-if="selectedEntry" class="gex-panel gex-metric" aria-label="Selected expiry pressure" aria-live="polite" data-testid="selected-pressure-detail">
+          <div class="gex-row" style="justify-content: space-between">
+            <div>
+              <div class="gex-metric-label">Selected expiry</div>
+              <div class="gex-metric-value gex-number" style="font-size: 20px">{{ selectedEntry.exp_date }}</div>
+            </div>
+            <UiBadge :tone="numeric(selectedEntry.pin_score) == null ? 'warning' : numeric(selectedEntry.pin_score) >= 70 ? 'warning' : 'data'">
+              Score {{ formatScore(selectedEntry.pin_score) ?? 'unavailable' }} / 100
+            </UiBadge>
           </div>
-          <div class="text-sm text-gray-200">
-            <span class="text-gray-400 mr-1">Max pain:</span>
-            <span class="font-medium">{{ e.max_pain ?? '—' }}</span>
-          </div>
-        </div>
+          <dl class="gex-grid gex-small">
+            <div><dt class="gex-muted">Max pain</dt><dd class="gex-number">{{ selectedEntry.max_pain ?? 'Unavailable' }}</dd></div>
+            <div><dt class="gex-muted">Source chain date</dt><dd class="gex-number">{{ selectedEntry.source_chain_date ?? 'Unavailable' }}</dd></div>
+            <div><dt class="gex-muted">Cluster rows</dt><dd class="gex-number">{{ selectedClusters.length }} of {{ selectedClusters.length }} displayed</dd></div>
+          </dl>
+        </section>
 
-        <div>
-          <div class="text-xs text-gray-400 mb-1">Top strike clusters near spot</div>
-          <ul class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <li v-for="c in e.clusters.slice(0,4)" :key="e.exp_date+'-'+c.strike"
-                class="px-2 py-1 bg-gray-700 rounded text-sm flex items-center justify-between">
-              <span>Strike {{ c.strike }}</span>
-              <span class="text-gray-300">{{ c.score.toFixed(0) }}%</span>
-            </li>
-          </ul>
-        </div>
+        <UiDataTable
+          caption="Selected expiry cluster readings"
+          :rows="selectedClusterRows"
+          :columns="clusterColumns"
+          row-key="cluster_key"
+          data-testid="selected-pressure-clusters"
+        />
+
+        <UiDataTable
+          caption="All expiry pressure readings"
+          :rows="expiryRows"
+          :columns="expiryColumns"
+          row-key="exp_date"
+          data-testid="pressure-expiry-table"
+        />
+
+        <details>
+          <summary>All {{ allClusterRows.length }} cluster readings across {{ entries.length }} expiries</summary>
+          <UiDataTable
+            caption="All expiry cluster readings"
+            :rows="allClusterRows"
+            :columns="allClusterColumns"
+            row-key="cluster_key"
+            data-testid="all-pressure-clusters"
+          />
+        </details>
       </div>
-    </div>
+      <UiStatus
+        v-else
+        state="sparse"
+        title="No expiry pressure readings"
+        :message="data?.data_date ? `The ${data.data_date} snapshot returned no expiries for this window.` : 'No completed pressure snapshot is available.'"
+        :retry="!data?.data_date"
+        @retry="load"
+      />
 
-    <!-- Expandable “learn more” block (your long help text) -->
-    <transition name="fade">
-      <div v-if="showMore" class="bg-gray-700/40 rounded p-3 text-[12px] text-gray-200 space-y-2">
-        <div class="font-semibold text-gray-100">How to use</div>
-        <ul class="list-disc pl-5 space-y-1">
-          <li><b>Pin-risk score</b> (0–100): combines OI density near spot and proximity. Higher → stronger pin risk.</li>
-          <li><b>Clusters</b>: OI “humps” near spot that can act like magnets into expiry.</li>
-          <li><b>Max pain</b>: classical payoff-minimizing price; treat as a reference, not a target.</li>
-        </ul>
-
-        <div class="font-semibold text-gray-100">Rules of thumb</div>
-        <ul class="list-disc pl-5 space-y-1">
-          <li><b>Score ≥ 70</b>: High pin risk; breakouts may need a catalyst.</li>
-          <li><b>40–70</b>: Mixed—respect clusters, but flows can still move.</li>
-          <li><b>&lt; 40</b>: Low pin risk; other signals dominate.</li>
-        </ul>
-
-        <div class="font-semibold text-gray-100">Examples</div>
-        <ul class="list-disc pl-5 space-y-1">
-          <li><b>Score 82, clusters 500/505</b> — Expect magnet behavior around those strikes into the close.</li>
-          <li><b>Score 28, max pain 498</b> — Weak; treat max pain as informational only.</li>
-        </ul>
-      </div>
-    </transition>
-  </div>
+    </template>
+  </UiPanel>
 </template>

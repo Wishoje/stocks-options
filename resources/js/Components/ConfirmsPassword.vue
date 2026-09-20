@@ -86,16 +86,20 @@ const closeModal = () => {
 
                 <div class="mt-4">
                     <TextInput
+                        id="confirm-password"
                         ref="passwordInput"
                         v-model="form.password"
                         type="password"
                         class="mt-1 block w-3/4"
                         placeholder="Password"
                         autocomplete="current-password"
+                        aria-label="Password"
+                        :aria-invalid="Boolean(form.error)"
+                        :aria-describedby="form.error ? 'confirm-password-error' : undefined"
                         @keyup.enter="confirmPassword"
                     />
 
-                    <InputError :message="form.error" class="mt-2" />
+                    <InputError id="confirm-password-error" :message="form.error" class="mt-2" />
                 </div>
             </template>
 

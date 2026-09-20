@@ -1,6 +1,9 @@
 <?php
+
 namespace App\Http\Middleware;
 
+use App\Support\BillingIntent;
+use App\Support\ProductAccess;
 use Closure;
 use Illuminate\Http\Request;
 
@@ -18,12 +21,7 @@ class EnsureSubscribed
             return redirect()->route('login');
         }
 
-        $subName = config('plans.default_subscription_name');
-
-        // Generic trials do not require a subscription lookup.
-        if ($user->onGenericTrial()
-            || $user->subscribed($subName)
-            || $user->onTrial($subName)) {
+        if (ProductAccess::for($user)['has_access']) {
             return $next($request);
         }
 
@@ -38,6 +36,8 @@ class EnsureSubscribed
         // if ($user->subscription($subName)?->onGracePeriod()) return $next($request);
 
         // send them to pricing
+        BillingIntent::rememberReturnTo($request, $request->getRequestUri());
+
         return redirect()->route('pricing');
     }
 }

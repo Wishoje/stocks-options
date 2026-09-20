@@ -3,11 +3,13 @@ import { Link } from '@inertiajs/vue3'
 </script>
 
 <template>
-  <Link :href="route('home')" class="inline-flex items-center justify-center">
+  <Link :href="route('home')" class="gex-auth-logo" aria-label="GEX Options home">
     <img
       src="/marketing/gexoptions_logo.svg"
       alt="GEX Options"
-      class="h-48 w-auto"
+      class="gex-auth-logo__image"
+      width="798"
+      height="316"
     />
   </Link>
 </template>

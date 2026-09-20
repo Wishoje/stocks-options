@@ -1,12 +1,8 @@
 <script setup>
 import { ref } from 'vue';
 import { useForm } from '@inertiajs/vue3';
-import ActionSection from '@/Components/ActionSection.vue';
-import DangerButton from '@/Components/DangerButton.vue';
 import DialogModal from '@/Components/DialogModal.vue';
 import InputError from '@/Components/InputError.vue';
-import SecondaryButton from '@/Components/SecondaryButton.vue';
-import TextInput from '@/Components/TextInput.vue';
 
 const confirmingUserDeletion = ref(false);
 const passwordInput = ref(null);
@@ -18,85 +14,104 @@ const form = useForm({
 const confirmUserDeletion = () => {
     confirmingUserDeletion.value = true;
 
-    setTimeout(() => passwordInput.value.focus(), 250);
+    setTimeout(() => passwordInput.value?.focus(), 250);
 };
 
 const deleteUser = () => {
+    if (form.processing) return;
+
     form.delete(route('current-user.destroy'), {
         preserveScroll: true,
         onSuccess: () => closeModal(),
-        onError: () => passwordInput.value.focus(),
+        onError: () => passwordInput.value?.focus(),
         onFinish: () => form.reset(),
     });
 };
 
 const closeModal = () => {
+    if (form.processing) return;
+
     confirmingUserDeletion.value = false;
 
     form.reset();
+    form.clearErrors();
 };
 </script>
 
 <template>
-    <ActionSection>
-        <template #title>
-            Delete Account
-        </template>
+  <section class="account-settings-card account-settings-card--danger" aria-labelledby="delete-account-settings-heading">
+    <header class="account-settings-card__header">
+      <div>
+        <p class="account-settings-card__eyebrow">Account control</p>
+        <h2 id="delete-account-settings-heading">Delete account</h2>
+        <p>Permanently remove your account and its saved application data.</p>
+      </div>
+    </header>
 
-        <template #description>
-            Permanently delete your account.
-        </template>
+    <div class="account-settings-card__body">
+      <p>
+        Download anything you need before continuing. Every saved subscription must be fully ended before the account can be deleted.
+      </p>
 
-        <template #content>
-            <div class="max-w-xl text-sm text-gray-600 dark:text-gray-400">
-                Once your account is deleted, all of its resources and data will be permanently deleted. Before deleting your account, please download any data or information that you wish to retain.
-            </div>
+      <div class="account-form-footer">
+        <button type="button" class="account-button account-button--danger" @click="confirmUserDeletion">
+          Delete account
+        </button>
+      </div>
+    </div>
 
-            <div class="mt-5">
-                <DangerButton @click="confirmUserDeletion">
-                    Delete Account
-                </DangerButton>
-            </div>
+    <DialogModal
+      :show="confirmingUserDeletion"
+      labelledby="delete-account-dialog-title"
+      :closeable="!form.processing"
+      @close="closeModal"
+    >
+      <template #title>
+        <h2 id="delete-account-dialog-title">Delete account permanently?</h2>
+      </template>
 
-            <!-- Delete Account Confirmation Modal -->
-            <DialogModal :show="confirmingUserDeletion" @close="closeModal">
-                <template #title>
-                    Delete Account
-                </template>
+      <template #content>
+        <p>
+          This cannot be undone. Enter your password to confirm permanent account deletion.
+        </p>
 
-                <template #content>
-                    Are you sure you want to delete your account? Once your account is deleted, all of its resources and data will be permanently deleted. Please enter your password to confirm you would like to permanently delete your account.
+        <InputError id="delete-account-dialog-error" :message="form.errors.account" class="mt-3" />
 
-                    <div class="mt-4">
-                        <TextInput
-                            ref="passwordInput"
-                            v-model="form.password"
-                            type="password"
-                            class="mt-1 block w-3/4"
-                            placeholder="Password"
-                            autocomplete="current-password"
-                            @keyup.enter="deleteUser"
-                        />
+        <div class="account-form-field account-dialog-field mt-4">
+          <label for="delete-account-password">Current password</label>
+          <input
+            id="delete-account-password"
+            ref="passwordInput"
+            v-model="form.password"
+            type="password"
+            autocomplete="current-password"
+            :disabled="form.processing"
+            :aria-invalid="form.errors.password ? 'true' : 'false'"
+            :aria-describedby="form.errors.password ? 'delete-account-password-error' : undefined"
+            @keyup.enter.prevent="deleteUser"
+          >
+          <InputError id="delete-account-password-error" :message="form.errors.password" />
+        </div>
+      </template>
 
-                        <InputError :message="form.errors.password" class="mt-2" />
-                    </div>
-                </template>
-
-                <template #footer>
-                    <SecondaryButton @click="closeModal">
-                        Cancel
-                    </SecondaryButton>
-
-                    <DangerButton
-                        class="ms-3"
-                        :class="{ 'opacity-25': form.processing }"
-                        :disabled="form.processing"
-                        @click="deleteUser"
-                    >
-                        Delete Account
-                    </DangerButton>
-                </template>
-            </DialogModal>
-        </template>
-    </ActionSection>
+      <template #footer>
+        <button
+          type="button"
+          class="account-button account-button--quiet"
+          :disabled="form.processing"
+          @click="closeModal"
+        >
+          Keep account
+        </button>
+        <button
+          type="button"
+          class="account-button account-button--danger ms-3"
+          :disabled="form.processing"
+          @click="deleteUser"
+        >
+          {{ form.processing ? 'Deleting…' : 'Delete permanently' }}
+        </button>
+      </template>
+    </DialogModal>
+  </section>
 </template>

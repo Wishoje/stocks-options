@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Support\CoordinationCache;
+use App\Support\PositioningRegimeRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -10,19 +11,19 @@ class PositioningController extends Controller
 {
     public function dex(Request $req)
     {
-        $symbol    = \App\Support\Symbols::canon($req->query('symbol', 'SPY'));
+        $symbol = \App\Support\Symbols::canon($req->query('symbol', 'SPY'));
         $lookahead = (int) $req->query('days_ahead', 90);
-        $lookback  = (int) $req->query('days_back', 30);
+        $lookback = (int) $req->query('days_back', 30);
 
         $anchor = $this->completedSessionDate();
-        $date  = DB::table('dex_by_expiry')
+        $date = DB::table('dex_by_expiry')
             ->where('symbol', $symbol)
             ->whereDate('data_date', '<=', $anchor)
             ->max('data_date');
-        if (!$date) {
+        if (! $date) {
             $date = DB::table('dex_by_expiry')->where('symbol', $symbol)->max('data_date');
         }
-        if ($date && !$this->hasUsableDex($symbol, $date)) {
+        if ($date && ! $this->hasUsableDex($symbol, $date)) {
             $date = DB::table('dex_by_expiry')
                 ->where('symbol', $symbol)
                 ->whereRaw('ABS(dex_total) > 0')
@@ -32,7 +33,7 @@ class PositioningController extends Controller
 
         $today = now('America/New_York')->toDateString();
         $start = now('America/New_York')->copy()->subDays($lookback)->toDateString();
-        $end   = now('America/New_York')->copy()->addDays($lookahead)->toDateString();
+        $end = now('America/New_York')->copy()->addDays($lookahead)->toDateString();
 
         // expiries that already have DEX for the latest compute date
         $exA = DB::table('dex_by_expiry')
@@ -68,18 +69,23 @@ class PositioningController extends Controller
 
         $total = DB::table('dex_by_expiry')
             ->where('symbol', $symbol)->where('data_date', $date)->sum('dex_total');
-        $gammaStrength = $date ? CoordinationCache::store()->get("gamma_strength:{$symbol}:{$date}") : null;
+        $gammaStrength = $date
+            ? app(PositioningRegimeRepository::class)->find($symbol, $date)
+            : null;
+        $gammaStrength ??= $date
+            ? CoordinationCache::store()->get("gamma_strength:{$symbol}:{$date}")
+            : null;
 
         return response()->json([
-            'symbol'    => $symbol,
+            'symbol' => $symbol,
             'data_date' => $date,          // last compute date for DEX
-            'today'     => $today,         // calendar today (for marker)
+            'today' => $today,         // calendar today (for marker)
             'by_expiry' => $by,
-            'total'     => (float) $total,
+            'total' => (float) $total,
             'regime_strength' => $gammaStrength['strength'] ?? null,
             'gamma_sign' => $gammaStrength['sign'] ?? null,
             'regime_source_meta' => $gammaStrength['source_meta'] ?? null,
-            'window'    => ['start' => $start, 'end' => $end],
+            'window' => ['start' => $start, 'end' => $end],
         ]);
     }
 

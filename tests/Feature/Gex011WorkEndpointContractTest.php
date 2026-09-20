@@ -708,6 +708,7 @@ class Gex011WorkEndpointContractTest extends TestCase
 
     public function test_work_run_status_embeds_a_lightweight_calculator_manifest_without_chain_rows(): void
     {
+        $this->travelTo(CarbonImmutable::parse('2026-08-16 14:00:00', 'UTC'));
         Sanctum::actingAs($this->createEntitledUser());
         $start = $this->postJson('/api/prime-calculator', ['symbol' => 'AAPL'])
             ->assertAccepted();

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "documents": {
+    "resources/markdown/terms.md": {
+      "status": "approved",
+      "sha256": "1762cf7e0d7fbe8406527049b0f3a0039fe04a17529b2a854aed16cecca7f47e",
+      "drafted_on": "2026-09-18",
+      "approved_on": "2026-09-20",
+      "approved_by": "Site owner: explicit approval of all pending release items and production deployment"
+    },
+    "resources/markdown/policy.md": {
+      "status": "approved",
+      "sha256": "6682ea77e3bd9d495dbd2eec15e71e95cc3a94c5b1c4ae206e2b0403dc2f127c",
+      "drafted_on": "2026-09-18",
+      "approved_on": "2026-09-20",
+      "approved_by": "Site owner: explicit approval of all pending release items and production deployment"
+    }
+  },
+  "owner_confirmation_required": [
+    "Confirm whether a legal operator name and mailing address must be published for the markets served.",
+    "Confirm whether to add a governing-law, venue, arbitration, or class-action term.",
+    "Confirm any refund policy beyond rights required by applicable law or written checkout terms.",
+    "Confirm Google Analytics property settings and whether regional consent controls are required before analytics loads.",
+    "Confirm an operational suppression process for optional checkout-reminder and reactivation email opt-out requests.",
+    "Confirm that market-data provider licenses permit the subscriber displays and exports offered by the Service and whether provider attribution is required.",
+    "Approve a written operational retention schedule consistent with the criteria stated in the Privacy Policy."
+  ]
+}

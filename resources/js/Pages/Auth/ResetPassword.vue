@@ -29,7 +29,10 @@ const submit = () => {
 <template>
     <Head title="Reset Password" />
 
-    <AuthenticationCard>
+    <AuthenticationCard
+        title="Choose a new password"
+        description="Set a new password for the account associated with this reset link."
+    >
         <template #logo>
             <AuthenticationCardLogo />
         </template>
@@ -45,8 +48,10 @@ const submit = () => {
                     required
                     autofocus
                     autocomplete="username"
+                    :aria-invalid="Boolean(form.errors.email)"
+                    :aria-describedby="form.errors.email ? 'email-error' : undefined"
                 />
-                <InputError class="mt-2" :message="form.errors.email" />
+                <InputError id="email-error" class="mt-2" :message="form.errors.email" />
             </div>
 
             <div class="mt-4">
@@ -58,8 +63,10 @@ const submit = () => {
                     class="mt-1 block w-full"
                     required
                     autocomplete="new-password"
+                    :aria-invalid="Boolean(form.errors.password)"
+                    :aria-describedby="form.errors.password ? 'password-error' : undefined"
                 />
-                <InputError class="mt-2" :message="form.errors.password" />
+                <InputError id="password-error" class="mt-2" :message="form.errors.password" />
             </div>
 
             <div class="mt-4">
@@ -71,8 +78,10 @@ const submit = () => {
                     class="mt-1 block w-full"
                     required
                     autocomplete="new-password"
+                    :aria-invalid="Boolean(form.errors.password_confirmation)"
+                    :aria-describedby="form.errors.password_confirmation ? 'password-confirmation-error' : undefined"
                 />
-                <InputError class="mt-2" :message="form.errors.password_confirmation" />
+                <InputError id="password-confirmation-error" class="mt-2" :message="form.errors.password_confirmation" />
             </div>
 
             <div class="flex items-center justify-end mt-4">

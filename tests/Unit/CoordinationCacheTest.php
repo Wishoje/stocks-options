@@ -12,6 +12,7 @@ use App\Models\OptionChainData;
 use App\Support\CalculatorRefreshState;
 use App\Support\CoordinationCache;
 use App\Support\EodSnapshotSelector;
+use App\Support\PositioningRegimeRepository;
 use App\Support\ProviderRequestReplay;
 use Carbon\CarbonImmutable;
 use Illuminate\Cache\RateLimiter;
@@ -176,12 +177,11 @@ class CoordinationCacheTest extends TestCase
         $job = Mockery::mock(ComputePositioningJob::class, [['SPY'], '2026-09-04'])
             ->makePartial()->shouldAllowMockingProtectedMethods();
         $job->shouldReceive('dexExpiryMap')->once()->andReturn(collect(['2026-09-18' => 1]));
-        $job->shouldReceive('forwardExpiryMap')->once()->andReturn(collect(['2026-09-18' => 1]));
-        $job->shouldReceive('selectedChainContext')->twice()->andReturn([
+        $job->shouldReceive('selectedChainContext')->once()->andReturn([
             collect([1 => (object) ['max_date' => '2026-09-04']]),
             collect([
-                (object) ['expiration_id' => 1, 'open_interest' => 10, 'delta' => 0.5, 'gamma' => 0.01, 'underlying_price' => 100],
-                (object) ['expiration_id' => 1, 'open_interest' => 5, 'delta' => -0.5, 'gamma' => -0.01, 'underlying_price' => 100],
+                (object) ['expiration_id' => 1, 'option_type' => 'call', 'open_interest' => 10, 'delta' => 0.5, 'gamma' => 0.01, 'underlying_price' => 100],
+                (object) ['expiration_id' => 1, 'option_type' => 'put', 'open_interest' => 5, 'delta' => -0.5, 'gamma' => 0.01, 'underlying_price' => 100],
             ]),
         ]);
         $query = Mockery::mock(Builder::class);
@@ -191,21 +191,44 @@ class CoordinationCacheTest extends TestCase
         $query->shouldReceive('where')->with('data_date', '2026-09-04')->once()->andReturnSelf();
         $query->shouldReceive('delete')->once()->andReturn(0);
         $query->shouldReceive('insert')->once()->with(Mockery::on(fn ($rows): bool => $rows[0]['dex_total'] === 250.0 && $rows[0]['source_chain_date'] === '2026-09-04'))->andReturnTrue();
+        $regimes = Mockery::mock(PositioningRegimeRepository::class);
+        $regimes->shouldReceive('write')->once()->with(
+            'SPY',
+            '2026-09-04',
+            PositioningRegimeRepository::DEFAULT_SCOPE_DAYS,
+            Mockery::on(fn (array $facts): bool => $facts['strength'] === 1 / 3
+                && $facts['sign'] === 1
+                && $facts['net_gamma'] === 50000.0
+                && $facts['absolute_gamma'] === 150000.0
+                && $facts['source_meta']['scope_end_date'] === '2026-09-18')
+        )->andReturn([]);
+        $this->app->instance(PositioningRegimeRepository::class, $regimes);
 
         $job->handle();
         $expected = [
-            'date' => '2026-09-04', 'strength' => 1 / 3, 'sign' => 1,
-            'source_meta' => ['anchor_date' => '2026-09-04', 'selected_snapshot_dates' => [1 => '2026-09-04']],
+            'date' => '2026-09-04', 'scope_days' => 14, 'strength' => 1 / 3, 'sign' => 1,
+            'net_gamma' => 50000.0, 'absolute_gamma' => 150000.0,
+            'source_meta' => [
+                'anchor_date' => '2026-09-04',
+                'scope_days' => 14,
+                'scope_start_date' => '2026-09-04',
+                'scope_end_date' => '2026-09-18',
+                'sign_convention' => 'call_minus_put',
+                'expiration_dates' => ['2026-09-18'],
+                'selected_snapshot_dates' => [1 => '2026-09-04'],
+            ],
         ];
         Cache::flush();
         $this->assertSame($expected, CoordinationCache::store()->get('gamma_strength:SPY:2026-09-04'));
         $this->assertNull(Cache::get('gamma_strength:SPY:2026-09-04'));
     }
 
-    public function test_positioning_endpoint_reads_original_gamma_fields_after_payload_clear(): void
+    public function test_positioning_endpoint_reads_durable_gamma_fields_after_payload_clear(): void
     {
         config()->set('cache.coordination_enabled', true);
-        CoordinationCache::store()->put('gamma_strength:SPY:2026-09-04', $this->gammaFacts(), 3600);
+        $regimes = Mockery::mock(PositioningRegimeRepository::class);
+        $regimes->shouldReceive('find')->once()->with('SPY', '2026-09-04')->andReturn($this->gammaFacts());
+        $this->app->instance(PositioningRegimeRepository::class, $regimes);
         $query = Mockery::mock(Builder::class);
         DB::shouldReceive('table')->andReturn($query);
         DB::shouldReceive('query')->andReturn($query);
@@ -223,10 +246,12 @@ class CoordinationCacheTest extends TestCase
         $this->assertGammaFacts($payload);
     }
 
-    public function test_gex_cold_builder_reads_original_gamma_fields_after_payload_clear(): void
+    public function test_gex_cold_builder_reads_durable_gamma_fields_after_payload_clear(): void
     {
         config()->set('cache.coordination_enabled', true);
-        CoordinationCache::store()->put('gamma_strength:SPY:2026-09-04', $this->gammaFacts(), 3600);
+        $regimes = Mockery::mock(PositioningRegimeRepository::class);
+        $regimes->shouldReceive('find')->once()->with('SPY', '2026-09-04')->andReturn($this->gammaFacts());
+        $this->app->instance(PositioningRegimeRepository::class, $regimes);
         $originalResolver = Model::getConnectionResolver();
         $resolver = Mockery::mock(ConnectionResolverInterface::class);
         $connection = Mockery::mock(Connection::class);

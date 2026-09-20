@@ -1,209 +1,179 @@
 <template>
-  <div class="min-h-screen bg-[#070A12] text-white flex flex-col">
-    <!-- Background glow -->
-    <div class="pointer-events-none fixed inset-0 -z-10">
-      <div class="absolute -top-40 left-1/2 h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-cyan-500/15 blur-[120px]" />
-      <div class="absolute -bottom-40 left-1/3 h-[520px] w-[520px] rounded-full bg-blue-500/15 blur-[120px]" />
-    </div>
+  <div class="marketing-site">
+    <a class="mk-skip-link" href="#marketing-main">Skip to main content</a>
 
-    <!-- Nav -->
-    <header class="sticky top-0 z-50 border-b border-white/10 bg-[#070A12]/70 backdrop-blur">
-      <div class="w-full px-2 sm:px-4">
-        <div class="flex h-24 items-center justify-between">
-          <!-- LEFT -->
-          <Link :href="route('home')" class="flex items-center gap-4 overflow-visible">
+    <header ref="header" class="mk-header">
+      <div class="mk-container">
+        <div class="mk-header-row">
+          <Link href="/" class="mk-brand mk-brand--header" aria-label="GEX Options home" @click="closeMobileMenu(false)">
             <img
               src="/marketing/gexoptions_logo.svg"
               alt="GEX Options"
-              class="h-24 sm:h-28 md:h-32 w-auto -my-3"
+              class="mk-brand__logo"
+              width="798"
+              height="316"
             />
-            <div class="hidden md:block text-xs text-white/50 leading-tight">
-              Analytics Terminal
-            </div>
+            <span>Options analytics</span>
           </Link>
 
-          <!-- RIGHT -->
-          <div class="flex items-center gap-8">
-            <button
-              type="button"
-              class="inline-flex items-center justify-center rounded-lg border border-white/10 bg-white/5 p-2 text-white/70 hover:bg-white/10 hover:text-white md:hidden"
-              :aria-expanded="showMobileMenu ? 'true' : 'false'"
-              aria-label="Toggle navigation menu"
-              @click="showMobileMenu = !showMobileMenu"
-            >
-              <svg class="size-6" stroke="currentColor" fill="none" viewBox="0 0 24 24">
-                <path
-                  :class="{ hidden: showMobileMenu, 'inline-flex': !showMobileMenu }"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M4 6h16M4 12h16M4 18h16"
-                />
-                <path
-                  :class="{ hidden: !showMobileMenu, 'inline-flex': showMobileMenu }"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
+          <nav class="mk-nav mk-desktop-nav" aria-label="Primary navigation">
+            <Link
+              v-for="item in publicLinks"
+              :key="item.href"
+              :href="item.href"
+              class="mk-nav-link"
+              :aria-current="isActive(item.href) ? 'page' : undefined"
+            >{{ item.label }}</Link>
 
-            <nav class="hidden items-center gap-8 md:flex">
-              <Link :href="route('features')" class="text-sm text-white/70 hover:text-white">Features</Link>
-              <Link :href="route('contact')" class="text-sm text-white/70 hover:text-white">Contact</Link>
+            <template v-if="user">
+              <Link href="/user/profile" class="mk-nav-link" :aria-current="isActive('/user/profile') ? 'page' : undefined">Profile</Link>
+              <MarketingCta location="marketing_nav" source="marketing_nav" />
+              <button class="mk-nav-action" type="button" @click="logout">Log out</button>
+            </template>
+            <template v-else>
+              <Link :href="loginHref" class="mk-nav-link">Log in</Link>
+              <MarketingCta location="marketing_nav" source="marketing_nav" guest-label="Start free trial" />
+            </template>
+          </nav>
 
-              <template v-if="page.props.auth?.user">
-                <Link :href="route('pricing')" class="text-sm text-white/70 hover:text-white">
-                  Pricing
-                </Link>
-
-                <button
-                  v-if="page.props.billing?.needs_checkout"
-                  type="button"
-                  @click="goCheckout"
-                  class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15"
-                >
-                  Finish Checkout
-                </button>
-
-                <button type="button" @click="logout" class="text-sm text-white/70 hover:text-white">
-                  Logout
-                </button>
-              </template>
-
-              <template v-else>
-                <Link :href="route('login')" class="text-sm text-white/70 hover:text-white">Login</Link>
-                <Link :href="registerWithPlanUrl" @click="trackNavStartFree" class="text-sm rounded-lg bg-white/10 px-3 py-2 hover:bg-white/15">
-                  Start Free
-                </Link>
-              </template>
-            </nav>
-          </div>
+          <button
+            ref="menuButton"
+            class="mk-menu-button"
+            type="button"
+            aria-label="Toggle navigation menu"
+            aria-controls="marketing-mobile-navigation"
+            :aria-expanded="mobileOpen"
+            @click="toggleMobileMenu"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path v-if="!mobileOpen" d="M4 6h16M4 12h16M4 18h16" />
+              <path v-else d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
         </div>
 
-        <div v-if="showMobileMenu" class="border-t border-white/10 pb-4 pt-3 md:hidden">
-          <nav class="flex flex-col gap-2">
+        <div v-if="mobileOpen" id="marketing-mobile-navigation" ref="mobilePanel" class="mk-mobile-panel">
+          <nav class="mk-nav" aria-label="Mobile navigation">
             <Link
-              :href="route('features')"
-              class="rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
-              @click="closeMobileMenu"
-            >
-              Features
-            </Link>
-            <Link
-              :href="route('contact')"
-              class="rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
-              @click="closeMobileMenu"
-            >
-              Contact
-            </Link>
+              v-for="item in publicLinks"
+              :key="item.href"
+              :href="item.href"
+              class="mk-nav-link"
+              :aria-current="isActive(item.href) ? 'page' : undefined"
+              @click="closeMobileMenu(false)"
+            >{{ item.label }}</Link>
 
-            <template v-if="page.props.auth?.user">
-              <Link
-                :href="route('pricing')"
-                class="rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
-                @click="closeMobileMenu"
-              >
-                Pricing
-              </Link>
-
-              <button
-                v-if="page.props.billing?.needs_checkout"
-                type="button"
-                class="rounded-xl bg-white/10 px-3 py-2 text-left text-sm text-white/85 hover:bg-white/15"
-                @click="goCheckout"
-              >
-                Finish Checkout
-              </button>
-
-              <button
-                type="button"
-                class="rounded-xl px-3 py-2 text-left text-sm text-white/75 hover:bg-white/5 hover:text-white"
-                @click="logout"
-              >
-                Logout
-              </button>
+            <template v-if="user">
+              <Link href="/user/profile" class="mk-nav-link" @click="closeMobileMenu(false)">Profile</Link>
+              <MarketingCta location="marketing_mobile_nav" source="marketing_nav" />
+              <button class="mk-nav-action" type="button" @click="logout">Log out</button>
             </template>
-
             <template v-else>
-              <Link
-                :href="route('login')"
-                class="rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
-                @click="closeMobileMenu"
-              >
-                Login
-              </Link>
-              <Link
-                :href="registerWithPlanUrl"
-                class="rounded-xl bg-white/10 px-3 py-2 text-sm text-white/90 hover:bg-white/15"
-                @click="trackMobileStartFree"
-              >
-                Start Free
-              </Link>
+              <Link :href="loginHref" class="mk-nav-link" @click="closeMobileMenu(false)">Log in</Link>
+              <MarketingCta location="marketing_mobile_nav" source="marketing_nav" guest-label="Start free trial" />
             </template>
           </nav>
         </div>
       </div>
     </header>
 
-    <main class="flex-1">
-      <slot />
-    </main>
+    <main id="marketing-main" tabindex="-1"><slot /></main>
 
-    <footer class="mt-20 border-t border-white/10">
-      <div class="mx-auto max-w-[1440px] px-4 py-10 sm:px-6 lg:px-8">
-        <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          <div class="text-sm text-white/60">
-            &copy; {{ year }} GEX Options, Inc. All rights reserved.
-          </div>
-          <div class="flex items-center gap-6 text-sm">
-            <Link :href="route('features')" class="text-white/60 hover:text-white">Features</Link>
-            <Link :href="route('pricing')" class="text-white/60 hover:text-white">Pricing</Link>
-            <Link :href="route('contact')" class="text-white/60 hover:text-white">Contact</Link>
-            <a href="mailto:support@gexlevels.com" class="text-white/40 hover:text-white/70">support@gexoptions.com</a>
-          </div>
+    <footer class="mk-footer">
+      <div class="mk-container mk-footer-grid">
+        <div>
+          <Link href="/" class="mk-brand mk-brand--footer" aria-label="GEX Options home">
+            <img
+              src="/marketing/gexoptions_logo.svg"
+              alt="GEX Options"
+              class="mk-brand__logo"
+              width="798"
+              height="316"
+              loading="lazy"
+            />
+          </Link>
+          <p class="mk-meta">Options analytics software. Data availability and timing vary by dataset and provider.</p>
+          <p class="mk-meta">&copy; {{ year }} GEX Options.</p>
         </div>
+        <nav class="mk-footer-links" aria-label="Footer navigation">
+          <Link v-for="item in publicLinks" :key="item.href" :href="item.href">{{ item.label }}</Link>
+          <Link v-for="item in legalLinks" :key="item.href" :href="item.href">{{ item.label }}</Link>
+          <a href="mailto:support@gexoptions.com">support@gexoptions.com</a>
+        </nav>
       </div>
     </footer>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
-import { trackEvent } from '@/lib/ga'
+import MarketingCta from '@/Components/Marketing/MarketingCta.vue'
+import { journeyUrl, selectionForPage } from '@/Support/marketing-journey'
+import '../../css/marketing-refresh.css'
 
 const page = usePage()
 const year = new Date().getFullYear()
-const registerWithPlanUrl = '/register?plan=earlybird&billing=monthly'
-const showMobileMenu = ref(false)
+const mobileOpen = ref(false)
+const menuButton = ref(null)
+const mobilePanel = ref(null)
+const header = ref(null)
+const user = computed(() => page.props.auth?.user ?? null)
+const loginHref = computed(() => journeyUrl('login', selectionForPage(page.url || '/', page.props.billing?.intent)))
+
+const publicLinks = Object.freeze([
+  { label: 'Home', href: '/' },
+  { label: 'Features', href: '/features' },
+  { label: 'Pricing', href: '/pricing' },
+  { label: 'Contact', href: '/contact' },
+])
+
+const legalLinks = Object.freeze([
+  { label: 'Terms', href: '/terms-of-service' },
+  { label: 'Privacy', href: '/privacy-policy' },
+])
+
+function isActive(href) {
+  const path = (page.url || '/').split('?')[0]
+  return href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`)
+}
+
+async function toggleMobileMenu() {
+  mobileOpen.value = !mobileOpen.value
+  if (mobileOpen.value) {
+    await nextTick()
+    mobilePanel.value?.querySelector('a, button')?.focus()
+  }
+}
+
+function closeMobileMenu(restoreFocus = true) {
+  if (!mobileOpen.value) return
+  mobileOpen.value = false
+  if (restoreFocus) nextTick(() => menuButton.value?.focus())
+}
+
+function handleGlobalKeydown(event) {
+  if (event.key === 'Escape' && mobileOpen.value) closeMobileMenu()
+}
+
+function handleOutsidePointer(event) {
+  if (mobileOpen.value && !header.value?.contains(event.target)) closeMobileMenu(false)
+}
 
 function logout() {
-  // Jetstream logout route is POST
-  showMobileMenu.value = false
-  router.post(route('logout'))
+  closeMobileMenu(false)
+  router.post('/logout')
 }
 
-function goCheckout() {
-  showMobileMenu.value = false
-  const current = new URL(page.url, window.location.origin)
-  const plan = current.searchParams.get('plan') || 'earlybird'
-  const billing = current.searchParams.get('billing') || 'monthly'
-  trackEvent('checkout_start', { plan, billing, source: 'marketing_nav' })
-  window.location.assign(`/checkout?plan=${encodeURIComponent(plan)}&billing=${encodeURIComponent(billing)}`)
-}
+watch(() => page.url, () => closeMobileMenu(false))
 
-function trackNavStartFree() {
-  trackEvent('hero_cta_click', { location: 'marketing_nav_start_free', destination: 'register_with_plan' })
-}
+onMounted(() => {
+  document.addEventListener('keydown', handleGlobalKeydown)
+  document.addEventListener('pointerdown', handleOutsidePointer)
+})
 
-function closeMobileMenu() {
-  showMobileMenu.value = false
-}
-
-function trackMobileStartFree() {
-  closeMobileMenu()
-  trackNavStartFree()
-}
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleGlobalKeydown)
+  document.removeEventListener('pointerdown', handleOutsidePointer)
+})
 </script>

@@ -1,202 +1,174 @@
 ﻿<template>
   <div class="min-h-screen bg-gray-950 text-white">
-    <!-- First-run onboarding -->
-    <div
-      v-if="showOnboarding"
-      class="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur"
-    >
-      <div class="w-full max-w-3xl rounded-2xl border border-cyan-500/40 bg-gray-900/95 p-8 shadow-2xl">
-        <p class="text-xs uppercase tracking-[0.2em] text-cyan-300 mb-3">Quick start</p>
-        <h2 class="text-3xl font-bold text-white">Welcome to GexOptions</h2>
-        <p class="mt-2 text-sm text-gray-300">
-          In under 5 minutes, you’ll know where dealer positioning matters today.
-        </p>
-
-        <div class="mt-6 space-y-3 text-sm text-gray-200">
-          <div class="flex items-start gap-2">
-            <span class="text-cyan-300">1️⃣</span>
-            <div>
-              <div class="font-semibold">See today’s key levels first</div>
-              <div class="text-gray-400">We’ll take you straight to SPY and zoom you into Net GEX by strike.</div>
-            </div>
+    <section ref="dashboardContext" class="gex-ui gex-dashboard-context" data-theme="dark" data-density="compact" aria-label="Dashboard data context">
+      <div class="gex-dashboard-context__primary">
+        <div class="gex-dashboard-heading">
+          <div class="gex-dashboard-heading__copy">
+            <small>Market dashboard</small>
+            <h1>GEX Levels &amp; Analytics</h1>
           </div>
-          <div class="flex items-start gap-2">
-            <span class="text-cyan-300">2️⃣</span>
-            <div>
-              <div class="font-semibold">Value before settings</div>
-              <div class="text-gray-400">No menus or choices—just the map dealers are hedging against today.</div>
-            </div>
-          </div>
+          <button
+            ref="symbolPickerTrigger"
+            type="button"
+            class="gex-symbol-button gex-number"
+            aria-haspopup="dialog"
+            aria-controls="dashboard-symbol-dialog"
+            :aria-expanded="showSymbolPicker ? 'true' : 'false'"
+            @click="openSymbolPicker"
+          >
+            {{ userSymbol }}
+            <svg
+              class="gex-symbol-button__chevron"
+              viewBox="0 0 20 20"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path d="m6 8 4 4 4-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <UiBadge
+            v-if="dataMode === 'intraday' && intradayTransition"
+            tone="warning"
+          >
+            Updating selection
+          </UiBadge>
         </div>
 
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <button
-            class="w-full sm:w-auto rounded-xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-cyan-400 transition shadow-lg shadow-cyan-500/30"
-            @click="startGuidedView"
-          >
-            View Today’s Key Levels (SPY)
-          </button>
-          <button
-            class="text-sm text-gray-400 hover:text-white"
-            @click="dismissOnboarding"
-          >
-            Skip for now
-          </button>
-        </div>
-
-        <p class="mt-4 text-xs text-gray-400">
-          Most traders check this before the open to frame risk — not to predict direction.
-        </p>
-      </div>
-    </div>
-    <!-- Trading Terminal Header -->
-    <header class="sticky top-0 z-50 border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm">
-      <div class="flex flex-col gap-3 px-3 py-3 sm:px-4 md:flex-row md:items-center md:justify-between">
-        <div class="min-w-0">
-          <div class="flex items-center gap-2 sm:gap-3">
-            <h1 class="truncate text-base font-bold leading-tight tracking-tight sm:text-xl">
-              GEX Levels<span class="hidden sm:inline"> & Analytics</span>
-            </h1>
-
-            <div class="flex min-w-0 items-center gap-1.5 sm:gap-2">
-              <span class="truncate text-base font-mono text-cyan-400 sm:text-lg">{{ userSymbol }}</span>
-              <button @click="showSymbolPicker = true" class="text-xs text-gray-400 hover:text-white">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-
-              <span
-                v-if="dataMode === 'intraday' && intradayTransition"
-                class="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-100 sm:text-[11px]"
-              >
-                <svg class="h-3 w-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M12 4v2m0 12v2m8-8h-2M6 12H4m13.657-5.657l-1.414 1.414M7.757 16.243l-1.414 1.414m0-11.314l1.414 1.414M16.243 16.243l1.414 1.414" />
-                </svg>
-                Updating...
-              </span>
+        <div class="gex-dashboard-controls">
+          <fieldset class="gex-control-group">
+            <legend>Dataset</legend>
+            <div class="gex-segmented" aria-label="Dataset mode">
+              <button type="button" :aria-pressed="dataMode === 'eod'" @click="setMode('eod')">End of day</button>
+              <button type="button" :aria-pressed="dataMode === 'intraday'" @click="setMode('intraday')">Intraday</button>
             </div>
-          </div>
+          </fieldset>
 
-          <div v-if="dataMode === 'eod'" class="mt-2 flex items-center gap-2 md:hidden">
-            <span class="text-[10px] uppercase tracking-wider text-gray-400">Timeframe</span>
-            <div class="flex rounded-lg overflow-hidden border border-gray-700">
+          <fieldset v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab)" class="gex-control-group">
+            <legend>Expiry scope</legend>
+            <div class="gex-segmented" aria-label="EOD expiry timeframe">
               <button
                 v-for="tf in visibleTimeframeOptions"
-                :key="`mobile-${tf.value}`"
-                @click="gexTf = tf.value"
-                class="px-2.5 py-1 text-[11px] font-medium transition"
-                :class="gexTf === tf.value ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'"
+                :key="tf.value"
+                type="button"
+                :aria-pressed="gexTf === tf.value"
+                @click="chooseTimeframe(tf.value)"
               >
                 {{ tf.label }}
               </button>
             </div>
+          </fieldset>
+
+          <div v-else-if="dataMode === 'eod' && activeTab === 'positioning'" class="gex-positioning-scope" role="note">
+            <strong>Positioning uses local scopes:</strong>
+            DEX snapshot window · {{ pinDays }} trading-day pressure · selectable skew bucket
+          </div>
+          <div v-else-if="dataMode === 'eod' && activeTab === 'volatility'" class="gex-positioning-scope" role="note">
+            <strong>Volatility uses local scopes:</strong>
+            all returned term expiries · 1-month VRP proxy · next 5 sessions
+          </div>
+          <div v-else-if="dataMode === 'eod' && activeTab === 'ua'" class="gex-positioning-scope" role="note">
+            <strong>Unusual activity uses its own scope:</strong>
+            latest completed activity snapshot · all expiries or one selected expiry
           </div>
         </div>
 
-        <div v-if="dataMode === 'eod'" class="hidden items-center gap-2 md:flex">
-          <span class="text-xs uppercase tracking-wider text-gray-400">Timeframe</span>
-          <div class="flex rounded-lg overflow-hidden border border-gray-700">
-            <button
-              v-for="tf in visibleTimeframeOptions"
-              :key="tf.value"
-              @click="gexTf = tf.value"
-              class="px-3 py-1.5 text-xs font-medium transition"
-              :class="gexTf === tf.value ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'"
-            >
-              {{ tf.label }}
-            </button>
-          </div>
+        <div
+          v-if="dataMode === 'eod'"
+          class="gex-dashboard-freshness"
+          :data-state="activeTab === 'ua' ? (uaDate ? 'fresh' : 'stale') : (Number(levels?.data_age_days || 0) > 0 ? 'stale' : 'fresh')"
+          aria-live="polite"
+        >
+          <template v-if="activeTab === 'ua'">
+            <strong>{{ uaDate ? `Activity ${uaDate}` : (uaLoading ? 'Loading activity snapshot' : 'Activity date unavailable') }}</strong>
+            <span>Independent latest completed activity snapshot</span>
+          </template>
+          <template v-else>
+            <strong>{{ levels?.data_date ? `EOD ${levels.data_date}` : (eodLoading ? 'Loading EOD snapshot' : 'EOD date unavailable') }}</strong>
+            <span v-if="levels?.data_age_days > 0">{{ levels.data_age_days }} day<span v-if="levels.data_age_days !== 1">s</span> old</span>
+            <span v-else-if="levels?.data_date">Completed-session snapshot</span>
+          </template>
         </div>
-
-        <div class="flex items-start justify-between gap-3 md:items-center">
-          <div class="flex rounded-lg overflow-hidden border border-gray-700">
-            <button
-              @click="setMode('eod')"
-              class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition sm:gap-1.5 sm:px-4 sm:text-sm"
-              :class="dataMode === 'eod' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              EOD
-            </button>
-
-            <button
-              @click="setMode('intraday')"
-              class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition sm:gap-1.5 sm:px-4 sm:text-sm"
-              :class="dataMode === 'intraday' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              <span class="hidden sm:inline">Intraday</span>
-              <span class="sm:hidden">Live</span>
-              <span v-if="dataMode === 'intraday'" class="text-[10px] opacity-80">15m</span>
-            </button>
-          </div>
-
-          <div class="text-right text-[11px] text-gray-400 sm:text-xs">
-            <span v-if="dataMode === 'eod' && levels?.data_date">
-              EOD: {{ levels.data_date }}
-              <span v-if="levels.data_age_days > 0" class="ml-1 text-[10px] text-amber-400 sm:text-[11px]">
-                ({{ levels.data_age_days }}d old)
-              </span>
-            </span>
-            <span v-else-if="dataMode === 'intraday'" class="flex items-center justify-end gap-1">
-              <span class="font-medium" :class="marketOpen && intradaySourceAge !== null && intradaySourceAge < 90 ? 'text-green-400' : 'text-amber-300'">{{ intradaySourceLabel }}</span>
-              <button @click="manualRefresh" class="ml-1 text-cyan-400 hover:text-cyan-300">
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-            </span>
-          </div>
+        <div
+          v-else
+          class="gex-dashboard-freshness"
+          :data-state="intradayFreshnessState"
+          aria-live="polite"
+        >
+          <template v-if="intradayTransition">
+            <strong>Loading {{ userSymbol }}</strong>
+            <span>Previous-symbol readings are hidden</span>
+          </template>
+          <template v-else>
+            <strong>{{ intradaySourceLabel }}</strong>
+            <span v-if="intradaySnapshotAsOf">{{ intradaySourceTimeKind }} {{ intradayAsOfEtLabel }} ET</span>
+            <span v-else>Provider update time unavailable</span>
+          </template>
+          <UiButton :disabled="intradayLoading || intradayRefreshing || intradayTransition" @click="manualRefresh">
+            {{ intradayLoading || intradayTransition ? 'Loading…' : (intradayRefreshing ? 'Refreshing…' : 'Refresh') }}
+          </UiButton>
         </div>
       </div>
-    </header>
 
-    <!-- Expiration Chips (EOD only) -->
-    <div v-if="dataMode === 'eod' && levels?.expiration_dates?.length" class="px-4 py-2 border-b border-gray-800 bg-gray-900/50">
-      <div class="flex flex-wrap gap-1.5">
-        <span
-          v-for="d in levels.expiration_dates"
-          :key="d"
-          class="px-2 py-0.5 rounded text-xs font-mono bg-gray-800 text-cyan-300 border border-gray-700"
-        >
-          {{ d }}
-        </span>
+      <section
+        v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab) && scopedExpirationDates.length"
+        class="gex-expiry-scope"
+        aria-label="Included expiration dates"
+      >
+        <p class="gex-expiry-scope__label">
+          {{ scopedExpirationDates.length }} {{ scopedExpirationDates.length === 1 ? 'expiration' : 'expirations' }} included in {{ selectedTimeframeLabel }}
+        </p>
+        <div class="gex-expiry-scope__items">
+          <UiBadge v-for="d in scopedExpirationDates" :key="d" tone="data">{{ d }}</UiBadge>
+        </div>
+      </section>
+
+      <div class="gex-dashboard-context__secondary">
+        <nav aria-label="Dashboard views">
+          <div class="gex-tabs" role="tablist" aria-label="Dashboard views">
+            <button
+              v-for="(tab, index) in dashboardTabItems"
+              :id="`dashboard-content-tabs-${tab.value}`"
+              :key="tab.value"
+              :ref="el => dashboardTabButtons[index] = el"
+              type="button"
+              class="gex-tab"
+              role="tab"
+              aria-controls="dashboard-content-tabs-panel"
+              :aria-selected="activeTab === tab.value"
+              :tabindex="activeTab === tab.value ? 0 : -1"
+              @click="activate(tab.value)"
+              @keydown="onDashboardTabKey($event, index)"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
+        </nav>
+        <div class="gex-dashboard-scope gex-small gex-muted">
+          <span>{{ dataMode === 'eod' ? 'End-of-day analysis' : 'Stored intraday snapshots' }}</span>
+          <span aria-hidden="true">·</span>
+          <span>{{ userSymbol }}</span>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Tabs -->
-    <div class="sticky top-[65px] z-40 border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm">
-      <nav class="flex gap-1 overflow-x-auto px-3 py-2 no-scrollbar sm:px-4">
-        <button
-          v-for="t in tabMeta"
-          :key="t.key"
-          @click="activate(t.key)"
-          class="flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition sm:gap-2 sm:px-5 sm:text-sm"
-          :class="activeTab === t.key
-            ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-500/20'
-            : t.state === 'ready' || t.state === 'idle'
-              ? 'text-gray-400 hover:text-white hover:bg-gray-800'
-              : 'text-gray-500 bg-gray-800/60'"
-        >
-          <component :is="t.icon" class="h-4 w-4" />
-          {{ t.label }}
-          <span v-if="t.badge" class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-white/20">
-            {{ t.badge }}
-          </span>
-          <span v-else-if="t.state === 'pending'" class="text-[10px] text-amber-300">Preparing…</span>
-          <span v-else-if="t.state === 'error'" class="text-[10px] text-red-400">Unavailable</span>
-        </button>
-      </nav>
-    </div>
+    <FirstUseGuide
+      v-if="showOnboarding"
+      :symbol="userSymbol"
+      :mode="dataMode"
+      :tab-label="activeGuideTabLabel"
+      :timeframe="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab) ? selectedTimeframeLabel : ''"
+      @continue="startGuidedView"
+      @dismiss="dismissOnboarding"
+    />
 
     <!-- Body -->
-    <div class="p-4 space-y-6">
+    <div
+      id="dashboard-content-tabs-panel"
+      class="p-4 space-y-6"
+      role="tabpanel"
+      :aria-labelledby="`dashboard-content-tabs-${activeTab}`"
+      tabindex="0"
+    >
       <!-- Loading / Error -->
       <ui-error-block v-if="topError" :message="'Failed to load data'" :detail="topError"
                      :onRetry="() => dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : refreshIntraday()" />
@@ -245,7 +217,19 @@
           </div>
         </div>
         <div
-          v-if="dataMode==='intraday' && !marketOpen"
+          v-if="dataMode==='intraday' && intradayTransition"
+          class="gex-ui"
+          data-theme="dark"
+          data-density="compact"
+        >
+          <UiStatus
+            state="loading"
+            :title="`Loading ${userSymbol} intraday data`"
+            message="The previous symbol is hidden while its replacement snapshot is verified."
+          />
+        </div>
+        <div
+          v-else-if="dataMode==='intraday' && marketOpen === false"
           class="bg-slate-500/10 border border-slate-400/30 text-slate-100 text-sm px-4 py-3 rounded-lg flex items-start gap-2"
         >
           <svg class="w-4 h-4 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -257,7 +241,7 @@
             </div>
             <div class="text-slate-200/80">
               <template v-if="intradayHasData">
-                <span v-if="intradaySnapshotAsOf">Source as of {{ intradayAsOfEtLabel }} ET.</span>
+                <span v-if="intradaySnapshotAsOf">{{ intradaySourceTimeKind }} {{ intradayAsOfEtLabel }} ET.</span>
                 <span v-else>Provider update time is unavailable.</span>
                 Live updates resume {{ intradayNextOpenLabel }}.
               </template>
@@ -267,386 +251,506 @@
             </div>
           </div>
         </div>
+        <div
+          v-if="dataMode==='intraday' && activeTab==='strikes' && intradayError && intradayHasData"
+          class="gex-ui"
+          data-theme="dark"
+          data-density="compact"
+        >
+          <UiStatus
+            state="error"
+            title="Intraday refresh failed"
+            :message="`${intradayError} The last aligned snapshot remains visible below.`"
+            retry
+            @retry="manualRefresh"
+          />
+        </div>
         <!-- OVERVIEW (EOD) -->
-        <section v-show="activeTab==='overview' && dataMode==='eod'" class="space-y-4">
-          <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2">
-              <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              Q-Score
-            </h3>
-            <QScorePanel :symbol="userSymbol" />
-          </div>
+        <section
+          v-show="activeTab==='overview' && dataMode==='eod'"
+          class="gex-ui gex-overview-view"
+          data-theme="dark"
+          data-density="compact"
+          aria-label="End-of-day overview"
+        >
+          <QScorePanel
+            :symbol="userSymbol"
+            :snapshot-date="levels?.data_date ?? null"
+            :active="activeTab === 'overview' && dataMode === 'eod'"
+          />
+          <OverviewMetrics :levels="levels" :scope-label="selectedTimeframeLabel" />
 
-          <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-            <MetricCard title="HVL" :value="levels?.hvl" />
-            <MetricCard title="Call OI %" :value="fmtPct(levels?.call_interest_percentage)" />
-            <MetricCard title="Put OI %" :value="fmtPct(levels?.put_interest_percentage)" />
-            <MetricCard title="Total OI" :value="num(levels?.call_open_interest_total) + num(levels?.put_open_interest_total)" />
-            <MetricCard title="Total Vol" :value="num(levels?.call_volume_total) + num(levels?.put_volume_total)" />
-            <MetricCard title="ΔOI" :value="levels?.total_oi_delta" />
-            <MetricCard title="ΔVol" :value="levels?.total_volume_delta" />
-          </div>
-
-          <div class="bg-gradient-to-r from-gray-800 to-gray-900 rounded-xl p-4 text-center">
-            <h3 class="text-sm font-semibold text-gray-400">PCR (Volume)</h3>
-            <p class="text-2xl font-bold text-cyan-400">{{ levels?.pcr_volume ?? '—' }}</p>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-2">OI Distribution</h4>
-              <OiDistributionChart
-                :call-oi="num(levels?.call_open_interest_total)"
-                :put-oi="num(levels?.put_open_interest_total)" />
-            </div>
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-2">Volume Distribution</h4>
-              <VolDistributionChart
-                :call-vol="num(levels?.call_volume_total)"
-                :put-vol="num(levels?.put_volume_total)" />
-            </div>
+          <div class="gex-overview-distributions">
+            <OiDistributionChart
+              :call-oi="levels?.call_open_interest_total ?? null"
+              :put-oi="levels?.put_open_interest_total ?? null"
+              @reading-inspected="recordFirstUsefulReading"
+            />
+            <VolDistributionChart
+              :call-vol="levels?.call_volume_total ?? null"
+              :put-vol="levels?.put_volume_total ?? null"
+              @reading-inspected="recordFirstUsefulReading"
+            />
           </div>
         </section>
 
         <!-- POSITIONING (EOD) -->
-        <Suspense v-if="activeTab==='positioning' && dataMode==='eod' && tabState('positioning')==='ready'">
-          <section class="space-y-4">
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-                <h4 class="font-semibold mb-2">Dealer Positioning</h4>
-                <component :is="busy.positioning ? uiSkeletonCard : DexTile" :symbol="userSymbol" />
-              </div>
-              <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-                <h4 class="font-semibold mb-2">Expiry Pressure ({{ pinDays }}D)</h4>
-                <component :is="busy.positioning ? uiSkeletonCard : ExpiryPressureTile" :symbol="userSymbol" :days="pinDays" />
-              </div>
+        <Suspense v-if="positioningMounted && dataMode==='eod' && tabState('positioning')==='ready'">
+          <section v-show="activeTab==='positioning'" class="gex-ui gex-positioning-view" data-theme="dark" data-density="compact" aria-label="End-of-day positioning">
+            <div class="gex-positioning-view__grid">
+              <DexTile :symbol="userSymbol" :active="activeTab === 'positioning'" @reading-inspected="recordFirstUsefulReading" />
+              <ExpiryPressureTile :symbol="userSymbol" :days="pinDays" :active="activeTab === 'positioning'" @reading-inspected="recordFirstUsefulReading" />
             </div>
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <h4 class="font-semibold mb-2">IV Skew</h4>
-              <component :is="busy.positioning ? uiSkeletonCard : SkewTile" :symbol="userSymbol" />
-            </div>
+            <SkewTile :symbol="userSymbol" :active="activeTab === 'positioning'" @reading-inspected="recordFirstUsefulReading" />
           </section>
         </Suspense>
         <section
           v-else-if="activeTab==='positioning' && dataMode==='eod'"
-          class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700 text-sm text-gray-300"
+          class="gex-ui"
+          data-theme="dark"
+          data-density="compact"
         >
-          <div v-if="tabState('positioning')==='pending'">
-            Positioning is being prepared for {{ userSymbol }}… we’ll show it as soon as it’s ready.
-          </div>
-          <div v-else class="text-red-300">
-            Positioning unavailable: {{ tabStatus.positioning.err || 'Data not ready yet.' }}
-          </div>
+          <UiStatus
+            v-if="tabState('positioning')==='pending'"
+            state="preparing"
+            :title="`Preparing ${userSymbol} positioning`"
+            message="DEX, pressure, and skew will appear as their current snapshots become available."
+          />
+          <UiStatus
+            v-else
+            state="error"
+            title="Positioning unavailable"
+            :message="tabStatus.positioning.err || 'Data is not ready yet.'"
+            retry
+            @retry="ensureTabReady('positioning')"
+          />
         </section>
 
         <!-- VOLATILITY -->
         <section
           v-if="activeTab==='volatility' && dataMode==='eod' && tabState('volatility')==='ready'"
-          class="space-y-4"
+          class="gex-ui gex-volatility-view"
+          data-theme="dark"
+          data-density="compact"
+          aria-label="End-of-day volatility"
         >
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <div class="flex items-center justify-between mb-2">
-                <h4 class="font-semibold">Term Structure</h4>
-                <span v-if="term?.date" class="text-xs text-gray-400">as of {{ term.date }}</span>
-              </div>
-              <ui-error-block v-if="volErrors.term" :message="'Failed to load volatility data'"
-                            :detail="volErrors.term" :onRetry="ensureVolatility" />
-              <ui-skeleton-card v-else-if="volState.term === 'loading' || volState.term === 'pending'" />
-              <TermTile v-else :items="term.items || []" :date="term.date" />
-            </div>
+          <div class="gex-volatility-view__grid">
+            <UiStatus
+              v-if="volErrors.term"
+              state="error"
+              title="Term structure unavailable"
+              :message="volErrors.term"
+              retry
+              @retry="ensureVolatility"
+            />
+            <UiStatus
+              v-else-if="volState.term === 'loading' || volState.term === 'pending'"
+              :state="volState.term === 'pending' ? 'preparing' : 'loading'"
+              title="Loading term structure"
+              message="All returned forward expiries will appear when this snapshot is ready."
+            />
+            <TermTile v-else :items="term.items || []" :date="term.date" @reading-inspected="recordFirstUsefulReading" />
 
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <div class="flex items-center justify-between mb-2">
-                <h4 class="font-semibold">Variance Risk Premium</h4>
-                <span v-if="vrp?.date" class="text-xs text-gray-400">as of {{ vrp.date }}</span>
-              </div>
-              <ui-error-block v-if="volErrors.vrp" :message="'Failed to load volatility data'"
-                            :detail="volErrors.vrp" :onRetry="ensureVolatility" />
-              <ui-skeleton-card v-else-if="volState.vrp === 'loading' || volState.vrp === 'pending'" />
-              <VRPTile v-else :date="vrp.date" :iv1m="vrp.iv1m" :rv20="vrp.rv20" :vrp="vrp.vrp" :z="vrp.z" />
-            </div>
+            <UiStatus
+              v-if="volErrors.vrp"
+              state="error"
+              title="Variance risk premium unavailable"
+              :message="volErrors.vrp"
+              retry
+              @retry="ensureVolatility"
+            />
+            <UiStatus
+              v-else-if="volState.vrp === 'loading' || volState.vrp === 'pending'"
+              :state="volState.vrp === 'pending' ? 'preparing' : 'loading'"
+              title="Loading variance risk premium"
+              message="The 1-month implied and 20-session realized volatility comparison is being prepared."
+            />
+            <VRPTile
+              v-else
+              :date="vrp.date"
+              :iv1m="vrp.iv1m"
+              :rv20="vrp.rv20"
+              :vrp="vrp.vrp"
+              :z="vrp.z"
+              :source-meta="vrp.source_meta"
+            />
           </div>
 
-          <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-            <h4 class="font-semibold mb-2">Seasonality (5D)</h4>
-            <ui-error-block v-if="volErrors.season" :message="'Failed to load seasonality'"
-                          :detail="volErrors.season" :onRetry="ensureVolatility" />
-            <ui-skeleton-card v-else-if="volState.season === 'loading' || volState.season === 'pending'" />
-            <template v-else>
-              <Seasonality5Tile
-                v-if="season"
-                :date="season.date"
-                :d1="season.d1" :d2="season.d2" :d3="season.d3" :d4="season.d4" :d5="season.d5"
-                :cum5="season.cum5" :z="season.z" :note="seasonNote" />
-              <div v-else class="text-sm text-gray-400">{{ seasonNote || 'No seasonality data.' }}</div>
-            </template>
-            <div v-if="volErr" class="text-red-400 text-sm mt-2">Vol metrics error: {{ volErr }}</div>
-          </div>
+          <UiStatus
+            v-if="volErrors.season"
+            state="error"
+            title="Five-session seasonality unavailable"
+            :message="volErrors.season"
+            retry
+            @retry="ensureVolatility"
+          />
+          <UiStatus
+            v-else-if="volState.season === 'loading' || volState.season === 'pending'"
+            :state="volState.season === 'pending' ? 'preparing' : 'loading'"
+            title="Loading five-session seasonality"
+            message="The historical tendency for the next five sessions is being prepared."
+          />
+          <Seasonality5Tile
+            v-else-if="season"
+            :date="season.date"
+            :d1="season.d1" :d2="season.d2" :d3="season.d3" :d4="season.d4" :d5="season.d5"
+            :cum5="season.cum5" :z="season.z" :note="seasonNote"
+            @reading-inspected="recordFirstUsefulReading"
+          />
+          <UiStatus
+            v-else
+            state="sparse"
+            title="Seasonality is unavailable"
+            :message="seasonNote || 'No five-session seasonality data was returned for this symbol.'"
+          />
+
+          <UiStatus
+            v-if="volErr"
+            state="warning"
+            title="Some volatility context is incomplete"
+            :message="volErr"
+          />
         </section>
         <section
           v-else-if="activeTab==='volatility' && dataMode==='eod'"
-          class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700 text-sm text-gray-300"
+          class="gex-ui"
+          data-theme="dark"
+          data-density="compact"
         >
-          <div v-if="tabState('volatility')==='pending'">
-            Volatility metrics are being prepared for {{ userSymbol }}… we’ll show them as soon as they’re ready.
-          </div>
-          <div v-else class="text-red-300">
-            Volatility unavailable: {{ tabStatus.volatility.err || 'Data not ready yet.' }}
-          </div>
+          <UiStatus
+            v-if="tabState('volatility')==='pending'"
+            state="preparing"
+            :title="`Preparing ${userSymbol} volatility`"
+            message="Term structure, variance risk premium, and seasonality will appear independently as their snapshots become ready."
+          />
+          <UiStatus
+            v-else
+            state="error"
+            title="Volatility unavailable"
+            :message="tabStatus.volatility.err || 'Data is not ready yet.'"
+            retry
+            @retry="ensureVolatility"
+          />
         </section>
 
         <!-- UA -->
         <section
           v-if="activeTab==='ua' && tabState('ua')==='ready'"
-          class="space-y-4"
+          class="gex-ui gex-ua-view"
+          data-theme="dark"
+          data-density="compact"
         >
-          <div class="flex items-center gap-2 text-xs">
-            <label>Expiry</label>
-            <select v-model="uaExp" class="px-2 py-1 bg-gray-700 rounded text-sm">
-              <option value="ALL">All</option>
-              <option v-for="d in (levels?.expiration_dates || [])" :key="d" :value="d">{{ d }}</option>
-            </select>
+          <UiPanel
+            title="Unusual activity filters"
+            :subtitle="`Screen ${userSymbol} contracts from the latest completed activity snapshot. Z-score and volume/OI are alternative signals; the other filters narrow the result.`"
+            tone="data"
+          >
+            <template #actions>
+              <div class="gex-row">
+                <UiBadge v-if="uaDate" tone="data">Snapshot {{ uaDate }}</UiBadge>
+                <UiBadge>{{ uaRows.length }} result<span v-if="uaRows.length !== 1">s</span></UiBadge>
+              </div>
+            </template>
 
-            <label>Top</label>
-            <input type="number" v-model.number="uaTop" class="w-16 bg-gray-700 rounded px-2 py-1">
-            <label>Sort</label>
-            <select v-model="uaSort" class="bg-gray-700 rounded px-2 py-1">
-              <option value="z_score">Z-Score</option>
-              <option value="premium">Premium ($)</option>
-              <option value="vol_oi">Vol/OI</option>
-            </select>
+            <form class="gex-ua-filter-form" @submit.prevent="ensureUA">
+              <div class="gex-ua-filter-form__primary">
+                <UiSelect v-model="uaExp" label="Expiry" :options="uaExpiryOptions" />
+                <label class="gex-field" for="ua-top-per-expiry">
+                  Top per expiry
+                  <input id="ua-top-per-expiry" v-model.number="uaTop" class="gex-input gex-number" type="number" min="1" max="20" step="1">
+                </label>
+                <UiSelect v-model="uaSort" label="Rank results by" :options="uaSortOptions" />
+                <div class="gex-ua-filter-form__actions">
+                  <UiButton type="submit" variant="primary" :disabled="uaLoading">
+                    {{ uaLoading ? 'Applying…' : 'Apply filters' }}
+                  </UiButton>
+                  <UiButton
+                    type="button"
+                    :aria-expanded="showAdvanced ? 'true' : 'false'"
+                    aria-controls="ua-advanced-filters"
+                    @click="showAdvanced = !showAdvanced"
+                  >
+                    {{ showAdvanced ? 'Hide advanced' : 'Advanced filters' }}
+                  </UiButton>
+                </div>
+              </div>
 
-            <button @click="ensureUA" class="ml-auto px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded">Apply</button>
-            <button @click="showAdvanced = !showAdvanced" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded">
-              {{ showAdvanced ? 'Hide' : 'Advanced' }}
-            </button>
-          </div>
+              <div class="gex-ua-active-filters" aria-label="Current unusual activity filters">
+                <span>Current screen</span>
+                <UiBadge v-if="uaFiltersDirty" tone="warning">Changes waiting to be applied</UiBadge>
+                <UiBadge tone="data">Z ≥ {{ uaFilterView.minZ }} or Vol/OI ≥ {{ uaFilterView.minVolOI }}</UiBadge>
+                <UiBadge>Volume ≥ {{ uaFilterView.minVol }}</UiBadge>
+                <UiBadge>
+                  {{ uaFilterView.minPrem > 0
+                    ? `Post-screen premium ≥ ${fmtUsd(uaFilterView.minPrem)}`
+                    : uaEffectiveMinPremium != null
+                      ? `Post-screen premium ≥ ${fmtUsd(uaEffectiveMinPremium)} automatic floor`
+                      : 'Automatic premium floor' }}
+                </UiBadge>
+                <UiBadge>{{ uaFilterView.nearPct > 0 ? `Within ±${uaFilterView.nearPct}% of spot` : 'Any strike distance' }}</UiBadge>
+                <UiBadge>{{ uaFilterView.side === 'call' ? 'Call-led only' : uaFilterView.side === 'put' ? 'Put-led only' : 'Both sides' }}</UiBadge>
+                <UiBadge>Limit {{ uaFilterView.limit }}</UiBadge>
+              </div>
 
-          <div v-if="showAdvanced" class="flex flex-wrap items-center gap-2 text-xs mb-1">
-            <label>min Z</label>
-            <input type="number" step="0.1" v-model.number="uaMinZ" class="w-16 bg-gray-700 rounded px-2 py-1">
-            <label>min Vol/OI</label>
-            <input type="number" step="0.1" v-model.number="uaMinVolOI" class="w-16 bg-gray-700 rounded px-2 py-1">
-            <label>min Vol</label>
-            <input type="number" v-model.number="uaMinVol" class="w-20 bg-gray-700 rounded px-2 py-1">
-            <label>min $</label>
-            <input type="number" v-model.number="uaMinPrem" class="w-24 bg-gray-700 rounded px-2 py-1" placeholder="premium">
-            <label>near ±%</label>
-            <input type="number" v-model.number="uaNearPct" class="w-16 bg-gray-700 rounded px-2 py-1" placeholder="10">
-            <label>Side</label>
-            <select v-model="uaSide" class="bg-gray-700 rounded px-2 py-1">
-              <option value="">Both</option><option value="call">Call-led</option><option value="put">Put-led</option>
-            </select>
-            <div class="ml-auto flex gap-2">
-              <button @click="presetConservative" class="px-2 py-1 bg-gray-700 rounded">Conservative</button>
-              <button @click="presetAggressive" class="px-2 py-1 bg-gray-700 rounded">Aggressive</button>
-            </div>
-          </div>
+              <div v-if="showAdvanced" id="ua-advanced-filters" class="gex-ua-advanced">
+                <div class="gex-ua-advanced__heading">
+                  <div>
+                    <h3>Advanced thresholds</h3>
+                    <p>Use zero to remove a threshold. A zero premium uses the server's symbol-specific floor.</p>
+                  </div>
+                  <div class="gex-row">
+                    <UiButton type="button" @click="presetConservative">Conservative preset</UiButton>
+                    <UiButton type="button" @click="presetAggressive">Broader preset</UiButton>
+                  </div>
+                </div>
+                <div class="gex-ua-advanced__grid">
+                  <label class="gex-field" for="ua-min-z">
+                    Minimum z-score
+                    <input id="ua-min-z" v-model.number="uaMinZ" class="gex-input gex-number" type="number" min="0" step="0.1">
+                  </label>
+                  <label class="gex-field" for="ua-min-vol-oi">
+                    Minimum volume / OI
+                    <input id="ua-min-vol-oi" v-model.number="uaMinVolOI" class="gex-input gex-number" type="number" min="0" step="0.1">
+                  </label>
+                  <label class="gex-field" for="ua-min-volume">
+                    Minimum volume
+                    <input id="ua-min-volume" v-model.number="uaMinVol" class="gex-input gex-number" type="number" min="0" step="1">
+                  </label>
+                  <label class="gex-field" for="ua-min-premium">
+                    Minimum premium after signal screen ($)
+                    <input id="ua-min-premium" v-model.number="uaMinPrem" class="gex-input gex-number" type="number" min="0" step="1000">
+                  </label>
+                  <label class="gex-field" for="ua-near-spot">
+                    Distance from spot (±%)
+                    <input id="ua-near-spot" v-model.number="uaNearPct" class="gex-input gex-number" type="number" min="0" step="1">
+                  </label>
+                  <UiSelect v-model="uaSide" label="Leading side" :options="uaSideOptions" />
+                </div>
+              </div>
+            </form>
+          </UiPanel>
 
-          <ui-error-block v-if="errors.ua" :message="'Failed to load UA'" :detail="errors.ua" :onRetry="ensureUA" />
-          <ui-spinner v-else-if="uaLoading" />
+          <UiStatus v-if="errors.ua" state="error" title="Unusual activity failed to load" :message="errors.ua" retry @retry="ensureUA" />
+          <UiStatus
+            v-else-if="uaLoading"
+            state="loading"
+            title="Applying unusual activity filters"
+            message="Keeping the current screen in place until the updated activity response is ready."
+          />
           <template v-else>
-            <div v-if="!uaDate" class="text-sm text-gray-400 mb-2">No UA data yet for today.</div>
-            <UnusualActivityTable :rows="uaRows || []" :dataDate="uaDate" :symbol="userSymbol" />
-            <div class="flex justify-center mt-3">
-              <button @click="showMore" class="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded">Show more</button>
+            <UiStatus
+              v-if="!uaDate"
+              state="sparse"
+              title="No unusual activity snapshot is available"
+              message="Try another symbol or return after the next completed activity calculation."
+            />
+            <UnusualActivityTable :rows="uaRows || []" :dataDate="uaDate" :symbol="userSymbol" :request-sort="uaFilterView.sort" @reading-inspected="recordFirstUsefulReading" />
+            <div v-if="uaDate" class="gex-ua-show-more">
+              <span class="gex-small gex-muted">Increase the per-expiry and overall limits without changing the active thresholds.</span>
+              <UiButton :disabled="uaTop >= 20 && uaLimit >= 200" @click="showMore">
+                {{ uaTop >= 20 && uaLimit >= 200 ? 'Maximum rows shown' : 'Show more activity' }}
+              </UiButton>
             </div>
           </template>
         </section>
         <section
           v-else-if="activeTab==='ua'"
-          class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700 text-sm text-gray-300"
+          class="gex-ui"
+          data-theme="dark"
+          data-density="compact"
         >
-          <div v-if="tabState('ua')==='pending'">
-            Unusual Activity is being prepared for {{ userSymbol }}… we’ll surface it as soon as it’s ready.
-          </div>
-          <div v-else class="text-red-300">
-            Unusual Activity unavailable: {{ tabStatus.ua.err || 'Data not ready yet.' }}
-          </div>
+          <UiStatus
+            v-if="tabState('ua')==='pending'"
+            state="preparing"
+            :title="`Preparing ${userSymbol} unusual activity`"
+            message="The latest completed activity screen will appear here when it is ready."
+          />
+          <UiStatus
+            v-else
+            state="error"
+            title="Unusual activity unavailable"
+            :message="tabStatus.ua.err || 'Data is not ready yet.'"
+            retry
+            @retry="ensureUA"
+          />
         </section>
 
         <!-- STRIKES -->
-        <section v-show="activeTab==='strikes'" class="space-y-4">
+        <section
+          v-if="strikesMounted && !intradayTransition && (dataMode==='eod' || activeTab==='strikes')"
+          v-show="activeTab==='strikes'"
+          :class="dataMode === 'eod' ? 'gex-ui gex-strikes-view' : 'gex-ui gex-intraday-strikes-view'"
+          data-theme="dark"
+          data-density="compact"
+        >
           <!-- EOD: OI + Net GEX + ΔVol (EOD) -->
           <template v-if="dataMode==='eod'">
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700" ref="netGexSection">
-              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <h4 class="font-semibold">Net GEX by Strike (EOD)</h4>
-                  <p class="text-xs text-gray-400">Zoomed to the most active band so you see where hedging bites first.</p>
-                </div>
-                <div class="text-xs bg-gray-900/80 border border-gray-700 rounded-lg p-3 text-gray-200">
-                  <div class="font-semibold mb-1 text-white">How to read Net GEX</div>
-                  <ul class="space-y-1">
-                    <li>• Positive GEX → dealers hedge with price → ranges compress</li>
-                    <li>• Negative GEX → dealers hedge against price → moves expand</li>
-                    <li>• Large clusters → reaction zones, not targets</li>
-                  </ul>
-                </div>
-              </div>
-
-              <NetGexChart :strikeData="levels?.strike_data || []" />
-
-              <div
-                v-if="checklistVisible"
-                class="mt-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs text-cyan-100"
-              >
-                <div class="font-semibold mb-2 text-white">First-day checklist</div>
-                <ul class="space-y-1">
-                  <li>☑️ Check today’s Net GEX near spot</li>
-                  <li>☑️ Note the closest large positive / negative level</li>
-                  <li>☑️ Watch how price reacts at that level</li>
-                </ul>
-                <div class="mt-2 text-[11px] text-cyan-200">
-                  You’re not looking for predictions — just context.
-                </div>
-                <div class="mt-2">
-                  <button
-                    class="text-[11px] text-cyan-300 hover:text-cyan-100 underline"
-                    @click="dismissChecklist"
-                  >
-                    Got it
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <div class="mb-3">
-                <h4 class="font-semibold">ΔOI by Strike (EOD)</h4>
-                <p v-if="levels?.date_prev" class="text-xs mt-1" :class="levels?.date_prev_is_stale ? 'text-amber-300' : 'text-gray-400'">
-                  Comparing against {{ levels.date_prev }}
-                  <span v-if="levels?.date_prev_gap_trading_days != null">
-                    ({{ levels.date_prev_gap_trading_days }} trading day<span v-if="levels.date_prev_gap_trading_days !== 1">s</span> back)
-                  </span>
-                  <span v-if="levels?.date_prev_is_stale"> because the prior session snapshot for this expiry set is incomplete.</span>
-                </p>
-              </div>
-              <StrikeDeltaChart
-                :strikeData="strikeSeriesForDelta"
-                height-class="h-80 md:h-96 xl:h-[26rem]"
-                snapshot-name="delta-oi-eod"
+            <div ref="netGexSection" class="gex-strikes-view__primary">
+              <NetGexChart
+                eod
+                :strikeData="levels?.strike_data || []"
+                :symbol="userSymbol"
+                :timeframe="selectedTimeframeLabel"
+                :snapshot-date="levels?.data_date || levels?.date || null"
+                :snapshot-name="`net-gex-${userSymbol}-${gexTf}-${levels?.data_date || levels?.date || 'date-unavailable'}`"
+                @reading-inspected="recordFirstUsefulReading"
               />
             </div>
-            <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-              <div class="mb-3">
-                <h4 class="font-semibold">ΔVol by Strike (EOD)</h4>
-                <p v-if="levels?.date_prev" class="text-xs mt-1" :class="levels?.date_prev_is_stale ? 'text-amber-300' : 'text-gray-400'">
-                  Comparing against {{ levels.date_prev }}
-                  <span v-if="levels?.date_prev_gap_trading_days != null">
-                    ({{ levels.date_prev_gap_trading_days }} trading day<span v-if="levels.date_prev_gap_trading_days !== 1">s</span> back)
-                  </span>
-                  <span v-if="levels?.date_prev_is_stale"> because the prior session snapshot for this expiry set is incomplete.</span>
-                </p>
-              </div>
-              <VolumeDeltaChart
-                :strikeData="strikeSeriesForDelta"
-                height-class="h-80 md:h-96 xl:h-[26rem]"
-                snapshot-name="delta-vol-eod"
-              />
-            </div>
+            <StrikeDeltaChart
+              :strikeData="strikeSeriesForDelta"
+              :symbol="userSymbol"
+              :timeframe="selectedTimeframeLabel"
+              :snapshot-date="levels?.data_date || levels?.date || null"
+              :comparison-basis="strikeComparisonBasis"
+              :comparison-date="strikeComparisonDate"
+              :comparison-gap-trading-days="strikeComparisonGap"
+              :comparison-is-stale="strikeComparisonIsStale"
+              height-class="h-80 md:h-96 xl:h-[26rem]"
+              :snapshot-name="`delta-oi-${userSymbol}-${gexTf}-${levels?.data_date || levels?.date || 'date-unavailable'}-${strikeComparisonBasis}-${strikeComparisonDate || 'no-comparison'}`"
+              @reading-inspected="recordFirstUsefulReading"
+            />
+            <VolumeDeltaChart
+              eod
+              :strikeData="strikeSeriesForDelta"
+              :symbol="userSymbol"
+              :timeframe="selectedTimeframeLabel"
+              :snapshot-date="levels?.data_date || levels?.date || null"
+              :comparison-basis="strikeComparisonBasis"
+              :comparison-date="strikeComparisonDate"
+              :comparison-gap-trading-days="strikeComparisonGap"
+              :comparison-is-stale="strikeComparisonIsStale"
+              height-class="h-80 md:h-96 xl:h-[26rem]"
+              :snapshot-name="`delta-vol-${userSymbol}-${gexTf}-${levels?.data_date || levels?.date || 'date-unavailable'}-${strikeComparisonBasis}-${strikeComparisonDate || 'no-comparison'}`"
+              @reading-inspected="recordFirstUsefulReading"
+            />
           </template>
 
-          <!-- Intraday: only ΔVol (Live) -->
+          <!-- Intraday strike ratios and premium -->
           <template v-else>
-            <div class="space-y-4">
-              <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-                <h4 class="font-semibold mb-3">Vol / OI (Live) by Strike</h4>
-                <div class="h-1/3">
-                  <VolOverOiChart
-                    :strikeData="toVolOiSeries(levels?.strike_data || [])"
-                  />
+            <UiPanel
+              v-if="!intradaySnapshotAvailable"
+              title="Live strikes"
+              subtitle="A completed intraday strike snapshot is not available yet."
+              tone="data"
+            >
+              <UiStatus
+                :state="intradayLoading ? 'loading' : (marketOpen === true ? 'preparing' : (marketOpen === false ? 'closed' : 'sparse'))"
+                :title="`No completed intraday strike snapshot for ${userSymbol}`"
+                :message="marketOpen === true
+                  ? 'The dashboard will retry according to the current refresh state. Returned pre-snapshot rows are not presented as live activity.'
+                  : (marketOpen === false
+                    ? `The first live strike snapshot can be collected ${intradayNextOpenLabel}.`
+                    : 'Market-session status is unavailable. Returned pre-snapshot rows are not presented as live activity.')"
+              />
+              <details
+                class="gex-intraday-diagnostic"
+                @toggle="intradayUnavailableDetailsOpen = $event.currentTarget.open"
+              >
+                <summary>Returned pre-snapshot diagnostic rows · {{ levels?.strike_data?.length || 0 }}</summary>
+                <div v-if="intradayUnavailableDetailsOpen">
+                  <p class="gex-small gex-muted">These rows can contain EOD open-interest scaffolding. They are preserved exactly and are not labeled as intraday volume, ratios, or premium.</p>
+                  <pre>{{ JSON.stringify(levels?.strike_data || [], null, 2) }}</pre>
                 </div>
-              </div>
-
-              <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-                <h4 class="font-semibold mb-3">PCR (Live) by Strike</h4>
-                <div class="h-1/3">
-                  <PcrByStrikeChart
-                    :strikeData="toPcrSeries(levels?.strike_data || [])"
-                  />
-                </div>
-              </div>
-
-              <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-                <h4 class="font-semibold mb-3">Premium (Live) by Strike</h4>
-                <div class="h-1/3">
-                  <PremiumByStrikeChart
-                    :strikeData="toPremiumSeries(levels?.strike_data || [])"
-                  />
-                </div>
-              </div>
-            </div>
+              </details>
+            </UiPanel>
+            <template v-else>
+              <VolOverOiChart
+                :strikeData="levels?.strike_data || []"
+                :symbol="userSymbol"
+                :source-label="intradaySourceLabel"
+                :snapshot-as-of="intradaySnapshotAsOf"
+                :source-timestamp-status="intradaySourceTimestampStatus"
+                :market-open="marketOpen"
+                :snapshot-name="`intraday-vol-oi-${userSymbol}-${intradaySnapshotAsOf || 'time-unavailable'}`"
+                @reading-inspected="recordFirstUsefulReading"
+              />
+              <PcrByStrikeChart
+                :strikeData="levels?.strike_data || []"
+                :symbol="userSymbol"
+                :source-label="intradaySourceLabel"
+                :snapshot-as-of="intradaySnapshotAsOf"
+                :source-timestamp-status="intradaySourceTimestampStatus"
+                :market-open="marketOpen"
+                :snapshot-name="`intraday-pcr-${userSymbol}-${intradaySnapshotAsOf || 'time-unavailable'}`"
+                @reading-inspected="recordFirstUsefulReading"
+              />
+              <PremiumByStrikeChart
+                :strikeData="levels?.strike_data || []"
+                :symbol="userSymbol"
+                :source-label="intradaySourceLabel"
+                :snapshot-as-of="intradaySnapshotAsOf"
+                :source-timestamp-status="intradaySourceTimestampStatus"
+                :market-open="marketOpen"
+                :snapshot-name="`intraday-premium-${userSymbol}-${intradaySnapshotAsOf || 'time-unavailable'}`"
+                @reading-inspected="recordFirstUsefulReading"
+              />
+            </template>
           </template>
         </section>
 
 
         <!-- FLOW (Intraday) -->
-        <section v-show="activeTab==='flow' && dataMode==='intraday'" class="space-y-4">
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <MetricCard
-              title="Call Vol"
-              :value="num(levels?.call_volume_total)"
-              sub="contracts"
-              :class="levels?.call_volume_total > levels?.put_volume_total ? 'text-green-400' : ''"
-            />
-            <MetricCard
-              title="Put Vol"
-              :value="num(levels?.put_volume_total)"
-              sub="contracts"
-              :class="levels?.put_volume_total > levels?.call_volume_total ? 'text-red-400' : ''"
-            />
-            <MetricCard
-              title="PCR"
-              :value="levels?.pcr_volume"
-              sub="puts ÷ calls"
-              :class="levels?.pcr_volume > 1 ? 'text-red-400' : 'text-green-400'"
-            />
-            <MetricCard
-              title="Premium"
-              :value="fmtUsd(estimatePremium(levels))"
-              sub="notional"
-            />
-          </div>
-
-          <div class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700">
-            <h4 class="font-semibold mb-3 flex items-center gap-2">
-              <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-              </svg>
-              Live Flow by Strike
-            </h4>
-            <VolumeDeltaChart
-              :strikeData="(levels?.strike_data || []).map(r => ({
-                strike: r.strike,
-                call_vol_delta: r.call_vol_delta ?? r.call_volume_delta ?? 0,
-                put_vol_delta:  r.put_vol_delta  ?? r.put_volume_delta  ?? 0,
-              }))"
-              snapshot-name="flow-delta-live"
-            />
-          </div>
+        <section
+          v-if="intradayFlowMounted && dataMode==='intraday' && activeTab==='flow'"
+          class="gex-ui gex-intraday-view"
+          data-theme="dark"
+          data-density="compact"
+        >
+          <IntradayFlowPanel
+            :symbol="userSymbol"
+            :data-symbol="intradayDataSymbol || ''"
+            :totals="{
+              call_volume_total: levels?.call_volume_total,
+              put_volume_total: levels?.put_volume_total,
+              pcr_volume: levels?.pcr_volume,
+              premium_total: levels?.premium_total,
+            }"
+            :rows="levels?.strike_data || []"
+            :summary="levels?.intraday_summary || {}"
+            :snapshot-meta="levels?.intraday_snapshot_meta || {}"
+            :response-meta="levels?.intraday_response_meta || {}"
+            :source-age-seconds="intradaySourceAge"
+            :source-label="intradaySourceLabel"
+            :next-open-label="intradayNextOpenLabel"
+            :loading="intradayLoading"
+            :refreshing="intradayRefreshing"
+            :error="intradayError || ''"
+            @refresh="manualRefresh"
+            @retry="manualRefresh"
+            @reading-inspected="recordFirstUsefulReading"
+          />
         </section>
       </template>
     </div>
 
     <!-- Symbol Picker Modal -->
     <teleport to="body">
-      <div v-if="showSymbolPicker" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="bg-gray-900 rounded-xl border border-gray-700 max-w-md w-full p-6">
-          <h3 class="text-lg font-semibold mb-4">Select Symbol</h3>
-          <input
-            v-model="symbolSearch"
-            @keyup.enter="pickSymbol(symbolSearch)"
-            placeholder="SPY, QQQ, AAPL..."
-            class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-cyan-500"
-          />
-          <div class="mt-4 flex justify-end gap-2">
-            <button @click="showSymbolPicker = false" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
-            <button @click="pickSymbol(symbolSearch)" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700">
-              Go
-            </button>
+      <div
+        v-if="showSymbolPicker"
+        ref="symbolPickerDialog"
+        class="gex-ui gex-dashboard-dialog"
+        data-theme="dark"
+        data-density="compact"
+        @click.self="closeSymbolPicker()"
+        @keydown="handleSymbolPickerKeydown"
+      >
+        <div id="dashboard-symbol-dialog" class="gex-dashboard-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="symbol-picker-title">
+          <h2 id="symbol-picker-title">Select dashboard symbol</h2>
+          <label for="dashboard-symbol-input">
+            Ticker symbol
+            <input
+              id="dashboard-symbol-input"
+              ref="symbolPickerInput"
+              v-model="symbolSearch"
+              maxlength="15"
+              autocomplete="off"
+              placeholder="SPY, QQQ, AAPL…"
+              @keyup.enter="pickSymbol(symbolSearch)"
+            />
+          </label>
+          <div class="gex-row" style="justify-content:flex-end; margin-top:16px">
+            <UiButton @click="closeSymbolPicker()">Cancel</UiButton>
+            <UiButton variant="primary" @click="pickSymbol(symbolSearch)">Open symbol</UiButton>
           </div>
         </div>
       </div>
@@ -661,15 +765,23 @@ import {
 } from 'vue'
 import axios from 'axios'
 import { coalesceDashboardRequest } from '@/Support/dashboard-request-scope.js'
+import { dashboardStateFromSearch, dashboardUrl } from '@/Support/dashboard-url-state.js'
 import {
   bootstrapPollDelayMs,
   bootstrapPreparationNotice,
   ownsPreparationPoll,
   symbolPreparationState,
 } from '@/Support/symbol-bootstrap-state.js'
+import UiBadge from './UI/UiBadge.vue'
+import UiButton from './UI/UiButton.vue'
+import UiPanel from './UI/UiPanel.vue'
+import UiSelect from './UI/UiSelect.vue'
+import UiStatus from './UI/UiStatus.vue'
+import OverviewMetrics from './OverviewMetrics.vue'
+import FirstUseGuide from './FirstUseGuide.vue'
+import { recordFirstUsefulReading as recordFirstUsefulReadingEvent } from '@/Support/first-use.js'
 
 // Components
-import MetricCard from './MetricCard.vue'
 import StrikeDeltaChart from './StrikeDeltaChart.vue'
 import VolumeDeltaChart from './VolumeDeltaChart.vue'
 import NetGexChart from './NetGexChart.vue'
@@ -679,6 +791,7 @@ import Seasonality5Tile from './Seasonality5Tile.vue'
 import VolOverOiChart from './VolOverOiChart.vue'
 import PcrByStrikeChart from './PcrByStrikeChart.vue'
 import PremiumByStrikeChart from './PremiumByStrikeChart.vue'
+import IntradayFlowPanel from './IntradayFlow/IntradayFlowPanel.vue'
 import TermTile from './TermTile.vue'
 import VRPTile from './VRPTile.vue'
 const SkewTile = defineAsyncComponent(() => import('./SkewTile.vue'))
@@ -687,8 +800,12 @@ import QScorePanel from './QScorePanel.vue'
 const ExpiryPressureTile = defineAsyncComponent(() => import('./ExpiryPressureTile.vue'))
 import UnusualActivityTable from './UnusualActivityTable.vue'
 import uiSpinner from './Spinner.vue'
-import uiSkeletonCard from './SkeletonCard.vue'
 import uiErrorBlock from './ErrorBlock.vue'
+
+const props = defineProps({
+  accountId: { type: [Number, String], default: null },
+})
+
 axios.defaults.withCredentials = true
 axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest'
 
@@ -716,6 +833,10 @@ const tabsIntraday = [
   { key: 'strikes', label: 'Live Strikes', icon: defineComponent({ render: () => h('svg', { class: 'w-4 h-4', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' })]) }) },
 ]
 
+const initialDashboardState = dashboardStateFromSearch(
+  typeof window === 'undefined' ? '' : window.location.search,
+)
+const dataMode = ref(initialDashboardState.mode)
 const currentTabs = computed(() => dataMode.value === 'eod' ? tabsEOD : tabsIntraday)
 const tabStatus = reactive({
   positioning: { state: 'idle', err: '' },
@@ -735,13 +856,62 @@ const tabMeta = computed(() =>
     err: tabStatus[t.key]?.err || '',
   }))
 )
+const dashboardTabItems = computed(() => tabMeta.value.map(tab => ({
+  value: tab.key,
+  label: tab.state === 'pending'
+    ? `${tab.label} · Preparing`
+    : tab.state === 'error'
+      ? `${tab.label} · Unavailable`
+      : tab.label,
+})))
+const dashboardTabButtons = ref([])
+
+function onDashboardTabKey(event, index) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const last = dashboardTabItems.value.length - 1
+  const next = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? last
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + dashboardTabItems.value.length) % dashboardTabItems.value.length
+  const tab = dashboardTabItems.value[next]
+  if (!tab) return
+  activate(tab.value)
+  nextTick(() => dashboardTabButtons.value[next]?.focus())
+}
 
 // State
+const symbol = ref(initialDashboardState.symbol)
+const gexTf = ref(initialDashboardState.timeframe)
+const userSymbol = symbol
 const getDefaultTab = (mode) => mode === 'intraday' ? 'flow' : 'strikes'
-const activeTab = ref(getDefaultTab('eod'))
+const activeTab = ref(initialDashboardState.tab)
+const activeGuideTabLabel = computed(() =>
+  dashboardTabItems.value.find(item => item.value === activeTab.value)?.label ?? activeTab.value
+)
+const lastTabByMode = reactive({
+  eod: initialDashboardState.mode === 'eod' ? initialDashboardState.tab : 'strikes',
+  intraday: initialDashboardState.mode === 'intraday' ? initialDashboardState.tab : 'flow',
+})
+const positioningMounted = ref(initialDashboardState.mode === 'eod' && initialDashboardState.tab === 'positioning')
+const intradayFlowMounted = ref(initialDashboardState.mode === 'intraday' && initialDashboardState.tab === 'flow')
+const intradayUnavailableDetailsOpen = ref(false)
+const eodStrikesMounted = ref(initialDashboardState.mode === 'eod' && initialDashboardState.tab === 'strikes')
+const intradayStrikesMounted = ref(initialDashboardState.mode === 'intraday' && initialDashboardState.tab === 'strikes')
+const strikesMounted = computed({
+  get: () => dataMode.value === 'eod' ? eodStrikesMounted.value : intradayStrikesMounted.value,
+  set: value => {
+    if (dataMode.value === 'eod') eodStrikesMounted.value = Boolean(value)
+    else intradayStrikesMounted.value = Boolean(value)
+  },
+})
 const eodLevels = ref(null)
 const intradayLevels = ref(null)
-const levels = computed(() => dataMode.value === 'eod' ? eodLevels.value : intradayLevels.value)
+const intradayDataSymbol = ref(null)
+const levels = computed(() => dataMode.value === 'eod'
+  ? eodLevels.value
+  : (intradayDataSymbol.value === userSymbol.value ? intradayLevels.value : null))
 // Separate loading states
 const eodLoading = ref(false)
 const intradayLoading = ref(false)
@@ -767,6 +937,27 @@ const visibleTimeframeOptions = computed(() => {
   const filtered = timeframeOptions.filter(tf => avail.has(tf.value))
   return filtered.length ? filtered : timeframeOptions
 })
+const selectedTimeframeLabel = computed(() => timeframeOptions.find(tf => tf.value === gexTf.value)?.label ?? gexTf.value.toUpperCase())
+const scopedExpirationDates = computed(() => {
+  const mapped = levels.value?.timeframe_expirations?.[gexTf.value]
+  if (Array.isArray(mapped)) return mapped
+  return Array.isArray(levels.value?.expiration_dates) ? levels.value.expiration_dates : []
+})
+const uaExpiryOptions = computed(() => [
+  { value: 'ALL', label: 'All activity expiries' },
+  ...uaExpirationDates.value
+    .map(date => ({ value: date, label: date })),
+])
+const uaSortOptions = [
+  { value: 'z_score', label: 'Z-score' },
+  { value: 'premium', label: 'Premium after signal screen' },
+  { value: 'vol_oi', label: 'Volume / OI' },
+]
+const uaSideOptions = [
+  { value: '', label: 'Calls and puts' },
+  { value: 'call', label: 'Call-led only' },
+  { value: 'put', label: 'Put-led only' },
+]
 
 // Separate error states
 const eodError = ref('')
@@ -794,10 +985,18 @@ const preparing = ref({
   coverage: null,
 })
 const preparationNotice = computed(() => bootstrapPreparationNotice(preparing.value, userSymbol.value))
-const topError = computed(() => dataMode.value === 'eod' ? eodError.value : intradayError.value)
+const topError = computed(() => dataMode.value === 'eod'
+  ? eodError.value
+  : (intradayHasData.value ? '' : intradayError.value))
+
+function recordFirstUsefulReading() {
+  recordFirstUsefulReadingEvent({
+    accountId: props.accountId,
+    validated: true,
+  })
+}
 
 const lastUpdated = ref(null)
-const dataMode = ref('eod')
 const refreshTimer = ref(null)
 const pinDays = 3
 const busy = ref({ positioning: false })
@@ -809,6 +1008,9 @@ const seasonNote = ref('')
 const loaded = ref({ volatility: false, ua: false })
 const uaRows = ref([])
 const uaDate = ref(null)
+const uaExpirationDates = ref([])
+const uaEffectiveMinPremium = ref(null)
+const uaAppliedServerFilters = ref(null)
 const uaExp = ref('ALL')
 const uaLoading = ref(false)
 const uaTop = ref(5)
@@ -821,12 +1023,48 @@ const uaSide = ref('')
 const uaSort = ref('z_score')
 const uaMinPrem = ref(0)
 const showAdvanced = ref(false)
-const initialSymbol = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('symbol')
-const symbol = ref(initialSymbol?.trim().toUpperCase() || 'SPY')
-const gexTf = ref('14d')
-const userSymbol = symbol
+const uaAppliedFilters = ref(null)
+function activityFilterSnapshot(exp = null) {
+  return {
+    exp: exp || 'ALL',
+    top: uaTop.value,
+    limit: uaLimit.value,
+    minZ: uaMinZ.value,
+    minVolOI: uaMinVolOI.value,
+    minVol: uaMinVol.value,
+    minPrem: uaMinPrem.value,
+    nearPct: uaNearPct.value || 0,
+    side: uaSide.value || '',
+    sort: uaSort.value,
+  }
+}
+const uaSelectedFilters = computed(() => activityFilterSnapshot(uaExp.value === 'ALL' ? null : uaExp.value))
+const uaFilterView = computed(() => uaAppliedFilters.value || uaSelectedFilters.value)
+const uaFiltersDirty = computed(() => uaAppliedFilters.value !== null
+  && JSON.stringify(uaAppliedFilters.value) !== JSON.stringify(uaSelectedFilters.value))
+
+function applyUaPayload(data, requestedFilters) {
+  const payload = data && typeof data === 'object' ? data : {}
+  const hasReportedExpirations = Array.isArray(payload.expiration_dates)
+  uaDate.value = payload.data_date || null
+  uaRows.value = Array.isArray(payload.items) ? payload.items : []
+  uaExpirationDates.value = hasReportedExpirations
+    ? [...new Set(payload.expiration_dates.filter(Boolean).map(String))].sort()
+    : [...new Set(uaRows.value.map(row => row?.exp_date).filter(Boolean).map(String))].sort()
+  uaEffectiveMinPremium.value = Number.isFinite(Number(payload.effective_min_premium))
+    ? Number(payload.effective_min_premium)
+    : (requestedFilters.minPrem > 0 ? Number(requestedFilters.minPrem) : null)
+  uaAppliedServerFilters.value = payload.applied_filters && typeof payload.applied_filters === 'object'
+    ? payload.applied_filters
+    : null
+  uaAppliedFilters.value = requestedFilters
+
+  if (hasReportedExpirations && requestedFilters.exp !== 'ALL' && !uaExpirationDates.value.includes(requestedFilters.exp)) {
+    uaExp.value = 'ALL'
+  }
+}
 const showOnboarding = ref(false)
-const checklistVisible = ref(false)
+const dashboardContext = ref(null)
 const netGexSection = ref(null)
 const cache = new Map()
 const cacheTerm = new Map()
@@ -844,61 +1082,152 @@ let uaLoadGeneration = 0
 let uaActiveKey = null
 let volatilityLoad = null
 let preparedRefreshTimer = null
-let positioningFrame = null
-let positioningTimer = null
 const bootstrapControllers = new Map()
 const bootstrapInflight = new Map()
 const inflight = new Map()
-const marketOpen = ref(false)
+const marketOpen = ref(null)
 const inflightIntraday = new Map()
 const cacheIntraday = new Map()
 const INTRADAY_TTL_MS = 60_000 // 1 minute cache window
 const INTRADAY_PENDING_RETRY_MS = 5_000
 const INTRADAY_PENDING_MAX_RETRIES = 12
-const intradayDataSymbol = ref(null)
 const intradaySnapshotAsOf = ref(null)
 const intradaySnapshotAvailable = ref(false)
 const intradayNextOpen = ref(null)
 const intradaySourceAge = ref(null)
+const intradayReceivedAt = ref(null)
+const intradayIngestionCompletedAt = ref(null)
+const intradayRefreshEligible = ref(null)
+const intradayTradeDate = ref(null)
+const intradayMarketSession = ref(null)
+const intradaySourceTimestampStatus = ref('unknown')
+const intradaySourceIsLegacy = computed(() => String(intradaySourceTimestampStatus.value).toLowerCase() === 'legacy')
 const intradaySourceLabel = computed(() => {
-  if (!marketOpen.value) return 'Market Closed'
+  if (marketOpen.value === null) return intradayLoading.value ? 'Loading session state' : 'Session state unavailable'
+  if (marketOpen.value === false) return 'Market Closed'
+  if (intradaySourceIsLegacy.value) {
+    if (intradaySourceAge.value === null) return 'Legacy response time'
+    return intradaySourceAge.value < 90
+      ? 'Recent legacy response'
+      : `Legacy response (${Math.floor(intradaySourceAge.value / 60)}m old)`
+  }
   if (intradaySourceAge.value === null) return 'Provider update time unavailable'
   return intradaySourceAge.value < 90 ? 'Live' : `Delayed (${Math.floor(intradaySourceAge.value / 60)}m)`
+})
+const intradaySourceTimeKind = computed(() => intradaySourceIsLegacy.value ? 'Legacy response time' : 'Provider source as of')
+const intradayFreshnessState = computed(() => {
+  if (intradayTransition.value) return 'loading'
+  if (marketOpen.value === null) return intradayLoading.value ? 'loading' : 'stale'
+  if (marketOpen.value === false) return 'closed'
+  if (intradaySourceIsLegacy.value || intradaySourceAge.value === null) return 'stale'
+  return intradaySourceAge.value < 90 ? 'fresh' : 'stale'
 })
 const intradayNextOpenLabel = computed(() => intradayNextOpen.value
   ? `at ${formatEtDateTime(intradayNextOpen.value)} ET`
   : 'at the next trading session')
 const intradayHasData = computed(() => {
-  if (intradayDataSymbol.value !== userSymbol.value || !intradaySnapshotAvailable.value) return false
-
-  const rows = levels.value?.strike_data
-  if (Array.isArray(rows) && rows.length > 0) return true
-
-  const callVol = Number(levels.value?.call_volume_total || 0)
-  const putVol = Number(levels.value?.put_volume_total || 0)
-  return (callVol + putVol) > 0
+  return intradayDataSymbol.value === userSymbol.value && intradaySnapshotAvailable.value
 })
 const intradayAsOfEtLabel = computed(() => formatEtDateTime(lastUpdated.value))
 
 // Symbol picker
 const showSymbolPicker = ref(false)
 const symbolSearch = ref('')
+const symbolPickerTrigger = ref(null)
+const symbolPickerInput = ref(null)
+const symbolPickerDialog = ref(null)
+let dashboardHistoryReady = false
+let restoringDashboardHistory = false
+const dashboardUrlEnabled = typeof window !== 'undefined' && window.location.pathname === '/dashboard'
+
+function currentDashboardState() {
+  return {
+    symbol: userSymbol.value,
+    mode: dataMode.value,
+    tab: activeTab.value,
+    timeframe: gexTf.value,
+  }
+}
+
+function syncDashboardUrl(action = 'replace') {
+  if (!dashboardUrlEnabled || restoringDashboardHistory) return
+  const url = dashboardUrl(window.location.href, currentDashboardState())
+  const method = action === 'push' ? 'pushState' : 'replaceState'
+  window.history[method](currentDashboardState(), '', url)
+}
+
+async function restoreDashboardLocation() {
+  if (!dashboardUrlEnabled) return
+  const state = dashboardStateFromSearch(window.location.search, currentDashboardState())
+  restoringDashboardHistory = true
+  lastTabByMode[state.mode] = state.tab
+  dataMode.value = state.mode
+  activeTab.value = state.tab
+  gexTf.value = state.timeframe
+  userSymbol.value = state.symbol
+  if (state.mode === 'eod' && state.tab === 'positioning') positioningMounted.value = true
+  if (state.mode === 'intraday' && state.tab === 'flow') intradayFlowMounted.value = true
+  if (state.tab === 'strikes') strikesMounted.value = true
+  await nextTick()
+  restoringDashboardHistory = false
+}
+
+function openSymbolPicker() {
+  symbolSearch.value = userSymbol.value
+  showSymbolPicker.value = true
+  nextTick(() => symbolPickerInput.value?.select())
+}
+
+function closeSymbolPicker({ restoreFocus = true } = {}) {
+  showSymbolPicker.value = false
+  symbolSearch.value = ''
+  if (restoreFocus) nextTick(() => symbolPickerTrigger.value?.focus())
+}
+
+function handleSymbolPickerKeydown(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeSymbolPicker()
+    return
+  }
+  if (event.key !== 'Tab') return
+
+  const focusable = [...(symbolPickerDialog.value?.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+  ) || [])].filter(element => element.getClientRects().length > 0 || import.meta.env.MODE === 'test')
+  if (!focusable.length) return
+
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+function chooseTimeframe(timeframe) {
+  if (gexTf.value === timeframe) return
+  gexTf.value = timeframe
+  syncDashboardUrl('push')
+}
 
 const intradayTransition = computed(() =>
   dataMode.value === 'intraday' &&
-  intradayRefreshing.value &&
   intradayDataSymbol.value &&
   userSymbol.value !== intradayDataSymbol.value
 )
 
 function pickSymbol(sym) {
-  const s = sym.trim().toUpperCase()
+  const s = String(sym || '').trim().toUpperCase().replace(/[^A-Z0-9.^-]/g, '').slice(0, 15)
   if (s) {
     kickoffSymbolWarm(s, gexTf.value)
     userSymbol.value = s
+    syncDashboardUrl('push')
   }
-  showSymbolPicker.value = false
-  symbolSearch.value = ''
+  closeSymbolPicker()
 }
 
 // Controllers
@@ -939,9 +1268,6 @@ function stopPageWork() {
   clearTimeout(symbolTimer)
   clearTimeout(preparedRefreshTimer)
   preparedRefreshTimer = null
-  if (positioningFrame !== null) cancelAnimationFrame(positioningFrame)
-  clearTimeout(positioningTimer)
-  positioningFrame = positioningTimer = null
   busy.value.positioning = false
   for (const type of Object.keys(controllers)) {
     controllers[type]?.abort()
@@ -966,7 +1292,17 @@ function stopPageWork() {
 
 watch(tabMeta, (tabs) => {
   const active = tabs.find(t => t.key === activeTab.value)
-  if (!active) activeTab.value = getDefaultTab(dataMode.value)
+  if (!active) {
+    activeTab.value = getDefaultTab(dataMode.value)
+    syncDashboardUrl('replace')
+  }
+})
+
+watch(activeTab, tab => {
+  lastTabByMode[dataMode.value] = tab
+  if (dataMode.value === 'eod' && tab === 'positioning') positioningMounted.value = true
+  if (dataMode.value === 'intraday' && tab === 'flow') intradayFlowMounted.value = true
+  if (tab === 'strikes') strikesMounted.value = true
 })
 
 function activate(key) {
@@ -975,6 +1311,10 @@ function activate(key) {
     return
   }
   activeTab.value = key
+  if (dataMode.value === 'eod' && key === 'positioning') positioningMounted.value = true
+  if (dataMode.value === 'intraday' && key === 'flow') intradayFlowMounted.value = true
+  if (key === 'strikes') strikesMounted.value = true
+  syncDashboardUrl('push')
 }
 
 const preferredTf = (target) => {
@@ -986,10 +1326,12 @@ const preferredTf = (target) => {
   return target
 }
 
-function scrollToNetGex() {
+function scrollToDashboardContext() {
   nextTick(() => {
-    if (!disposed && netGexSection.value) {
-      netGexSection.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!disposed && dashboardContext.value) {
+      const reduceMotion = typeof window !== 'undefined'
+        && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      dashboardContext.value.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
     }
   })
 }
@@ -997,16 +1339,7 @@ function scrollToNetGex() {
 function startGuidedView() {
   showOnboarding.value = false
   localStorage.setItem('gex_onboarding_v1', 'seen')
-
-  dataMode.value = 'eod'
-  userSymbol.value = 'SPY'
-  activeTab.value = 'strikes'
-
-  // force a fresh load for SPY / 0d, then scroll to Net GEX
-  const owner = pageGeneration
-  fetchGexLevelsEOD(userSymbol.value, '0d', { applyTf: true }).then(() => {
-    if (!disposed && owner === pageGeneration) scrollToNetGex()
-  })
+  scrollToDashboardContext()
 }
 
 function dismissOnboarding() {
@@ -1016,15 +1349,15 @@ function dismissOnboarding() {
   localStorage.setItem('gex_onboarding_v1', `skipped:${today}`)
 }
 
-function dismissChecklist() {
-  checklistVisible.value = false
-  localStorage.setItem('gex_checklist_v1_dismissed', '1')
-}
-
 function setMode(mode) {
-  if (dataMode.value === mode) return
+  if (!['eod', 'intraday'].includes(mode) || dataMode.value === mode) return
+  lastTabByMode[dataMode.value] = activeTab.value
   dataMode.value = mode
-  activeTab.value = getDefaultTab(mode)
+  activeTab.value = lastTabByMode[mode] || getDefaultTab(mode)
+  if (mode === 'eod' && activeTab.value === 'positioning') positioningMounted.value = true
+  if (mode === 'intraday' && activeTab.value === 'flow') intradayFlowMounted.value = true
+  if (activeTab.value === 'strikes') strikesMounted.value = true
+  syncDashboardUrl('push')
 }
 
 // Data refresh on mode/tab change
@@ -1057,11 +1390,6 @@ function fmtUsd(v) {
   if (v == null || isNaN(v)) return '—'
   return Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v)
 }
-function estimatePremium(levelsObj) {
-  return Number(levelsObj?.premium_total || 0)
-}
-function num(v) { return Number(v || 0) }
-function fmtPct(v) { return (v === null || v === undefined) ? '—' : `${v}%` }
 function formatEtDateTime(ts) {
   if (!ts) return '—'
   const dt = new Date(ts)
@@ -1344,7 +1672,14 @@ async function loadTermAndVRP(sym, isCurrent) {
           axios.get('/api/vrp', { params: { symbol: sym }, signal: vrpCtl.signal }))
         if (!isCurrent() || vrpCtl.signal.aborted) return
         pendingResponse(response)
-        vrp.value = { date: response.data?.date ?? null, iv1m: response.data?.iv1m ?? null, rv20: response.data?.rv20 ?? null, vrp: response.data?.vrp ?? null, z: response.data?.z ?? null }
+        vrp.value = {
+          date: response.data?.date ?? null,
+          iv1m: response.data?.iv1m ?? null,
+          rv20: response.data?.rv20 ?? null,
+          vrp: response.data?.vrp ?? null,
+          z: response.data?.z ?? null,
+          ...(response.data?.source_meta != null ? { source_meta: response.data.source_meta } : {}),
+        }
         volState.vrp = vrp.value.date ? 'ready' : 'pending'
         if (volState.vrp === 'ready') setCache(cacheVRP, vKey, vrp.value)
       } catch (e) {
@@ -1397,7 +1732,8 @@ async function loadUA(sym, exp = null) {
   const owner = tabGeneration
   const generation = ++uaLoadGeneration
   const uaUrl = mode === 'intraday' ? '/api/intraday/ua' : '/api/ua'
-  const k = ['ua', mode, sym, (exp || 'ALL'), uaTop.value, uaMinZ.value, uaMinVolOI.value, uaMinVol.value, uaMinPrem.value, uaNearPct.value || 0, uaSide.value || '', uaSort.value, uaLimit.value].join('|')
+  const requestedFilters = activityFilterSnapshot(exp)
+  const k = ['ua', mode, sym, requestedFilters.exp, requestedFilters.top, requestedFilters.minZ, requestedFilters.minVolOI, requestedFilters.minVol, requestedFilters.minPrem, requestedFilters.nearPct, requestedFilters.side, requestedFilters.sort, requestedFilters.limit].join('|')
   const ctl = uaActiveKey === k ? ensureController('ua') : cancel('ua')
   if (uaActiveKey !== k) {
     for (const key of inflight.keys()) if (key.startsWith('ua:')) inflight.delete(key)
@@ -1411,17 +1747,17 @@ async function loadUA(sym, exp = null) {
   stopTabPoll('ua')
   const hit = getCache(cacheUA, k, 60_000)
   if (hit) {
-    uaDate.value = hit.data_date || null
-    uaRows.value = hit.items || []
+    applyUaPayload(hit, requestedFilters)
     loaded.value.ua = true
     uaLoading.value = false
     return
   }
   const params = {
-    symbol: sym, exp, per_expiry: uaTop.value, limit: uaLimit.value,
-    min_z: uaMinZ.value, min_vol_oi: uaMinVolOI.value, min_vol: uaMinVol.value,
-    min_premium: uaMinPrem.value, near_spot_pct: uaNearPct.value || 0,
-    only_side: uaSide.value || null, with_premium: true, sort: uaSort.value,
+    symbol: sym, exp, per_expiry: requestedFilters.top, limit: requestedFilters.limit,
+    min_z: requestedFilters.minZ, min_vol_oi: requestedFilters.minVolOI, min_vol: requestedFilters.minVol,
+    min_premium: requestedFilters.minPrem, near_spot_pct: requestedFilters.nearPct,
+    only_side: requestedFilters.side || null, with_premium: true, sort: requestedFilters.sort,
+    include_scope: true,
   }
   try {
     const response = await withInflight(`ua:${k}`, () =>
@@ -1432,8 +1768,7 @@ async function loadUA(sym, exp = null) {
     )
     if (!isCurrent()) return
     const { data } = pendingResponse(response)
-    uaDate.value = data?.data_date || null
-    uaRows.value = data?.items || []
+    applyUaPayload(data, requestedFilters)
     loaded.value.ua = true
     setCache(cacheUA, k, data || {})
   } catch (e) {
@@ -1442,7 +1777,7 @@ async function loadUA(sym, exp = null) {
       tabStatus.ua.state = 'pending'
       pollActiveTab('ua', ensureUA, isCurrent)
     } else {
-      errors.value.ua = e?.response?.data || e.message
+      errors.value.ua = e?.response?.data?.error || e?.message || 'The activity request failed.'
       uaDate.value = null
       uaRows.value = []
     }
@@ -1538,6 +1873,7 @@ function handleSelectSymbolEvent(evt) {
   stopPreparingPoll({ reset: true })
   cancel('gex_eod')
   userSymbol.value = next
+  syncDashboardUrl('push')
 }
 
 function onboardingState() {
@@ -1554,15 +1890,22 @@ function onboardingState() {
 
 onMounted(() => {
   const onboarding = onboardingState()
-  const checklistDismissed = !!localStorage.getItem('gex_checklist_v1_dismissed')
   showOnboarding.value = onboarding === 'new'
-  // Only show checklist on first run AND if not dismissed
-  checklistVisible.value = !checklistDismissed && onboarding === 'new'
 
-  // make sure we load something on first render
-  const initialTf = showOnboarding.value ? '0d' : gexTf.value
-  if (showOnboarding.value) gexTf.value = '0d'
-  fetchGexLevelsEOD(userSymbol.value, initialTf, { applyTf: true })
+  // Make the current URL shareable and restore it with browser Back/Forward.
+  dashboardHistoryReady = dashboardUrlEnabled
+  if (dashboardUrlEnabled) {
+    syncDashboardUrl('replace')
+    window.addEventListener('popstate', restoreDashboardLocation)
+  }
+
+  if (dataMode.value === 'eod') {
+    fetchGexLevelsEOD(userSymbol.value, gexTf.value, { applyTf: true })
+  } else {
+    refreshIntraday({ force: false })
+    startAutoRefresh()
+  }
+  ensureActiveTab()
 
   // listen for watchlist / scanner clicks
   window.addEventListener('select-symbol', handleSelectSymbolEvent)
@@ -1572,6 +1915,7 @@ onMounted(() => {
 onUnmounted(() => {
   disposed = true
   window.removeEventListener('select-symbol', handleSelectSymbolEvent)
+  window.removeEventListener('popstate', restoreDashboardLocation)
   stopPageWork()
   bootstrapStartResponses.clear()
 })
@@ -1880,6 +2224,74 @@ async function kickoffSymbolWarm(sym, timeframe = '14d') {
   })
 }
 
+function ownsField(payload, field) {
+  return payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, field)
+}
+
+function zonedTimestamp(value) {
+  if (typeof value !== 'string') return null
+  const timestamp = value.trim()
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : null
+}
+
+function legacyResponseTime(summaryPayload, strikesPayload) {
+  return zonedTimestamp(summaryPayload?.asof) ?? zonedTimestamp(strikesPayload?.asof)
+}
+
+function intradayResponseMeta(summaryPayload = {}, strikesPayload = {}) {
+  const compositeOrSummary = field => {
+    if (ownsField(strikesPayload, field)) return strikesPayload[field]
+    if (ownsField(summaryPayload, field)) return summaryPayload[field]
+    return null
+  }
+  const sourceContractPresent = ['source_asof', 'source_timestamp_complete', 'source_timestamp_status']
+    .some(field => ownsField(strikesPayload, field) || ownsField(summaryPayload, field))
+  const sourceAsOf = sourceContractPresent
+    ? compositeOrSummary('source_asof')
+    : legacyResponseTime(summaryPayload, strikesPayload)
+  const rawAsOf = compositeOrSummary('asof')
+  const marketSession = compositeOrSummary('market_session')
+  const snapshotContractPresent = ownsField(strikesPayload, 'snapshot_available')
+    || ownsField(summaryPayload, 'snapshot_available')
+
+  return {
+    open: typeof compositeOrSummary('open') === 'boolean' ? compositeOrSummary('open') : null,
+    sourceAsOf,
+    rawAsOf,
+    capturedAt: compositeOrSummary('captured_at'),
+    receivedAt: compositeOrSummary('received_at'),
+    ingestionCompletedAt: compositeOrSummary('ingestion_completed_at'),
+    snapshotAvailable: snapshotContractPresent ? compositeOrSummary('snapshot_available') : Boolean(rawAsOf),
+    refreshEligible: compositeOrSummary('refresh_eligible'),
+    refreshReason: compositeOrSummary('refresh_reason'),
+    tradeDate: compositeOrSummary('trade_date'),
+    marketSession,
+    nextOpen: marketSession?.next_open_at ?? null,
+    sourceTimestampStatus: compositeOrSummary('source_timestamp_status')
+      ?? (sourceAsOf ? (sourceContractPresent ? 'complete' : 'legacy') : 'unknown'),
+    sourceTimestampComplete: compositeOrSummary('source_timestamp_complete')
+      ?? (sourceAsOf ? true : null),
+  }
+}
+
+function applyIntradayResponseMeta(meta, now = Date.now()) {
+  const sourceMs = meta?.sourceAsOf ? new Date(meta.sourceAsOf).getTime() : Number.NaN
+  marketOpen.value = typeof meta?.open === 'boolean' ? meta.open : null
+  intradaySnapshotAsOf.value = meta?.sourceAsOf ?? null
+  intradaySnapshotAvailable.value = Boolean(meta?.snapshotAvailable)
+  intradayNextOpen.value = meta?.nextOpen ?? null
+  intradayReceivedAt.value = meta?.receivedAt ?? null
+  intradayIngestionCompletedAt.value = meta?.ingestionCompletedAt ?? null
+  intradayRefreshEligible.value = typeof meta?.refreshEligible === 'boolean' ? meta.refreshEligible : null
+  intradayTradeDate.value = meta?.tradeDate ?? null
+  intradayMarketSession.value = meta?.marketSession ?? null
+  intradaySourceTimestampStatus.value = meta?.sourceTimestampStatus ?? 'unknown'
+  intradaySourceAge.value = Number.isFinite(sourceMs)
+    ? Math.max(0, Math.floor((now - sourceMs) / 1000))
+    : null
+  lastUpdated.value = meta?.sourceAsOf ?? null
+}
+
 function startAutoRefresh() {
   if (disposed || dataMode.value !== 'intraday') return
   if (refreshTimer.value) clearInterval(refreshTimer.value)
@@ -1890,6 +2302,7 @@ async function refreshIntraday({ force = false } = {}) {
   if (disposed || dataMode.value !== 'intraday') return
   const sym = userSymbol.value
   const now = Date.now()
+  intradayError.value = ''
 
   // 1) Use in-memory cache if recent and not forced
   const cached = cacheIntraday.get(sym)
@@ -1897,12 +2310,13 @@ async function refreshIntraday({ force = false } = {}) {
     if (!intradayLevels.value) intradayLevels.value = {}
     Object.assign(intradayLevels.value, cached.payload)
     intradayDataSymbol.value = sym
-    intradaySnapshotAsOf.value = cached.asof
-    intradaySnapshotAvailable.value = cached.available ?? !!cached.asof
-    intradayNextOpen.value = cached.nextOpen ?? null
-    intradaySourceAge.value = cached.asof ? Math.max(0, Math.floor((now - new Date(cached.asof).getTime()) / 1000)) : null
+    applyIntradayResponseMeta(cached.meta ?? {
+      open: marketOpen.value,
+      sourceAsOf: cached.asof ?? null,
+      snapshotAvailable: cached.available ?? Boolean(cached.asof),
+      nextOpen: cached.nextOpen ?? null,
+    }, now)
     clearIntradayPendingRetry()
-    lastUpdated.value = cached.asof
     firstIntradayLoadDone.value = true
     return
   }
@@ -1915,8 +2329,6 @@ async function refreshIntraday({ force = false } = {}) {
   const soft = firstIntradayLoadDone.value
   if (!soft) intradayLoading.value = true
   else intradayRefreshing.value = true
-  intradayError.value = ''
-
   const p = (async () => {
     try {
       // Step A: lightweight summary to check freshness
@@ -1927,9 +2339,12 @@ async function refreshIntraday({ force = false } = {}) {
       const sumData = summaryResp.data || {}
       if (userSymbol.value !== sym || dataMode.value !== 'intraday' || ctl.signal.aborted) return
 
-      marketOpen.value = !!sumData.open
+      marketOpen.value = typeof sumData.open === 'boolean' ? sumData.open : null
 
-      const asofMs = sumData.asof ? new Date(sumData.asof).getTime() : null
+      const summarySourceContractPresent = ['source_asof', 'source_timestamp_complete', 'source_timestamp_status']
+        .some(field => ownsField(sumData, field))
+      const freshnessAsOf = summarySourceContractPresent ? sumData.source_asof : sumData.asof
+      const asofMs = freshnessAsOf ? new Date(freshnessAsOf).getTime() : null
       const isFresh = !!asofMs && (now - asofMs) < INTRADAY_TTL_MS
 
       // New servers decide from completed ingestion, pending work and session policy.
@@ -1950,28 +2365,24 @@ async function refreshIntraday({ force = false } = {}) {
 
       const compData = comp.data || {}
       if (userSymbol.value !== sym || dataMode.value !== 'intraday' || ctl.signal.aborted) return
-      marketOpen.value = !!compData.open
+      const responseMeta = intradayResponseMeta(sumData, compData)
+      const rawStrikeRows = Array.isArray(compData.items) ? compData.items : []
+      const totals = compData.totals && typeof compData.totals === 'object' ? compData.totals : {}
+      const snapshotMeta = Object.fromEntries(Object.entries(compData).filter(([field]) => field !== 'items'))
 
       const next = {
-        call_volume_total: compData?.totals?.call_vol ?? 0,
-        put_volume_total:  compData?.totals?.put_vol  ?? 0,
-        pcr_volume:        compData?.totals?.pcr_vol  ?? compData?.totals?.pcr_vol ?? null,
-        premium_total:     compData?.totals?.premium ?? 0,
-        strike_data:       (compData.items || []).map(r => ({
-          strike:        r.strike,
-          call_vol_delta: r.call_vol,
-          put_vol_delta:  r.put_vol,
-          oi_call_eod:    r.oi_call_eod,
-          oi_put_eod:     r.oi_put_eod,
-          vol_oi:         r.vol_oi,
-          pcr:            r.pcr,
-          premium_call:   r.call_prem,
-          premium_put:    r.put_prem,
-        })),
-        strike_gex_live: (compData.items || []).map(r => ({
-          strike:       r.strike,
-          net_gex:      r.net_gex_live,
-          net_gex_delta: r.net_gex_delta,
+        call_volume_total: totals.call_vol ?? null,
+        put_volume_total: totals.put_vol ?? null,
+        pcr_volume: totals.pcr_vol ?? null,
+        premium_total: totals.premium ?? null,
+        intraday_summary: sumData,
+        intraday_snapshot_meta: snapshotMeta,
+        intraday_response_meta: responseMeta,
+        strike_data: rawStrikeRows.map(r => ({ ...r })),
+        strike_gex_live: rawStrikeRows.map(r => ({
+          ...r,
+          net_gex: r.net_gex ?? r.net_gex_live ?? null,
+          net_gex_delta: r.net_gex_delta ?? null,
         })),
       }
 
@@ -1979,26 +2390,20 @@ async function refreshIntraday({ force = false } = {}) {
       Object.assign(intradayLevels.value, next)
 
       intradayDataSymbol.value = sym
-      const snapshotAsOf = compData.asof || sumData.asof || null
-      intradaySnapshotAsOf.value = snapshotAsOf
-      intradaySourceAge.value = snapshotAsOf ? Math.max(0, Math.floor((Date.now() - new Date(snapshotAsOf).getTime()) / 1000)) : null
-      const snapshotAvailable = compData.snapshot_available ?? sumData.snapshot_available ?? !!snapshotAsOf
-      intradaySnapshotAvailable.value = snapshotAvailable
-      intradayNextOpen.value = compData.market_session?.next_open_at ?? sumData.market_session?.next_open_at ?? null
-
-      lastUpdated.value = snapshotAsOf
+      applyIntradayResponseMeta(responseMeta)
       firstIntradayLoadDone.value = true
 
       // Step D: never retain the placeholder read made while a new symbol's
       // queued ingest is still running. Poll briefly, then fall back to the
       // normal 30-second refresh interval.
-      if (snapshotAvailable) {
+      if (responseMeta.snapshotAvailable) {
         clearIntradayPendingRetry()
         cacheIntraday.set(sym, {
           t: Date.now(),
-          asof: snapshotAsOf,
-          available: snapshotAvailable,
-          nextOpen: intradayNextOpen.value,
+          asof: responseMeta.sourceAsOf,
+          available: responseMeta.snapshotAvailable,
+          nextOpen: responseMeta.nextOpen,
+          meta: responseMeta,
           payload: next,
         })
       } else {
@@ -2053,7 +2458,11 @@ function resetAuxiliaryData() {
   seasonNote.value = ''
   uaRows.value = []
   uaDate.value = null
+  uaExpirationDates.value = []
+  uaEffectiveMinPremium.value = null
+  uaAppliedServerFilters.value = null
   uaLoading.value = false
+  uaAppliedFilters.value = null
 }
 
 watch(dataMode, () => {
@@ -2069,19 +2478,14 @@ watch(userSymbol, (s) => {
   eodLoading.value = false
   intradayLoading.value = false
   intradayRefreshing.value = false
+  intradayError.value = ''
+  intradayUnavailableDetailsOpen.value = false
   for (const candidate of bootstrapStartResponses.keys()) {
     if (candidate !== s) bootstrapStartResponses.delete(candidate)
   }
 
   const owner = pageGeneration
-  busy.value.positioning = true
-  positioningFrame = requestAnimationFrame(() => {
-    positioningFrame = null
-    positioningTimer = setTimeout(() => {
-      positioningTimer = null
-      if (!disposed && owner === pageGeneration) busy.value.positioning = false
-    }, 250)
-  })
+  busy.value.positioning = false
   symbolTimer = setTimeout(() => {
     symbolTimer = null
     if (disposed || owner !== pageGeneration || userSymbol.value !== s) return
@@ -2099,17 +2503,20 @@ watch(userSymbol, (s) => {
 watch(userSymbol, (s) => {
   if (typeof window !== 'undefined') {
     localStorage.setItem('calculator_last_symbol', s)
+    window.dispatchEvent(new CustomEvent('dashboard-symbol-changed', {
+      detail: { symbol: s },
+    }))
   }
+})
+
+watch([userSymbol, dataMode, activeTab, gexTf], () => {
+  if (dashboardHistoryReady && !restoringDashboardHistory) syncDashboardUrl('replace')
 })
 
 watch(uaExp, () => { if (!symbolTimer && activeTab.value === 'ua') ensureUA() })
 
 watch(gexTf, tf => {
-  if (dataMode.value === 'eod')
-    fetchGexLevelsEOD(userSymbol.value, tf)
-  else {
-    refreshIntraday()
-  }
+  if (dataMode.value === 'eod') fetchGexLevelsEOD(userSymbol.value, tf)
 })
 
 watch(timeframeAvailability, (set) => {
@@ -2125,81 +2532,23 @@ function getCache(map, key, ttl) {
   const h = map.get(key)
   return (h && Date.now() - h.t < ttl) ? h.data : null
 }
-
-function n(v, d = 0) { return Number.isFinite(Number(v)) ? Number(v) : d }
-
-// --- Normalizers for chart inputs ---
-function toNetGexSeries(arr) {
-  // Accept {strike, net_gex, net_gex_delta} OR {strike, net_gex_live, net_gex_delta}
-  return (arr || []).map(r => ({
-    strike: n(r.strike),
-    netGex: n(r.net_gex ?? r.net_gex_live ?? 0),
-    netGexDelta: n(r.net_gex_delta ?? 0),
-  }))
-}
-
-function toVolOiSeries(arr = []) {
-  return (arr || []).map(r => ({
-    strike: n(r.strike),
-
-    // keep volume fields under the names the chart expects
-    call_vol_delta: n(r.call_vol_delta ?? r.call_volume_delta ?? 0),
-    put_vol_delta:  n(r.put_vol_delta  ?? r.put_volume_delta  ?? 0),
-
-    // keep OI
-    oi_call_eod:    n(r.oi_call_eod ?? 0),
-    oi_put_eod:     n(r.oi_put_eod  ?? 0),
-
-    // keep precomputed Vol/OI as-is (null allowed)
-    vol_oi: (r.vol_oi === null || r.vol_oi === undefined)
-      ? null
-      : Number(r.vol_oi),
-  }))
-}
-
-function toPcrSeries(arr = []) {
-  return (arr || []).map(r => ({
-    strike: n(r.strike),
-
-    pcr: (r.pcr === null || r.pcr === undefined) ? null : Number(r.pcr),
-
-    // keep vols so the chart fallback can compute p/c when pcr is null
-    call_vol_delta: n(r.call_vol_delta ?? r.call_volume_delta ?? 0),
-    put_vol_delta:  n(r.put_vol_delta  ?? r.put_volume_delta  ?? 0),
-  }))
-}
-
-function toPremiumSeries(arr = []) {
-  return (arr || []).map(r => ({
-    strike: n(r.strike),
-    // use snake_case so PremiumByStrikeChart can see them
-    premium_call: n(r.premium_call ?? r.call_prem ?? 0),
-    premium_put:  n(r.premium_put  ?? r.put_prem  ?? 0),
-  }))
-}
-
 const strikeSeriesForDelta = computed(() => {
-  const rows = levels.value?.strike_data || []
-
-  const hasAnyDod =
-    rows.some(r =>
-      (r.call_oi_delta ?? 0) !== 0 ||
-      (r.put_oi_delta ?? 0) !== 0 ||
-      (r.call_vol_delta ?? 0) !== 0 ||
-      (r.put_vol_delta ?? 0) !== 0
-    )
-
-  if (hasAnyDod) return rows
-
-  // fallback: use WoW deltas instead
-  return rows.map(r => ({
-    ...r,
-    call_oi_delta: r.call_oi_wow ?? 0,
-    put_oi_delta:  r.put_oi_wow ?? 0,
-    call_vol_delta: r.call_vol_wow ?? 0,
-    put_vol_delta:  r.put_vol_wow ?? 0,
-  }))
+  return Array.isArray(levels.value?.strike_data) ? levels.value.strike_data : []
 })
+const strikeComparisonBasis = computed(() => {
+  if (levels.value?.date_prev) return 'daily'
+  if (levels.value?.date_prev_week) return 'weekly'
+  return 'unavailable'
+})
+const strikeComparisonDate = computed(() => strikeComparisonBasis.value === 'daily'
+  ? (levels.value?.date_prev ?? null)
+  : (levels.value?.date_prev_week ?? null))
+const strikeComparisonGap = computed(() => strikeComparisonBasis.value === 'daily'
+  ? (levels.value?.date_prev_gap_trading_days ?? null)
+  : (levels.value?.date_prev_week_gap_trading_days ?? null))
+const strikeComparisonIsStale = computed(() => strikeComparisonBasis.value === 'daily'
+  ? Boolean(levels.value?.date_prev_is_stale)
+  : (strikeComparisonGap.value != null && Number(strikeComparisonGap.value) > 5))
 </script>
 
 <style scoped>

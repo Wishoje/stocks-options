@@ -17,7 +17,8 @@ class ActivityController extends Controller
         $minZ = (float) ($req->query('min_z', 2.0));
         $minVolOI = (float) ($req->query('min_vol_oi', 1.0));
         $minVol = (int) ($req->query('min_vol', 0));
-        $minPremium = (float) ($req->query('min_premium', 0));
+        $requestedMinPremium = (float) ($req->query('min_premium', 0));
+        $minPremium = $requestedMinPremium;
         if ($minPremium <= 0) {
             $minPremium = $this->defaultPremiumFloor($symbol);
         }
@@ -29,6 +30,7 @@ class ActivityController extends Controller
         $sort = $req->query('sort', 'z_score');      // z_score|vol_oi|premium
         $sort = in_array($sort, ['z_score', 'vol_oi', 'premium'], true) ? $sort : 'z_score';
         $useIntraday = (bool) $req->boolean('intraday');
+        $includeScope = (bool) $req->boolean('include_scope');
 
         $ttl = now()->addMinutes(15);
         $cacheVersion = app(EodCacheVersion::class)->current(
@@ -37,16 +39,38 @@ class ActivityController extends Controller
         );
         $batchPricing = (bool) config('activity_performance.batch_pricing_enabled', false);
         $key = ($batchPricing ? 'ua:v3:' : 'ua:v2:').md5(json_encode([
-            $symbol, $exp, $minZ, $minVolOI, $minVol, $minPremium, $limit, $perExp, $sideFilter, $withPrem, $nearPct, $sort, $useIntraday, $cacheVersion,
+            $symbol, $exp, $minZ, $minVolOI, $minVol, $requestedMinPremium, $minPremium, $limit, $perExp, $sideFilter, $withPrem, $nearPct, $sort, $useIntraday, $includeScope, $cacheVersion,
         ]));
 
         return Cache::remember($key, $ttl, function () use (
-            $symbol, $exp, $minZ, $minVolOI, $minVol, $minPremium, $limit, $perExp, $sideFilter, $withPrem, $nearPct, $sort, $useIntraday, $batchPricing
+            $symbol, $exp, $minZ, $minVolOI, $minVol, $requestedMinPremium, $minPremium, $limit, $perExp, $sideFilter, $withPrem, $nearPct, $sort, $useIntraday, $includeScope, $batchPricing
         ) {
             $latest = DB::table('unusual_activity')->where('symbol', $symbol)->max('data_date');
             if (! $latest) {
-                return response()->json(['symbol' => $symbol, 'data_date' => null, 'items' => []], 200);
+                $payload = ['symbol' => $symbol, 'data_date' => null, 'items' => []];
+                if ($includeScope) {
+                    $payload += [
+                        'expiration_dates' => [],
+                        'effective_min_premium' => $minPremium,
+                        'applied_filters' => $this->appliedFilters($exp, $perExp, $limit, $minZ, $minVolOI, $minVol, $requestedMinPremium, $minPremium, $nearPct, $sideFilter, $sort, $withPrem),
+                    ];
+                }
+
+                return response()->json($payload, 200);
             }
+
+            $expirationDates = $includeScope
+                ? DB::table('unusual_activity')
+                    ->where('symbol', $symbol)
+                    ->where('data_date', $latest)
+                    ->whereNotNull('exp_date')
+                    ->distinct()
+                    ->orderBy('exp_date')
+                    ->pluck('exp_date')
+                    ->map(static fn ($date): string => (string) $date)
+                    ->values()
+                    ->all()
+                : [];
 
             // Determine if "today" (ET) matches the latest UA day
             $todayEt = $this->tradingDate(now());
@@ -260,8 +284,35 @@ class ActivityController extends Controller
                 return true;
             }));
 
-            return response()->json(['symbol' => $symbol, 'data_date' => $latest, 'items' => $items], 200);
+            $payload = ['symbol' => $symbol, 'data_date' => $latest, 'items' => $items];
+            if ($includeScope) {
+                $payload += [
+                    'expiration_dates' => $expirationDates,
+                    'effective_min_premium' => $minPremium,
+                    'applied_filters' => $this->appliedFilters($exp, $perExp, $limit, $minZ, $minVolOI, $minVol, $requestedMinPremium, $minPremium, $nearPct, $sideFilter, $sort, $withPrem),
+                ];
+            }
+
+            return response()->json($payload, 200);
         });
+    }
+
+    private function appliedFilters(?string $exp, int $perExp, int $limit, float $minZ, float $minVolOI, int $minVol, float $requestedMinPremium, float $effectiveMinPremium, float $nearPct, mixed $sideFilter, string $sort, bool $withPremium): array
+    {
+        return [
+            'exp' => $exp,
+            'per_expiry' => $perExp,
+            'limit' => $limit,
+            'min_z' => $minZ,
+            'min_vol_oi' => $minVolOI,
+            'min_vol' => $minVol,
+            'requested_min_premium' => $requestedMinPremium,
+            'effective_min_premium' => $effectiveMinPremium,
+            'near_spot_pct' => $nearPct,
+            'only_side' => in_array($sideFilter, ['call', 'put'], true) ? $sideFilter : null,
+            'sort' => $sort,
+            'with_premium' => $withPremium,
+        ];
     }
 
     private function compareActivityRows(object $a, object $b, string $sort): int

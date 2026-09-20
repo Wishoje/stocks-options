@@ -40,20 +40,15 @@ const submit = () => {
 <template>
     <Head title="Two-factor Confirmation" />
 
-    <AuthenticationCard>
+    <AuthenticationCard
+        title="Two-factor confirmation"
+        :description="recovery
+            ? 'Enter one unused recovery code.'
+            : 'Enter the current code from your authenticator app.'"
+    >
         <template #logo>
             <AuthenticationCardLogo />
         </template>
-
-        <div class="mb-4 text-sm text-gray-600 dark:text-gray-400">
-            <template v-if="! recovery">
-                Please confirm access to your account by entering the authentication code provided by your authenticator application.
-            </template>
-
-            <template v-else>
-                Please confirm access to your account by entering one of your emergency recovery codes.
-            </template>
-        </div>
 
         <form @submit.prevent="submit">
             <div v-if="! recovery">
@@ -67,8 +62,10 @@ const submit = () => {
                     class="mt-1 block w-full"
                     autofocus
                     autocomplete="one-time-code"
+                    :aria-invalid="Boolean(form.errors.code)"
+                    :aria-describedby="form.errors.code ? 'code-error' : undefined"
                 />
-                <InputError class="mt-2" :message="form.errors.code" />
+                <InputError id="code-error" class="mt-2" :message="form.errors.code" />
             </div>
 
             <div v-else>
@@ -80,8 +77,10 @@ const submit = () => {
                     type="text"
                     class="mt-1 block w-full"
                     autocomplete="one-time-code"
+                    :aria-invalid="Boolean(form.errors.recovery_code)"
+                    :aria-describedby="form.errors.recovery_code ? 'recovery-code-error' : undefined"
                 />
-                <InputError class="mt-2" :message="form.errors.recovery_code" />
+                <InputError id="recovery-code-error" class="mt-2" :message="form.errors.recovery_code" />
             </div>
 
             <div class="flex items-center justify-end mt-4">

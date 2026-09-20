@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import ApplicationMark from '@/Components/ApplicationMark.vue';
@@ -14,6 +14,29 @@ defineProps({
 });
 
 const showingNavigationDropdown = ref(false);
+const mobileNavigationButton = ref(null);
+const mobileNavigationMenu = ref(null);
+
+const closeNavigation = (restoreFocus = false) => {
+    if (!showingNavigationDropdown.value) return;
+    showingNavigationDropdown.value = false;
+    if (restoreFocus) nextTick(() => mobileNavigationButton.value?.focus());
+};
+
+const toggleNavigation = async () => {
+    const opening = !showingNavigationDropdown.value;
+    showingNavigationDropdown.value = opening;
+    if (!opening) return;
+    await nextTick();
+    mobileNavigationMenu.value?.querySelector('a, button')?.focus();
+};
+
+const closeNavigationOnEscape = (event) => {
+    if (event.key === 'Escape' && showingNavigationDropdown.value) {
+        event.preventDefault();
+        closeNavigation(true);
+    }
+};
 
 const switchToTeam = (team) => {
     router.put(route('current-team.update'), {
@@ -43,29 +66,33 @@ async function dispatchLastSymbol() {
 const logout = () => {
     router.post(route('logout'));
 };
+
+onMounted(() => document.addEventListener('keydown', closeNavigationOnEscape));
+onUnmounted(() => document.removeEventListener('keydown', closeNavigationOnEscape));
 </script>
 
 <template>
-    <div>
+    <div class="dashboard-app-layout">
         <Head :title="title" />
 
         <Banner />
 
-        <div class="min-h-screen bg-gray-100 dark:bg-gray-900">
-            <nav class="bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
+        <div class="dashboard-app-layout__canvas">
+            <a class="dashboard-skip-link" href="#application-page-content">Skip to page content</a>
+            <nav class="gex-ui dashboard-topbar" aria-label="Primary navigation" data-theme="dark" data-density="compact">
                 <!-- Primary Navigation Menu -->
-                <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
-                    <div class="flex justify-between h-24">
+                <div class="dashboard-topbar__inner">
+                    <div class="dashboard-topbar__row">
                         <div class="flex">
                             <!-- Logo -->
-                            <div class="shrink-0 flex items-center">
-                                <Link :href="route('dashboard')">
-                                    <ApplicationMark sizeClass="h-24 sm:h-28 md:h-32" class="block w-auto -my-3" />
+                            <div class="dashboard-topbar__brand">
+                                <Link :href="route('dashboard')" aria-label="GEX Options dashboard">
+                                    <ApplicationMark class="dashboard-topbar__mark" />
                                 </Link>
                             </div>
 
                             <!-- Navigation Links -->
-                            <div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
+                            <div class="dashboard-topbar__links">
                                 <NavLink :href="route('dashboard')" :active="route().current('dashboard')">
                                     Dashboard
                                 </NavLink>
@@ -98,13 +125,18 @@ const logout = () => {
                             </div>
                         </div>
 
-                        <div class="hidden sm:flex sm:items-center sm:ms-6">
+                        <div class="dashboard-topbar__account">
                             <div class="ms-3 relative">
                                 <!-- Teams Dropdown -->
-                                <Dropdown v-if="$page.props.jetstream.hasTeamFeatures" align="right" width="60">
+                                <Dropdown
+                                    v-if="$page.props.jetstream.hasTeamFeatures"
+                                    align="right"
+                                    width="60"
+                                    :content-classes="['dashboard-topbar__dropdown-content']"
+                                >
                                     <template #trigger>
                                         <span class="inline-flex rounded-md">
-                                            <button type="button" class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 focus:outline-none focus:bg-gray-50 dark:focus:bg-gray-700 active:bg-gray-50 dark:active:bg-gray-700 transition ease-in-out duration-150">
+                                            <button type="button" class="dashboard-topbar__menu-trigger" aria-haspopup="menu">
                                                 {{ $page.props.auth.user.current_team.name }}
 
                                                 <svg class="ms-2 -me-0.5 size-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -159,14 +191,14 @@ const logout = () => {
 
                             <!-- Settings Dropdown -->
                             <div class="ms-3 relative">
-                                <Dropdown align="right" width="48">
+                                <Dropdown align="right" width="48" :content-classes="['dashboard-topbar__dropdown-content']">
                                     <template #trigger>
-                                        <button v-if="$page.props.jetstream.managesProfilePhotos" class="flex text-sm border-2 border-transparent rounded-full focus:outline-none focus:border-gray-300 transition">
+                                        <button v-if="$page.props.jetstream.managesProfilePhotos" class="dashboard-topbar__avatar-button" aria-haspopup="menu" :aria-label="`Open account menu for ${$page.props.auth.user.name}`">
                                             <img class="size-8 rounded-full object-cover" :src="$page.props.auth.user.profile_photo_url" :alt="$page.props.auth.user.name">
                                         </button>
 
                                         <span v-else class="inline-flex rounded-md">
-                                            <button type="button" class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 focus:outline-none focus:bg-gray-50 dark:focus:bg-gray-700 active:bg-gray-50 dark:active:bg-gray-700 transition ease-in-out duration-150">
+                                            <button type="button" class="dashboard-topbar__menu-trigger" aria-haspopup="menu">
                                                 {{ $page.props.auth.user.name }}
 
                                                 <svg class="ms-2 -me-0.5 size-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -200,8 +232,16 @@ const logout = () => {
                         </div>
 
                         <!-- Hamburger -->
-                        <div class="-me-1 flex items-center sm:hidden">
-                            <button class="inline-flex items-center justify-center rounded-md p-2 text-gray-400 transition duration-150 ease-in-out hover:bg-gray-100 hover:text-gray-500 focus:bg-gray-100 focus:outline-none focus:text-gray-500 dark:text-gray-500 dark:hover:bg-gray-900 dark:hover:text-gray-400 dark:focus:bg-gray-900 dark:focus:text-gray-400" @click="showingNavigationDropdown = ! showingNavigationDropdown">
+                        <div class="dashboard-topbar__mobile-toggle">
+                            <button
+                                ref="mobileNavigationButton"
+                                type="button"
+                                class="dashboard-topbar__mobile-button"
+                                aria-label="Toggle navigation menu"
+                                aria-controls="mobile-primary-navigation"
+                                :aria-expanded="showingNavigationDropdown ? 'true' : 'false'"
+                                @click="toggleNavigation"
+                            >
                                 <svg
                                     class="size-5"
                                     stroke="currentColor"
@@ -229,15 +269,21 @@ const logout = () => {
                 </div>
 
                 <!-- Responsive Navigation Menu -->
-                <div :class="{'block': showingNavigationDropdown, 'hidden': ! showingNavigationDropdown}" class="sm:hidden">
+                <div
+                    v-show="showingNavigationDropdown"
+                    id="mobile-primary-navigation"
+                    ref="mobileNavigationMenu"
+                    class="dashboard-topbar__mobile-menu"
+                >
                     <div class="pt-2 pb-3 space-y-1">
-                        <ResponsiveNavLink :href="route('dashboard')" :active="route().current('dashboard')">
+                        <ResponsiveNavLink :href="route('dashboard')" :active="route().current('dashboard')" @click="closeNavigation()">
                             Dashboard
                         </ResponsiveNavLink>
 
                         <ResponsiveNavLink
                             :href="route('options.calculator')"
                             :active="route().current('options.calculator')"
+                            @click="dispatchLastSymbol(); closeNavigation()"
                         >
                             Options Calculator
                         </ResponsiveNavLink>
@@ -246,12 +292,14 @@ const logout = () => {
                         <ResponsiveNavLink
                             :href="route('options.scanner')"
                             :active="route().current('options.scanner')"
+                            @click="closeNavigation()"
                         >
                             Scanner
                         </ResponsiveNavLink>
                         <ResponsiveNavLink
                             :href="route('options.ai-export')"
                             :active="route().current('options.ai-export')"
+                            @click="closeNavigation()"
                         >
                             AI Export
                         </ResponsiveNavLink>
@@ -259,6 +307,7 @@ const logout = () => {
                             v-if="[3,4].includes(Number($page.props.auth.user.id))"
                             :href="route('eod.health')"
                             :active="route().current('eod.health')"
+                            @click="closeNavigation()"
                         >
                             EOD Health
                         </ResponsiveNavLink>
@@ -338,14 +387,14 @@ const logout = () => {
             </nav>
 
             <!-- Page Heading -->
-            <header v-if="$slots.header" class="bg-white dark:bg-gray-800 shadow">
+            <header v-if="$slots.header" class="dashboard-page-heading">
                 <div class="max-w-7xl mx-auto px-4 py-3 sm:px-6 sm:py-6 lg:px-8">
                     <slot name="header" />
                 </div>
             </header>
 
             <!-- Page Content -->
-            <main>
+            <main id="application-page-content" class="dashboard-page-content" tabindex="-1">
                 <slot />
             </main>
         </div>

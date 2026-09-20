@@ -2,27 +2,30 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use App\Models\SymbolWallSnapshot;
 use App\Support\Symbols;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
-use Carbon\Carbon;
 
 class WallScannerController extends Controller
 {
+    private const ALLOWED_TIMEFRAMES = ['0d', '1d', '7d', '14d', '21d', '30d', '45d', '60d', '90d', 'monthly'];
+
     public function scan(Request $request)
     {
         try {
             $validated = $request->validate([
-                'symbols'      => ['required', 'array', 'min:1', 'max:500'],
-                'symbols.*'    => ['required', 'string', 'max:32'],
-                'timeframe'    => ['nullable', 'string', 'max:16'],
-                'timeframes'   => ['nullable', 'array', 'max:12'],
-                'timeframes.*' => ['nullable', 'string', 'max:16'],
-                'near_pct'     => ['nullable', 'numeric', 'min:0', 'max:100'],
-                'near_pts'     => ['nullable', 'numeric', 'min:0'],
+                'symbols' => ['required', 'array', 'min:1', 'max:500'],
+                'symbols.*' => ['required', 'string', 'max:32'],
+                'timeframe' => ['nullable', 'string', 'max:16', Rule::in(self::ALLOWED_TIMEFRAMES)],
+                'timeframes' => ['nullable', 'array', 'max:12'],
+                'timeframes.*' => ['nullable', 'string', 'max:16', Rule::in(self::ALLOWED_TIMEFRAMES)],
+                'near_pct' => ['nullable', 'numeric', 'min:0', 'max:100'],
+                'near_pts' => ['nullable', 'numeric', 'min:0'],
             ]);
 
             $symbols = collect((array) ($validated['symbols'] ?? []))
@@ -40,14 +43,27 @@ class WallScannerController extends Controller
                 ->values()
                 ->all();
 
-            $allowedTimeframes = ['0d','1d','7d','14d','21d','30d','45d','60d','90d','monthly'];
-            $timeframes = array_values(array_intersect($requested, $allowedTimeframes));
+            $timeframes = array_values(array_intersect($requested, self::ALLOWED_TIMEFRAMES));
 
             $maxPct = array_key_exists('near_pct', $validated) ? (float) $validated['near_pct'] : 1.0;
             $maxPts = array_key_exists('near_pts', $validated) ? (float) $validated['near_pts'] : null;
 
+            $coverage = [
+                'requested_symbols' => count($symbols),
+                'requested_timeframes' => count($timeframes),
+                'requested_pairs' => count($symbols) * count($timeframes),
+                'latest_rows' => 0,
+                'stale_rows' => 0,
+                'invalid_rows' => 0,
+                'no_wall_rows' => 0,
+                'invalid_or_no_wall_rows' => 0,
+                'usable_rows' => 0,
+                'unmatched_usable_rows' => 0,
+                'matched_rows' => 0,
+            ];
+
             if (empty($symbols) || empty($timeframes)) {
-                return response()->json(['items' => []]);
+                return $this->scanResponse($maxPct, $maxPts, $timeframes, $coverage);
             }
 
             $now = now('America/New_York');
@@ -71,8 +87,10 @@ class WallScannerController extends Controller
                 ->get();
 
             if ($rows->isEmpty()) {
-                return response()->json(['items' => []]);
+                return $this->scanResponse($maxPct, $maxPts, $timeframes, $coverage);
             }
+
+            $coverage['latest_rows'] = $rows->count();
 
             $items = [];
 
@@ -81,26 +99,36 @@ class WallScannerController extends Controller
                 // - weekdays: 24h
                 // - Monday/weekends: allow weekend bridge from Friday close
                 $maxFreshHours = ($now->isWeekend() || $now->isMonday()) ? 72 : 24;
-                if ($row->trade_date) {
-                    try {
-                        $tradeAt = Carbon::parse($row->trade_date . ' 16:00:00', 'America/New_York');
-                    } catch (\Throwable) {
-                        continue;
-                    }
-                    $ageHours = $tradeAt->diffInHours($now);
+                if (! $row->trade_date) {
+                    $coverage['invalid_rows']++;
 
-                    if ($ageHours > $maxFreshHours) {
-                        continue;
-                    }
+                    continue;
+                }
+
+                try {
+                    $tradeAt = Carbon::parse($row->trade_date.' 16:00:00', 'America/New_York');
+                } catch (\Throwable) {
+                    $coverage['invalid_rows']++;
+
+                    continue;
+                }
+                $ageHours = $tradeAt->diffInHours($now);
+
+                if ($ageHours > $maxFreshHours) {
+                    $coverage['stale_rows']++;
+
+                    continue;
                 }
 
                 $spot = (float) $row->spot;
                 if ($spot <= 0) {
+                    $coverage['invalid_rows']++;
+
                     continue;
                 }
 
                 $hitTypes = [];
-                $walls    = [];
+                $walls = [];
 
                 // Keep scanner focused on one primary put wall + one primary call wall
                 // (EOD first; intraday as fallback) to avoid weaker multi-wall noise.
@@ -111,7 +139,7 @@ class WallScannerController extends Controller
 
                 if ($putWall) {
                     $walls[$putWall['key']] = [
-                        'strike'      => $putWall['strike'],
+                        'strike' => $putWall['strike'],
                         'distance_pt' => $putWall['distance_pt'],
                         'distance_pc' => $putWall['distance_pc'],
                     ];
@@ -128,7 +156,7 @@ class WallScannerController extends Controller
 
                 if ($callWall) {
                     $walls[$callWall['key']] = [
-                        'strike'      => $callWall['strike'],
+                        'strike' => $callWall['strike'],
                         'distance_pt' => $callWall['distance_pt'],
                         'distance_pc' => $callWall['distance_pc'],
                     ];
@@ -138,23 +166,37 @@ class WallScannerController extends Controller
                     }
                 }
 
-                if (!$hitTypes) {
+                if (! $putWall && ! $callWall) {
+                    $coverage['no_wall_rows']++;
+
+                    continue;
+                }
+
+                $coverage['usable_rows']++;
+
+                if (! $hitTypes) {
+                    $coverage['unmatched_usable_rows']++;
+
                     continue;
                 }
 
                 $items[] = [
-                    'symbol'      => $row->symbol,
-                    'spot'        => $spot,
-                    'timeframe'   => $row->timeframe,
-                    'trade_date'  => $row->trade_date,
-                    'hits'        => $hitTypes,
-                    'walls'       => $walls,
+                    'symbol' => $row->symbol,
+                    'spot' => $spot,
+                    'timeframe' => $row->timeframe,
+                    'trade_date' => $row->trade_date,
+                    'hits' => $hitTypes,
+                    'walls' => $walls,
                 ];
+                $coverage['matched_rows']++;
             }
+
+            $coverage['invalid_or_no_wall_rows'] = $coverage['invalid_rows'] + $coverage['no_wall_rows'];
 
             usort($items, function ($a, $b) {
                 $aMin = $this->minDistance($a);
                 $bMin = $this->minDistance($b);
+
                 return $aMin <=> $bMin;
             });
 
@@ -164,12 +206,7 @@ class WallScannerController extends Controller
                 $byTimeframe[$tf][] = $hit;
             }
 
-            return response()->json([
-                'near_pct'     => $maxPct,
-                'near_pts'     => $maxPts,
-                'items'        => $items,
-                'by_timeframe' => $byTimeframe,
-            ]);
+            return $this->scanResponse($maxPct, $maxPts, $timeframes, $coverage, $items, $byTimeframe);
         } catch (\Throwable $e) {
             // Keep Laravel's normal 422 response shape for bad payloads.
             if ($e instanceof ValidationException) {
@@ -186,10 +223,38 @@ class WallScannerController extends Controller
         }
     }
 
+    private function scanResponse(
+        float $maxPct,
+        ?float $maxPts,
+        array $timeframes,
+        array $coverage,
+        array $items = [],
+        array $byTimeframe = [],
+    ) {
+        return response()->json([
+            'near_pct' => $maxPct,
+            'near_pts' => $maxPts,
+            'timeframes' => array_values($timeframes),
+            'applied' => [
+                'near_pct' => $maxPct,
+                'near_pts' => $maxPts,
+                'timeframes' => array_values($timeframes),
+            ],
+            'coverage' => $coverage,
+            'items' => array_values($items),
+            'by_timeframe' => $byTimeframe,
+        ]);
+    }
+
     private function isHit(float $distPct, float $distPts, ?float $maxPct, ?float $maxPts): bool
     {
-        if ($maxPts !== null && $distPts <= $maxPts) return true;
-        if ($maxPct !== null && $distPct <= $maxPct) return true;
+        if ($maxPts !== null && $distPts <= $maxPts) {
+            return true;
+        }
+        if ($maxPct !== null && $distPct <= $maxPct) {
+            return true;
+        }
+
         return false;
     }
 
@@ -197,9 +262,12 @@ class WallScannerController extends Controller
     {
         $min = INF;
         foreach ($hit['walls'] as $info) {
-            if (!$info || !isset($info['distance_pt'])) continue;
+            if (! $info || ! isset($info['distance_pt'])) {
+                continue;
+            }
             $min = min($min, (float) $info['distance_pt']);
         }
+
         return $min === INF ? PHP_FLOAT_MAX : $min;
     }
 
@@ -216,7 +284,7 @@ class WallScannerController extends Controller
 
     private function wallInfo(string $key, mixed $strikeRaw, mixed $distPctRaw, float $spot): ?array
     {
-        if ($strikeRaw === null || !is_numeric($strikeRaw)) {
+        if ($strikeRaw === null || ! is_numeric($strikeRaw)) {
             return null;
         }
 
@@ -227,8 +295,8 @@ class WallScannerController extends Controller
             : ($spot > 0 ? ($distPts / $spot) * 100.0 : INF);
 
         return [
-            'key'         => $key,
-            'strike'      => $strike,
+            'key' => $key,
+            'strike' => $strike,
             'distance_pt' => $distPts,
             'distance_pc' => $distPct,
         ];

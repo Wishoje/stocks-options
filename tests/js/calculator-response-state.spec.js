@@ -126,6 +126,8 @@ describe('calculator API response states', () => {
         expect(wrapper.text()).toContain('Preparing SPY calculator')
         expect(axiosMock.get).toHaveBeenCalledTimes(1)
         expect(axiosMock.post).toHaveBeenCalledTimes(1)
+        const refresh = wrapper.get('[data-testid="calculator-refresh"]')
+        expect(refresh.attributes('disabled')).toBeDefined()
     })
 
     it('adopts an active run from the initial read without sending another POST', async () => {
@@ -304,9 +306,72 @@ describe('calculator API response states', () => {
         await july24.trigger('click')
         await flushPromises()
 
-        expect(wrapper.text()).toContain('(live mid)')
+        expect(wrapper.text()).toContain('(mid)')
         expect(entry.element.value).toBe('5')
         expect(wrapper.text()).toContain('2026-07-24 595 CALL')
+    })
+
+    it('clears unaligned exact metadata and restores matching metadata with the cached expiry', async () => {
+        const catalog17 = [
+            { value: '2026-07-17', label: 'Jul 17', dte: 7, readiness: 'ready', publication_marker: 'catalog-17' },
+            { value: '2026-07-24', label: 'Jul 24', dte: 14, readiness: 'ready', publication_marker: 'catalog-17' },
+        ]
+        const catalog24 = catalog17.map((item) => ({ ...item, publication_marker: 'catalog-24' }))
+        let resolveJuly24
+        const july24Response = new Promise((resolve) => { resolveJuly24 = resolve })
+        const never = new Promise(() => {})
+
+        axiosMock.get
+            .mockResolvedValueOnce({
+                data: {
+                    ...completeResponse,
+                    snapshot_at: '2026-07-16T14:35:00Z',
+                    publication: { id: 'pub-17' },
+                    resolved_expiry: '2026-07-17',
+                    expirations: catalog17,
+                },
+            })
+            .mockReturnValueOnce(july24Response)
+            .mockReturnValueOnce(never)
+
+        wrapper = mount(Calculator)
+        await flushPromises()
+        const details = wrapper.find('[data-testid="calculator-exact-market-data"]')
+        details.element.open = true
+        await details.trigger('toggle')
+        expect(wrapper.find('[data-testid="calculator-response-metadata"]').text()).toContain('pub-17')
+        expect(wrapper.find('[data-testid="calculator-raw-expirations"]').text()).toContain('catalog-17')
+
+        const july24 = wrapper.findAll('button').find((button) => button.text().includes('Jul 24'))
+        await july24.trigger('click')
+        expect(wrapper.find('[data-testid="calculator-response-metadata"]').text()).toBe('{}')
+        expect(wrapper.find('[data-testid="calculator-raw-expirations"]').text()).toBe('[]')
+
+        resolveJuly24({
+            data: {
+                ...completeResponse,
+                snapshot_at: '2026-07-23T14:35:00Z',
+                publication: { id: 'pub-24' },
+                resolved_expiry: '2026-07-24',
+                expirations: catalog24,
+                chain: completeResponse.chain.map((contract) => ({
+                    ...contract,
+                    contract_symbol: contract.contract_symbol.replace('260717', '260724'),
+                    expiry: '2026-07-24',
+                    expiration_date: '2026-07-24',
+                    dte: 14,
+                })),
+            },
+        })
+        await flushPromises()
+        expect(wrapper.find('[data-testid="calculator-response-metadata"]').text()).toContain('pub-24')
+        expect(wrapper.find('[data-testid="calculator-raw-expirations"]').text()).toContain('catalog-24')
+
+        const july17 = wrapper.findAll('button').find((button) => button.text().includes('Jul 17'))
+        await july17.trigger('click')
+        expect(wrapper.find('[data-testid="calculator-response-metadata"]').text()).toContain('pub-17')
+        expect(wrapper.find('[data-testid="calculator-response-metadata"]').text()).not.toContain('pub-24')
+        expect(wrapper.find('[data-testid="calculator-raw-expirations"]').text()).toContain('catalog-17')
     })
 
     it('clears selection when the exact type counterpart does not exist', async () => {

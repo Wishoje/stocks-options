@@ -124,6 +124,44 @@ class Gex027ActivityPricingTest extends MySqlTestCase
         ];
     }
 
+    public function test_ui_scope_metadata_lists_every_latest_expiry_before_result_filters_and_reports_the_effective_floor(): void
+    {
+        $this->seedPricingRows(20);
+
+        $payload = json_decode($this->response(true, 1, [
+            'include_scope' => true,
+            'exp' => '2030-01-03',
+            'min_premium' => 0,
+            'with_premium' => false,
+        ]), true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertSame('2026-09-08', $payload['data_date']);
+        $this->assertSame([
+            '2030-01-03',
+            '2030-01-06',
+            '2030-01-09',
+            '2030-01-12',
+            '2030-01-15',
+        ], $payload['expiration_dates']);
+        $this->assertCount(1, $payload['items']);
+        $this->assertSame('2030-01-03', $payload['items'][0]['exp_date']);
+        $this->assertSame(25000.0, (float) $payload['effective_min_premium']);
+        $this->assertEquals([
+            'exp' => '2030-01-03',
+            'per_expiry' => 1,
+            'limit' => 1,
+            'min_z' => 0.0,
+            'min_vol_oi' => 0.0,
+            'min_vol' => 0,
+            'requested_min_premium' => 0.0,
+            'effective_min_premium' => 25000.0,
+            'near_spot_pct' => 0.0,
+            'only_side' => null,
+            'sort' => 'z_score',
+            'with_premium' => false,
+        ], $payload['applied_filters']);
+    }
+
     public function test_missing_or_invalid_theoretical_inputs_and_chain_average_fallback_preserve_output(): void
     {
         $this->seedPricingRows(10);

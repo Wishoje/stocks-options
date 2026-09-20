@@ -23,16 +23,15 @@ const submit = () => {
 <template>
     <Head title="Forgot Password" />
 
-    <AuthenticationCard>
+    <AuthenticationCard
+        title="Reset your password"
+        description="Enter the email on your account and we will send a reset link."
+    >
         <template #logo>
             <AuthenticationCardLogo />
         </template>
 
-        <div class="mb-4 text-sm text-gray-600 dark:text-gray-400">
-            Forgot your password? No problem. Just let us know your email address and we will email you a password reset link that will allow you to choose a new one.
-        </div>
-
-        <div v-if="status" class="mb-4 font-medium text-sm text-green-600 dark:text-green-400">
+        <div v-if="status" class="mb-4 font-medium text-sm text-green-600 dark:text-green-400" role="status">
             {{ status }}
         </div>
 
@@ -47,8 +46,10 @@ const submit = () => {
                     required
                     autofocus
                     autocomplete="username"
+                    :aria-invalid="Boolean(form.errors.email)"
+                    :aria-describedby="form.errors.email ? 'email-error' : undefined"
                 />
-                <InputError class="mt-2" :message="form.errors.email" />
+                <InputError id="email-error" class="mt-2" :message="form.errors.email" />
             </div>
 
             <div class="flex items-center justify-end mt-4">

@@ -5,10 +5,13 @@ import {
     closestContract,
     contractFamilyIdentity,
     contractIdentity,
+    contractPremiumQuote,
     groupContractsByStrike,
     longOptionPayoff,
+    longOptionProfitPotential,
     selectContractState,
     switchContractType,
+    validContractQuantity,
 } from '@/Support/calculator-contracts.js'
 
 const call = {
@@ -32,6 +35,75 @@ const put = {
 }
 
 describe('calculator contract state', () => {
+    it.each([0, -1, 1.5, '2.5', '', '2oops', Infinity, NaN, true])('rejects invalid contract quantity %s instead of clamping it', (contracts) => {
+        expect(validContractQuantity(contracts)).toBeNull()
+        expect(calculateLongOption({ selectedContract: call, entryPrice: 5, contracts })).toBeNull()
+    })
+
+    it.each([0, -1, '', ' ', '3oops', Infinity, NaN, true])('rejects invalid manual entry %s instead of partially parsing it', (entryPrice) => {
+        expect(calculateLongOption({ selectedContract: call, entryPrice, contracts: 1 })).toBeNull()
+    })
+
+    it('accepts a positive whole quantity and preserves a raw manual entry through type changes', () => {
+        expect(calculateLongOption({ selectedContract: call, entryPrice: '3.125', contracts: '2' })).toMatchObject({
+            premium: 3.125,
+            contracts: 2,
+            cost: 625,
+        })
+
+        expect(switchContractType({
+            chain: [call, put],
+            selectedContract: call,
+            targetType: 'put',
+            entryMode: 'manual',
+            entryPrice: '003.1250',
+        }).entryPrice).toBe('003.1250')
+    })
+
+    it('identifies the exact pricing field used instead of calling every fallback a mid', () => {
+        expect(contractPremiumQuote({ mark: 4.25, bid: 4, ask: 5 })).toEqual({ value: 4.25, source: 'mark' })
+        expect(contractPremiumQuote({ bid: 4, ask: 5 })).toEqual({ value: 4.5, source: 'bid_ask_midpoint' })
+        expect(contractPremiumQuote({ bid: 4 })).toEqual({ value: 4, source: 'bid' })
+        expect(contractPremiumQuote({ ask: 5 })).toEqual({ value: 5, source: 'ask' })
+    })
+
+    it('reports accurate long-option expiration profit potential without changing payoff math', () => {
+        expect(longOptionProfitPotential({
+            selectedContract: call,
+            entryPrice: 5,
+            contracts: 2,
+        })).toEqual({
+            unlimited: true,
+            maximum_profit: null,
+            reward_to_risk: null,
+        })
+
+        expect(longOptionProfitPotential({
+            selectedContract: put,
+            entryPrice: 8,
+            contracts: 2,
+        })).toEqual({
+            unlimited: false,
+            maximum_profit: 18400,
+            reward_to_risk: 11.5,
+        })
+        expect(longOptionPayoff({
+            selectedContract: put,
+            entryPrice: 8,
+            contracts: 2,
+            underlyingPrice: 0,
+        })).toBe(18400)
+
+        expect(longOptionProfitPotential({
+            selectedContract: put,
+            entryPrice: 100,
+        })).toEqual({
+            unlimited: false,
+            maximum_profit: 0,
+            reward_to_risk: null,
+        })
+    })
+
     it('switches type, identity, premium, IV, and payoff inputs atomically', () => {
         const switched = switchContractType({
             chain: [call, put],

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Http\Controllers\GexController;
 use App\Models\OptionChainData;
 use App\Support\EodSnapshotSelector;
+use App\Support\PositioningRegimeRepository;
 use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Eloquent\Model;
@@ -38,6 +39,9 @@ class GexAggregationComplexityTest extends TestCase
         // Two MAX lookups per aggregation. No query is sent to any database.
         $query->shouldReceive('max')->with('data_date')->times(4)->andReturnNull();
         Model::setConnectionResolver($resolver);
+        $regimes = Mockery::mock(PositioningRegimeRepository::class);
+        $regimes->shouldReceive('find')->twice()->with('SPY', '2026-09-04')->andReturnNull();
+        $this->app->instance(PositioningRegimeRepository::class, $regimes);
         Cache::shouldReceive('get')->with('gamma_strength:SPY:2026-09-04')->twice()->andReturnNull();
     }
 

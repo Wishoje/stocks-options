@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Support\CoordinationCache;
 use App\Support\EodSnapshotSelector;
+use App\Support\PositioningRegimeRepository;
 use Carbon\Carbon;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
@@ -16,9 +17,10 @@ use Illuminate\Support\Facades\DB;
 
 class ComputePositioningJob extends QueueJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
+    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     protected const DEX_HISTORY_DAYS = 30;
+
     protected const DEX_FORWARD_DAYS = 90;
 
     public function __construct(public array $symbols, public ?string $anchorDate = null)
@@ -37,8 +39,13 @@ class ComputePositioningJob extends QueueJob implements ShouldQueue
             $dexExpMap = $this->dexExpiryMap($symbol, $date);
             [$dexSelectedDates, $dexRows] = $this->selectedChainContext($dexExpMap, $date, $selector);
 
-            $gammaExpMap = $this->forwardExpiryMap($symbol, $date);
-            [$gammaSelectedDates, $gammaRows] = $this->selectedChainContext($gammaExpMap, $date, $selector);
+            // The fixed regime window is a subset of the DEX window. Reuse
+            // the selected snapshot rows instead of materializing the chain a
+            // second time for every symbol.
+            $gammaExpMap = $this->regimeExpiryMap($dexExpMap, $date);
+            $gammaExpirationIds = array_values($gammaExpMap->all());
+            $gammaSelectedDates = $dexSelectedDates->only($gammaExpirationIds);
+            $gammaRows = $dexRows->whereIn('expiration_id', $gammaExpirationIds)->values();
 
             if ($dexRows->isEmpty() && $gammaRows->isEmpty()) {
                 continue;
@@ -63,7 +70,7 @@ class ComputePositioningJob extends QueueJob implements ShouldQueue
                     $dex += $delta * $oi * 100.0;
                 }
 
-                if (!is_finite($dex)) {
+                if (! is_finite($dex)) {
                     continue;
                 }
 
@@ -78,17 +85,6 @@ class ComputePositioningJob extends QueueJob implements ShouldQueue
                 ];
             }
 
-            DB::transaction(function () use ($symbol, $date, $dexRowsToInsert): void {
-                DB::table('dex_by_expiry')
-                    ->where('symbol', $symbol)
-                    ->where('data_date', $date)
-                    ->delete();
-
-                if ($dexRowsToInsert !== []) {
-                    DB::table('dex_by_expiry')->insert($dexRowsToInsert);
-                }
-            }, 3);
-
             $spot = (float) round($gammaRows->avg('underlying_price') ?? 0, 6);
             $netGamma = 0.0;
             $absGamma = 0.0;
@@ -102,24 +98,74 @@ class ComputePositioningJob extends QueueJob implements ShouldQueue
                     }
 
                     $gammaNotional = $gamma * $spot * $spot * $oi * 100.0;
-                    $netGamma += $gammaNotional;
+                    $netGamma += $row->option_type === 'call'
+                        ? $gammaNotional
+                        : -$gammaNotional;
                     $absGamma += abs($gammaNotional);
                 }
             }
 
             $strength = $absGamma > 0 ? min(1.0, max(0.0, abs($netGamma) / $absGamma)) : null;
-
-            CoordinationCache::store()->put("gamma_strength:{$symbol}:{$date}", [
+            $sign = $absGamma <= 0 ? null : ($netGamma <=> 0.0);
+            $sourceMeta = [
+                'anchor_date' => $date,
+                'scope_days' => PositioningRegimeRepository::DEFAULT_SCOPE_DAYS,
+                'scope_start_date' => $date,
+                'scope_end_date' => Carbon::parse($date, 'America/New_York')
+                    ->addDays(PositioningRegimeRepository::DEFAULT_SCOPE_DAYS)
+                    ->toDateString(),
+                'sign_convention' => 'call_minus_put',
+                'expiration_dates' => array_values($gammaExpMap->keys()->all()),
+                'selected_snapshot_dates' => $gammaSelectedDates->mapWithKeys(
+                    fn ($row, $expirationId) => [$expirationId => $row->max_date]
+                )->all(),
+            ];
+            $regimeFacts = [
                 'date' => $date,
+                'scope_days' => PositioningRegimeRepository::DEFAULT_SCOPE_DAYS,
                 'strength' => $strength,
-                'sign' => ($netGamma >= 0 ? +1 : -1),
-                'source_meta' => [
-                    'anchor_date' => $date,
-                    'selected_snapshot_dates' => $gammaSelectedDates->mapWithKeys(
-                        fn ($row, $expirationId) => [$expirationId => $row->max_date]
-                    )->all(),
-                ],
-            ], now()->addDay());
+                'sign' => $sign,
+                'net_gamma' => $netGamma,
+                'absolute_gamma' => $absGamma,
+                'source_meta' => $sourceMeta,
+            ];
+
+            DB::transaction(function () use (
+                $symbol,
+                $date,
+                $dexRowsToInsert,
+                $strength,
+                $sign,
+                $netGamma,
+                $absGamma,
+                $sourceMeta
+            ): void {
+                DB::table('dex_by_expiry')
+                    ->where('symbol', $symbol)
+                    ->where('data_date', $date)
+                    ->delete();
+
+                if ($dexRowsToInsert !== []) {
+                    DB::table('dex_by_expiry')->insert($dexRowsToInsert);
+                }
+
+                app(PositioningRegimeRepository::class)->write(
+                    $symbol,
+                    $date,
+                    PositioningRegimeRepository::DEFAULT_SCOPE_DAYS,
+                    [
+                        'strength' => $strength,
+                        'sign' => $sign,
+                        'net_gamma' => $netGamma,
+                        'absolute_gamma' => $absGamma,
+                        'source_meta' => $sourceMeta,
+                    ]
+                );
+            }, 3);
+
+            // Keep the established coordination-cache key during the durable
+            // storage rollout. Controllers prefer the database row.
+            CoordinationCache::store()->put("gamma_strength:{$symbol}:{$date}", $regimeFacts, now()->addDay());
         }
     }
 
@@ -137,13 +183,15 @@ class ComputePositioningJob extends QueueJob implements ShouldQueue
             ->pluck('id', 'expiration_date');
     }
 
-    protected function forwardExpiryMap(string $symbol, string $date): Collection
+    protected function regimeExpiryMap(Collection $expirationMap, string $date): Collection
     {
-        return DB::table('option_expirations')
-            ->where('symbol', $symbol)
-            ->whereDate('expiration_date', '>=', $date)
-            ->orderBy('expiration_date')
-            ->pluck('id', 'expiration_date');
+        $anchor = Carbon::parse($date, 'America/New_York');
+        $end = $anchor->copy()->addDays(PositioningRegimeRepository::DEFAULT_SCOPE_DAYS)->toDateString();
+
+        return $expirationMap->filter(
+            fn ($expirationId, $expirationDate): bool => $expirationDate >= $anchor->toDateString()
+                && $expirationDate <= $end
+        );
     }
 
     /**

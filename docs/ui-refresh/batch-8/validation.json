@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "status": "automated_verified_pending_manual_review",
+  "checks": {
+    "account_settings": "automated_verified",
+    "account_deletion_safeguards": "automated_verified",
+    "authenticated_product_routes": "automated_verified",
+    "sanctum_dead_configuration": "automated_verified",
+    "first_use_measurement": "automated_verified"
+  },
+  "verified_on": null,
+  "release_exception": {
+    "approved_on": "2026-09-20",
+    "approved_by": "Site owner",
+    "scope": "Release with automated verification and prior local UI acceptance; the complete manual checklist is not attested as finished.",
+    "approval": "i approve everting just dfeploy it please"
+  },
+  "evidence": [
+    "2026-09-18: AccountSettingsTest, DeleteAccountTest, and FirstUsefulReadingTest passed: 38 tests, 280 assertions.",
+    "2026-09-18: account-settings.spec.js and auth-first-use.spec.js passed: 10 tests.",
+    "2026-09-18: full frontend regression suite passed: 44 files, 426 tests.",
+    "2026-09-18: production Vite build passed: 285 modules transformed.",
+    "2026-09-18: AuthenticatedProductRouteBoundaryTest and the combined account, legal, billing, and conversion contracts passed: 112 tests, 703 assertions.",
+    "2026-09-18: guest smoke requests to dashboard, intraday, scanner, calculator, watchlist, work-run, and identity APIs all returned 401 before controller work.",
+    "2026-09-18: Laravel route inspection resolved framework Authenticate:sanctum plus the required entitlement and throttle middleware; the ignored custom provider file and registration are removed."
+  ]
+}

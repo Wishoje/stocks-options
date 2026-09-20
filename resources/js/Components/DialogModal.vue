@@ -16,6 +16,14 @@ defineProps({
         type: Boolean,
         default: true,
     },
+    labelledby: {
+        type: String,
+        default: null,
+    },
+    label: {
+        type: String,
+        default: null,
+    },
 });
 
 const close = () => {
@@ -28,6 +36,8 @@ const close = () => {
         :show="show"
         :max-width="maxWidth"
         :closeable="closeable"
+        :labelledby="labelledby"
+        :label="label"
         @close="close"
     >
         <div class="px-6 py-4">

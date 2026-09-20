@@ -380,8 +380,7 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
                         'iv' => (float) $row->iv,
                     ])
                     ->filter(fn ($point) => abs($point['k']) <= 0.30)
-                    ->sortBy(fn ($point) => abs($point['k']))
-                    ->take(60)
+                    ->sortBy('k')
                     ->values()
                     ->all();
 
@@ -393,8 +392,10 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
 
                     if ($span >= 0.05) {
                         $curvatureRaw = $this->quadA($points);
-                        $curvature = is_finite($curvatureRaw) ? $curvatureRaw * 0.01 : null;
-                        if (! is_finite($curvature) || abs($curvature) > 1e6) {
+                        $curvature = $curvatureRaw !== null && is_finite($curvatureRaw)
+                            ? $curvatureRaw * 0.01
+                            : null;
+                        if ($curvature !== null && (! is_finite($curvature) || abs($curvature) > 1e6)) {
                             $curvature = null;
                         }
                     }
@@ -413,8 +414,12 @@ class ComputeVolMetricsJob extends QueueJob implements ShouldQueue
                 ->orderByDesc('data_date')
                 ->first(['skew_pc', 'curvature']);
 
-            $skewDod = (! is_null($skew) && $prev) ? ($skew - (float) $prev->skew_pc) : null;
-            $curvatureDod = (! is_null($curvature) && $prev) ? ($curvature - (float) $prev->curvature) : null;
+            $skewDod = (! is_null($skew) && ! is_null($prev?->skew_pc))
+                ? ($skew - (float) $prev->skew_pc)
+                : null;
+            $curvatureDod = (! is_null($curvature) && ! is_null($prev?->curvature))
+                ? ($curvature - (float) $prev->curvature)
+                : null;
 
             DB::table('iv_skew')->updateOrInsert(
                 ['symbol' => $symbol, 'data_date' => $date, 'exp_date' => $expDate],

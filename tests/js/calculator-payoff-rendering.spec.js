@@ -223,6 +223,13 @@ describe('calculator payoff trust and rendering', () => {
         expect(requestFrame).toHaveBeenCalledTimes(1)
         await renderFrame()
         expect(chartMock).toHaveBeenCalledTimes(2)
+        const referenceConfig = chartMock.mock.calls[0][1].options.plugins.calculatorReferences
+        expect(referenceConfig).toMatchObject({ domainStart: 60, domainEnd: 140 })
+        expect(referenceConfig.references).toEqual([
+            expect.objectContaining({ label: 'Current', value: 100 }),
+            expect.objectContaining({ label: 'Breakeven', value: 105 }),
+        ])
+        expect(referenceConfig.references.every((reference) => !Object.hasOwn(reference, 'index'))).toBe(true)
         const initialCharts = chartMock.mock.results.map((result) => result.value)
 
         await wrapper.find('input[min="1"]').setValue('2')
@@ -239,6 +246,79 @@ describe('calculator payoff trust and rendering', () => {
         await flushPromises()
         expect(frames.size).toBe(0)
         expect(chartMock).toHaveBeenCalledTimes(4)
+    })
+
+    it('keeps unrounded local assumptions request-free and synchronizes keyboard chart inspection', async () => {
+        await mountResponse()
+        const chainReads = axiosMock.get.mock.calls.length
+
+        await entryInput().setValue('3.125')
+        await underlyingInput().setValue('103.375')
+        await wrapper.find('input[min="1"]').setValue('2')
+        await wrapper.findAll('button').find((button) => button.text() === 'Near (±15%)').trigger('click')
+        await wrapper.findAll('button').find((button) => button.text() === 'Flat @ Target').trigger('click')
+        const target = wrapper.find('input[placeholder="Target"]')
+        await target.setValue('104.625')
+
+        expect(entryInput().element.value).toBe('3.125')
+        expect(underlyingInput().element.value).toBe('103.375')
+        expect(target.element.value).toBe('104.625')
+        expect(axiosMock.get).toHaveBeenCalledTimes(chainReads)
+        expect(axiosMock.post).not.toHaveBeenCalled()
+        expect(wrapper.text()).toContain('Black–Scholes estimate at one-day intervals')
+        expect(wrapper.text()).toContain('assumes zero dividends and European exercise')
+        expect(wrapper.text()).toContain('does not model American early exercise')
+        expect(wrapper.text()).not.toContain('decays linearly')
+
+        await wrapper.find('[data-testid="calculator-payoff-chart"]').trigger('keydown', { key: 'ArrowRight' })
+        const selectedRows = payoffRows().filter((row) => row.attributes('data-selected') === 'true')
+        expect(selectedRows).toHaveLength(1)
+        expect(selectedRows[0].findAll('td')[0].text()).toBe('$105.03')
+        expect(axiosMock.get).toHaveBeenCalledTimes(chainReads)
+    })
+
+    it('retains invalid raw quantity and entry keystrokes while pausing every calculation', async () => {
+        await mountResponse()
+        const chainReads = axiosMock.get.mock.calls.length
+        const quantity = wrapper.find('[data-testid="calculator-contracts"]')
+
+        await quantity.setValue('1.5')
+        expect(quantity.element.value).toBe('1.5')
+        expect(quantity.attributes('aria-invalid')).toBe('true')
+        expect(wrapper.find('[data-testid="calculator-contracts-invalid"]').exists()).toBe(true)
+        expect(payoffRows()).toHaveLength(0)
+        expect(decayRows()).toHaveLength(0)
+
+        await quantity.setValue('02')
+        await entryInput().setValue('3oops')
+        expect(quantity.element.value).toBe('02')
+        expect(entryInput().element.value).toBe('3oops')
+        expect(entryInput().attributes('aria-invalid')).toBe('true')
+        expect(wrapper.find('[data-testid="calculator-entry-invalid"]').exists()).toBe(true)
+        expect(payoffRows()).toHaveLength(0)
+
+        await entryInput().setValue('003.1250')
+        expect(entryInput().element.value).toBe('003.1250')
+        expect(entryInput().attributes('aria-invalid')).toBe('false')
+        expect(payoffRows()).toHaveLength(51)
+        expect(axiosMock.get).toHaveBeenCalledTimes(chainReads)
+        expect(axiosMock.post).not.toHaveBeenCalled()
+    })
+
+    it('keeps the keyboard-selected day in the compact time-decay table', async () => {
+        const data = response()
+        data.expirations[0].dte = 30
+        data.chain = data.chain.map((contract) => ({ ...contract, dte: 30 }))
+        await mountResponse(data)
+
+        const inspectors = wrapper.findAll('.calculator-inspector-select select')
+        await inspectors[1].setValue('5')
+
+        const visibleDte = decayRows()
+            .map((row) => row.findAll('td')[0]?.text())
+            .filter(Boolean)
+        expect(visibleDte).toContain('25')
+        expect(decayRows().find((row) => row.attributes('data-selected') === 'true')?.findAll('td')[0].text()).toBe('25')
     })
 
     it('renders put payoff using the current selection without a duplicate frame', async () => {

@@ -10,6 +10,7 @@ use App\Support\EodSnapshotHealth;
 use App\Support\EodSnapshotSelector;
 use App\Support\GexExpirationUniverse;
 use App\Support\GexSnapshotCache;
+use App\Support\PositioningRegimeRepository;
 use App\Support\SymbolBootstrapCoordinator;
 use App\Support\SymbolBootstrapPolicy;
 use App\Support\Symbols;
@@ -506,7 +507,8 @@ class GexController extends Controller
         $totalOiDelta = $totCallOiDelta + $totPutOiDelta;
         $totalVolDelta = $totCallVolDelta + $totPutVolDelta;
 
-        $gs = CoordinationCache::store()->get("gamma_strength:{$symbol}:{$latestDate}");
+        $gs = app(PositioningRegimeRepository::class)->find($symbol, $latestDate)
+            ?? CoordinationCache::store()->get("gamma_strength:{$symbol}:{$latestDate}");
 
         return [
             'symbol' => $symbol,

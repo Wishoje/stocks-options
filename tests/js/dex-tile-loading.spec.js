@@ -17,8 +17,8 @@ function dexResponse(total = 1234, date = '2026-09-04') {
   return { data: { total, data_date: date, by_expiry: [{ exp_date: '2026-09-11', dex_total: total }] } }
 }
 
-function gexResponse(strength = 0.82, sign = 1) {
-  return { data: { regime_strength: strength, gamma_sign: sign } }
+function gexResponse(strength = 0.82, sign = 1, date) {
+  return { data: { regime_strength: strength, gamma_sign: sign, ...(date === undefined ? {} : { data_date: date }) } }
 }
 
 describe('DexTile request and retry ownership', () => {
@@ -66,6 +66,51 @@ describe('DexTile request and retry ownership', () => {
     expect(axios.get).toHaveBeenCalledTimes(2)
   })
 
+  it('uses a complete DEX regime without issuing a redundant GEX request', async () => {
+    const response = dexResponse()
+    response.data.regime_strength = 0.64
+    response.data.gamma_sign = -1
+    axios.get.mockResolvedValue(response)
+
+    start()
+    await flushPromises()
+
+    expect(wrapper.vm.strength).toBe(0.64)
+    expect(wrapper.vm.gammaSign).toBe(-1)
+    expect(requests('/api/dex')).toHaveLength(1)
+    expect(requests('/api/gex-levels')).toHaveLength(0)
+  })
+
+  it('does not mix a missing DEX regime with a different-date GEX snapshot', async () => {
+    axios.get.mockImplementation(url => Promise.resolve(url === '/api/dex'
+      ? dexResponse()
+      : gexResponse(0.99, -1, '2026-09-03')))
+
+    start()
+    await flushPromises()
+
+    expect(wrapper.vm.dataDate).toBe('2026-09-04')
+    expect(wrapper.vm.strength).toBeNull()
+    expect(wrapper.vm.gammaSign).toBeNull()
+    expect(requests('/api/gex-levels')).toHaveLength(1)
+  })
+
+  it('fills only a missing field from a date-compatible GEX snapshot and preserves zero', async () => {
+    const response = dexResponse()
+    response.data.regime_strength = 0.55
+    response.data.gamma_sign = null
+    axios.get.mockImplementation(url => Promise.resolve(url === '/api/dex'
+      ? response
+      : gexResponse(0.99, 0, '2026-09-04')))
+
+    start()
+    await flushPromises()
+
+    expect(wrapper.vm.strength).toBe(0.55)
+    expect(wrapper.vm.gammaSign).toBe(0)
+    expect(requests('/api/gex-levels')).toHaveLength(1)
+  })
+
   it('keeps the four-second retry while mounted and stops when data becomes ready', async () => {
     let dexRequests = 0
     axios.get.mockImplementation((url) => {
@@ -77,10 +122,30 @@ describe('DexTile request and retry ownership', () => {
     await vi.advanceTimersByTimeAsync(3999)
     expect(axios.get).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(1)
-    expect(axios.get).toHaveBeenCalledTimes(4)
+    expect(axios.get).toHaveBeenCalledTimes(3)
     expect(wrapper.vm.dataDate).toBe('2026-09-04')
     await vi.advanceTimersByTimeAsync(12000)
-    expect(axios.get).toHaveBeenCalledTimes(4)
+    expect(axios.get).toHaveBeenCalledTimes(3)
+  })
+
+  it('bounds sparse retries and pauses them while the positioning tab is inactive', async () => {
+    axios.get.mockImplementation((url) => Promise.resolve(url === '/api/dex'
+      ? dexResponse(1234, null)
+      : gexResponse()))
+    start()
+    await flushPromises()
+
+    await wrapper.setProps({ active: false })
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(requests('/api/dex')).toHaveLength(1)
+    expect(requests('/api/gex-levels')).toHaveLength(1)
+
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(requests('/api/dex')).toHaveLength(5)
+    expect(requests('/api/gex-levels')).toHaveLength(1)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('makes zero further requests after unmount with a missing-date retry scheduled', async () => {

@@ -54,7 +54,7 @@ class ColdSymbolLocalOwnershipTest extends TestCase
             'name' => 'Cold symbol owner',
             'email' => 'cold-symbol@example.test',
             'trial_ends_at' => now()->addDay(),
-        ]);
+        ])->setRelation('subscriptions', collect());
 
         $this->actingAs($user)
             ->postJson('/api/watchlist', ['symbol' => 'AAPL'])

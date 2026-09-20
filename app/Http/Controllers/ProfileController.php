@@ -2,33 +2,26 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\AccountSubscriptionData;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use Laravel\Fortify\Features;
+use Laravel\Jetstream\Http\Controllers\Inertia\UserProfileController;
 
-class ProfileController extends Controller
+class ProfileController extends UserProfileController
 {
     public function show(Request $request)
     {
-        $subName = config('plans.default_subscription_name', 'default');
-        $sub = $request->user()->subscription($subName);
+        $this->validateTwoFactorAuthenticationState($request);
 
-        $subscription = null;
-        if ($sub) {
-            $subscription = [
-                'status' => $sub->stripe_status,
-                'active' => $sub->valid(),
-                'on_grace_period' => $sub->onGracePeriod(),
-                'plan_name' => 'Early Bird',
-                // we'll add next charge below (optional)
-                'next_charge_at' => null,
-            ];
-        }
-
-        // render the same Jetstream profile page:
         return Inertia::render('Profile/Show', [
-            'sessions' => [], // if you don't use it, you can remove in your Vue too
-            'confirmsTwoFactorAuthentication' => false,
-            'subscription' => $subscription,
+            'sessions' => $this->sessions($request)->all(),
+            'sessionsSupported' => config('session.driver') === 'database',
+            'confirmsTwoFactorAuthentication' => Features::optionEnabled(
+                Features::twoFactorAuthentication(),
+                'confirm',
+            ),
+            'subscription' => AccountSubscriptionData::for($request->user()),
         ]);
     }
 }

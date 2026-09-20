@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import Chart from 'chart.js/auto'
+import '../../../css/calculator-refresh.css'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import AppShell from '@/Components/AppShell.vue'
 import axios from 'axios'
@@ -10,10 +11,12 @@ import {
   contractIdentity,
   contractPremium,
   groupContractsByStrike,
+  longOptionProfitPotential,
   longOptionPayoff,
   normalizeContract,
   selectContractState,
   switchContractType,
+  validContractQuantity,
 } from '@/Support/calculator-contracts.js'
 import {
   attachServerDte,
@@ -22,6 +25,12 @@ import {
   positiveCalculatorPrice,
 } from '@/Support/calculator-market-state.js'
 import { createCalculatorChartScheduler } from '@/Support/calculator-chart-scheduler.js'
+import {
+  clampScenarioIndex,
+  moveScenarioIndex,
+  nearestScenarioIndex,
+  scenarioValuePixel,
+} from '@/Support/calculator-scenario-inspection.js'
 import {
   abortableDelay,
   calculatorProgress,
@@ -81,6 +90,11 @@ let mounted = false
 const lastKnownGood = new Map()
 const chartRef = ref(null)
 const decayChartRef = ref(null)
+const selectedPayoffIndex = ref(null)
+const selectedDecayIndex = ref(null)
+const exactContractsOpen = ref(false)
+const responseMetadata = ref({})
+const rawExpirations = ref([])
 
 // ---------- helpers ----------
 const safeNumber = (val) => {
@@ -92,7 +106,7 @@ const safeNumber = (val) => {
 const positiveNumber = positiveCalculatorPrice
 
 const safePremium = (opt) => contractPremium(opt)
-// ----- Black–Scholes helpers -----
+// ----- Black-Scholes helpers -----
 
 const needsFollowUpPrime = (payload) => {
   if (!payload) return true
@@ -159,6 +173,8 @@ const rememberCurrentChain = () => {
     expirations: expirations.value,
     underlying: underlyingQuote.value,
     snapshotAt: snapshotAt.value,
+    responseMetadata: responseMetadata.value,
+    rawExpirations: rawExpirations.value,
   })
 }
 
@@ -167,6 +183,9 @@ const restoreKnownChain = () => {
   if (!known) {
     chainData.value = []
     selectedOption.value = null
+    snapshotAt.value = null
+    responseMetadata.value = {}
+    rawExpirations.value = []
     return false
   }
 
@@ -175,6 +194,8 @@ const restoreKnownChain = () => {
   underlyingQuote.value = known.underlying
   stockPrice.value = known.underlying.price
   snapshotAt.value = known.snapshotAt
+  responseMetadata.value = known.responseMetadata ?? {}
+  rawExpirations.value = known.rawExpirations ?? []
 
   return true
 }
@@ -186,10 +207,10 @@ const clearKnownChainsForSymbol = (sym) => {
   }
 }
 
-const riskFreeRate = 0.04 // rough guess; tweak if you want
+const riskFreeRate = 0.04 // Model assumption disclosed beside the time-decay chart.
 
 const normCdf = (x) => {
-  // Abramowitz–Stegun approximation for N(x)
+  // Abramowitz-Stegun approximation for N(x)
   const k = 1 / (1 + 0.2316419 * Math.abs(x))
   const kSum =
     k *
@@ -255,8 +276,21 @@ const impliedVolBS = (price, S, K, T, r, type) => {
 // Effective premium PER SHARE used as *entry price*
 const effectivePremium = computed(() => {
   if (!entryAuto.value) return positiveNumber(entryPrice.value)
-  // fallback: you “entered” at current mid
+  // fallback: the entry is the current pricing input
   return safePremium(selectedOption.value)
+})
+
+const contractsInvalid = computed(() => validContractQuantity(contracts.value) === null)
+const entryPriceInvalid = computed(() => (
+  !entryAuto.value && positiveNumber(entryPrice.value) === null
+))
+
+const calculationBlockedMessage = computed(() => {
+  if (contractsInvalid.value) return 'Enter a positive whole number of contracts to view calculations.'
+  if (entryPriceInvalid.value) return 'Enter a finite entry price greater than zero to view calculations.'
+  if (!selectedOption.value) return 'Select a priced contract to view calculations.'
+
+  return 'A valid contract price is required to view calculations.'
 })
 
 // ---------- main metrics ----------
@@ -282,10 +316,32 @@ const maxLoss = computed(() => tradeSummary.value?.max_loss ?? null)
 
 const cost = computed(() => tradeSummary.value?.cost ?? null)
 
+const profitPotential = computed(() => longOptionProfitPotential({
+  selectedContract: selectedOption.value,
+  entryPrice: effectivePremium.value,
+  contracts: contracts.value,
+}))
+
+const profitPotentialLabel = computed(() => {
+  if (!profitPotential.value) return '\u2014'
+  if (profitPotential.value.unlimited) return 'Unlimited'
+  if (profitPotential.value.maximum_profit <= 0) return '$0'
+
+  return `$${formatMoney(profitPotential.value.maximum_profit)}`
+})
+
+const rewardRiskLabel = computed(() => {
+  if (!profitPotential.value) return '\u2014'
+  if (profitPotential.value.unlimited) return 'Unlimited'
+  if (!Number.isFinite(profitPotential.value.reward_to_risk)) return '\u2014'
+
+  return `${profitPotential.value.reward_to_risk.toFixed(2)} : 1`
+})
+
 const formatPrice = (val) => {
   if (val === null || val === undefined || val === '') return '\u2014'
   const n = typeof val === 'string' ? Number.parseFloat(val) : Number(val)
-  if (!Number.isFinite(n)) return '—'
+  if (!Number.isFinite(n)) return '\u2014'
   return n.toFixed(2)
 }
 
@@ -340,6 +396,24 @@ const payoffTableRows = computed(() => {
   })
 })
 
+const payoffDefaultIndex = computed(() => nearestScenarioIndex(
+  payoffTableRows.value,
+  calculationUnderlyingPrice.value ?? breakeven.value,
+))
+
+const resolvedPayoffIndex = computed(() => {
+  const rows = payoffTableRows.value
+  if (!rows.length) return null
+
+  return selectedPayoffIndex.value === null
+    ? payoffDefaultIndex.value
+    : clampScenarioIndex(selectedPayoffIndex.value, rows.length)
+})
+
+const selectedPayoffRow = computed(() => (
+  resolvedPayoffIndex.value === null ? null : payoffTableRows.value[resolvedPayoffIndex.value]
+))
+
 // ---------- DTE + scenario ----------
 const daysToExpiration = computed(() => {
   const rawDte = selectedOption.value?.dte
@@ -386,7 +460,7 @@ const timeDecayTitle = computed(() => {
  *  - time to expiry shrinks from today's DTE down to 0
  *
  * Uses:
- *   - current mid for today's option value + IV fit
+ *   - current resolved contract price for today's option value + IV fit
  *   - entryPrice / effectivePremium for P&L
  */
 const timeDecayRows = computed(() => {
@@ -401,7 +475,7 @@ const timeDecayRows = computed(() => {
 
   const K = safeNumber(selectedOption.value.strike)
   const entry = effectivePremium.value
-  const c = Math.max(1, safeNumber(contracts.value || 1))
+  const c = tradeSummary.value.contracts
 
   const currentMid = safePremium(selectedOption.value)
   if (currentMid === null || currentMid <= 0 || K <= 0 || entry === null) return []
@@ -439,6 +513,18 @@ const timeDecayRows = computed(() => {
   return rows
 })
 
+const resolvedDecayIndex = computed(() => {
+  if (!timeDecayRows.value.length) return null
+
+  return selectedDecayIndex.value === null
+    ? 0
+    : clampScenarioIndex(selectedDecayIndex.value, timeDecayRows.value.length)
+})
+
+const selectedDecayRow = computed(() => (
+  resolvedDecayIndex.value === null ? null : timeDecayRows.value[resolvedDecayIndex.value]
+))
+
 // compact vs full view for table
 const visibleTimeDecayRows = computed(() => {
   const rows = timeDecayRows.value
@@ -457,7 +543,17 @@ const visibleTimeDecayRows = computed(() => {
 
   const middle = rows.slice(start, end + 1)
 
-  return [first, ...middle, last]
+  const selected = selectedDecayRow.value
+  const visible = [first, ...middle, last, selected].filter(Boolean)
+  const dte = new Set()
+
+  return visible
+    .filter((row) => {
+      if (dte.has(row.dte)) return false
+      dte.add(row.dte)
+      return true
+    })
+    .sort((left, right) => rows.indexOf(left) - rows.indexOf(right))
 })
 
 const hiddenTimeDecayCount = computed(() => {
@@ -486,12 +582,103 @@ const groupedStrikes = computed(() => {
   return groupContractsByStrike(strikesAroundPrice.value)
 })
 
+const formatExact = (value) => {
+  if (value === null || value === undefined || value === '') return '\u2014'
+
+  return String(value)
+}
+
+const formatSourceTime = (value) => {
+  if (!value) return 'Unavailable'
+  const text = String(value)
+  if (!/(?:z|[+-]\d{2}:?\d{2})$/i.test(text)) return `${text} (timezone unavailable)`
+  const date = new Date(text)
+  if (Number.isNaN(date.getTime())) return text
+
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(date)
+}
+
+const quoteState = computed(() => {
+  if (manualUnderlying.value) return calculationUnderlyingPrice.value === null ? 'invalid' : 'manual'
+  if (!underlyingQuote.value.usable) return 'unavailable'
+  if (underlyingQuote.value.status === 'stale') return 'stale'
+
+  return 'live'
+})
+
+const quoteStateLabel = computed(() => ({
+  invalid: 'Manual price invalid',
+  manual: 'Manual scenario',
+  unavailable: 'Quote unavailable',
+  stale: 'Delayed or stale quote',
+  live: 'Accepted market quote',
+}[quoteState.value]))
+
+const selectedContractLabel = computed(() => {
+  if (!selectedOption.value) return `No ${optionType.value} selected`
+
+  return `${selectedOption.value.expiry} \u00b7 $${formatPrice(selectedOption.value.strike)} \u00b7 ${selectedOption.value.type.toUpperCase()}`
+})
+
+const premiumSourceLabel = computed(() => ({
+  mid: 'Mid',
+  mid_price: 'Mid',
+  bid_ask_midpoint: 'Mid',
+  mark: 'Mark',
+  price: 'Price',
+  last: 'Last',
+  fmv: 'FMV',
+  bid: 'Bid fallback',
+  ask: 'Ask fallback',
+}[selectedOption.value?.premium_source] ?? 'Pricing input'))
+
+const selectPayoffIndex = (value, { focusChart = true } = {}) => {
+  const next = clampScenarioIndex(value, payoffTableRows.value.length)
+  selectedPayoffIndex.value = next
+  if (focusChart && next !== null) highlightChartPoint(chart, next)
+}
+
+const selectDecayIndex = (value, { focusChart = true } = {}) => {
+  const next = clampScenarioIndex(value, timeDecayRows.value.length)
+  selectedDecayIndex.value = next
+  if (focusChart && next !== null) highlightChartPoint(decayChart, next)
+}
+
+const handleScenarioKeydown = (event, kind) => {
+  const payoff = kind === 'payoff'
+  const rows = payoff ? payoffTableRows.value : timeDecayRows.value
+  const current = payoff ? resolvedPayoffIndex.value : resolvedDecayIndex.value
+  const direction = {
+    ArrowLeft: 'previous',
+    ArrowUp: 'previous',
+    ArrowRight: 'next',
+    ArrowDown: 'next',
+    Home: 'first',
+    End: 'last',
+  }[event.key]
+  if (!direction || !rows.length) return
+
+  event.preventDefault()
+  const next = moveScenarioIndex(current, direction, rows.length)
+  if (payoff) selectPayoffIndex(next)
+  else selectDecayIndex(next)
+}
+
 const handleExpiryClick = async (value) => {
   if (selectedExpiry.value === value) return // no-op if same
   resetRefreshObserver()
   rememberCurrentChain()
   selectedExpiry.value = value
   selectedOption.value = null
+  selectedPayoffIndex.value = null
+  selectedDecayIndex.value = null
   entryPrice.value = null
   entryAuto.value = true
   restoreKnownChain()
@@ -582,10 +769,19 @@ const publishChain = (data) => {
     stockPrice.value = underlyingQuote.value.price
     entryPrice.value = null
     entryAuto.value = true
+    responseMetadata.value = Object.fromEntries(Object.entries(data ?? {}).filter(([key]) => (
+      !['chain', 'expirations'].includes(key)
+    )))
+    rawExpirations.value = responseExpirations
     return false
   }
 
   if (!publishable) return false
+
+  responseMetadata.value = Object.fromEntries(Object.entries(data ?? {}).filter(([key]) => (
+    !['chain', 'expirations'].includes(key)
+  )))
+  rawExpirations.value = responseExpirations
 
   const nextUnderlying = normalizeUnderlying(data.underlying)
   underlyingQuote.value = nextUnderlying
@@ -681,6 +877,7 @@ const selectOption = (opt) => {
 
   localStorage.setItem('calculator_last_symbol', symbol.value)
 
+  const previousIdentity = contractIdentity(selectedOption.value)
   const next = selectContractState({
     contract: opt,
     entryMode: entryAuto.value ? 'auto' : 'manual',
@@ -691,9 +888,13 @@ const selectOption = (opt) => {
   optionType.value = next.optionType
   entryAuto.value = next.entryMode === 'auto'
 
-  // ✅ always follow selected contract price while auto mode is on
+  // Always follow the selected contract price while automatic mode is on.
   if (entryAuto.value) {
     entryPrice.value = next.entryPrice
+  }
+  if (previousIdentity !== contractIdentity(next.selectedOption)) {
+    selectedPayoffIndex.value = null
+    selectedDecayIndex.value = null
   }
 }
 
@@ -712,6 +913,8 @@ const switchOptionType = (targetType) => {
   selectedOption.value = next.selectedOption
   entryAuto.value = next.entryMode === 'auto'
   entryPrice.value = next.entryPrice
+  selectedPayoffIndex.value = null
+  selectedDecayIndex.value = null
 }
 
 const useLiveEntryPrice = () => {
@@ -720,6 +923,48 @@ const useLiveEntryPrice = () => {
 }
 
 // ---------- charts ----------
+const highlightChartPoint = (instance, index) => {
+  if (!instance || index === null) return
+  const active = [{ datasetIndex: 0, index }]
+  instance.setActiveElements?.(active)
+  instance.tooltip?.setActiveElements?.(active, { x: 0, y: 0 })
+  instance.update?.('none')
+}
+
+const calculatorReferencesPlugin = {
+  id: 'calculatorReferences',
+  afterDatasetsDraw(instance, _args, options) {
+    const { ctx, chartArea } = instance
+    if (!ctx || !chartArea || !Array.isArray(options?.references)) return
+
+    options.references.forEach((reference) => {
+      const x = scenarioValuePixel(
+        reference.value,
+        options.domainStart,
+        options.domainEnd,
+        chartArea.left,
+        chartArea.right,
+      )
+      if (!Number.isFinite(x)) return
+
+      ctx.save()
+      ctx.strokeStyle = reference.color
+      ctx.fillStyle = reference.color
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 4])
+      ctx.beginPath()
+      ctx.moveTo(x, chartArea.top)
+      ctx.lineTo(x, chartArea.bottom)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.font = '11px system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText(reference.label, x, chartArea.top + 12)
+      ctx.restore()
+    })
+  },
+}
+
 const renderChart = () => {
   if (!chartRef.value || !calculationReady.value || profitData.value.length === 0) {
     if (chart) {
@@ -731,8 +976,22 @@ const renderChart = () => {
   const ctx = chartRef.value.getContext('2d')
   if (chart) chart.destroy()
 
+  const references = [
+    calculationUnderlyingPrice.value === null ? null : {
+      value: calculationUnderlyingPrice.value,
+      label: manualUnderlying.value ? 'Scenario' : 'Current',
+      color: '#7dd3fc',
+    },
+    breakeven.value === null ? null : {
+      value: breakeven.value,
+      label: 'Breakeven',
+      color: '#fbbf24',
+    },
+  ].filter(Boolean)
+
   chart = new Chart(ctx, {
     type: 'line',
+    plugins: [calculatorReferencesPlugin],
     data: {
       labels: priceRange.value.map((p) => p.toFixed(1)),
       datasets: [
@@ -745,19 +1004,50 @@ const renderChart = () => {
               ? 'rgba(16, 185, 129, 0.15)'
               : 'rgba(239, 68, 68, 0.15)',
           fill: true,
-          tension: 0.4,
+          tension: 0,
+          pointRadius: 2,
+          pointHoverRadius: 6,
+          pointHitRadius: 14,
         },
       ],
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: false } },
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'nearest', intersect: false },
+      onClick: (_event, elements) => {
+        if (elements?.[0]) selectPayoffIndex(elements[0].index, { focusChart: false })
+      },
+      plugins: {
+        legend: { display: false },
+        calculatorReferences: {
+          references,
+          domainStart: priceRange.value[0],
+          domainEnd: priceRange.value[priceRange.value.length - 1],
+        },
+        tooltip: {
+          callbacks: {
+            title: (items) => `Underlying $${payoffTableRows.value[items[0]?.dataIndex]?.price?.toFixed(2) ?? '\u2014'}`,
+            label: (item) => `P&L $${Number(item.raw).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+          },
+        },
+      },
       scales: {
-        x: { title: { display: true, text: 'Stock Price at Expiration' } },
-        y: { title: { display: true, text: 'P&L ($)' } },
+        x: {
+          grid: { color: 'rgba(148, 163, 184, .08)' },
+          ticks: { color: '#8fa1b3', maxTicksLimit: 7 },
+          title: { display: true, text: 'Stock Price at Expiration', color: '#8fa1b3' },
+        },
+        y: {
+          grid: { color: 'rgba(148, 163, 184, .12)' },
+          ticks: { color: '#8fa1b3' },
+          title: { display: true, text: 'P&L ($)', color: '#8fa1b3' },
+        },
       },
     },
   })
+  highlightChartPoint(chart, resolvedPayoffIndex.value)
 }
 
 const renderDecayChart = () => {
@@ -787,19 +1077,45 @@ const renderDecayChart = () => {
               ? 'rgba(34, 197, 94, 0.15)'
               : 'rgba(249, 115, 22, 0.15)',
           fill: true,
-          tension: 0.3,
+          tension: 0,
+          pointRadius: 2,
+          pointHoverRadius: 6,
+          pointHitRadius: 14,
         },
       ],
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: false } },
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'nearest', intersect: false },
+      onClick: (_event, elements) => {
+        if (elements?.[0]) selectDecayIndex(elements[0].index, { focusChart: false })
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => `${timeDecayRows.value[items[0]?.dataIndex]?.dte ?? '\u2014'} days to expiration`,
+            label: (item) => `P&L $${Number(item.raw).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+          },
+        },
+      },
       scales: {
-        x: { title: { display: true, text: 'Days to Expiration' } },
-        y: { title: { display: true, text: 'P&L ($)' } },
+        x: {
+          grid: { color: 'rgba(148, 163, 184, .08)' },
+          ticks: { color: '#8fa1b3', maxTicksLimit: 7 },
+          title: { display: true, text: 'Days to Expiration', color: '#8fa1b3' },
+        },
+        y: {
+          grid: { color: 'rgba(148, 163, 184, .12)' },
+          ticks: { color: '#8fa1b3' },
+          title: { display: true, text: 'P&L ($)', color: '#8fa1b3' },
+        },
       },
     },
   })
+  highlightChartPoint(decayChart, resolvedDecayIndex.value)
 }
 
 const chartScheduler = createCalculatorChartScheduler(() => {
@@ -817,8 +1133,9 @@ watch(
   { flush: 'post' },
 )
 
-const onEntryPriceInput = () => {
+const onEntryPriceInput = (event) => {
   entryAuto.value = false
+  entryPrice.value = event.target.value
 }
 
 const onUnderlyingPriceInput = (event) => {
@@ -830,7 +1147,7 @@ const useQuotedUnderlying = () => {
   manualUnderlying.value = false
   manualUnderlyingPrice.value = ''
 }
-// NO watcher on selectedExpiry – we control it via handleExpiryClick + loadChain
+// No watcher on selectedExpiry; handleExpiryClick and loadChain own this transition.
 
 // ---------- symbol selection handler ----------
 const mergeProgressReadiness = (progress) => {
@@ -1050,10 +1367,15 @@ const handleSelectSymbol = async (e) => {
   snapshotAt.value     = null
   entryPrice.value     = null
   targetPrice.value    = null
+  selectedPayoffIndex.value = null
+  selectedDecayIndex.value = null
+  exactContractsOpen.value = false
+  responseMetadata.value = {}
+  rawExpirations.value = []
   underlyingQuote.value = normalizeUnderlying(null)
   stockPrice.value     = null
   useQuotedUnderlying()
-  entryAuto.value      = true   // ✅ reset auto on symbol change
+  entryAuto.value      = true
   error.value          = ''
   loading.value        = true
 
@@ -1082,609 +1404,262 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <AppLayout title="Live Options Calculator">
+  <AppLayout title="Options Calculator">
     <template #header>
-      <h2 class="text-2xl font-bold text-white">Live Options Calculator (15-min delay)</h2>
+      <div class="calculator-app-header">
+        <div><span>Strategy workspace</span><h2>Options Calculator</h2></div>
+        <span class="calculator-app-header__delay">Quote source and timing are shown with the selected contract</span>
+      </div>
     </template>
-
-    <div class="py-6">
+    <div class="calculator-page">
       <AppShell>
-        <div class="max-w-7xl mx-auto px-6 space-y-6">
-          <!-- Error first -->
-          <div v-if="error" class="text-center py-20 text-red-400">
-            {{ error }}
-          </div>
-
-          <!-- Global "booting" / loading / waiting for full data -->
-          <div
-            v-else-if="loading"
-            class="text-center py-20"
-          >
-            <div
-              class="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-500"
-            ></div>
-            <p class="mt-4 text-gray-400">
-              Preparing {{ symbol }} calculator…
-            </p>
-          </div>
-
-          <!-- Main UI only when fully ready -->
-          <div v-else class="space-y-6">
-            <div
-              v-if="refreshState === 'no_options'"
-              class="rounded-xl border border-slate-500/40 bg-slate-900/50 px-4 py-3 text-sm text-slate-200"
-              data-testid="calculator-no-options"
-            >
-              {{ refreshMessage }}
+        <main class="calculator-workspace" aria-labelledby="calculator-title">
+          <section class="calculator-hero" aria-describedby="calculator-intro">
+            <div>
+              <span class="calculator-eyebrow">Long option planner</span>
+              <h1 id="calculator-title">Build the trade, then inspect every outcome</h1>
+              <p id="calculator-intro">Choose an expiration and contract, set the position assumptions, and compare expiration payoff with a constant-IV time-decay estimate.</p>
             </div>
-            <div
-              v-else-if="['starting', 'running'].includes(refreshState)"
-              class="rounded-xl border border-cyan-500/30 bg-cyan-950/30 px-4 py-3 text-sm text-cyan-100"
-              data-testid="calculator-refresh-running"
-            >
-              Preparing updated calculator data in the background.
-              <span v-if="refreshProgress?.expected_count" class="ml-1 text-cyan-300">
-                {{ refreshProgress.completed_count }} of {{ refreshProgress.expected_count }} expirations ready.
-              </span>
-            </div>
-            <div
-              v-else-if="refreshState === 'slow'"
-              class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-100"
-              data-testid="calculator-refresh-slow"
-            >
-              <span>{{ refreshMessage }}</span>
-              <button class="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white" @click="refreshLiveData">
-                Continue checking
-              </button>
-            </div>
-            <div
-              v-else-if="['failed', 'rate_limited', 'unauthorized', 'forbidden'].includes(refreshState)"
-              class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/40 bg-red-950/30 px-4 py-3 text-sm text-red-100"
-              data-testid="calculator-refresh-failed"
-            >
-              <span>{{ refreshMessage }}</span>
-              <button
-                v-if="!['unauthorized', 'forbidden'].includes(refreshState)"
-                class="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
-                @click="refreshLiveData"
-              >
-                Retry refresh
-              </button>
-            </div>
-            <div
-              v-if="manualUnderlying && calculationUnderlyingPrice !== null"
-              class="rounded-xl border border-cyan-500/40 bg-cyan-950/30 px-4 py-3 text-sm text-cyan-100"
-              data-testid="calculator-manual-underlying"
-            >
-              Using your manual underlying scenario price of ${{ formatPrice(calculationUnderlyingPrice) }}. This is a hypothetical input, not a live quote.
-            </div>
-            <div
-              v-else-if="!underlyingQuote.usable"
-              class="rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200"
-            >
-              A trustworthy underlying quote is unavailable. Expiration payoffs remain available using hypothetical stock prices. Enter an underlying scenario price to enable time-decay calculations.
-            </div>
-            <div
-              v-else-if="!manualUnderlying && underlyingQuote.status === 'stale'"
-              class="rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-xs text-amber-200"
-            >
-              Using a stale quote from {{ underlyingQuote.source || 'the market-data provider' }}
-              <span v-if="underlyingQuote.asof"> (as of {{ underlyingQuote.asof }})</span>.
-            </div>
-
-            <!-- Expiry chips -->
-            <div class="flex flex-wrap gap-2 items-center">
-              <span class="text-xs text-gray-400 mr-1">Expiry:</span>
-              <button
-                v-for="exp in expirations"
-                :key="exp.value"
-                @click="handleExpiryClick(exp.value)"
-                :class="selectedExpiry === exp.value ? 'bg-cyan-600' : 'bg-gray-700'"
-                class="px-3 py-1.5 rounded-lg text-xs font-medium"
-              >
-                <span>{{ exp.label }}</span>
-                <span
-                  class="ml-1 text-[10px] opacity-80"
-                  :data-readiness="expirationStatus(exp)"
-                >
-                  {{ expirationStatusLabel(exp) }}
-                </span>
-              </button>
-              <span v-if="!expirations.length" class="text-xs text-amber-300">
-                No expirations loaded yet.
-              </span>
-            </div>
-
-            <div class="flex justify-center mt-4">
-              <button
-                @click="refreshLiveData"
-                :disabled="refreshingLive"
-                class="px-6 py-2 bg-cyan-600 rounded-lg hover:bg-cyan-700 transition"
-              >
+            <div class="calculator-hero__actions">
+              <div class="calculator-context-chip" :data-state="quoteState"><span>{{ symbol }}</span><strong>{{ quoteStateLabel }}</strong></div>
+              <button type="button" class="calculator-button calculator-button--primary" data-testid="calculator-refresh" :disabled="refreshingLive || loading" @click="refreshLiveData">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.4 6.6L20 11M4 13l1.6 4.4A7 7 0 0 0 17.9 15" /></svg>
                 {{ refreshingLive ? 'Refreshing...' : 'Refresh Live Data' }}
               </button>
             </div>
-
-            <!-- Chain Table -->
-            <div
-              class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6 overflow-x-auto"
-            >
-              <div class="flex items-center justify-between mb-4">
-                <h3 class="text-xl font-bold">Live Chain</h3>
-                <div class="flex items-center gap-2">
-                  <span class="text-xs text-gray-400">Strikes:</span>
-                  <button
-                    class="px-2.5 py-1 rounded-full text-[11px] font-medium"
-                    :class="strikeBandMode === 'near' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
-                    @click="strikeBandMode = 'near'"
-                  >
-                    Near (±15%)
-                  </button>
-                  <button
-                    class="px-2.5 py-1 rounded-full text-[11px] font-medium"
-                    :class="strikeBandMode === 'wide' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
-                    @click="strikeBandMode = 'wide'"
-                  >
-                    Wide (±40%)
-                  </button>
-                  <button
-                    class="px-2.5 py-1 rounded-full text-[11px] font-medium"
-                    :class="strikeBandMode === 'all' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
-                    @click="strikeBandMode = 'all'"
-                  >
-                    All
-                  </button>
-                </div>
-              </div>
-              <div class="max-h-[55vh] overflow-y-auto pr-2">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="text-gray-400 border-b border-gray-700">
-                      <th class="text-left py-2">Strike</th>
-                      <th class="text-left py-2">Call</th>
-                      <th class="text-left py-2">Put</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="row in groupedStrikes"
-                      :key="row.key"
-                      :data-contract-family="row.family"
-                      class="hover:bg-gray-800/50 cursor-pointer border-b border-gray-800"
-                      :class="{
-                        'bg-gray-800/30': selectedOption && [row.call, row.put]
-                          .some((contract) => contractIdentity(contract) === contractIdentity(selectedOption)),
-                      }"
-                    >
-                      <td class="py-3 font-mono">
-                        <div>{{ row.strike }}</div>
-                        <div v-if="row.show_family" class="text-[10px] text-cyan-300">
-                          {{ row.family_label }} contract
-                        </div>
-                      </td>
-
-                      <td
-                        @click="selectOption(row.call)"
-                        :data-contract-symbol="row.call?.contract_symbol ?? null"
-                        :title="row.call?.contract_symbol ?? ''"
-                        class="py-3"
-                        :class="
-                          contractIdentity(row.call) === contractIdentity(selectedOption)
-                            ? 'text-emerald-400 font-bold'
-                            : 'text-gray-300'
-                        "
-                      >
-                        <span v-if="row.call">
-                          ${{ formatPrice(safePremium(row.call)) }}
-                        </span>
-                        <span v-else>—</span>
-                      </td>
-
-                      <td
-                        @click="selectOption(row.put)"
-                        :data-contract-symbol="row.put?.contract_symbol ?? null"
-                        :title="row.put?.contract_symbol ?? ''"
-                        class="py-3"
-                        :class="
-                          contractIdentity(row.put) === contractIdentity(selectedOption)
-                            ? 'text-red-400 font-bold'
-                            : 'text-gray-300'
-                        "
-                      >
-                        <span v-if="row.put">
-                          ${{ formatPrice(safePremium(row.put)) }}
-                        </span>
-                        <span v-else>—</span>
-                      </td>
-                    </tr>
-                    <tr v-if="!groupedStrikes.length">
-                      <td colspan="3" class="py-6 text-center text-sm text-amber-300">
-                        No chain rows yet. Click "Refresh Live Data" and wait a few seconds.
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+          </section>
+          <section v-if="error" class="calculator-state calculator-state--error" role="alert"><strong>Calculator unavailable</strong><span>{{ error }}</span></section>
+          <section v-else-if="loading" class="calculator-loading" role="status" aria-live="polite">
+            <span class="calculator-loading__mark" aria-hidden="true"></span>
+            <div><strong>Preparing {{ symbol }} calculator</strong><p>Loading the expiration catalog and latest publishable chain.</p></div>
+          </section>
+          <div v-else class="calculator-content">
+            <div v-if="refreshState === 'no_options'" class="calculator-state" data-testid="calculator-no-options" role="status"><strong>No contracts available</strong><span>{{ refreshMessage }}</span></div>
+            <div v-else-if="['starting', 'running'].includes(refreshState)" class="calculator-state calculator-state--data" data-testid="calculator-refresh-running" role="status" aria-live="polite">
+              <div><strong>Preparing updated calculator data in the background.</strong><span v-if="refreshProgress?.expected_count">{{ refreshProgress.completed_count }} of {{ refreshProgress.expected_count }} expirations ready.</span></div>
+              <span class="calculator-state__pulse" aria-hidden="true"></span>
             </div>
-
-            <!-- Controls + Summary -->
-            <div class="grid lg:grid-cols-3 gap-6">
-              <div class="space-y-6">
-                <div
-                  class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6"
-                >
-                  <h3 class="text-xl font-bold mb-4">
-                    {{ symbol }} @
-                    <span v-if="calculationUnderlyingPrice !== null">${{ formatPrice(calculationUnderlyingPrice) }}<span v-if="manualUnderlying" class="ml-1 text-xs text-cyan-300">(manual scenario)</span></span>
-                    <span v-else-if="manualUnderlying" class="text-amber-300">Invalid manual scenario</span>
-                    <span v-else class="text-amber-300">Quote unavailable</span>
-                  </h3>
-                  <div class="space-y-4">
-                    <div class="flex gap-3">
-                      <button
-                        @click="switchOptionType('call')"
-                        :class="optionType === 'call' ? 'bg-emerald-600' : 'bg-gray-700'"
-                        class="flex-1 py-3 rounded-lg font-medium"
-                      >
-                        Long Call
-                      </button>
-                      <button
-                        @click="switchOptionType('put')"
-                        :class="optionType === 'put' ? 'bg-red-600' : 'bg-gray-700'"
-                        class="flex-1 py-3 rounded-lg font-medium"
-                      >
-                        Long Put
-                      </button>
-                    </div>
-
-                    <div
-                      v-if="selectedOption"
-                      class="bg-gray-800/50 rounded-lg p-4 space-y-2"
-                    >
-                      <div class="text-sm text-gray-400">Selected</div>
-                      <div class="font-mono text-lg text-cyan-300">
-                        {{ selectedOption.expiry }} {{ selectedOption.strike }}
-                        {{ selectedOption.type.toUpperCase() }}
-                      </div>
-                      <div class="text-sm">
-                        <span class="text-gray-400">Mid:</span>
-                        <span class="font-bold text-emerald-400 ml-2">
-                          ${{ formatPrice(selectedOption.premium) }}
-                        </span>
-                      </div>
-                    </div>
-                    <div v-else class="rounded-lg bg-amber-950/30 p-3 text-sm text-amber-200">
-                      No {{ optionType }} contract exists at the selected strike and expiration. Select another contract.
-                    </div>
-
-                    <div>
-                      <label class="text-sm text-gray-300">Contracts</label>
-                      <input
-                        v-model.number="contracts"
-                        type="number"
-                        min="1"
-                        class="w-full mt-2 px-4 py-3 bg-gray-800/70 border border-gray-600 rounded-lg text-white"
-                      />
-                    </div>
-
-                    <div class="mt-4">
-                      <label class="text-sm text-gray-300">
-                        Entry price per share
-                        <span class="ml-1 text-xs" :class="entryAuto ? 'text-cyan-300' : 'text-amber-300'">
-                          ({{ entryAuto ? 'live mid' : 'manual' }})
-                        </span>
-                      </label>
-                     <input
-                        v-model.number="entryPrice"
-                        @input="onEntryPriceInput"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        class="w-full mt-2 px-4 py-3 bg-gray-800/70 border border-gray-600 rounded-lg text-white"
-                        placeholder="Leave blank to use live mid"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      class="text-xs text-cyan-400 hover:text-cyan-300"
-                      @click="useLiveEntryPrice"
-                      :disabled="!selectedOption || selectedOption.premium === null"
-                      :class="{ 'opacity-50 cursor-not-allowed': !selectedOption || selectedOption.premium === null }"
-                    >
-                      Use live mid for entry price
-                    </button>
-                    <div>
-                      <label for="calculator-underlying-price" class="text-sm text-gray-300">
-                        Underlying scenario price
-                        <span class="ml-1 text-xs" :class="manualUnderlying ? 'text-amber-300' : 'text-cyan-300'">
-                          ({{ manualUnderlying ? 'manual' : 'quote' }})
-                        </span>
-                      </label>
-                      <input
-                        id="calculator-underlying-price"
-                        data-testid="calculator-underlying-price"
-                        :value="manualUnderlying ? manualUnderlyingPrice : (stockPrice ?? '')"
-                        @input="onUnderlyingPriceInput"
-                        type="number"
-                        min="0"
-                        step="any"
-                        class="w-full mt-2 px-4 py-3 bg-gray-800/70 border border-gray-600 rounded-lg text-white"
-                        placeholder="Enter a hypothetical stock price"
-                        :aria-invalid="manualUnderlying && calculationUnderlyingPrice === null"
-                      />
-                      <p v-if="manualUnderlying && calculationUnderlyingPrice === null" class="mt-2 text-xs text-amber-300" data-testid="calculator-underlying-invalid">
-                        Enter a finite price greater than zero. No automatic quote is used while this manual input is invalid.
-                      </p>
-                      <button
-                        v-if="manualUnderlying"
-                        type="button"
-                        class="mt-2 text-xs text-cyan-400 hover:text-cyan-300"
-                        data-testid="calculator-use-quoted-underlying"
-                        @click="useQuotedUnderlying"
-                      >
-                        Use automatic underlying quote
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  class="bg-gradient-to-br from-cyan-600/20 to-blue-700/20 backdrop-blur-xl rounded-2xl border border-cyan-500/30 p-6"
-                >
-                  <h4 class="text-lg font-bold text-cyan-300 mb-4">Trade Summary</h4>
-                  <div class="space-y-3 text-sm">
-                    <div class="flex justify-between">
-                      <span class="text-gray-400">Breakeven</span>
-                      <span class="font-bold text-white">{{ breakeven === null ? '\u2014' : `$${formatPrice(breakeven)}` }}</span>
-                    </div>
-                    <div class="flex justify-between">
-                      <span class="text-gray-400">Max Loss</span>
-                      <span class="font-bold text-red-400">
-                        {{ maxLoss === null ? '\u2014' : `$${formatMoney(Math.abs(maxLoss))}` }}
-                      </span>
-                    </div>
-                    <div class="flex justify-between">
-                      <span class="text-gray-400">Cost</span>
-                      <span class="font-bold text-white">
-                        {{ cost === null ? '\u2014' : `$${formatMoney(cost)}` }}
-                      </span>
-                    </div>
-                    <div class="flex justify-between">
-                      <span class="text-gray-400">Move Needed</span>
-                      <span class="font-bold text-cyan-400">{{ moveNeeded }}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="lg:col-span-2 space-y-6">
-                <!-- charts -->
-                <div class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6">
-                  <p v-if="!calculationReady" class="mb-4 text-sm text-amber-300">
-                    Select a priced contract to view calculations.
-                  </p>
-                  <div v-else class="grid lg:grid-cols-2 gap-6">
-                    <div>
-                      <h3 class="text-xl font-bold mb-4">P&L vs Price (at Expiration)</h3>
-                      <p v-if="calculationUnderlyingPrice === null" class="mb-3 text-xs text-amber-300" data-testid="calculator-hypothetical-payoff">
-                        Hypothetical range centered on the selected strike (${{ formatPrice(selectedOption.strike) }}), not a current stock quote.
-                      </p>
-                      <canvas ref="chartRef" class="w-full h-80"></canvas>
-                    </div>
-
-                    <div>
-                      <h3 class="text-xl font-bold mb-1">P&L vs Time</h3>
-                      <p class="text-xs text-gray-400 mb-3">
-                        Scenario: {{ timeDecayTitle }} • DTE: {{ daysToExpiration ?? 'Unavailable' }}
-                      </p>
-                      <p v-if="calculationUnderlyingPrice === null" class="text-sm text-amber-300" data-testid="calculator-charts-paused">
-                        Time-decay calculations require an accepted underlying quote or a valid manual underlying scenario price.
-                      </p>
-                      <p v-else-if="decayMode === 'target' && decayUnderlying === null" class="text-sm text-amber-300">
-                        Enter a finite target price greater than zero.
-                      </p>
-                      <canvas v-else ref="decayChartRef" class="w-full h-80"></canvas>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Time Decay Table (before payoff) -->
-                <div
-                  class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6"
-                >
-                  <div class="flex items-center justify-between mb-3">
-                    <div>
-                      <h3 class="text-lg font-bold">
-                        {{ timeDecayTitle }}
-                      </h3>
-                      <span class="text-xs text-gray-400">
-                        DTE: {{ daysToExpiration ?? 'Unavailable' }}<template v-if="daysToExpiration !== null">
-                          day<span v-if="daysToExpiration !== 1">s</span>
-                        </template>
-                      </span>
-                    </div>
-
-                    <div class="flex items-center gap-2">
-                      <span class="text-xs text-gray-400 mr-1">View:</span>
-                      <button
-                        class="px-3 py-1 rounded-full text-xs font-medium"
-                        :class="decayViewMode === 'compact' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
-                        @click="decayViewMode = 'compact'"
-                      >
-                        Compact
-                      </button>
-                      <button
-                        class="px-3 py-1 rounded-full text-xs font-medium"
-                        :class="decayViewMode === 'full' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
-                        @click="decayViewMode = 'full'"
-                      >
-                        Full
-                      </button>
-                    </div>
-                  </div>
-
-                  <!-- Scenario controls -->
-                  <div class="flex flex-wrap items-center gap-3 mb-4">
-                    <span class="text-xs text-gray-400 mr-1">Scenario:</span>
-
-                    <button
-                      class="px-3 py-1 rounded-full text-xs font-medium"
-                      :class="decayMode === 'flat' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
-                      @click="decayMode = 'flat'"
-                    >
-                      Flat @ Spot
-                    </button>
-
-                    <button
-                      class="px-3 py-1 rounded-full text-xs font-medium"
-                      :class="decayMode === 'breakeven' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
-                      @click="decayMode = 'breakeven'"
-                    >
-                      Flat @ Breakeven
-                    </button>
-
-                    <button
-                      class="px-3 py-1 rounded-full text-xs font-medium"
-                      :class="decayMode === 'target' ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-200'"
-                      @click="decayMode = 'target'"
-                    >
-                      Flat @ Target
-                    </button>
-
-                    <input
-                      v-if="decayMode === 'target'"
-                      v-model.number="targetPrice"
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      class="ml-2 px-3 py-1.5 bg-gray-800/70 border border-gray-600 rounded-lg text-xs text-white w-28"
-                      placeholder="Target"
-                    />
-                  </div>
-
-                  <p class="text-xs text-gray-400 mb-3">
-                    Approximate option value and P&amp;L per day if the stock stays at the selected
-                    scenario price and time value decays linearly into expiration.
-                  </p>
-
-                  <div class="max-h-80 overflow-y-auto">
-                    <table class="w-full text-sm">
-                      <thead>
-                        <tr class="text-gray-400 border-b border-gray-700">
-                          <th class="text-left py-2">Days to Exp</th>
-                          <th class="text-left py-2">Option Price ($)</th>
-                          <th class="text-left py-2">P&amp;L ($)</th>
-                          <th class="text-left py-2">ROI (%)</th>
-                        </tr>
-                      </thead>
-                      <tbody data-testid="calculator-time-decay-rows">
-                        <tr
-                          v-for="row in visibleTimeDecayRows"
-                          :key="row.dte"
-                          :class="[
-                            'border-b border-gray-800',
-                            row.pnl > 0 ? 'bg-emerald-900/20' : '',
-                            row.pnl < 0 ? 'bg-red-900/10' : '',
-                          ]"
-                        >
-                          <td class="py-2 font-mono">{{ row.dte }}</td>
-                          <td class="py-2 font-mono">
-                            ${{ row.price.toFixed(2) }}
-                          </td>
-                          <td
-                            class="py-2 font-mono"
-                            :class="row.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'"
-                          >
-                            ${{ row.pnl.toFixed(0) }}
-                          </td>
-                          <td class="py-2 font-mono text-gray-300">
-                            {{ row.roi.toFixed(1) }}%
-                          </td>
-                        </tr>
-
-                        <tr
-                          v-if="decayViewMode === 'compact' && hiddenTimeDecayCount > 0"
-                        >
-                          <td colspan="4" class="py-2 text-center text-xs text-gray-500">
-                            … {{ hiddenTimeDecayCount }} more day<span v-if="hiddenTimeDecayCount !== 1">s</span> hidden.
-                            Switch to <span class="font-semibold">Full</span> view to see all.
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <!-- Payoff table (after time decay) -->
-                <div
-                  class="bg-white/10 backdrop-blur-xl rounded-2xl border border-gray-700/50 p-6"
-                >
-                  <h3 class="text-lg font-bold mb-4">Payoff Table (at Expiration)</h3>
-                  <p v-if="calculationReady && calculationUnderlyingPrice === null" class="mb-3 text-xs text-amber-300">
-                    Hypothetical prices centered on the selected strike; a live underlying quote is not required for expiration payoff.
-                  </p>
-                  <div class="max-h-80 overflow-y-auto">
-                    <table class="w-full text-sm">
-                      <thead>
-                        <tr class="text-gray-400 border-b border-gray-700">
-                          <th class="text-left py-2">Stock Price</th>
-                          <th class="text-left py-2">P&amp;L ($)</th>
-                          <th class="text-left py-2">ROI (%)</th>
-                        </tr>
-                      </thead>
-                      <tbody data-testid="calculator-payoff-rows">
-                        <tr
-                          v-for="row in payoffTableRows"
-                          :key="row.price"
-                          :class="[
-                            'border-b border-gray-800',
-                            row.pnl > 0 ? 'bg-emerald-900/20' : '',
-                            row.pnl < 0 ? 'bg-red-900/10' : '',
-                          ]"
-                        >
-                          <td class="py-2 font-mono">${{ row.price.toFixed(2) }}</td>
-                          <td
-                            class="py-2 font-mono"
-                            :class="row.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'"
-                          >
-                            ${{ row.pnl.toFixed(0) }}
-                          </td>
-                          <td class="py-2 font-mono text-gray-300">
-                            {{ row.roi.toFixed(1) }}%
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <!-- quick stats -->
-                <div class="grid grid-cols-3 gap-4 text-center">
-                  <div
-                    class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
-                  >
-                    <div class="text-2xl font-bold text-red-400">
-                      {{ maxLoss === null ? '\u2014' : `$${formatMoney(Math.abs(maxLoss))}` }}
-                    </div>
-                    <div class="text-xs text-gray-400">Max Risk</div>
-                  </div>
-                  <div
-                    class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
-                  >
-                    <div class="text-2xl font-bold text-yellow-400">1 : Infinity</div>
-                    <div class="text-xs text-gray-400">R:R (long option)</div>
-                  </div>
-                  <div
-                    class="bg-gray-800/50 backdrop-blur rounded-xl p-4 border border-gray-700"
-                  >
-                    <div class="text-2xl font-bold text-cyan-400">{{ moveNeeded }}</div>
-                    <div class="text-xs text-gray-400">Move Needed</div>
-                  </div>
-                </div>
-              </div>
+            <div v-else-if="refreshState === 'slow'" class="calculator-state calculator-state--warning" data-testid="calculator-refresh-slow" role="status">
+              <div><strong>Refresh is taking longer than usual</strong><span>{{ refreshMessage }}</span></div><button type="button" class="calculator-button" @click="refreshLiveData">Continue checking</button>
             </div>
+            <div v-else-if="['failed', 'rate_limited', 'unauthorized', 'forbidden'].includes(refreshState)" class="calculator-state calculator-state--error" data-testid="calculator-refresh-failed" role="alert">
+              <div><strong>Live refresh did not complete</strong><span>{{ refreshMessage }}</span></div>
+              <button v-if="!['unauthorized', 'forbidden'].includes(refreshState)" type="button" class="calculator-button" @click="refreshLiveData">Retry refresh</button>
+            </div>
+            <div v-if="manualUnderlying && calculationUnderlyingPrice !== null" class="calculator-state calculator-state--data" data-testid="calculator-manual-underlying" role="status">
+              <strong>Manual stock scenario active</strong><span>Using your manual underlying scenario price of &#36;{{ formatPrice(calculationUnderlyingPrice) }}. This is a hypothetical input, not a live quote.</span>
+            </div>
+            <div v-else-if="!underlyingQuote.usable" class="calculator-state calculator-state--warning" role="status">
+              <strong>Underlying quote unavailable</strong><span>A trustworthy underlying quote is unavailable. Expiration payoffs remain available using hypothetical stock prices. Enter an underlying scenario price to enable time-decay calculations.</span>
+            </div>
+            <div v-else-if="!manualUnderlying && underlyingQuote.status === 'stale'" class="calculator-state calculator-state--warning" role="status">
+              <strong>Accepted stale quote</strong><span>Using a stale quote from {{ underlyingQuote.source || 'the market-data provider' }}<template v-if="underlyingQuote.asof"> (as of {{ underlyingQuote.asof }})</template>.</span>
+            </div>
+            <section class="calculator-panel calculator-expiries" aria-labelledby="calculator-expiry-heading">
+              <div class="calculator-panel__header">
+                <div><span class="calculator-step">1</span><div><h2 id="calculator-expiry-heading">Choose an expiration</h2><p>Each date keeps its own readiness state.</p></div></div>
+                <dl class="calculator-provenance">
+                  <div><dt>Quote source</dt><dd>{{ underlyingQuote.source || 'Unavailable' }}</dd></div>
+                  <div><dt>Quote time</dt><dd>{{ formatSourceTime(underlyingQuote.asof) }}</dd></div>
+                  <div><dt>Chain snapshot</dt><dd>{{ formatSourceTime(snapshotAt) }}</dd></div>
+                </dl>
+              </div>
+              <div class="calculator-expiry-list" role="list" aria-label="Available expirations">
+                <button v-for="exp in expirations" :key="exp.value" type="button" class="calculator-expiry" :class="{ 'calculator-expiry--selected': selectedExpiry === exp.value }" :aria-pressed="selectedExpiry === exp.value" @click="handleExpiryClick(exp.value)">
+                  <span>{{ exp.label }}</span><small :data-readiness="expirationStatus(exp)">{{ expirationStatusLabel(exp) }}</small>
+                </button>
+                <span v-if="!expirations.length" class="calculator-empty-inline">No expirations loaded yet.</span>
+              </div>
+            </section>
+            <div class="calculator-builder">
+              <section class="calculator-panel calculator-chain" aria-labelledby="calculator-chain-heading">
+                <div class="calculator-panel__header">
+                  <div><span class="calculator-step">2</span><div><h2 id="calculator-chain-heading">Live Chain</h2><p>Select the exact call or put contract used by every result.</p></div></div>
+                  <fieldset class="calculator-segmented">
+                    <legend>Strike range</legend>
+                    <button type="button" :aria-pressed="strikeBandMode === 'near'" @click="strikeBandMode = 'near'">Near (±15%)</button>
+                    <button type="button" :aria-pressed="strikeBandMode === 'wide'" @click="strikeBandMode = 'wide'">Wide (±40%)</button>
+                    <button type="button" :aria-pressed="strikeBandMode === 'all'" @click="strikeBandMode = 'all'">All</button>
+                  </fieldset>
+                </div>
+                <div class="calculator-chain__selection" aria-live="polite"><span>Selected contract</span><strong>{{ selectedContractLabel }}</strong></div>
+                <div class="calculator-table-wrap calculator-chain__table">
+                  <table class="calculator-table">
+                    <caption class="sr-only">Live Chain</caption>
+                    <thead><tr><th scope="col">Strike</th><th scope="col">Call price</th><th scope="col">Put price</th></tr></thead>
+                    <tbody>
+                      <tr v-for="row in groupedStrikes" :key="row.key" :data-contract-family="row.family" :data-selected="selectedOption && [row.call, row.put].some((contract) => contractIdentity(contract) === contractIdentity(selectedOption))">
+                        <td><span class="calculator-number">&#36;{{ formatPrice(row.strike) }}</span><small v-if="row.show_family">{{ row.family_label }} contract</small></td>
+                        <td :data-contract-symbol="row.call?.contract_symbol ?? null" :title="row.call?.contract_symbol ?? ''" :tabindex="row.call ? 0 : -1" :role="row.call ? 'button' : null" :aria-pressed="row.call ? contractIdentity(row.call) === contractIdentity(selectedOption) : null" :aria-label="row.call ? 'Select call at strike $' + formatPrice(row.strike) + ', price $' + formatPrice(safePremium(row.call)) : 'Call unavailable'" :data-active="contractIdentity(row.call) === contractIdentity(selectedOption)" :class="{ 'font-bold': contractIdentity(row.call) === contractIdentity(selectedOption) }" @click="selectOption(row.call)" @keydown.enter.prevent="selectOption(row.call)" @keydown.space.prevent="selectOption(row.call)">
+                          <span v-if="row.call" class="calculator-quote calculator-quote--call">&#36;{{ formatPrice(safePremium(row.call)) }}</span><span v-else aria-label="Unavailable">—</span>
+                        </td>
+                        <td :data-contract-symbol="row.put?.contract_symbol ?? null" :title="row.put?.contract_symbol ?? ''" :tabindex="row.put ? 0 : -1" :role="row.put ? 'button' : null" :aria-pressed="row.put ? contractIdentity(row.put) === contractIdentity(selectedOption) : null" :aria-label="row.put ? 'Select put at strike $' + formatPrice(row.strike) + ', price $' + formatPrice(safePremium(row.put)) : 'Put unavailable'" :data-active="contractIdentity(row.put) === contractIdentity(selectedOption)" :class="{ 'font-bold': contractIdentity(row.put) === contractIdentity(selectedOption) }" @click="selectOption(row.put)" @keydown.enter.prevent="selectOption(row.put)" @keydown.space.prevent="selectOption(row.put)">
+                          <span v-if="row.put" class="calculator-quote calculator-quote--put">&#36;{{ formatPrice(safePremium(row.put)) }}</span><span v-else aria-label="Unavailable">—</span>
+                        </td>
+                      </tr>
+                      <tr v-if="!groupedStrikes.length"><td colspan="3" class="calculator-empty-cell">No chain rows yet. Click "Refresh Live Data" and wait a few seconds.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+              <aside class="calculator-panel calculator-setup" aria-labelledby="calculator-setup-heading">
+                <div class="calculator-panel__header"><div><span class="calculator-step">3</span><div><h2 id="calculator-setup-heading">Set the position</h2><p>Inputs recalculate locally and issue no market-data request.</p></div></div></div>
+                <div class="calculator-setup__body">
+                  <div class="calculator-underlying-heading">
+                    <h3>{{ symbol }} @
+                      <span v-if="calculationUnderlyingPrice !== null">&#36;{{ formatPrice(calculationUnderlyingPrice) }}<small v-if="manualUnderlying">(manual scenario)</small></span>
+                      <span v-else-if="manualUnderlying">Invalid manual scenario</span><span v-else>Quote unavailable</span>
+                    </h3>
+                    <span class="calculator-badge" :data-state="quoteState">{{ quoteStateLabel }}</span>
+                  </div>
+                  <fieldset class="calculator-option-type">
+                    <legend>Position type</legend>
+                    <button type="button" :aria-pressed="optionType === 'call'" data-tone="positive" @click="switchOptionType('call')">Long Call</button>
+                    <button type="button" :aria-pressed="optionType === 'put'" data-tone="negative" @click="switchOptionType('put')">Long Put</button>
+                  </fieldset>
+                  <div v-if="selectedOption" class="calculator-contract-card">
+                    <span>Selected</span><strong>{{ selectedOption.expiry }} {{ selectedOption.strike }} {{ selectedOption.type.toUpperCase() }}</strong>
+                    <dl>
+                      <div><dt>Bid</dt><dd>{{ selectedOption.bid == null ? '—' : '$' + formatPrice(selectedOption.bid) }}</dd></div>
+                      <div><dt class="sr-only">Pricing input</dt><dd>{{ premiumSourceLabel }}: {{ selectedOption.premium == null ? '—' : '$' + formatPrice(selectedOption.premium) }}</dd></div>
+                      <div><dt>Ask</dt><dd>{{ selectedOption.ask == null ? '—' : '$' + formatPrice(selectedOption.ask) }}</dd></div>
+                      <div><dt>IV</dt><dd>{{ selectedOption.iv == null ? '—' : (selectedOption.iv * 100).toFixed(1) + '%' }}</dd></div>
+                      <div><dt>DTE</dt><dd>{{ selectedOption.dte ?? '—' }}</dd></div>
+                    </dl>
+                    <details class="calculator-inline-details"><summary>Exact selected contract fields</summary><pre>{{ JSON.stringify(selectedOption, null, 2) }}</pre></details>
+                  </div>
+                  <div v-else class="calculator-state calculator-state--warning"><span>No {{ optionType }} contract exists at the selected strike and expiration. Select another contract.</span></div>
+                  <div class="calculator-fields">
+                    <label class="calculator-field" for="calculator-contracts">
+                      <span>Contracts</span>
+                      <input id="calculator-contracts" data-testid="calculator-contracts" :value="contracts" type="text" min="1" inputmode="numeric" pattern="[0-9]*" :aria-invalid="contractsInvalid" :aria-describedby="contractsInvalid ? 'calculator-contracts-error' : 'calculator-contracts-help'" @input="contracts = $event.target.value" />
+                      <small id="calculator-contracts-help">Each standard contract controls 100 shares.</small>
+                    </label>
+                    <p v-if="contractsInvalid" id="calculator-contracts-error" class="calculator-field-error" data-testid="calculator-contracts-invalid">Enter a positive whole number of contracts. Calculations are paused until this is corrected.</p>
+                    <label class="calculator-field" for="calculator-entry-price">
+                      <span>Entry price per share <em :data-state="entryAuto ? 'live' : 'manual'">({{ entryAuto ? premiumSourceLabel.toLowerCase() : 'manual' }})</em></span>
+                      <input id="calculator-entry-price" data-testid="calculator-entry-price" :value="entryPrice ?? ''" type="text" min="0" step="0.01" inputmode="decimal" placeholder="Leave blank to use the current contract price" :aria-invalid="entryPriceInvalid" :aria-describedby="entryPriceInvalid ? 'calculator-entry-error' : null" @input="onEntryPriceInput" />
+                    </label>
+                    <p v-if="entryPriceInvalid" id="calculator-entry-error" class="calculator-field-error" data-testid="calculator-entry-invalid">Enter a finite price greater than zero. Your value is retained and calculations remain paused.</p>
+                    <button type="button" class="calculator-text-button" :disabled="!selectedOption || selectedOption.premium === null" @click="useLiveEntryPrice">Use current contract price for entry</button>
+                    <label class="calculator-field" for="calculator-underlying-price">
+                      <span>Underlying scenario price <em :data-state="manualUnderlying ? 'manual' : 'live'">({{ manualUnderlying ? 'manual' : 'quote' }})</em></span>
+                      <input id="calculator-underlying-price" data-testid="calculator-underlying-price" :value="manualUnderlying ? manualUnderlyingPrice : (stockPrice ?? '')" type="number" min="0" step="any" inputmode="decimal" placeholder="Enter a hypothetical stock price" :aria-invalid="manualUnderlying && calculationUnderlyingPrice === null" @input="onUnderlyingPriceInput" />
+                    </label>
+                    <p v-if="manualUnderlying && calculationUnderlyingPrice === null" class="calculator-field-error" data-testid="calculator-underlying-invalid">Enter a finite price greater than zero. No automatic quote is used while this manual input is invalid.</p>
+                    <button v-if="manualUnderlying" type="button" class="calculator-text-button" data-testid="calculator-use-quoted-underlying" @click="useQuotedUnderlying">Use automatic underlying quote</button>
+                  </div>
+                  <section class="calculator-trade-summary" aria-labelledby="calculator-summary-heading">
+                    <h3 id="calculator-summary-heading">Trade Summary</h3>
+                    <dl>
+                      <div><dt>Breakeven</dt><dd>{{ breakeven === null ? '—' : '$' + formatPrice(breakeven) }}</dd></div>
+                      <div><dt>Max Loss</dt><dd data-tone="negative">{{ maxLoss === null ? '—' : '$' + formatMoney(Math.abs(maxLoss)) }}</dd></div>
+                      <div><dt>Cost</dt><dd>{{ cost === null ? '—' : '$' + formatMoney(cost) }}</dd></div>
+                      <div><dt>Move Needed</dt><dd data-tone="data">{{ moveNeeded }}</dd></div>
+                    </dl>
+                  </section>
+                </div>
+              </aside>
+            </div>
+            <section class="calculator-results" aria-labelledby="calculator-results-heading">
+              <div class="calculator-results__heading">
+                <div><span class="calculator-step">4</span><div><h2 id="calculator-results-heading">Inspect the outcomes</h2><p>Chart selection stays visible and matches the exact row in each table.</p></div></div>
+                <span class="calculator-badge" data-state="estimated">Time curve is estimated, not a quote</span>
+              </div>
+              <div class="calculator-metrics">
+                <article class="calculator-metric" data-tone="data"><span>Breakeven</span><strong>{{ breakeven === null ? '—' : '$' + formatPrice(breakeven) }}</strong><small>At expiration</small></article>
+                <article class="calculator-metric" data-tone="negative"><span>Maximum risk</span><strong>{{ maxLoss === null ? '—' : '$' + formatMoney(Math.abs(maxLoss)) }}</strong><small>Premium paid</small></article>
+                <article class="calculator-metric" :data-tone="optionType === 'call' ? 'positive' : 'warning'"><span>{{ optionType === 'call' ? 'Profit potential' : 'Maximum profit' }}</span><strong>{{ profitPotentialLabel }}</strong><small>{{ optionType === 'call' ? 'Long call at expiration' : 'If the underlying reaches $0' }}</small></article>
+                <article class="calculator-metric" data-tone="warning"><span>Reward / risk</span><strong>{{ rewardRiskLabel }}</strong><small>{{ optionType === 'call' ? 'Upside is unbounded' : 'Maximum expiration profit / premium' }}</small></article>
+              </div>
+              <p v-if="!calculationReady" class="calculator-state calculator-state--warning">{{ calculationBlockedMessage }}</p>
+              <div v-else class="calculator-chart-grid">
+                <article class="calculator-panel calculator-chart-panel">
+                  <div class="calculator-chart-heading">
+                    <div><h3>P&amp;L vs Price (at Expiration)</h3><p>Exact intrinsic-value payoff across 51 stock-price scenarios.</p></div>
+                    <div v-if="selectedPayoffRow" class="calculator-chart-value" aria-live="polite"><span>Selected scenario</span><strong>&#36;{{ selectedPayoffRow.price.toFixed(2) }}</strong><small :data-sign="selectedPayoffRow.pnl >= 0 ? 'positive' : 'negative'">{{ selectedPayoffRow.pnl >= 0 ? '+' : '' }}&#36;{{ selectedPayoffRow.pnl.toFixed(2) }}</small></div>
+                  </div>
+                  <p v-if="calculationUnderlyingPrice === null" class="calculator-chart-note" data-testid="calculator-hypothetical-payoff">Hypothetical range centered on the selected strike (&#36;{{ formatPrice(selectedOption.strike) }}), not a current stock quote.</p>
+                  <label class="calculator-inspector-select"><span>Inspect price</span><select :value="resolvedPayoffIndex" @change="selectPayoffIndex($event.target.value)"><option v-for="(row, index) in payoffTableRows" :key="row.price" :value="index">&#36;{{ row.price.toFixed(2) }} · {{ row.pnl >= 0 ? '+' : '' }}&#36;{{ row.pnl.toFixed(2) }}</option></select></label>
+                  <div class="calculator-canvas"><canvas ref="chartRef" data-testid="calculator-payoff-chart" tabindex="0" role="img" :aria-label="'Expiration payoff chart for ' + selectedContractLabel + '. Use arrow keys to inspect exact scenarios.'" @keydown="handleScenarioKeydown($event, 'payoff')"></canvas></div>
+                  <div class="calculator-chart-legend" aria-label="Chart references"><span><i data-reference="current"></i>{{ manualUnderlying ? 'Scenario price' : 'Current price' }}</span><span><i data-reference="breakeven"></i>Breakeven</span><span>Arrow keys inspect points</span></div>
+                </article>
+                <article class="calculator-panel calculator-chart-panel">
+                  <div class="calculator-chart-heading">
+                    <div>
+                      <h3>P&amp;L vs Time</h3>
+                      <p>Scenario: {{ timeDecayTitle }} · DTE: {{ daysToExpiration ?? 'Unavailable' }}<template v-if="daysToExpiration !== null"> day<span v-if="daysToExpiration !== 1">s</span></template></p>
+                    </div>
+                    <div v-if="selectedDecayRow" class="calculator-chart-value" aria-live="polite"><span>{{ selectedDecayRow.dte }} days left</span><strong>&#36;{{ selectedDecayRow.price.toFixed(2) }}</strong><small :data-sign="selectedDecayRow.pnl >= 0 ? 'positive' : 'negative'">{{ selectedDecayRow.pnl >= 0 ? '+' : '' }}&#36;{{ selectedDecayRow.pnl.toFixed(2) }}</small></div>
+                  </div>
+                  <fieldset class="calculator-scenario-controls">
+                    <legend>Underlying scenario</legend>
+                    <button type="button" :aria-pressed="decayMode === 'flat'" @click="decayMode = 'flat'">Flat @ Spot</button>
+                    <button type="button" :aria-pressed="decayMode === 'breakeven'" @click="decayMode = 'breakeven'">Flat @ Breakeven</button>
+                    <button type="button" :aria-pressed="decayMode === 'target'" @click="decayMode = 'target'">Flat @ Target</button>
+                    <input v-if="decayMode === 'target'" :value="targetPrice ?? ''" type="number" min="0" step="0.1" inputmode="decimal" placeholder="Target" aria-label="Target underlying price" @input="targetPrice = $event.target.value" />
+                  </fieldset>
+                  <p v-if="calculationUnderlyingPrice === null" class="calculator-chart-note" data-testid="calculator-charts-paused">Time-decay calculations require an accepted underlying quote or a valid manual underlying scenario price.</p>
+                  <p v-else-if="decayMode === 'target' && decayUnderlying === null" class="calculator-chart-note">Enter a finite target price greater than zero.</p>
+                  <template v-else>
+                    <label class="calculator-inspector-select"><span>Inspect day</span><select :value="resolvedDecayIndex" @change="selectDecayIndex($event.target.value)"><option v-for="(row, index) in timeDecayRows" :key="row.dte" :value="index">{{ row.dte }} DTE · &#36;{{ row.price.toFixed(2) }} · {{ row.pnl >= 0 ? '+' : '' }}&#36;{{ row.pnl.toFixed(2) }}</option></select></label>
+                    <div class="calculator-canvas"><canvas ref="decayChartRef" data-testid="calculator-decay-chart" tabindex="0" role="img" :aria-label="'Time-decay estimate for ' + selectedContractLabel + '. Use arrow keys to inspect exact days.'" @keydown="handleScenarioKeydown($event, 'decay')"></canvas></div>
+                  </template>
+                  <p class="calculator-assumption">Black–Scholes estimate at one-day intervals. It holds the selected provider IV constant, or fits IV from the current contract price when IV is absent, and uses a 4% risk-free rate. It assumes zero dividends and European exercise, so it does not model American early exercise. It does not forecast future IV or the underlying price.</p>
+                </article>
+              </div>
+              <div class="calculator-exact-grid">
+                <details class="calculator-panel calculator-details">
+                  <summary><span><strong>Daily option-price, P&amp;L, and ROI</strong><small>{{ timeDecayRows.length }} exact day{{ timeDecayRows.length === 1 ? '' : 's' }}</small></span><span>Open table</span></summary>
+                  <div class="calculator-details__body">
+                    <div class="calculator-table-tools"><p>{{ timeDecayTitle }}. Every calculation row remains available.</p><fieldset class="calculator-segmented"><legend>Rows</legend><button type="button" :aria-pressed="decayViewMode === 'compact'" @click="decayViewMode = 'compact'">Compact</button><button type="button" :aria-pressed="decayViewMode === 'full'" @click="decayViewMode = 'full'">Full</button></fieldset></div>
+                    <div class="calculator-table-wrap calculator-results-table">
+                      <table class="calculator-table">
+                        <thead><tr><th scope="col">Days to Exp</th><th scope="col">Option Price (&#36;)</th><th scope="col">P&amp;L (&#36;)</th><th scope="col">ROI (%)</th></tr></thead>
+                        <tbody data-testid="calculator-time-decay-rows">
+                          <tr v-for="row in visibleTimeDecayRows" :key="row.dte" :data-selected="selectedDecayRow?.dte === row.dte" @click="selectDecayIndex(timeDecayRows.findIndex((candidate) => candidate.dte === row.dte))">
+                            <td>{{ row.dte }}</td><td>&#36;{{ row.price.toFixed(2) }}</td><td :data-sign="row.pnl >= 0 ? 'positive' : 'negative'">&#36;{{ row.pnl.toFixed(0) }}</td><td>{{ row.roi.toFixed(1) }}%</td>
+                          </tr>
+                          <tr v-if="decayViewMode === 'compact' && hiddenTimeDecayCount > 0"><td colspan="4" class="calculator-empty-cell">… {{ hiddenTimeDecayCount }} more day<span v-if="hiddenTimeDecayCount !== 1">s</span> hidden. Switch to <strong>Full</strong> view to see all.</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </details>
+                <details class="calculator-panel calculator-details">
+                  <summary><span><strong>Payoff Table (at Expiration)</strong><small>{{ payoffTableRows.length }} exact scenarios</small></span><span>Open table</span></summary>
+                  <div class="calculator-details__body">
+                    <p v-if="calculationReady && calculationUnderlyingPrice === null" class="calculator-chart-note">Hypothetical prices centered on the selected strike; a live underlying quote is not required for expiration payoff.</p>
+                    <div class="calculator-table-wrap calculator-results-table">
+                      <table class="calculator-table">
+                        <thead><tr><th scope="col">Stock Price</th><th scope="col">P&amp;L (&#36;)</th><th scope="col">ROI (%)</th></tr></thead>
+                        <tbody data-testid="calculator-payoff-rows">
+                          <tr v-for="(row, index) in payoffTableRows" :key="row.price" :data-selected="resolvedPayoffIndex === index" @click="selectPayoffIndex(index)">
+                            <td>&#36;{{ row.price.toFixed(2) }}</td><td :data-sign="row.pnl >= 0 ? 'positive' : 'negative'">&#36;{{ row.pnl.toFixed(0) }}</td><td>{{ row.roi.toFixed(1) }}%</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </details>
+              </div>
+              <details class="calculator-panel calculator-details calculator-raw" data-testid="calculator-exact-market-data" @toggle="exactContractsOpen = $event.currentTarget.open">
+                <summary><span><strong>Exact market-data inputs</strong><small>{{ chainData.length }} contracts · provider fields retained</small></span><span>Open raw data</span></summary>
+                <div v-if="exactContractsOpen" class="calculator-details__body">
+                  <dl class="calculator-provenance calculator-provenance--raw">
+                    <div><dt>Quote reason</dt><dd>{{ underlyingQuote.reason || 'Unavailable' }}</dd></div>
+                    <div><dt>Live age limit</dt><dd>{{ formatExact(underlyingQuote.live_max_age_seconds) }} seconds</dd></div>
+                    <div><dt>Stale usable limit</dt><dd>{{ formatExact(underlyingQuote.stale_usable_max_age_seconds) }} seconds</dd></div>
+                    <div><dt>Snapshot</dt><dd>{{ snapshotAt || 'Unavailable' }}</dd></div>
+                  </dl>
+                  <h3>Response metadata</h3><pre data-testid="calculator-response-metadata">{{ JSON.stringify(responseMetadata, null, 2) }}</pre>
+                  <h3>Raw expiration publications</h3><pre data-testid="calculator-raw-expirations">{{ JSON.stringify(rawExpirations, null, 2) }}</pre>
+                  <h3>Normalized contracts with retained provider fields</h3><pre>{{ JSON.stringify(chainData, null, 2) }}</pre>
+                </div>
+              </details>
+            </section>
           </div>
-        </div>
+        </main>
       </AppShell>
     </div>
   </AppLayout>

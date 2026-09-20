@@ -17,20 +17,35 @@ const deferred = () => {
 }
 const calls = url => axios.get.mock.calls.filter(([path]) => path === url)
 const termData = symbol => ({ date: symbol, items: [{ tenor: 30, iv: 0.25 }] })
-const vrpData = symbol => ({ date: symbol, iv1m: 0.25, rv20: 0.2, vrp: 0.05, z: 1.5 })
+const vrpData = symbol => ({
+  date: symbol,
+  iv1m: 0.25,
+  rv20: 0.2,
+  vrp: 0.05,
+  z: 1.5,
+  source_meta: {
+    anchor_date: symbol,
+    selected_exp_date: '2026-10-02',
+    source_chain_date: symbol,
+    fallback_reason: null,
+  },
+})
 const seasonData = symbol => ({ variant: { date: symbol, d1: 1, cum5: 2 }, note: symbol })
-const snapshot = symbol => response({ symbol, date: '2026-09-04', strike_data: [{ strike: 100, net_gex: 10 }], expiration_dates: ['2026-09-11', '2026-09-18'] })
+const snapshot = symbol => response({ symbol, data_date: '2026-09-04', strike_data: [{ strike: 100, net_gex: 10 }], expiration_dates: ['2026-09-11', '2026-09-18'] })
 
 async function tick(ms = 0) {
   await vi.advanceTimersByTimeAsync(ms)
   await flushPromises()
 }
-async function mountDashboard(symbol = 'SPY') {
-  window.history.replaceState({}, '', '/?symbol=' + symbol)
+async function mountDashboardAt(url) {
+  window.history.replaceState({}, '', url)
   const wrapper = shallowMount(Dashboard)
   wrappers.push(wrapper)
   await flushPromises()
   return wrapper
+}
+async function mountDashboard(symbol = 'SPY') {
+  return mountDashboardAt('/?symbol=' + symbol)
 }
 async function activate(wrapper, tab) {
   const button = wrapper.findAll('nav button').find(item => item.text().includes(tab))
@@ -54,7 +69,13 @@ describe('Dashboard request lifecycle', () => {
       if (url === '/api/iv/term') return Promise.resolve(response(termData(symbol)))
       if (url === '/api/vrp') return Promise.resolve(response(vrpData(symbol)))
       if (url === '/api/seasonality/5d') return Promise.resolve(response(seasonData(symbol)))
-      if (url === '/api/ua' || url === '/api/intraday/ua') return Promise.resolve(response({ data_date: symbol, items: [{ symbol, exp: options.params.exp }] }))
+      if (url === '/api/ua' || url === '/api/intraday/ua') return Promise.resolve(response({
+        data_date: symbol,
+        expiration_dates: ['2026-09-11', '2026-09-18', '2026-10-16'],
+        effective_min_premium: options.params.min_premium > 0 ? options.params.min_premium : 100000,
+        applied_filters: { sort: options.params.sort, exp: options.params.exp },
+        items: [{ symbol, exp: options.params.exp }],
+      }))
       if (url === '/api/dex') return Promise.resolve(response({ symbol }))
       if (url === '/api/intraday/summary') return Promise.resolve(response({ open: true, refresh_eligible: false, asof: '2026-09-04T14:59:00Z' }))
       if (url === '/api/intraday/strikes') return Promise.resolve(response({ open: true, snapshot_available: true, asof: '2026-09-04T14:59:00Z', totals: {}, items: [] }))
@@ -77,6 +98,69 @@ describe('Dashboard request lifecycle', () => {
     expect(axios.post).not.toHaveBeenCalled()
     expect(wrapper.vm.tabStatus.volatility.state).toBe('idle')
     expect(wrapper.vm.activeTab).toBe('strikes')
+  })
+
+  it('keeps included expiration dates visible with a contiguous plural label', async () => {
+    const wrapper = await mountDashboard()
+    const scope = wrapper.get('.gex-expiry-scope')
+    expect(scope.element.tagName).toBe('SECTION')
+    expect(scope.get('.gex-expiry-scope__label').text()).toBe('2 expirations included in 2W')
+    expect(scope.findAllComponents({ name: 'UiBadge' })).toHaveLength(2)
+    expect(wrapper.vm.scopedExpirationDates).toEqual(['2026-09-11', '2026-09-18'])
+  })
+
+  it('uses the activity endpoint scope on UA instead of showing the GEX timeframe scope', async () => {
+    const wrapper = await mountDashboard()
+    await activate(wrapper, 'Unusual Activity')
+
+    expect(wrapper.find('.gex-expiry-scope').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Unusual activity uses its own scope:')
+    expect(wrapper.text()).toContain('Independent latest completed activity snapshot')
+    expect(wrapper.vm.uaExpiryOptions.map(option => option.value)).toEqual([
+      'ALL',
+      '2026-09-11',
+      '2026-09-18',
+      '2026-10-16',
+    ])
+    expect(wrapper.vm.uaEffectiveMinPremium).toBe(100000)
+    expect(wrapper.vm.uaAppliedServerFilters).toEqual({ sort: 'z_score', exp: null })
+    expect(calls('/api/ua')[0][1].params.include_scope).toBe(true)
+  })
+
+  it('uses the dashboard snapshot for Overview Q-Score and shows local volatility scopes', async () => {
+    const wrapper = await mountDashboard()
+    await activate(wrapper, 'Overview')
+    expect(wrapper.findComponent({ name: 'QScorePanel' }).props('snapshotDate')).toBe('2026-09-04')
+    expect(wrapper.findComponent({ name: 'OverviewMetrics' }).props('scopeLabel')).toBe('2W')
+
+    await activate(wrapper, 'Volatility')
+    expect(wrapper.find('.gex-expiry-scope').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Volatility uses local scopes:')
+    expect(wrapper.findComponent({ name: 'VRPTile' }).props('sourceMeta')).toEqual(vrpData('SPY').source_meta)
+  })
+
+  it('mounts strike charts only after the Strikes tab is opened, then retains their local view state', async () => {
+    const wrapper = await mountDashboardAt('/dashboard?symbol=SPY&mode=eod&tab=overview&timeframe=14d')
+    expect(wrapper.findComponent({ name: 'NetGexChart' }).exists()).toBe(false)
+    expect(wrapper.vm.strikesMounted).toBe(false)
+
+    await activate(wrapper, 'Strikes')
+    expect(wrapper.findComponent({ name: 'NetGexChart' }).exists()).toBe(true)
+    expect(wrapper.vm.strikesMounted).toBe(true)
+
+    await activate(wrapper, 'Overview')
+    expect(wrapper.findComponent({ name: 'NetGexChart' }).exists()).toBe(true)
+  })
+
+  it.each([
+    ['positioning', ['/api/gex-levels', '/api/dex']],
+    ['volatility', ['/api/gex-levels', '/api/iv/term', '/api/vrp', '/api/seasonality/5d']],
+    ['ua', ['/api/gex-levels', '/api/ua']],
+  ])('starts the %s loader from a shareable dashboard URL', async (tab, expectedRequests) => {
+    const wrapper = await mountDashboardAt(`/dashboard?symbol=QQQ&mode=eod&tab=${tab}&timeframe=14d`)
+
+    expect(wrapper.vm.activeTab).toBe(tab)
+    expect(axios.get.mock.calls.map(([url]) => url).sort()).toEqual([...expectedRequests].sort())
   })
 
   it('starts term, VRP and seasonality concurrently, with one request each for activation and repeated clicks', async () => {
@@ -196,7 +280,7 @@ describe('Dashboard request lifecycle', () => {
     const wrapper = await mountDashboard()
     await activate(wrapper, 'Volatility')
     expect(wrapper.vm.volState.season).toBe('empty')
-    expect(wrapper.text()).toContain('No seasonality available yet.')
+    expect(wrapper.findComponent({ name: 'UiStatus' }).props('message')).toBe('No seasonality available yet.')
     await tick(120_000)
     expect(calls('/api/seasonality/5d')).toHaveLength(1)
     expect(vi.getTimerCount()).toBe(0)
@@ -228,6 +312,46 @@ describe('Dashboard request lifecycle', () => {
     await flushPromises()
     expect(calls('/api/ua').at(-1)[1].params.per_expiry).toBe(6)
     expect([...wrapper.vm.cacheUA.keys()].some(key => key.includes('|ALL|6|'))).toBe(true)
+  })
+
+  it('preserves every activity filter parameter and separates pending edits from the applied screen', async () => {
+    const wrapper = await mountDashboard()
+    await activate(wrapper, 'Unusual Activity')
+    expect(wrapper.vm.uaAppliedFilters.top).toBe(5)
+
+    wrapper.vm.uaTop = 8
+    wrapper.vm.uaLimit = 80
+    wrapper.vm.uaMinZ = 3.2
+    wrapper.vm.uaMinVolOI = 1.4
+    wrapper.vm.uaMinVol = 900
+    wrapper.vm.uaMinPrem = 125000
+    wrapper.vm.uaNearPct = 6
+    wrapper.vm.uaSide = 'put'
+    wrapper.vm.uaSort = 'premium'
+    await nextTick()
+
+    expect(wrapper.vm.uaFiltersDirty).toBe(true)
+    expect(wrapper.vm.uaFilterView.top).toBe(5)
+
+    await wrapper.vm.ensureUA()
+    await flushPromises()
+    expect(calls('/api/ua').at(-1)[1].params).toEqual({
+      symbol: 'SPY',
+      exp: null,
+      per_expiry: 8,
+      limit: 80,
+      min_z: 3.2,
+      min_vol_oi: 1.4,
+      min_vol: 900,
+      min_premium: 125000,
+      near_spot_pct: 6,
+      only_side: 'put',
+      with_premium: true,
+      sort: 'premium',
+      include_scope: true,
+    })
+    expect(wrapper.vm.uaFiltersDirty).toBe(false)
+    expect(wrapper.vm.uaFilterView).toMatchObject({ top: 8, limit: 80, sort: 'premium', side: 'put' })
   })
 
   it('does not leave the positioning skeleton latched when a mode switch cancels its release timer', async () => {

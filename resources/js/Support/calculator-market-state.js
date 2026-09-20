@@ -44,6 +44,7 @@ export const normalizeUnderlying = (underlying) => {
         && (structured ? explicitlyUsable === true : true)
 
     return {
+        ...value,
         symbol: String(value.symbol ?? '').trim().toUpperCase() || null,
         status,
         usable,

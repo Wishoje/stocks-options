@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Middleware\CaptureBillingIntent;
+use App\Http\Middleware\UseLocalReviewClock;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -23,13 +25,17 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         $middleware->web(append: [
+            CaptureBillingIntent::class,
             \App\Http\Middleware\HandleInertiaRequests::class,
         ]);
 
-        // Add Sanctum's "stateful" middleware to the API group
-        $middleware->api(prepend: [
-            EnsureFrontendRequestsAreStateful::class,
-        ]);
+        // Start stateful API sessions before applying the historical review
+        // clock. On the response path the clock is then restored before
+        // Laravel calculates session-cookie expiry.
+        $middleware->api(
+            prepend: [EnsureFrontendRequestsAreStateful::class],
+            append: [UseLocalReviewClock::class],
+        );
 
         $middleware->alias([
             'subscribed' => \App\Http\Middleware\EnsureSubscribed::class,

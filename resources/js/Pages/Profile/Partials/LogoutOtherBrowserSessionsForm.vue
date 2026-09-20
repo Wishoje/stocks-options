@@ -1,141 +1,154 @@
 <script setup>
-import { ref } from 'vue';
-import { useForm } from '@inertiajs/vue3';
-import ActionMessage from '@/Components/ActionMessage.vue';
-import ActionSection from '@/Components/ActionSection.vue';
-import DialogModal from '@/Components/DialogModal.vue';
-import InputError from '@/Components/InputError.vue';
-import PrimaryButton from '@/Components/PrimaryButton.vue';
-import SecondaryButton from '@/Components/SecondaryButton.vue';
-import TextInput from '@/Components/TextInput.vue';
+import { nextTick, ref } from 'vue'
+import { useForm } from '@inertiajs/vue3'
+import DialogModal from '@/Components/DialogModal.vue'
+import InputError from '@/Components/InputError.vue'
 
 defineProps({
-    sessions: Array,
-});
+  sessions: { type: Array, default: () => [] },
+  sessionsSupported: { type: Boolean, default: false },
+})
 
-const confirmingLogout = ref(false);
-const passwordInput = ref(null);
+const confirmingLogout = ref(false)
+const passwordInput = ref(null)
 
-const form = useForm({
-    password: '',
-});
+const form = useForm({ password: '' })
 
-const confirmLogout = () => {
-    confirmingLogout.value = true;
-
-    setTimeout(() => passwordInput.value.focus(), 250);
-};
-
-const logoutOtherBrowserSessions = () => {
-    form.delete(route('other-browser-sessions.destroy'), {
-        preserveScroll: true,
-        onSuccess: () => closeModal(),
-        onError: () => passwordInput.value.focus(),
-        onFinish: () => form.reset(),
-    });
-};
+const confirmLogout = async () => {
+  confirmingLogout.value = true
+  await nextTick()
+  passwordInput.value?.focus()
+}
 
 const closeModal = () => {
-    confirmingLogout.value = false;
+  confirmingLogout.value = false
+  form.reset()
+  form.clearErrors()
+}
 
-    form.reset();
-};
+const logoutOtherBrowserSessions = () => {
+  form.delete(route('other-browser-sessions.destroy'), {
+    preserveScroll: true,
+    onSuccess: closeModal,
+    onError: () => passwordInput.value?.focus(),
+    onFinish: () => form.reset(),
+  })
+}
 </script>
 
 <template>
-    <ActionSection>
-        <template #title>
-            Browser Sessions
-        </template>
+  <section class="account-settings-card" aria-labelledby="session-settings-heading">
+    <header class="account-settings-card__header">
+      <div>
+        <p class="account-settings-card__eyebrow">Security</p>
+        <h2 id="session-settings-heading">Browser sessions</h2>
+        <p>Review saved sessions and sign out browsers you are no longer using.</p>
+      </div>
+    </header>
 
-        <template #description>
-            Manage and log out your active sessions on other browsers and devices.
-        </template>
+    <div class="account-settings-card__body">
+      <div v-if="sessionsSupported && sessions.length" class="account-session-list" role="list">
+        <article
+          v-for="(session, index) in sessions"
+          :key="`${session.ip_address || 'unknown'}-${index}`"
+          class="account-session"
+          role="listitem"
+        >
+          <span class="account-session__icon" aria-hidden="true">
+            <svg v-if="session.agent.is_desktop" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" d="M4 5.75h16v10.5H4zM8 20h8M10 16.25V20m4-3.75V20" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="7" y="2.5" width="10" height="19" rx="2" stroke-width="1.6" />
+              <path stroke-linecap="round" stroke-width="1.6" d="M10.5 5h3M11 18.5h2" />
+            </svg>
+          </span>
+          <div class="account-session__details">
+            <strong>
+              {{ session.agent.platform || 'Unknown platform' }} ·
+              {{ session.agent.browser || 'Unknown browser' }}
+            </strong>
+            <span>{{ session.ip_address || 'IP address unavailable' }}</span>
+          </div>
+          <div class="account-session__activity">
+            <span v-if="session.is_current_device" class="account-status-pill" data-tone="positive">
+              <span aria-hidden="true" />This device
+            </span>
+            <span v-else>Last active {{ session.last_active }}</span>
+          </div>
+        </article>
+      </div>
 
-        <template #content>
-            <div class="max-w-xl text-sm text-gray-600 dark:text-gray-400">
-                If necessary, you may log out of all of your other browser sessions across all of your devices. Some of your recent sessions are listed below; however, this list may not be exhaustive. If you feel your account has been compromised, you should also update your password.
-            </div>
+      <div v-else class="account-empty-state">
+        <strong>{{ sessionsSupported ? 'No saved browser sessions found' : 'Session details unavailable' }}</strong>
+        <p v-if="sessionsSupported">
+          This session may be using a browser state that is not stored in the session table.
+        </p>
+        <p v-else>
+          The current session storage does not expose a device list. You can still sign out every other browser session.
+        </p>
+      </div>
 
-            <!-- Other Browser Sessions -->
-            <div v-if="sessions.length > 0" class="mt-5 space-y-6">
-                <div v-for="(session, i) in sessions" :key="i" class="flex items-center">
-                    <div>
-                        <svg v-if="session.agent.is_desktop" class="size-8 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25" />
-                        </svg>
+      <div class="account-inline-notice">
+        <p>
+          If you do not recognize a session, sign out other browsers and then update your password.
+        </p>
+      </div>
 
-                        <svg v-else class="size-8 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
-                        </svg>
-                    </div>
+      <div class="account-form-footer">
+        <p v-if="form.recentlySuccessful" class="account-save-status" role="status" aria-live="polite">
+          Other browser sessions signed out.
+        </p>
+        <button type="button" class="account-button account-button--secondary" @click="confirmLogout">
+          Sign out other browsers
+        </button>
+      </div>
+    </div>
 
-                    <div class="ms-3">
-                        <div class="text-sm text-gray-600 dark:text-gray-400">
-                            {{ session.agent.platform ? session.agent.platform : 'Unknown' }} - {{ session.agent.browser ? session.agent.browser : 'Unknown' }}
-                        </div>
+    <DialogModal
+      :show="confirmingLogout"
+      max-width="md"
+      labelledby="logout-sessions-dialog-title"
+      @close="closeModal"
+    >
+      <template #title>
+        <span id="logout-sessions-dialog-title">Sign out other browser sessions?</span>
+      </template>
 
-                        <div>
-                            <div class="text-xs text-gray-500">
-                                {{ session.ip_address }},
+      <template #content>
+        <p>
+          Your current browser will stay signed in. Enter your password to close your other active sessions.
+        </p>
+        <div class="account-form-field account-dialog-field">
+          <label for="logout-sessions-password">Current password</label>
+          <input
+            id="logout-sessions-password"
+            ref="passwordInput"
+            v-model="form.password"
+            type="password"
+            required
+            autocomplete="current-password"
+            :aria-invalid="form.errors.password ? 'true' : 'false'"
+            :aria-describedby="form.errors.password ? 'logout-sessions-password-error' : undefined"
+            @keyup.enter="logoutOtherBrowserSessions"
+          >
+          <InputError id="logout-sessions-password-error" :message="form.errors.password" />
+        </div>
+      </template>
 
-                                <span v-if="session.is_current_device" class="text-green-500 font-semibold">This device</span>
-                                <span v-else>Last active {{ session.last_active }}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="flex items-center mt-5">
-                <PrimaryButton @click="confirmLogout">
-                    Log Out Other Browser Sessions
-                </PrimaryButton>
-
-                <ActionMessage :on="form.recentlySuccessful" class="ms-3">
-                    Done.
-                </ActionMessage>
-            </div>
-
-            <!-- Log Out Other Devices Confirmation Modal -->
-            <DialogModal :show="confirmingLogout" @close="closeModal">
-                <template #title>
-                    Log Out Other Browser Sessions
-                </template>
-
-                <template #content>
-                    Please enter your password to confirm you would like to log out of your other browser sessions across all of your devices.
-
-                    <div class="mt-4">
-                        <TextInput
-                            ref="passwordInput"
-                            v-model="form.password"
-                            type="password"
-                            class="mt-1 block w-3/4"
-                            placeholder="Password"
-                            autocomplete="current-password"
-                            @keyup.enter="logoutOtherBrowserSessions"
-                        />
-
-                        <InputError :message="form.errors.password" class="mt-2" />
-                    </div>
-                </template>
-
-                <template #footer>
-                    <SecondaryButton @click="closeModal">
-                        Cancel
-                    </SecondaryButton>
-
-                    <PrimaryButton
-                        class="ms-3"
-                        :class="{ 'opacity-25': form.processing }"
-                        :disabled="form.processing"
-                        @click="logoutOtherBrowserSessions"
-                    >
-                        Log Out Other Browser Sessions
-                    </PrimaryButton>
-                </template>
-            </DialogModal>
-        </template>
-    </ActionSection>
+      <template #footer>
+        <button type="button" class="account-button account-button--quiet" @click="closeModal">
+          Keep sessions
+        </button>
+        <button
+          type="button"
+          class="account-button account-button--primary"
+          :disabled="form.processing"
+          @click="logoutOtherBrowserSessions"
+        >
+          {{ form.processing ? 'Signing out…' : 'Sign out other browsers' }}
+        </button>
+      </template>
+    </DialogModal>
+  </section>
 </template>

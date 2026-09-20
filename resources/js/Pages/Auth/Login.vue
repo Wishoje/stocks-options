@@ -8,6 +8,8 @@ import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
+import { journeyUrl } from '@/Support/marketing-journey.js';
+import { loginValidationErrors } from '@/Support/auth-validation.js';
 
 defineProps({
     canResetPassword: Boolean,
@@ -36,27 +38,8 @@ function fieldError(name) {
 }
 
 function validate() {
-    localErrors.email = '';
-    localErrors.password = '';
-
-    let ok = true;
-    if (!form.email || !form.email.trim()) {
-        localErrors.email = 'Email is required.';
-        ok = false;
-    } else if (!/^\S+@\S+\.\S+$/.test(form.email)) {
-        localErrors.email = 'Enter a valid email.';
-        ok = false;
-    }
-
-    if (!form.password) {
-        localErrors.password = 'Password is required.';
-        ok = false;
-    } else if (form.password.length < 8) {
-        localErrors.password = 'Password must be at least 8 characters.';
-        ok = false;
-    }
-
-    return ok;
+    Object.assign(localErrors, loginValidationErrors(form));
+    return !localErrors.email && !localErrors.password;
 }
 
 const submit = () => {
@@ -74,12 +57,15 @@ const submit = () => {
 <template>
     <Head title="Log in" />
 
-    <AuthenticationCard>
+    <AuthenticationCard
+        title="Welcome back"
+        description="Log in to return to your saved dashboard and billing flow."
+    >
         <template #logo>
             <AuthenticationCardLogo />
         </template>
 
-        <div v-if="status" class="mb-4 font-medium text-sm text-green-600 dark:text-green-400">
+        <div v-if="status" class="mb-4 font-medium text-sm text-green-600 dark:text-green-400" role="status">
             {{ status }}
         </div>
 
@@ -94,8 +80,10 @@ const submit = () => {
                     required
                     autofocus
                     autocomplete="username"
+                    :aria-invalid="Boolean(fieldError('email'))"
+                    :aria-describedby="fieldError('email') ? 'email-error' : undefined"
                 />
-                <InputError class="mt-2" :message="fieldError('email')" />
+                <InputError id="email-error" class="mt-2" :message="fieldError('email')" />
             </div>
 
             <div class="mt-4">
@@ -107,8 +95,10 @@ const submit = () => {
                     class="mt-1 block w-full"
                     required
                     autocomplete="current-password"
+                    :aria-invalid="Boolean(fieldError('password'))"
+                    :aria-describedby="fieldError('password') ? 'password-error' : undefined"
                 />
-                <InputError class="mt-2" :message="fieldError('password')" />
+                <InputError id="password-error" class="mt-2" :message="fieldError('password')" />
             </div>
 
             <div class="block mt-4">
@@ -128,5 +118,10 @@ const submit = () => {
                 </PrimaryButton>
             </div>
         </form>
+
+        <template #footer>
+            New to GexOptions?
+            <Link :href="journeyUrl('register', page.props.billing?.intent)">Create an account</Link>
+        </template>
     </AuthenticationCard>
 </template>

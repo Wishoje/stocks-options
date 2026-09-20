@@ -178,7 +178,8 @@ class VolController extends Controller
         }
 
         // Build per-exp quick stats so you can see which expiries are viable
-        $today = new \DateTimeImmutable('today', new \DateTimeZone('America/New_York'));
+        $marketTimezone = new \DateTimeZone('America/New_York');
+        $today = now($marketTimezone)->startOfDay()->toDateTimeImmutable();
         $expStats = [];
         foreach ($expMap as $expDate => $expId) {
             $slice = $rows->where('expiration_id', $expId);
@@ -200,7 +201,7 @@ class VolController extends Controller
                 $span = max($span, abs($k));
             }
 
-            $diffDays = (new \DateTimeImmutable($expDate))->diff($today)->days;
+            $diffDays = (new \DateTimeImmutable($expDate, $marketTimezone))->diff($today)->days;
             $expStats[] = [
                 'exp' => $expDate,
                 'days_from_today' => $diffDays, // absolute difference in days
@@ -250,13 +251,10 @@ class VolController extends Controller
                     $pts[] = ['k' => (float) log($r->strike / $S), 'iv' => (float) $r->iv];
                 }
             }
-            // bounds ±30%, prefer near ATM, keep up to 60
-            $pts = array_values(array_slice(
-                array_values(array_filter($pts, fn ($p) => abs($p['k']) <= 0.30)),
-                0, 1000
-            ));
-            usort($pts, fn ($a, $b) => abs($a['k']) <=> abs($b['k']));
-            $pts = array_slice($pts, 0, 60);
+            // Match the nightly calculation: retain the full usable smile
+            // inside ±30% log-moneyness so dense chains keep both wings.
+            $pts = array_values(array_filter($pts, fn ($p) => abs($p['k']) <= 0.30));
+            usort($pts, fn ($a, $b) => $a['k'] <=> $b['k']);
         }
 
         // Span and counts
@@ -281,8 +279,12 @@ class VolController extends Controller
             $curv_reason = 'Moneyness span too small (need ≥0.05).';
         } else {
             $curv_raw = $this->debugQuadA($pts);            // a
-            $curv = is_finite($curv_raw) ? $curv_raw * 0.01 : null;
-            if (! is_finite($curv) || abs($curv) > 1e6) {
+            $curv = $curv_raw !== null && is_finite($curv_raw)
+                ? $curv_raw * 0.01
+                : null;
+            if ($curv_raw === null) {
+                $curv_reason = 'Quadratic curvature fit could not be solved.';
+            } elseif ($curv === null || ! is_finite($curv) || abs($curv) > 1e6) {
                 $curv_reason = 'Curvature not finite or absurdly large → nulling.';
                 $curv = null;
             }
@@ -419,12 +421,14 @@ class VolController extends Controller
             return response()->json((object) [], 200);
         }
 
-        // pick nearest by calendar days from *server time*
-        $today = new \DateTimeImmutable('today', new \DateTimeZone('America/New_York'));
+        // Use Laravel's request clock so local historical review and production
+        // resolve the same bucket-selection rule.
+        $marketTimezone = new \DateTimeZone('America/New_York');
+        $today = now($marketTimezone)->startOfDay()->toDateTimeImmutable();
         $pick = null;
         $best = PHP_INT_MAX;
         foreach ($rows as $r) {
-            $exp = new \DateTimeImmutable($r->exp_date);
+            $exp = new \DateTimeImmutable($r->exp_date, $marketTimezone);
             $d = $exp->diff($today)->days;
             $diff = abs($d - $days);
             if ($diff < $best) {
@@ -459,11 +463,12 @@ class VolController extends Controller
             return response()->json([], 200);
         }
 
-        $today = new \DateTimeImmutable('today', new \DateTimeZone('America/New_York'));
+        $marketTimezone = new \DateTimeZone('America/New_York');
+        $today = now($marketTimezone)->startOfDay()->toDateTimeImmutable();
         $pickExp = null;
         $best = PHP_INT_MAX;
         foreach ($rows as $r) {
-            $exp = new \DateTimeImmutable($r->exp_date);
+            $exp = new \DateTimeImmutable($r->exp_date, $marketTimezone);
             $d = $exp->diff($today)->days;
             $diff = abs($d - $days);
             if ($diff < $best || ($diff === $best && $exp >= $today)) { // prefer non-past on ties

@@ -7,6 +7,11 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
+        "ui:preview": "vite --config vite.ui-preview.config.js",
+        "ui:build": "vite build --config vite.ui-preview.config.js",
+        "ui:serve": "vite preview --config vite.ui-preview.config.js",
+        "ui:audit": "node scripts/ui-release-audit.mjs",
+        "ui:audit:release": "node scripts/ui-release-audit.mjs --release",
         "test": "vitest run",
         "test:watch": "vitest",
         "test:ci": "vitest run --reporter=default"

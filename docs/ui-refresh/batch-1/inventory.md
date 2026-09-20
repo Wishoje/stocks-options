@@ -1,0 +1,92 @@
+# UI preservation inventory
+
+Declared source revision: `f82a94a1488785b2f0c586e3be425e73ba3f607d` (Cancel obsolete symbol selections and positioning retries). The working snapshot was created with `git archive` from that revision and excludes unrelated working-tree changes. The generator reads the current working tree and does not independently verify the supplied revision label. Production revision and live screen parity have not been verified: neither browser-control connection could reach the browser opened by the user during this run.
+
+The generated [source inventory](source-inventory.json) covers 87 existing Vue files and 3,133 static or dynamic template entries. It records static text and semantic attributes, displayed expressions, inputs, actions, conditions, direct Vue callers, candidate destination cards and heuristic source references. SHA-256 values verify the exact inspected file contents. Four apparent orphan files have no resolved Vue or route caller: `ApplicationLogo.vue`, `ConfirmationModal.vue`, `PreparingBlock.vue`, and `Pages/Welcome.vue`. Confirm they are unreachable before retaining or removing them.
+
+The detailed matrix groups related fields; it is not yet the card's complete field-by-field proof. The generator does not parse imported JavaScript helpers, PHP/routes, API schemas, runtime-built labels, image assets or every formula. It also does not prove deployed behavior. Those gaps, production captures and live parity keep UI-01 acceptance pending.
+
+Regenerate from the revision being audited, then review the changes:
+
+```powershell
+node scripts/ui-inventory.mjs f82a94a1488785b2f0c586e3be425e73ba3f607d
+```
+
+## Routes and access
+
+| Screen | Route or owner | Destination | Acceptance check |
+| --- | --- | --- | --- |
+| Dashboard | `/dashboard`; authenticated and subscription gates | UI-04, UI-06–13 | Direct entry, Back/Forward, symbol preparation, permissions and EOD/intraday mode work. |
+| Watchlist | AppShell / LeftPanel | UI-05 | Saved identities, search/add/remove/refresh, indicators and symbol handoff survive. |
+| Scanner | `/scanner` | UI-14 | Both volume and wall modes, filters, detail modal and dashboard handoff remain. |
+| Calculator | `/options-calculator` | UI-15 | Full contract selection, quote readiness, manual overrides, calculations and tables survive. |
+| AI Export | `/ai-export` | UI-16 | Every export group, scope, progress state, history and download remains. |
+| EOD Health | `/eod-health`; additional access middleware | UI-17 | Authorized access, diagnostics and quality thresholds remain. |
+| Account | `/user/profile`; billing portal, cancel and resume actions | UI-18 | Preserve authentication, confirmation, security, subscription and destructive-action safeguards. |
+| Public pages | `/`, `/features`, `/pricing`, `/contact` | UI-20–24, UI-26 | All offers, claims, FAQs, navigation, contact validation and rate limits remain accurate. |
+| Entry funnel | Login, Register, VerifyEmail, ForgotPassword, ResetPassword, ConfirmPassword, TwoFactorChallenge | UI-25 | Redirect intent, plan/billing selection, validation, recovery and verification remain. |
+| Legal | TermsOfService / PrivacyPolicy through Jetstream routes | UI-26 | Content, links and accessibility remain. |
+| Legacy/shared views | Welcome and reusable form/navigation components | UI-03, consuming cards | Check route/caller reachability before removing anything. |
+
+## Global context and states
+
+Dashboard selections include symbol, EOD/intraday mode, expiry timeframe (`0d`, `1d`, `7d`, `14d`, `30d`, `90d`) and active tab. Preserve available-timeframe lists and their included expirations. There are five EOD tabs (Overview, Positioning, Volatility, Unusual Activity, Strikes) and two intraday tabs (Flow, Strikes). Keep snapshot time, displayed timezone, previous date and comparison freshness next to the data they qualify.
+
+Each later card must verify loading, preparation, partial data, empty response, unavailable series, failed request/retry, stale comparison, closed market, and rapid symbol/mode/timeframe changes. Retain request ownership and cancellation: an earlier response must not repopulate the current symbol. Preserve onboarding/checklist state and dismissal behavior.
+
+## Data and interaction map
+
+The source paths below are relative to `resources/js`. Every row requires comparison against the original binding and formatter in the generated inventory. The destination retains the same dataset and full raw rows; any calculation or scope correction requires explicit review.
+
+| Screen / source | Fields and calculations to preserve | Scope, precision and actions | Destination / verification |
+| --- | --- | --- | --- |
+| Overview / Components/Dashboard.vue | HVL, call/put OI shares, total OI, total volume, change in OI/volume, volume PCR; snapshot and previous dates | Selected symbol and EOD timeframe. Keep current source totals and null handling. Retain units and exact tooltips. | UI-08: compare every summary against the same API snapshot. |
+| Overview / QScorePanel.vue | `option`, `vol`, `momo`, `season` scores and each `expl`; overall, as-of | Symbol scope. Overall clamps 0–4 with weights .35/.25/.30/.10. Explanations and component values remain accessible. | UI-08: same weighted result, date and four explanations. |
+| Overview / OiDistributionChart.vue, VolDistributionChart.vue | Two call/put totals for OI and two call/put totals for volume | Preserve the two labels, legend and exact values for each pie. These components do not receive strike or expiry rows. | UI-08: both source totals in each chart equal the baseline. |
+| Positioning / DexTile.vue | `/api/dex`: `total`, `by_expiry[].exp_date`, `dex_total`, `data_date`; top positive and negative exposures | Symbol snapshot; DEX in share equivalents. Visible totals, rankings and tables use compact precision; the raw payload and every expiry remain in state. The full table starts collapsed. | UI-07: compare total, all rows, top three on each side, dates, signs and zero. |
+| Positioning / DexTile.vue | `/api/gex-levels`: `gamma_sign`, `regime_strength`, context copy | **Fixed 14d gamma context**, separate from DEX and global selection. Strength fraction displayed as %. It expresses model coherence, not a probability. | UI-07: label fixed scope; preserve raw strength and context. |
+| Positioning / DexByExpiryDiverging.vue | Signed expiry series, emphasized zero line, selected expiry and accessible source value | Expired contracts remain in a snapshot. Selection must work without hover. The selected expiry uses a stronger label and border without changing its value. | UI-07: 40-row sample remains 40 rows; zero and expired rows remain reachable. |
+| Positioning / ExpiryPressureTile.vue | `/api/expiry-pressure`: `data_date`, `headline_pin`, `entries[].exp_date`, `max_pain`, `clusters[].strike`, `score` | Symbol and `days=3`; response dates determine what is present. Preserve all returned clusters; current display slices four. | UI-07: retain headline, each expiry, pain and cluster score; raw extra clusters accessible. |
+| Positioning / SkewTile.vue | `/api/iv/skew/by-bucket`: `data_date`, `exp`, `iv_put_25d`, `iv_call_25d`, `skew_pc`, `curvature`, `skew_pc_dod`, `curvature_dod`, `n_points`, `k_span` | Bucket days 0/7/21. IV fraction ×100 displays %; skew difference ×100 displays pp; current summary uses 1 decimal; curvature uses 3 decimals. Skew and daily change are primary; absent curvature becomes one lower-priority status. Quality uses `n_points >= 20`, `k_span >= .05` when supplied. | UI-07: every raw field remains in the response state, with the quality explanation and daily change retained. Do not recalculate reported skew from rounded IV labels. |
+| Positioning / SkewTile.vue | `/api/iv/skew/history/bucket`: all historical dates and skew/curvature readings | Same rolling bucket, `limit=30`; actual contract can change by snapshot. Preserve every returned row, not only the chart. The chart stays visible; daily readings, calculation details and the complete field table start collapsed. | UI-07: explain rolling expiry, keep all 30 rows in state and the collapsed tables, and mark the latest available chart point. |
+| Volatility / TermTile.vue | Term items `exp`, `iv`, snapshot date | Symbol scope, all returned expiries. IV fraction displayed as %, existing tooltip 2 decimals. | UI-09: all expiries, exact values and source date. |
+| Volatility / VRPTile.vue | `date`, `iv1m`, `rv20`, `vrp`, `z` | Symbol scope, IV/RV/VRP percentage presentation at 1 decimal; z at 2 decimals. Preserve original calculation and interpretation. | UI-09: units and raw values unchanged. |
+| Volatility / Seasonality5Tile.vue | `d1`–`d5`, `cum5`, `z`, note and date | Five-day window; preserve daily and cumulative values separately, with source explanation. | UI-09: five readings, cumulative result and diagnostic text. |
+| Unusual Activity / Dashboard.vue | Expiry ALL or selected; top per expiry, total limit; `min_z`, `min_vol_oi`, `min_vol`, `min_premium`, `near_spot_pct`, side, sort, premium inclusion | Defaults top 5/limit 50, z 2.5, vol/OI 2, volume 500, premium 0, near spot 10%. Presets and Show More (+3 top, +30 total; caps 20/200). | UI-10: every control reaches the same request parameter. Preserve preset definitions in source. |
+| UnusualActivityTable.vue | `exp_date`, `strike`, `z_score`, `vol_oi`, `meta.total_vol`, `meta.premium_usd`; call/put volume and premium tooltips | 30-day winsorized baseline. Sort z score/premium/vol-OI; preserve date, call/put distinction and each row. | UI-10: full results under filters, exact tooltips and expansion counts. |
+| EOD Strikes / NetGexChart.vue | Strike, `net_gex`, and optional `call_gex` / `put_gex` split series; labels, extrema and context | Selected timeframe. Focus activity, automatic bucketing, split call/put where supplied, zoom reset and image download. Bucketing must preserve totals and raw rows. | UI-11: all source series and controls; no hidden strikes after reset. |
+| EOD Strikes / StrikeDeltaChart.vue | `call_oi_delta`, `put_oi_delta`; week-over-week fallback fields | Previous date, `date_prev_is_stale`, `date_prev_gap_trading_days`; call/put signs and bucket sums | UI-11: retain comparison provenance, fallback identity and exact values. |
+| EOD Strikes / VolumeDeltaChart.vue | `call_vol_delta`, `put_vol_delta`; explicit `call_vol_wow`, `put_vol_wow` week-over-week fallbacks | Match selected symbol/timeframe and comparison dates; focus/bucket/zoom/download controls | UI-11: verify full series, fallback identity, delta units and snapshot image. |
+| Intraday / Dashboard.vue | `/api/intraday/summary`, `/api/intraday/strikes`: `asof`, `snapshot_available`, `refresh_eligible`; total call/put volume and PCR | Live snapshot time and availability. Distinguish pull/refresh status and closed market. | UI-12/13: prevent stale data crossing symbol or mode boundaries. |
+| Intraday Live Flow / VolumeDeltaChart.vue | `call_vol_delta`, `put_vol_delta` mapped from live call/put volumes | Preserve all live strikes, call/put distinction, exact values, snapshot time, focus/bucket/zoom/download controls. | UI-12: compare every displayed strike and live volume with the response. |
+| Intraday Live Strikes / VolOverOiChart.vue | Call/put volume and OI-derived ratios | Preserve denominator behavior, all strikes and exact tooltips. | UI-13: call/put series, ratio units, missing versus zero. |
+| Intraday Live Strikes / PcrByStrikeChart.vue | Per-strike `pcr`, call/put volume fallback | Ratio, not percent. Preserve unavailable/zero-denominator semantics. | UI-13: compare original computation on the same response. |
+| Intraday Live Strikes / PremiumByStrikeChart.vue | `call_prem`, `put_prem` mapped to `premium_call`, `premium_put` | Premium estimates in currency; preserve estimation explanation and all controls. | UI-13: signs, totals, units, focus/bucket/zoom/download. |
+| Intraday loaded-only fields / Dashboard.vue | `net_gex_live`, `net_gex_delta` are loaded into intraday strike rows | These values are not currently rendered by `NetGexChart` in an intraday tab. Preserve the data path and decide explicitly in UI-13 whether to expose it; do not describe it as current user-visible information. | UI-13: confirm API field retention separately from visible parity. |
+| Watchlist / LeftPanel.vue | Symbol identity/company name, Pin/UA indicators, selected state, search results | Saved list, add/remove/refresh, search keyboard choices, mobile panel, handoff | UI-05: long names/list, retained order, correct symbol under rapid selection. |
+| Scanner / Pages/Scanner.vue | Volume mode: total volume, average PCR, watchlist count, universe date and fallback metadata | Top 100/200/400; 5/10/20-day lookback; Load More and symbol navigation | UI-14: each limit and source date, no lost rows. |
+| Scanner / Pages/Scanner.vue | Wall mode readings and detail NetGex chart | Timeframes 1d/7d/14d/30d; EOD/intraday types, details modal and dashboard handoff | UI-14: all wall values, filters, modal focus, correct mode/timeframe on handoff. |
+| Calculator / Pages/Options/Calculator.vue | Underlying quote source/status/as-of/usability; instrument/contract family; expiry readiness; strike, type, premium | Near 15%/wide 40%/all strikes; call/put selection; refresh progress completed/expected; starting/running/slow/failed/rate-limited/unauthorized/forbidden states | UI-15: preserve identity and quote provenance; never substitute stale or invalid quote silently. |
+| Calculator / Pages/Options/Calculator.vue | Contracts, entry price per share, automatic/manual entry, underlying scenario price; cost, breakeven, maximum loss, move needed | Restore live mid/automatic quote actions. Invalid manual input pauses affected calculations; retain source validation. | UI-15: existing calculator regression suite must stay green; formulas unchanged. |
+| Calculator / Pages/Options/Calculator.vue | Expiration P&L chart/table, time-decay chart/table, days-to-expiry, option price, P&L and ROI | Flat at spot/breakeven/target; target price; compact/full table and hidden count. Price 2 decimals, daily P&L 0, ROI 1. Linear time-value decay explanation. | UI-15: every table row and scenario, hypothetical-range disclosure, expired/missing-contract state. |
+| AI Export / Pages/AiExport.vue | Ten groups: wall snapshots, GEX levels, QScore, dealer positioning, expiry pressure, IV skew, term structure, VRP, seasonality, unusual activity | GEX 1d/7d/14d/30d/90d/monthly; latest snapshots for other groups. Symbol filters, select all, progress/history/download and payload documentation | UI-16: compare exported schemas and counts, not only visible labels. |
+| EOD Health / Pages/EodHealth.vue | Profile/date/only-issues/refresh, target/latest dates, minimum expiry/strike/ratio thresholds; totals covered/missing/alert/warn/ok | Broad/core profiles, selected date, response diagnostics | UI-17: every filter and summary retains meaning and access control. |
+| EOD Health / Pages/EodHealth.vue | `symbol`, `status`, `reasons`, `last_fetch_meta`, `rows_n`, `expirations_n`, `strikes_n`, `call_strikes_n`, `put_strikes_n`, `prev_strikes_n`, `strike_ratio_vs_prev_day` | Full row diagnostics and metadata chips, comparison counts | UI-17: retain every field and reason, including sparse/failed-fetch examples. |
+| Account / Profile partials | Profile name/email/photo, verification, password, two-factor and recovery codes, browser sessions, subscription state/actions, deletion | Existing forms, validation, confirmations, security rules and server truth | UI-18: test safe paths locally; no real purchase/cancellation/deletion for visual QA. |
+| Marketing / page and component templates | Home content, all feature sections and screenshots, pricing periods/offers/FAQ, CTA destinations, contact/legal content | Preserve links, plan/period handoff, authentication-dependent actions, responsive behavior and measurement definitions | UI-20–26: source binding inventory plus live copy/offer review before public changes. |
+
+## Reconciliation items
+
+1. **Deployed parity is pending.** Record the production revision and representative screenshots for every route. The available Positioning display sample does not establish parity for the other screens.
+2. **Fixed scope must be explicit.** Dealer gamma context uses 14d while other Positioning datasets use their own symbol/bucket scope. Do not imply the global expiry filter affects every tile.
+3. **Expiry pressure may contain more data than is displayed.** Preserve all returned clusters and make overflow available. Check symbol-change refresh behavior in the integration card.
+4. **Skew copy and date labels need review.** Some advice/help interpretations differ; reconcile them with the actual formula before rewriting. DTE computed from wall-clock time must be distinguished from snapshot-relative dates. Retain curvature and quality inputs while correcting wording.
+5. **Calculator risk copy needs review.** The current “1 : Infinity” long-option label does not distinguish calls and puts. Track any correction with the formula review; do not silently carry a broad claim into the new design.
+6. **Chart bucketing and fallbacks need explicit provenance.** A smaller visible chart must retain every strike and total in exact-value access. Identify day-over-day versus week-over-week fallback data.
+7. **Missing values must remain distinguishable.** Several existing transforms coerce missing values to zero. Investigate on each destination card before changing calculations; the new components distinguish them without changing current APIs.
+
+## Evidence and release gate
+
+The recorded fixture covers dense/mixed exposure, zero and expired dates, plus all three 30-day skew buckets. Synthetic fixtures cover sparse, missing, zero, sign-only, stale, closed-market, empty, preparing, loading and failure states. Other tool-specific fixtures and live captures remain work for their implementation cards.
+
+Before accepting a redesigned screen, compare its fields and interactions against this matrix and its generated bindings, then compare raw response counts and exact values on repeatable fixtures. Capture desktop/tablet/mobile screenshots and run relevant existing regressions. UI-19 and UI-27 provide cross-screen and launch checks. No field may be dropped merely because it was absent from the component gallery.

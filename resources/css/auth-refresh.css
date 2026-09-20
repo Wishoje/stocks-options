@@ -1,0 +1,133 @@
+.gex-auth-shell {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 20% 8%, rgba(34, 211, 238, .1), transparent 30rem),
+        radial-gradient(circle at 90% 88%, rgba(59, 130, 246, .08), transparent 26rem),
+        #050a13;
+    padding: 2rem 1rem;
+    color: #f8fafc;
+}
+
+.gex-auth-shell__glow {
+    position: absolute;
+    z-index: -1;
+    top: 22%;
+    left: 50%;
+    width: min(42rem, 90vw);
+    height: 28rem;
+    transform: translateX(-50%);
+    border-radius: 50%;
+    background: rgba(34, 211, 238, .045);
+    filter: blur(55px);
+    pointer-events: none;
+}
+
+.gex-auth-brand { margin-bottom: 1rem; }
+.gex-auth-logo { display: inline-flex; align-items: center; justify-content: center; }
+.gex-auth-logo:focus-visible { border-radius: .5rem; outline: 2px solid #67e8f9; outline-offset: 4px; }
+.gex-auth-logo__image { display: block; width: min(12rem, 72vw); height: auto; }
+
+.gex-auth-card {
+    width: min(100%, 29rem);
+    border: 1px solid rgba(148, 163, 184, .17);
+    border-radius: 1.25rem;
+    background: rgba(8, 15, 29, .9);
+    padding: clamp(1.25rem, 4vw, 2rem);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .35);
+    backdrop-filter: blur(18px);
+}
+.gex-auth-card--wide { width: min(100%, 36rem); }
+
+.gex-auth-card__heading { margin-bottom: 1.5rem; }
+.gex-auth-card__heading p {
+    margin: 0 0 .45rem;
+    color: #67e8f9;
+    font-size: .68rem;
+    font-weight: 800;
+    letter-spacing: .17em;
+    text-transform: uppercase;
+}
+.gex-auth-card__heading h1 {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 1.8rem;
+    font-weight: 720;
+    letter-spacing: -.035em;
+    line-height: 1.1;
+}
+.gex-auth-card__heading span {
+    display: block;
+    margin-top: .65rem;
+    color: #94a3b8;
+    font-size: .8rem;
+    line-height: 1.55;
+}
+
+.gex-auth-card label { color: #cbd5e1 !important; font-size: .76rem; }
+.gex-auth-card input:not([type='checkbox']) {
+    border-color: rgba(148, 163, 184, .22) !important;
+    background: rgba(2, 6, 23, .72) !important;
+    color: #f8fafc !important;
+}
+.gex-auth-card input:not([type='checkbox']):focus {
+    border-color: #22d3ee !important;
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, .12) !important;
+    --tw-ring-color: transparent !important;
+}
+.gex-auth-card input[type='checkbox'] {
+    border-color: rgba(148, 163, 184, .35) !important;
+    background-color: #020617 !important;
+    color: #06b6d4 !important;
+}
+.gex-auth-card button[type='submit'] {
+    min-height: 2.55rem;
+    justify-content: center;
+    border-radius: .7rem;
+    background: linear-gradient(110deg, #22d3ee, #38bdf8) !important;
+    color: #082f49 !important;
+    font-size: .76rem;
+    font-weight: 800;
+    letter-spacing: .05em;
+}
+.gex-auth-card button[type='submit']:hover:not(:disabled) { filter: brightness(1.08); }
+.gex-auth-card a { color: #67e8f9 !important; text-underline-offset: 3px; }
+.gex-auth-card [class*='text-red'] { color: #fda4af !important; }
+.gex-auth-card [class*='text-green'] { color: #a7f3d0 !important; }
+.gex-auth-card [class*='text-gray'] { color: #94a3b8 !important; }
+
+.gex-auth-context {
+    width: min(100%, 29rem);
+    margin-top: 1rem;
+    color: #94a3b8;
+    font-size: .76rem;
+    text-align: center;
+}
+.gex-auth-context a { color: #67e8f9; font-weight: 700; }
+.gex-auth-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: .65rem 1rem;
+    margin-top: 1.3rem;
+    color: #718096;
+    font-size: .7rem;
+}
+.gex-auth-links a:hover { color: #cbd5e1; }
+.gex-auth-links a:focus-visible { border-radius: .2rem; outline: 2px solid #22d3ee; outline-offset: 3px; }
+
+@media (max-width: 480px) {
+    .gex-auth-shell { justify-content: flex-start; padding-top: 1.4rem; }
+    .gex-auth-card { border-radius: 1rem; }
+    .gex-auth-logo__image { width: min(10.75rem, 72vw); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .gex-auth-card *, .gex-auth-links * { scroll-behavior: auto !important; transition: none !important; }
+}

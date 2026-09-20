@@ -1,145 +1,298 @@
-<!-- resources/js/Components/LeftPanel.vue -->
 <template>
-  <div class="flex flex-col h-full">
-    <!-- ──────────────────────────────────────
-         1. Header – same as Dashboard
-         ────────────────────────────────────── -->
-    <header class="border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm px-4 py-3">
-      <div class="flex items-center justify-between">
-        <h2 class="text-lg font-bold tracking-tight">Watchlist</h2>
-        <button @click="$emit('refresh')" class="text-cyan-400 hover:text-cyan-300">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-        </button>
+  <section
+    ref="panelRoot"
+    class="watchlist-panel"
+    :aria-labelledby="titleId"
+    @focusout="handleFocusOut"
+  >
+    <header class="watchlist-panel__header">
+      <div>
+        <p class="watchlist-panel__eyebrow">Market workspace</p>
+        <h2 :id="titleId">Watchlist</h2>
       </div>
+
+      <button
+        type="button"
+        class="watchlist-icon-button"
+        :aria-label="refreshing || loading ? 'Refreshing watchlist' : 'Refresh watchlist'"
+        :disabled="refreshing || loading"
+        @click="emit('refresh')"
+      >
+        <svg
+          class="watchlist-icon-button__icon"
+          :class="{ 'is-spinning': refreshing || loading }"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+          />
+        </svg>
+      </button>
     </header>
 
-    <!-- ──────────────────────────────────────
-         2. Search + Suggestions
-         ────────────────────────────────────── -->
-    <div class="p-4 space-y-3">
-      <input
-        v-model="q"
-        @input="onInput"
-        @keydown.down.prevent="move(1)"
-        @keydown.up.prevent="move(-1)"
-        @keydown.enter.prevent="choose(activeIndex)"
-        type="text"
-        placeholder="Search symbols…"
-        class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-cyan-500"
-      />
-
-      <!-- Suggestions -->
-      <ul v-if="suggestions.length"
-          class="bg-gray-800/50 backdrop-blur rounded-lg border border-gray-700 divide-y divide-gray-700 overflow-hidden">
-        <li
-          v-for="(s, i) in suggestions"
-          :key="s.symbol"
-          :class="[
-            'px-3 py-2.5 cursor-pointer flex justify-between items-center text-sm transition',
-            i === activeIndex ? 'bg-gray-700' : 'hover:bg-gray-700/50'
-          ]"
-          @mouseenter="activeIndex = i"
-          @click="choose(i)"
+    <div class="watchlist-search">
+      <label class="watchlist-search__label" :for="searchId">Add a symbol</label>
+      <div class="watchlist-search__control">
+        <svg class="watchlist-search__icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 21-4.35-4.35m1.35-5.65a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z" />
+        </svg>
+        <input
+          :id="searchId"
+          v-model="q"
+          data-watchlist-search
+          type="text"
+          role="combobox"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Symbol or company"
+          aria-autocomplete="list"
+          :aria-controls="listboxId"
+          :aria-expanded="suggestionsVisible ? 'true' : 'false'"
+          :aria-activedescendant="activeOptionId"
+          :aria-describedby="searchMessage ? searchStatusId : undefined"
+          @input="onInput"
+          @keydown.down.prevent="move(1)"
+          @keydown.up.prevent="move(-1)"
+          @keydown.enter.prevent="choose(activeIndex)"
+          @keydown.esc.prevent="dismissSuggestions"
         >
-          <span class="font-mono text-cyan-400">{{ s.symbol }}</span>
-          <span class="text-gray-400 truncate max-w-[180px] text-right">{{ s.name }}</span>
+        <span v-if="searchBusy || addBusy" class="watchlist-spinner" aria-hidden="true" />
+      </div>
+
+      <ul
+        v-if="suggestionsVisible"
+        :id="listboxId"
+        class="watchlist-suggestions"
+        role="listbox"
+        :aria-label="`Symbol suggestions for ${q.trim()}`"
+      >
+        <li
+          v-for="(suggestion, index) in suggestions"
+          :id="optionId(index)"
+          :key="suggestion.symbol"
+          role="option"
+          :aria-selected="index === activeIndex ? 'true' : 'false'"
+          :class="{ 'is-active': index === activeIndex }"
+          @mouseenter="activeIndex = index"
+          @mousedown.prevent
+          @click="choose(index)"
+        >
+          <span class="watchlist-suggestions__symbol">{{ suggestion.symbol }}</span>
+          <span class="watchlist-suggestions__company">
+            <span>{{ suggestion.name || 'Company name unavailable' }}</span>
+            <small v-if="suggestion.exchange">{{ suggestion.exchange }}</small>
+          </span>
         </li>
       </ul>
 
-      <p v-if="searchErr" class="text-xs text-red-400">Search unavailable.</p>
+      <p
+        v-if="searchMessage"
+        :id="searchStatusId"
+        class="watchlist-search__status"
+        :class="{ 'is-error': searchErr || addError }"
+        :role="searchErr || addError ? 'alert' : 'status'"
+      >
+        {{ searchMessage }}
+      </p>
     </div>
 
-    <!-- ──────────────────────────────────────
-         3. Watchlist items (glass cards)
-         ────────────────────────────────────── -->
-    <div class="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
-      <template v-if="watchlist.length">
-        <div
-          v-for="w in watchlist"
-          :key="w.id"
-          @click="selectFromList(w.symbol)"
-          class="bg-gray-800/50 backdrop-blur rounded-xl p-3 border border-gray-700 cursor-pointer hover:bg-gray-800/70 transition flex items-center justify-between gap-3"
+    <div class="watchlist-panel__meta" aria-live="polite">
+      <span>{{ watchlist.length }} {{ watchlist.length === 1 ? 'symbol' : 'symbols' }}</span>
+      <span v-if="refreshing">Updating…</span>
+      <span v-else>Saved list</span>
+    </div>
+
+    <div v-if="error" class="watchlist-notice is-error" role="alert">
+      <div>
+        <strong>Watchlist unavailable</strong>
+        <p>{{ error }}</p>
+      </div>
+      <button type="button" class="watchlist-text-button" :disabled="refreshing || loading" @click="emit('refresh')">
+        Retry
+      </button>
+    </div>
+
+    <div class="watchlist-items" :aria-busy="loading || refreshing ? 'true' : 'false'">
+      <div v-if="loading && watchlist.length === 0" class="watchlist-loading" role="status">
+        <span class="watchlist-spinner" aria-hidden="true" />
+        Loading saved symbols…
+      </div>
+
+      <ul v-else-if="watchlist.length" class="watchlist-list" aria-label="Saved symbols">
+        <li
+          v-for="item in watchlist"
+          :key="item.id"
+          class="watchlist-row"
+          :class="{ 'is-selected': normalizedSelectedSymbol === normalizeSymbol(item.symbol) }"
+          :data-watchlist-symbol="normalizeSymbol(item.symbol)"
         >
-          <!-- LEFT: Symbol -->
-          <span class="font-mono text-lg text-cyan-400 truncate">{{ w.symbol }}</span>
-
-          <!-- RIGHT: Badges + Remove -->
-          <div class="flex items-center gap-2">
-            <!-- Pin badge -->
-            <span
-              v-if="pinMap[w.symbol]?.headline_pin != null"
-              class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap"
-              :class="pinBadgeClass(pinMap[w.symbol].headline_pin)"
-            >
-              Pin {{ pinMap[w.symbol].headline_pin }}
+          <button
+            type="button"
+            class="watchlist-row__select"
+            :aria-current="normalizedSelectedSymbol === normalizeSymbol(item.symbol) ? 'true' : undefined"
+            :aria-label="selectLabel(item)"
+            :disabled="isRemoving(item.id)"
+            @click="selectFromList(item.symbol)"
+          >
+            <span class="watchlist-row__symbol">{{ item.symbol }}</span>
+            <span class="watchlist-row__badges">
+              <span
+                v-if="pinMap[item.symbol]?.headline_pin != null"
+                class="watchlist-badge"
+                :data-level="pinBadgeLevel(pinMap[item.symbol].headline_pin)"
+                :title="`Expiry pin score ${pinMap[item.symbol].headline_pin}`"
+              >
+                Pin {{ pinMap[item.symbol].headline_pin }}
+              </span>
+              <span
+                v-if="uaMap[item.symbol]?.count > 0"
+                class="watchlist-badge is-activity"
+                :title="activityTitle(item.symbol)"
+              >
+                UA {{ uaMap[item.symbol].count }}
+              </span>
+              <span
+                v-if="selectingSymbol === normalizeSymbol(item.symbol)"
+                class="watchlist-row__progress"
+              >
+                <span class="watchlist-spinner" aria-hidden="true" />
+                Loading
+              </span>
             </span>
+          </button>
 
-            <!-- UA bell with count -->
-            <span v-if="uaMap[w.symbol]?.count > 0" class="relative" title="UA today">
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
-              </svg>
-            </span>
+          <button
+            type="button"
+            class="watchlist-row__remove"
+            :aria-label="isRemoving(item.id) ? `Removing ${item.symbol}` : `Remove ${item.symbol} from watchlist`"
+            :disabled="isRemoving(item.id)"
+            @click="emit('remove', item.id)"
+          >
+            <span v-if="isRemoving(item.id)" class="watchlist-spinner" aria-hidden="true" />
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </li>
+      </ul>
 
-            <!-- Remove button -->
-            <button
-              @click.stop="$emit('remove', w.id)"
-              class="text-gray-400 hover:text-red-400 transition"
-            >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </template>
-
-      <!-- Empty state -->
-      <div v-else class="text-center py-12 text-gray-500">
-        <p class="text-lg">No symbols yet.</p>
-        <p class="text-sm mt-1">Search above to add.</p>
+      <div v-else-if="!error" class="watchlist-empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 5h14v14H5zM8 9h8M8 12h5M8 15h7" />
+        </svg>
+        <strong>No saved symbols</strong>
+        <p>Search above to build your watchlist.</p>
       </div>
     </div>
-  </div>
+  </section>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, onBeforeUnmount, ref } from 'vue'
 import axios from 'axios'
 
-defineProps({
+const props = defineProps({
   watchlist: { type: Array, default: () => [] },
-  pinMap:    { type: Object, default: () => ({}) },
-  uaMap:     { type: Object, default: () => ({}) },
+  pinMap: { type: Object, default: () => ({}) },
+  uaMap: { type: Object, default: () => ({}) },
+  selectedSymbol: { type: String, default: '' },
+  selectingSymbol: { type: String, default: '' },
+  loading: { type: Boolean, default: false },
+  refreshing: { type: Boolean, default: false },
+  error: { type: String, default: '' },
+  removingIds: { type: [Array, Set], default: () => [] },
 })
 
 const emit = defineEmits(['select', 'add', 'remove', 'refresh'])
-
-// ────── Search ──────
-const q           = ref('')
+const instanceUid = getCurrentInstance()?.uid ?? 0
+const titleId = `watchlist-title-${instanceUid}`
+const searchId = `watchlist-search-${instanceUid}`
+const listboxId = `watchlist-suggestions-${instanceUid}`
+const searchStatusId = `watchlist-search-status-${instanceUid}`
+const panelRoot = ref(null)
+const q = ref('')
 const suggestions = ref([])
 const activeIndex = ref(0)
-const searchErr   = ref(false)
-let timer = null
+const searchErr = ref(false)
+const addError = ref('')
+const searchBusy = ref(false)
+const addBusy = ref(false)
+let searchTimer = null
+let searchController = null
+let searchSequence = 0
+
+const suggestionsVisible = computed(() => suggestions.value.length > 0)
+const activeOptionId = computed(() => suggestionsVisible.value ? optionId(activeIndex.value) : undefined)
+const normalizedSelectedSymbol = computed(() => normalizeSymbol(props.selectedSymbol))
+const searchMessage = computed(() => {
+  if (addError.value) return addError.value
+  if (searchErr.value) return 'Symbol search is unavailable. Try again.'
+  if (!searchBusy.value && q.value.trim() && suggestions.value.length === 0) return 'No matching symbols.'
+  return ''
+})
+
+function normalizeSymbol(symbol) {
+  return String(symbol || '').trim().toUpperCase()
+}
+
+function optionId(index) {
+  return `${listboxId}-option-${index}`
+}
+
+function cancelSearch() {
+  clearTimeout(searchTimer)
+  searchTimer = null
+  searchController?.abort()
+  searchController = null
+  searchSequence += 1
+  searchBusy.value = false
+}
 
 function onInput() {
-  clearTimeout(timer)
-  const qq = q.value.trim()
-  if (!qq) { suggestions.value = []; return }
-  timer = setTimeout(async () => {
-    try {
-      const { data } = await axios.get('/api/symbols', { params: { q: qq } })
-      suggestions.value = data?.items || []
-      activeIndex.value = 0
-      searchErr.value = false
-    } catch {
-      suggestions.value = []
-      searchErr.value = true
+  cancelSearch()
+  suggestions.value = []
+  activeIndex.value = 0
+  searchErr.value = false
+  addError.value = ''
+
+  const query = q.value.trim()
+  if (!query) return
+
+  const sequence = searchSequence
+  searchBusy.value = true
+  searchTimer = setTimeout(() => searchSymbols(query, sequence), 200)
+}
+
+async function searchSymbols(query, sequence) {
+  const controller = new AbortController()
+  searchController = controller
+
+  try {
+    const { data } = await axios.get('/api/symbols', {
+      params: { q: query },
+      signal: controller.signal,
+    })
+    if (sequence !== searchSequence || controller.signal.aborted || q.value.trim() !== query) return
+
+    suggestions.value = Array.isArray(data?.items) ? data.items : []
+    activeIndex.value = 0
+    searchErr.value = false
+  } catch {
+    if (sequence !== searchSequence || controller.signal.aborted) return
+    suggestions.value = []
+    searchErr.value = true
+  } finally {
+    if (sequence === searchSequence && searchController === controller) {
+      searchController = null
+      searchBusy.value = false
     }
-  }, 200)
+  }
 }
 
 function move(delta) {
@@ -147,41 +300,86 @@ function move(delta) {
   activeIndex.value = (activeIndex.value + delta + suggestions.value.length) % suggestions.value.length
 }
 
-async function choose(i) {
-  const pick = suggestions.value[i]; if (!pick) return
+function dismissSuggestions() {
+  cancelSearch()
+  suggestions.value = []
+  activeIndex.value = 0
+}
+
+async function choose(index) {
+  const pick = suggestions.value[index]
+  const symbol = normalizeSymbol(pick?.symbol)
+  if (!pick || !symbol || addBusy.value) return
+
+  cancelSearch()
+  addBusy.value = true
+  addError.value = ''
+
   try {
     await axios.get('/sanctum/csrf-cookie')
-    await axios.post('/api/watchlist', { symbol: String(pick.symbol || '').toUpperCase() })
+    await axios.post('/api/watchlist', { symbol })
     emit('refresh')
-    emit('select', pick.symbol)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('calculator_last_symbol', String(pick.symbol || '').toUpperCase())
-    }
-  } catch (e) {
-    if (e?.response?.status === 401) window.location.href = '/login'
-  } finally {
-    q.value = pick.symbol
+    emit('select', symbol)
+    saveLastSymbol(symbol)
+    q.value = symbol
     suggestions.value = []
+  } catch (error) {
+    if (error?.response?.status === 401 && typeof window !== 'undefined') {
+      window.location.href = '/login'
+      return
+    }
+    addError.value = `Could not add ${symbol}. Try again.`
+  } finally {
+    addBusy.value = false
   }
 }
 
-function selectFromList(sym) {
-  emit('select', sym)
+function selectFromList(symbol) {
+  const normalized = normalizeSymbol(symbol)
+  if (!normalized) return
+  emit('select', normalized)
+  saveLastSymbol(normalized)
+  nextTick(() => {
+    panelRoot.value
+      ?.querySelector(`[data-watchlist-symbol="${normalized}"]`)
+      ?.scrollIntoView?.({ block: 'nearest' })
+  })
+}
+
+function saveLastSymbol(symbol) {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('calculator_last_symbol', String(sym || '').toUpperCase())
+    localStorage.setItem('calculator_last_symbol', symbol)
   }
 }
 
-// ────── Pin badge helper (copied from AppShell) ──────
-function pinBadgeClass(score) {
-  if (score >= 70) return 'bg-yellow-400/20 text-yellow-300 ring-1 ring-yellow-400/30'
-  if (score >= 40) return 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/20'
-  return 'bg-gray-600/40 text-gray-200 ring-1 ring-gray-500/30'
+function isRemoving(id) {
+  return props.removingIds instanceof Set
+    ? props.removingIds.has(id)
+    : props.removingIds.includes(id)
 }
-</script>
 
-<style scoped>
-/* hide scrollbars but keep functionality */
-.no-scrollbar::-webkit-scrollbar { display: none; }
-.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-</style>
+function pinBadgeLevel(score) {
+  if (Number(score) >= 70) return 'high'
+  if (Number(score) >= 40) return 'medium'
+  return 'low'
+}
+
+function activityTitle(symbol) {
+  const activity = props.uaMap[symbol]
+  const date = activity?.data_date ? ` on ${activity.data_date}` : ''
+  return `${activity?.count || 0} unusual activity ${activity?.count === 1 ? 'item' : 'items'}${date}`
+}
+
+function selectLabel(item) {
+  const selected = normalizedSelectedSymbol.value === normalizeSymbol(item.symbol)
+  return `${selected ? 'Selected' : 'Open'} ${item.symbol} dashboard`
+}
+
+function handleFocusOut(event) {
+  const next = event.relatedTarget
+  if (next && panelRoot.value?.contains(next)) return
+  dismissSuggestions()
+}
+
+onBeforeUnmount(cancelSearch)
+</script>

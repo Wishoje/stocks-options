@@ -1,114 +1,94 @@
-<!-- AppShell.vue -->
 <template>
-  <div class="min-h-screen bg-gray-900 text-white">
-    <div class="flex min-w-0">
-      <aside
-        class="hidden h-screen overflow-y-auto border-r border-gray-800 bg-gray-900/80 backdrop-blur md:sticky md:top-0 md:block md:w-[320px] lg:w-[360px]"
-      >
+  <div class="gex-ui dashboard-shell" data-theme="dark" data-density="compact">
+    <div class="dashboard-shell__frame">
+      <aside class="dashboard-shell__sidebar" aria-label="Watchlist">
         <LeftPanel
           :watchlist="watchlistItems"
-          :pinMap="pinMap"
-          :uaMap="uaMap"
+          :pin-map="pinMap"
+          :ua-map="uaMap"
+          :selected-symbol="selectedSymbol"
+          :selecting-symbol="selectingSymbol"
+          :loading="watchlistLoading"
+          :refreshing="watchlistRefreshing"
+          :error="watchlistError"
+          :removing-ids="removingIds"
           @select="handleSelectSymbol"
           @add="reloadWatchlist"
           @remove="handleRemoveFromWatchlist"
           @refresh="reloadWatchlist"
-        >
-          <template #chips="{ symbol }">
-            <span
-              v-if="pinMap[symbol]?.headline_pin != null"
-              class="rounded-full px-2 py-0.5 text-[11px]"
-              :class="pinBadgeClass(pinMap[symbol].headline_pin)"
-            >
-              Pin {{ pinMap[symbol].headline_pin }}
-            </span>
-            <span
-              v-if="uaMap[symbol]?.count > 0"
-              class="ml-1 rounded-full bg-yellow-400/15 px-2 py-0.5 text-[10px] font-semibold text-yellow-300 ring-1 ring-yellow-400/25"
-              title="UA today"
-            >
-              UA
-            </span>
-          </template>
-        </LeftPanel>
+        />
       </aside>
 
-      <div v-if="showMobileWatchlist" class="fixed inset-0 z-[80] md:hidden">
-        <button
-          type="button"
-          class="absolute inset-0 bg-black/70 backdrop-blur-sm"
-          aria-label="Close watchlist"
-          @click="showMobileWatchlist = false"
-        />
+      <Transition name="watchlist-drawer">
+        <div v-if="showMobileWatchlist" class="watchlist-drawer" @keydown="handleDrawerKeydown">
+          <div class="watchlist-drawer__backdrop" aria-hidden="true" @click="closeMobileWatchlist()" />
 
-        <aside
-          class="relative z-10 h-full w-[88vw] max-w-[360px] overflow-y-auto border-r border-gray-800 bg-gray-900 shadow-2xl"
-        >
+          <aside
+            id="mobile-watchlist-drawer"
+            ref="mobileWatchlistDrawer"
+            class="watchlist-drawer__panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Watchlist"
+          >
+            <button
+              ref="drawerCloseButton"
+              type="button"
+              class="watchlist-drawer__close"
+              aria-label="Close watchlist"
+              @click="closeMobileWatchlist()"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            <LeftPanel
+              :watchlist="watchlistItems"
+              :pin-map="pinMap"
+              :ua-map="uaMap"
+              :selected-symbol="selectedSymbol"
+              :selecting-symbol="selectingSymbol"
+              :loading="watchlistLoading"
+              :refreshing="watchlistRefreshing"
+              :error="watchlistError"
+              :removing-ids="removingIds"
+              @select="handleSelectSymbol"
+              @add="reloadWatchlist"
+              @remove="handleRemoveFromWatchlist"
+              @refresh="reloadWatchlist"
+            />
+          </aside>
+        </div>
+      </Transition>
+
+      <div id="dashboard-main-content" class="dashboard-shell__main">
+        <div class="dashboard-shell__mobile-tools">
           <button
+            ref="mobileWatchlistButton"
             type="button"
-            class="absolute right-3 top-3 rounded-lg border border-white/10 bg-white/5 p-2 text-gray-300 hover:bg-white/10 hover:text-white"
-            aria-label="Close watchlist"
-            @click="showMobileWatchlist = false"
+            class="dashboard-shell__watchlist-trigger"
+            aria-controls="mobile-watchlist-drawer"
+            aria-haspopup="dialog"
+            :aria-expanded="showMobileWatchlist ? 'true' : 'false'"
+            @click="openMobileWatchlist"
           >
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10" />
             </svg>
-          </button>
-
-          <LeftPanel
-            :watchlist="watchlistItems"
-            :pinMap="pinMap"
-            :uaMap="uaMap"
-            @select="handleSelectSymbol"
-            @add="reloadWatchlist"
-            @remove="handleRemoveFromWatchlist"
-            @refresh="reloadWatchlist"
-          >
-            <template #chips="{ symbol }">
-              <span
-                v-if="pinMap[symbol]?.headline_pin != null"
-                class="rounded-full px-2 py-0.5 text-[11px]"
-                :class="pinBadgeClass(pinMap[symbol].headline_pin)"
-              >
-                Pin {{ pinMap[symbol].headline_pin }}
-              </span>
-              <span
-                v-if="uaMap[symbol]?.count > 0"
-                class="ml-1 rounded-full bg-yellow-400/15 px-2 py-0.5 text-[10px] font-semibold text-yellow-300 ring-1 ring-yellow-400/25"
-                title="UA today"
-              >
-                UA
-              </span>
-            </template>
-          </LeftPanel>
-        </aside>
-      </div>
-
-      <main class="min-w-0 flex-1 overflow-y-auto p-3 md:p-6">
-        <div class="mb-3 md:hidden">
-          <button
-            type="button"
-            class="inline-flex items-center gap-2 rounded-xl border border-gray-700 bg-gray-800/80 px-3 py-2 text-sm font-medium text-white shadow-lg shadow-black/20"
-            @click="showMobileWatchlist = true"
-          >
-            <svg class="h-4 w-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h18M3 17h18" />
-            </svg>
-            Watchlist
-            <span class="rounded-full bg-cyan-500/15 px-2 py-0.5 text-xs text-cyan-300">
-              {{ watchlistItems.length }}
-            </span>
+            <span>Watchlist</span>
+            <span class="dashboard-shell__watchlist-count">{{ watchlistItems.length }}</span>
           </button>
         </div>
 
         <slot />
-      </main>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import axios from 'axios'
 import LeftPanel from './LeftPanel.vue'
 import {
@@ -120,16 +100,40 @@ import { selectionWarmupPlan } from '@/Support/symbol-bootstrap-state.js'
 const watchlistItems = ref([])
 const pinMap = ref({})
 const uaMap = ref({})
+const selectedSymbol = ref('')
+const selectingSymbol = ref('')
+const watchlistLoading = ref(true)
+const watchlistRefreshing = ref(false)
+const watchlistError = ref('')
+const removingIds = ref(new Set())
 const showMobileWatchlist = ref(false)
+const mobileWatchlistButton = ref(null)
+const mobileWatchlistDrawer = ref(null)
+const drawerCloseButton = ref(null)
 let activeReloadController = null
 let reloadSequence = 0
 let componentUnmounted = false
 let activeSelection = null
+let bodyOverflowBeforeDrawer = ''
+let drawerBodyLocked = false
 
-function pinBadgeClass(score) {
-  if (score >= 70) return 'bg-yellow-400/20 text-yellow-300 ring-1 ring-yellow-400/30'
-  if (score >= 40) return 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/20'
-  return 'bg-gray-600/40 text-gray-200 ring-1 ring-gray-500/30'
+function normalizeSymbol(symbol) {
+  return String(symbol || '').trim().toUpperCase()
+}
+
+function setSelectedSymbol(symbol) {
+  const normalized = normalizeSymbol(symbol)
+  if (normalized) selectedSymbol.value = normalized
+}
+
+function syncSelectedSymbolFromEvent(event) {
+  setSelectedSymbol(event?.detail?.symbol)
+}
+
+function syncSelectedSymbolFromLocation() {
+  if (typeof window === 'undefined') return
+  const locationSymbol = new URLSearchParams(window.location.search).get('symbol')
+  if (locationSymbol) setSelectedSymbol(locationSymbol)
 }
 
 function handleWatchlistUpdated() {
@@ -142,6 +146,9 @@ async function reloadWatchlist() {
 
   const controller = new AbortController()
   activeReloadController = controller
+  watchlistError.value = ''
+  watchlistLoading.value = watchlistItems.value.length === 0
+  watchlistRefreshing.value = watchlistItems.value.length > 0
 
   try {
     const { data } = await axios.get('/api/watchlist', { signal: controller.signal })
@@ -152,10 +159,14 @@ async function reloadWatchlist() {
     watchlistItems.value = items
     await loadPinsAndUA(items, sequence, controller)
   } catch (error) {
-    if (!controller.signal.aborted) throw error
+    if (!controller.signal.aborted && isCurrentReload(sequence, controller)) {
+      watchlistError.value = 'We could not load your saved symbols. Your current list is unchanged.'
+    }
   } finally {
     if (activeReloadController === controller) {
       activeReloadController = null
+      watchlistLoading.value = false
+      watchlistRefreshing.value = false
     }
   }
 }
@@ -168,9 +179,9 @@ function isCurrentReload(sequence, controller) {
 }
 
 async function loadPinsAndUA(items, sequence, controller) {
-  const syms = [...new Set(items.map((item) => item.symbol).filter(Boolean))]
+  const symbols = [...new Set(items.map((item) => item.symbol).filter(Boolean))]
 
-  if (syms.length === 0) {
+  if (symbols.length === 0) {
     if (isCurrentReload(sequence, controller)) {
       pinMap.value = {}
       uaMap.value = {}
@@ -180,7 +191,7 @@ async function loadPinsAndUA(items, sequence, controller) {
 
   try {
     const { data } = await axios.get('/api/expiry-pressure/batch', {
-      params: { symbols: syms, days: 3 },
+      params: { symbols, days: 3 },
       signal: controller.signal,
     })
 
@@ -196,7 +207,7 @@ async function loadPinsAndUA(items, sequence, controller) {
   if (!isCurrentReload(sequence, controller)) return
 
   const out = await loadUnusualActivityBadges(
-    syms,
+    symbols,
     async (symbol, signal) => {
       const { data } = await axios.get('/api/ua', { params: { symbol }, signal })
       return data
@@ -211,15 +222,24 @@ async function loadPinsAndUA(items, sequence, controller) {
 
 function handleSelectSymbol(symbol) {
   if (componentUnmounted) return Promise.resolve()
-  showMobileWatchlist.value = false
 
-  if (activeSelection?.symbol === symbol) return activeSelection.promise
+  const normalized = normalizeSymbol(symbol)
+  if (!normalized) return Promise.resolve()
+
+  setSelectedSymbol(normalized)
+  closeMobileWatchlist()
+
+  if (activeSelection?.symbol === normalized) return activeSelection.promise
 
   activeSelection?.controller.abort()
-  const selection = { symbol, controller: new AbortController(), promise: null }
+  const selection = { symbol: normalized, controller: new AbortController(), promise: null }
   activeSelection = selection
+  selectingSymbol.value = normalized
   selection.promise = selectSymbol(selection).finally(() => {
-    if (activeSelection === selection) activeSelection = null
+    if (activeSelection === selection) {
+      activeSelection = null
+      selectingSymbol.value = ''
+    }
   })
   return selection.promise
 }
@@ -240,8 +260,7 @@ async function selectSymbol(selection) {
       signal: controller.signal,
     })
   } catch {
-    // A status transport failure is treated as not ready. Priming is the
-    // bounded, durable fallback and intraday waits for the server handoff.
+    // A bounded prime request remains the durable fallback when status is unavailable.
   }
 
   if (!isCurrentSelection(selection)) return
@@ -266,8 +285,6 @@ async function selectSymbol(selection) {
 
   await Promise.allSettled(requests)
 
-  // Accepted warmup POSTs may finish after selection changes; only their
-  // current owner may emit the navigation event.
   if (!isCurrentSelection(selection)) return
 
   window.dispatchEvent(new CustomEvent('select-symbol', {
@@ -281,14 +298,83 @@ async function selectSymbol(selection) {
 }
 
 async function handleRemoveFromWatchlist(id) {
-  await axios.delete(`/api/watchlist/${id}`)
-  await reloadWatchlist()
+  if (removingIds.value.has(id)) return
+
+  removingIds.value = new Set([...removingIds.value, id])
+  watchlistError.value = ''
+  try {
+    await axios.delete(`/api/watchlist/${id}`)
+    await reloadWatchlist()
+  } catch {
+    watchlistError.value = 'We could not remove that symbol. Try again.'
+  } finally {
+    const next = new Set(removingIds.value)
+    next.delete(id)
+    removingIds.value = next
+  }
+}
+
+async function openMobileWatchlist() {
+  if (showMobileWatchlist.value) return
+  bodyOverflowBeforeDrawer = document.body.style.overflow
+  document.body.style.overflow = 'hidden'
+  drawerBodyLocked = true
+  showMobileWatchlist.value = true
+  await nextTick()
+  mobileWatchlistDrawer.value?.querySelector('[data-watchlist-search]')?.focus()
+}
+
+function closeMobileWatchlist(restoreFocus = true) {
+  if (!showMobileWatchlist.value) return
+  showMobileWatchlist.value = false
+  if (drawerBodyLocked) {
+    document.body.style.overflow = bodyOverflowBeforeDrawer
+    drawerBodyLocked = false
+  }
+  if (restoreFocus) nextTick(() => mobileWatchlistButton.value?.focus())
+}
+
+function handleDrawerKeydown(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeMobileWatchlist()
+    return
+  }
+
+  if (event.key !== 'Tab') return
+  const focusable = [...(mobileWatchlistDrawer.value?.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+  ) || [])].filter((element) => element.getClientRects().length > 0 || import.meta.env.MODE === 'test')
+  if (!focusable.length) return
+
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+function closeDrawerOnEscape(event) {
+  if (showMobileWatchlist.value && event.key === 'Escape') {
+    event.preventDefault()
+    closeMobileWatchlist()
+  }
 }
 
 onMounted(() => {
   componentUnmounted = false
+  setSelectedSymbol(typeof window !== 'undefined' ? localStorage.getItem('calculator_last_symbol') : '')
+  syncSelectedSymbolFromLocation()
   reloadWatchlist()
   window.addEventListener('watchlist-updated', handleWatchlistUpdated)
+  window.addEventListener('select-symbol', syncSelectedSymbolFromEvent)
+  window.addEventListener('dashboard-symbol-changed', syncSelectedSymbolFromEvent)
+  window.addEventListener('popstate', syncSelectedSymbolFromLocation)
+  document.addEventListener('keydown', closeDrawerOnEscape)
 })
 
 onUnmounted(() => {
@@ -298,6 +384,12 @@ onUnmounted(() => {
   activeReloadController = null
   activeSelection?.controller.abort()
   activeSelection = null
+  if (drawerBodyLocked) document.body.style.overflow = bodyOverflowBeforeDrawer
+  drawerBodyLocked = false
   window.removeEventListener('watchlist-updated', handleWatchlistUpdated)
+  window.removeEventListener('select-symbol', syncSelectedSymbolFromEvent)
+  window.removeEventListener('dashboard-symbol-changed', syncSelectedSymbolFromEvent)
+  window.removeEventListener('popstate', syncSelectedSymbolFromLocation)
+  document.removeEventListener('keydown', closeDrawerOnEscape)
 })
 </script>

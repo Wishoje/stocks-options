@@ -1,47 +1,140 @@
 <?php
+
 namespace App\Http\Controllers;
 
+use App\Support\BillingIntent;
+use App\Support\CheckoutRedirect;
+use App\Support\ProductAccess;
 use Illuminate\Http\Request;
-use Inertia\Inertia;
+use Illuminate\Support\Facades\Cache;
 
 class BillingController extends Controller
 {
     public function checkout(Request $request)
     {
         $user = $request->user();
-        $subName = config('plans.default_subscription_name'); // e.g. 'default'
+        $subscriptionName = config('plans.default_subscription_name');
+        $intent = BillingIntent::capture($request);
+        $access = ProductAccess::for($user);
 
-        if ($user->subscribed($subName) || $user->onTrial($subName)) {
-            return redirect()->route('dashboard');
+        if (! $access['needs_checkout']) {
+            return redirect()->to(BillingIntent::returnTo($request));
         }
 
-        $plan = $request->query('plan', 'earlybird');
-        $billing = $request->query('billing', 'monthly');
+        if ($existing = BillingIntent::activeCheckoutAttempt($request, $intent)) {
+            if (! $existing['matches_intent']) {
+                return redirect()
+                    ->route('pricing', $intent)
+                    ->with('status', 'checkout-active-other-selection');
+            }
 
+            return CheckoutRedirect::urlResponse($request, $existing['checkout_url']);
+        }
+
+        $plan = $intent['plan'];
+        $billing = $intent['billing'];
         $priceId = config("plans.plans.$plan.prices.$billing");
-        abort_unless($priceId, 400, 'Invalid plan');
+        abort_unless(is_string($priceId) && $priceId !== '', 400, 'This billing option is not configured.');
 
-        return $user->newSubscription($subName, $priceId)
-            ->trialDays(7)
-            ->checkout([
-                'success_url' => route('billing.success') . '?session_id={CHECKOUT_SESSION_ID}',
-                'cancel_url'  => route('pricing') . '?canceled=1',
-            ]);
+        $trialDays = (int) config("plans.plans.$plan.trial_days", 7);
+        $startKey = sprintf('billing-checkout-start:%s:%s', $user->getAuthIdentifier(), $subscriptionName);
+        $attemptToken = BillingIntent::checkoutAttemptToken();
+
+        if (! Cache::add($startKey, true, now()->addSeconds(20))) {
+            return redirect()
+                ->route('pricing', $intent)
+                ->with('status', 'checkout-already-starting');
+        }
+
+        try {
+            $checkout = $user->newSubscription($subscriptionName, $priceId)
+                ->trialDays($trialDays)
+                ->checkout([
+                    'success_url' => route('billing.success', [
+                        ...$intent,
+                        'attempt' => $attemptToken,
+                    ]).'&session_id={CHECKOUT_SESSION_ID}',
+                    'cancel_url' => route('pricing', [
+                        'canceled' => 1,
+                        ...$intent,
+                    ]),
+                ]);
+
+            BillingIntent::rememberCheckoutAttempt(
+                $request,
+                $attemptToken,
+                (string) $checkout->asStripeCheckoutSession()->id,
+                (string) $checkout->asStripeCheckoutSession()->url,
+                $intent,
+                (int) $checkout->asStripeCheckoutSession()->expires_at,
+            );
+
+            return CheckoutRedirect::response($request, $checkout);
+        } catch (\Throwable $exception) {
+            Cache::forget($startKey);
+
+            throw $exception;
+        }
     }
-
 
     public function success(Request $request)
     {
         $user = $request->user();
-        $subName = config('plans.default_subscription_name');
+        $subscriptionName = config('plans.default_subscription_name');
+        $intent = BillingIntent::consumeCheckoutAttempt(
+            $request,
+            $request->query('attempt'),
+            $request->query('session_id'),
+        );
 
-        // If Stripe sync is complete, go straight into the app.
-        if ($user->subscribed($subName) || $user->onTrial($subName)) {
-            return redirect()->route('dashboard');
+        if (! $intent) {
+            $access = ProductAccess::for($user);
+            if ($access['subscribed'] || $access['on_trial']) {
+                return redirect()->to(BillingIntent::returnTo($request));
+            }
+
+            return redirect()
+                ->route('pricing', BillingIntent::current($request))
+                ->with('status', 'checkout-return-unconfirmed');
         }
 
-        // If sync is still catching up, keep user oriented instead of bouncing.
-        return redirect()->route('pricing', ['activating' => 1]);
+        if (ProductAccess::for($user)['subscribed']) {
+            BillingIntent::clearActivation($request);
+            $returnTo = BillingIntent::returnTo($request);
+
+            if (str_starts_with($returnTo, '/dashboard')) {
+                $returnTo .= str_contains($returnTo, '?') ? '&welcome=1' : '?welcome=1';
+            }
+
+            return redirect()
+                ->to($returnTo)
+                ->with('activation_confirmed', true);
+        }
+
+        BillingIntent::markActivationPending($request, $intent);
+
+        return redirect()->route('pricing', [
+            'activating' => 1,
+            ...$intent,
+        ]);
+    }
+
+    public function status(Request $request)
+    {
+        $access = ProductAccess::for($request->user());
+        $active = $access['subscribed'] || $access['on_trial'];
+
+        if ($active) {
+            BillingIntent::clearActivation($request);
+        }
+
+        return response()->json([
+            'active' => $active,
+            'state' => $active
+                ? 'active'
+                : (BillingIntent::activation($request)['pending'] ? 'pending' : 'inactive'),
+            'redirect' => $active ? BillingIntent::returnTo($request) : null,
+        ])->header('Cache-Control', 'no-store, private');
     }
 
     public function portal(Request $request)
@@ -52,13 +145,16 @@ class BillingController extends Controller
     public function cancel(Request $request)
     {
         $user = $request->user();
-        $subName = config('plans.default_subscription_name');
+        $subscriptionName = config('plans.default_subscription_name');
+        $subscription = $user->subscription($subscriptionName);
+        $access = ProductAccess::for($user);
+        abort_unless(
+            $subscription && in_array($access['subscription_state'], ['active', 'trialing'], true),
+            400,
+            'No active subscription',
+        );
 
-        $sub = $user->subscription($subName);
-        abort_unless($sub && $sub->valid(), 400, 'No active subscription');
-
-        $sub->cancel(); // cancels at period end
-        // If you want immediate cancel: $sub->cancelNow();
+        $subscription->cancel();
 
         return back()->with('status', 'subscription-canceled');
     }
@@ -66,14 +162,16 @@ class BillingController extends Controller
     public function resume(Request $request)
     {
         $user = $request->user();
-        $subName = config('plans.default_subscription_name');
+        $subscriptionName = config('plans.default_subscription_name');
+        $subscription = $user->subscription($subscriptionName);
+        abort_unless(
+            $subscription && ProductAccess::for($user)['subscription_state'] === 'grace_period',
+            400,
+            'Subscription is not on grace period',
+        );
 
-        $sub = $user->subscription($subName);
-        abort_unless($sub && $sub->onGracePeriod(), 400, 'Subscription is not on grace period');
-
-        $sub->resume();
+        $subscription->resume();
 
         return back()->with('status', 'subscription-resumed');
     }
-
 }

@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\BillingIntent;
+use App\Support\ProductAccess;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -36,19 +38,42 @@ class HandleInertiaRequests extends Middleware
     public function share(Request $request): array
     {
         $user = $request->user();
-        $subName = config('plans.default_subscription_name');
-        $subscribed = $user ? $user->subscribed($subName) : false;
-        $onTrial = $user ? $user->onTrial($subName) : false;
+        $access = ProductAccess::for($user);
+        $offer = config('plans.plans.earlybird', []);
+        $seoPages = (array) config('marketing_seo.pages', []);
+        $socialImage = (array) config('marketing_seo.social_image', []);
+        $routeName = $request->route()?->getName();
+        $seo = is_string($routeName) && isset($seoPages[$routeName])
+            ? [
+                ...(array) $seoPages[$routeName],
+                'image' => (string) ($socialImage['url'] ?? ''),
+                'image_alt' => (string) ($socialImage['alt'] ?? ''),
+                'image_width' => (int) ($socialImage['width'] ?? 0),
+                'image_height' => (int) ($socialImage['height'] ?? 0),
+            ]
+            : null;
 
         return array_merge(parent::share($request), [
-           'marketing' => [
+            'marketing' => [
                 'ga4_id' => config('services.ga4_id'),
                 'show_glossary' => (bool) env('SHOW_GLOSSARY', false),
             ],
+            'seo' => $seo,
             'billing' => [
-                'subscribed' => $subscribed,
-                'on_trial' => $onTrial,
-                'needs_checkout' => $user ? !($subscribed || $onTrial) : false,
+                ...$access,
+                'intent' => BillingIntent::current($request),
+                'activation' => BillingIntent::activation($request),
+            ],
+            'offer' => [
+                'plan' => 'earlybird',
+                'label' => (string) ($offer['label'] ?? 'Early Bird'),
+                'trial_days' => (int) ($offer['trial_days'] ?? 7),
+                'display' => (array) ($offer['display'] ?? []),
+                'features' => array_values((array) ($offer['features'] ?? [])),
+            ],
+            'flash' => [
+                'status' => fn () => $request->session()->get('status'),
+                'activation_confirmed' => fn () => (bool) $request->session()->get('activation_confirmed', false),
             ],
         ]);
     }

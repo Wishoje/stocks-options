@@ -15,8 +15,8 @@ class AiExportControllerTest extends TestCase
 
     public function test_index_returns_only_the_authenticated_users_export_metadata(): void
     {
-        $owner = User::factory()->create();
-        $otherUser = User::factory()->create();
+        $owner = $this->productUser();
+        $otherUser = $this->productUser();
 
         $owned = AiExport::query()->create([
             'user_id' => $owner->id,
@@ -69,7 +69,7 @@ class AiExportControllerTest extends TestCase
 
     public function test_scalar_legacy_json_metadata_cannot_crash_the_export_list(): void
     {
-        $user = User::factory()->create();
+        $user = $this->productUser();
 
         $exportId = DB::table('ai_exports')->insertGetId([
             'user_id' => $user->id,
@@ -97,8 +97,8 @@ class AiExportControllerTest extends TestCase
 
     public function test_show_returns_metadata_without_exposing_the_payload_and_enforces_ownership(): void
     {
-        $owner = User::factory()->create();
-        $otherUser = User::factory()->create();
+        $owner = $this->productUser();
+        $otherUser = $this->productUser();
 
         $export = AiExport::query()->create([
             'user_id' => $owner->id,
@@ -137,8 +137,8 @@ class AiExportControllerTest extends TestCase
 
     public function test_download_authorizes_before_loading_and_returns_the_exact_database_payload(): void
     {
-        $owner = User::factory()->create();
-        $otherUser = User::factory()->create();
+        $owner = $this->productUser();
+        $otherUser = $this->productUser();
         $payload = json_encode(['data' => str_repeat('x', 4096)], JSON_THROW_ON_ERROR);
 
         $export = AiExport::query()->create([
@@ -186,7 +186,7 @@ class AiExportControllerTest extends TestCase
 
     public function test_pending_export_download_does_not_load_the_payload(): void
     {
-        $owner = User::factory()->create();
+        $owner = $this->productUser();
         $export = AiExport::query()->create([
             'user_id' => $owner->id,
             'status' => 'processing',
@@ -217,5 +217,12 @@ class AiExportControllerTest extends TestCase
     public function test_export_history_requires_authentication(): void
     {
         $this->getJson('/api/watchlist/eod-exports')->assertUnauthorized();
+    }
+
+    private function productUser(): User
+    {
+        return User::factory()->create([
+            'trial_ends_at' => now()->addDay(),
+        ]);
     }
 }

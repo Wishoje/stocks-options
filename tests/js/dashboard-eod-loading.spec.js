@@ -168,6 +168,64 @@ describe('Dashboard EOD loading', () => {
     }
   }
 
+  it('uses comparison dates rather than values and passes complete raw rows to the EOD charts', async () => {
+    const rawRow = {
+      strike: 500,
+      net_gex: -1250000,
+      call_gex: 250000,
+      put_gex: 1500000,
+      call_oi_delta: 0,
+      put_oi_delta: 0,
+      call_oi_delta_pct: 0,
+      put_oi_delta_pct: 0,
+      call_vol_delta: 0,
+      put_vol_delta: 0,
+      call_vol_delta_pct: 0,
+      put_vol_delta_pct: 0,
+      call_oi_wow: 320,
+      put_oi_wow: -110,
+      call_vol_wow: 480,
+      put_vol_wow: -90,
+    }
+    gexResponse = (symbol, timeframe) => Promise.resolve({
+      ...snapshot(symbol, timeframe, 1),
+      data: {
+        ...snapshot(symbol, timeframe, 1).data,
+        data_date: '2026-09-04',
+        date_prev: '2026-09-03',
+        date_prev_gap_trading_days: 1,
+        date_prev_is_stale: false,
+        date_prev_week: '2026-08-28',
+        date_prev_week_gap_trading_days: 5,
+        strike_data: [rawRow],
+      },
+    })
+
+    const wrapper = await mountDashboard()
+    const net = wrapper.getComponent({ name: 'NetGexChart' })
+    const oi = wrapper.getComponent({ name: 'StrikeDeltaChart' })
+    const volume = wrapper.getComponent({ name: 'VolumeDeltaChart' })
+
+    expect(net.props()).toMatchObject({ symbol: 'SPY', timeframe: '2W', snapshotDate: '2026-09-04' })
+    expect(oi.props()).toMatchObject({ comparisonBasis: 'daily', comparisonDate: '2026-09-03', comparisonGapTradingDays: 1 })
+    expect(volume.props()).toMatchObject({ eod: true, comparisonBasis: 'daily', comparisonDate: '2026-09-03' })
+    expect(oi.props('strikeData')).toEqual([rawRow])
+    expect(volume.props('strikeData')).toEqual([rawRow])
+    expect(oi.props('strikeData')[0].call_oi_delta).toBe(0)
+    expect(oi.props('strikeData')[0].call_oi_wow).toBe(320)
+
+    wrapper.vm.eodLevels = {
+      ...wrapper.vm.eodLevels,
+      date_prev: null,
+      date_prev_gap_trading_days: null,
+      date_prev_week: '2026-08-28',
+      date_prev_week_gap_trading_days: 5,
+    }
+    await nextTick()
+    expect(oi.props()).toMatchObject({ comparisonBasis: 'weekly', comparisonDate: '2026-08-28', comparisonGapTradingDays: 5 })
+    expect(volume.props()).toMatchObject({ comparisonBasis: 'weekly', comparisonDate: '2026-08-28' })
+  })
+
   it('shows complete AMD EOD data with failed analytics without a filling spinner or terminal polling', async () => {
     const wrapper = await mountDashboard('AMD')
     gexResponse = (symbol, timeframe) => Promise.resolve({
