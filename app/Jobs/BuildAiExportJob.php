@@ -4,19 +4,20 @@ namespace App\Jobs;
 
 use App\Models\AiExport;
 use App\Services\AiExportBuilder;
-use RuntimeException;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use RuntimeException;
 
 class BuildAiExportJob extends QueueJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $timeout = 900;
+
     public int $tries = 2;
 
     public array $backoff = [60];
@@ -60,7 +61,8 @@ class BuildAiExportJob extends QueueJob implements ShouldQueue
             $payload = $builder->build(
                 $export->symbols ?? [],
                 $export->indicators ?? [],
-                (string) data_get($export->options, 'gex_timeframe', '30d')
+                (string) data_get($export->options, 'gex_timeframe', '30d'),
+                array_intersect_key((array) $export->options, array_flip(['gex_view', 'target_session']))
             );
 
             $stamp = now('America/Chicago')->format('Y-m-d_H-i-s');

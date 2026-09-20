@@ -59,6 +59,7 @@ class HandleInertiaRequests extends Middleware
                 'show_glossary' => (bool) env('SHOW_GLOSSARY', false),
             ],
             'seo' => $seo,
+            'eodViewDefaults' => fn () => \App\Support\EodViewContext::defaults(),
             'socialAdmin' => $user && in_array((int) $user->id, config('social.admin_ids', []), true),
             'billing' => [
                 ...$access,

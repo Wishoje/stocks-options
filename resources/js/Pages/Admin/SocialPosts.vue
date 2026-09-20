@@ -84,7 +84,7 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
             <div class="panel-heading"><div><p class="eyebrow">{{ selected.symbol }} · {{ selected.session_date }}</p><h2>The image your audience will see</h2></div><a v-if="imageUrl" class="button" :href="imageUrl+'&download=1'">Download PNG</a></div>
             <img v-if="imageUrl" :src="imageUrl" :alt="selected.alt_text" width="1600" height="1000">
             <div v-else class="empty-preview"><h3>{{ selected.status === 'generating' ? 'Preparing your chart' : 'No complete image yet' }}</h3><p>Refresh after generation, or regenerate when the required snapshot is available.</p></div>
-            <div v-if="selected.snapshot" class="source"><span>EOD {{ selected.snapshot.data_date }} · {{ selected.snapshot.expiration_dates?.length }} expiries · 2W scope</span><a :href="`/admin/social/${selected.id}/snapshot`">Download source JSON</a></div>
+            <div v-if="selected.snapshot" class="source"><span>EOD {{ selected.snapshot.data_date }} · {{ selected.snapshot.expiration_dates?.length }} expiries · 2W scope</span><a :href="`/admin/social/${selected.id}/snapshot`">Download source JSON</a><a :href="`/dashboard?symbol=${selected.symbol}&mode=eod&tab=strikes&timeframe=14d&view=next_session`">Compare next-session dashboard</a></div>
           </div>
           <form v-if="selected.body" class="panel editor" @submit.prevent="editor.put(`/admin/social/${selected.id}`, { preserveScroll: true })">
             <div class="panel-heading"><h2>Post text</h2><span :class="{ invalid: weightedLength > 280 }">{{ weightedLength }} / 280</span></div>

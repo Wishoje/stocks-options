@@ -23,7 +23,7 @@ onMounted(() => {
   <AppLayout title="Dashboard">
     <div class="py-0">
       <AppShell>
-        <Dashboard :account-id="page.props.auth?.user?.id ?? null" />
+        <Dashboard :account-id="page.props.auth?.user?.id ?? null" :eod-view-default="page.props.eodViewDefaults?.default_view" />
       </AppShell>
     </div>
   </AppLayout>

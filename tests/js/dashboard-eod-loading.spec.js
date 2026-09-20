@@ -575,4 +575,22 @@ describe('Dashboard EOD loading', () => {
     expect(chartRows(wrapper)).toHaveLength(30)
     expect(wrapper.vm.eodError).toBe('')
   })
+  it('keeps next-session requests and cached snapshots separate from EOD', async () => {
+    const wrapper = await mountDashboard()
+    const original = wrapper.vm.eodLevels
+    const pending = deferred()
+    gexResponse = () => pending.promise
+    wrapper.vm.eodView = 'next_session'
+    await nextTick()
+    expect(wrapper.vm.eodLevels).toBeNull()
+    expect(axios.get.mock.calls.filter(([url]) => url === '/api/gex-levels').at(-1)[1].params.view).toBe('next_session')
+    wrapper.vm.eodView = 'latest_eod'
+    await nextTick()
+    await flushPromises()
+    expect(wrapper.vm.eodLevels).toEqual(original)
+    pending.resolve(snapshot('SPY', '14d', 99))
+    await flushPromises()
+    expect(wrapper.vm.eodLevels).toEqual(original)
+  })
+
 })

@@ -222,6 +222,56 @@ class GexTimeframeParityTest extends MySqlTestCase
         $this->assertSame(2, $payload['total_volume_delta']);
     }
 
+    public function test_eod_and_next_session_views_are_isolated_and_match_social_and_ai_exports(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-09-06 12:00', 'America/New_York'));
+        foreach (['2026-09-04', '2026-09-08', '2026-09-18', '2026-09-21'] as $date) {
+            $id = $this->expiration('SPY', $date);
+            $this->rows($id, '2026-09-04', [['100.00', 'call', $date === '2026-09-04' ? 1000 : 10, 1, .01, 100], ['100.00', 'put', 5, 1, .01, 100]]);
+        }
+        \Illuminate\Support\Facades\Bus::fake();
+        foreach ([false, true] as $healthEnabled) {
+            Cache::flush();
+            config(['eod_snapshot_health.enabled' => $healthEnabled, 'eod_snapshot_health.read_enabled' => $healthEnabled]);
+            foreach ([false, true] as $universeEnabled) {
+                config(['gex_performance.expiration_universe_enabled' => $universeEnabled]);
+                $controller = app(GexController::class);
+                $read = fn ($view) => $controller->getGexLevels(Request::create('/', 'GET', ['symbol' => 'SPY', 'timeframe' => '14d', 'view' => $view]))->getData(true);
+                $eod = $read('latest_eod');
+                $next = $read('next_session');
+                $this->assertContains('2026-09-04', $eod['expiration_dates']);
+                $this->assertNotContains('2026-09-04', $next['expiration_dates']);
+                $this->assertContains('2026-09-21', $next['expiration_dates']);
+                $this->assertSame('2026-09-08', $next['view_context']['session_date']);
+                $this->assertSame('2026-09-04', $next['view_context']['source_date']);
+                $this->assertNotSame($eod['strike_data'], $next['strike_data']);
+                $this->assertSame($eod, $read('latest_eod'), 'Switching back must restore the historical view.');
+                $social = app(\App\Support\Social\SocialGexSource::class)->capture('SPY', '2026-09-08');
+                $this->assertSame($next, $social);
+                $export = app(\App\Services\AiExportBuilder::class)->build(['SPY'], ['gex_levels'], '14d', ['gex_view' => 'next_session', 'target_session' => '2026-09-08']);
+                $item = $export['items']->first();
+                $this->assertSame($next, $item['gex_levels']['data']);
+                $this->assertSame($next['view_context'], $item['summary']['gex']['view_context']);
+                $this->assertSame($next['expiration_dates'], $item['summary']['gex']['expiration_dates']);
+            }
+        }
+    }
+
+    public function test_holiday_zero_day_views_resolve_from_source_and_next_session(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-09-07 12:00', 'America/New_York'));
+        foreach (['2026-09-04', '2026-09-08'] as $date) {
+            $id = $this->expiration('SPY', $date);
+            $this->rows($id, '2026-09-04', [['100.00', 'call', 10, 1, .01, 100]]);
+        }
+        foreach (['latest_eod' => '2026-09-04', 'next_session' => '2026-09-08'] as $view => $expiry) {
+            $response = app(GexController::class)->getGexLevels(Request::create('/', 'GET', ['symbol' => 'SPY', 'timeframe' => '0d', 'view' => $view]));
+            $this->assertSame(200, $response->getStatusCode(), $response->getContent());
+            $this->assertSame([$expiry], $response->getData(true)['expiration_dates']);
+            $this->assertSame('2026-09-04', $response->getData(true)['view_context']['source_date']);
+        }
+    }
+
     private function payload(string $symbol, string $timeframe): array
     {
         $response = app(GexController::class)->getGexLevels(Request::create('/api/gex-levels', 'GET', [

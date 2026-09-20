@@ -40,7 +40,7 @@ class SocialWorkflow
             $incomplete = ($snapshot['social_quality']['publishable'] ?? false) !== true;
             $post->refresh()->update([
                 'status' => $incomplete ? 'blocked' : 'draft', 'snapshot' => $snapshot, 'body' => $body,
-                'issue' => $incomplete ? ($snapshot['social_quality']['missing_input_rows'] ?? 'Unknown number of').' source rows lack required GEX inputs. This watermarked preview cannot be approved or published. Repair the source data and regenerate.' : null,
+                'issue' => $incomplete ? ($snapshot['social_quality']['missing_input_rows'] ?? 'Unknown number of').' source rows lack required GEX inputs. Review the source-quality details before publishing. Approval is currently blocked. Repair the source data and regenerate.' : null,
                 'image_path' => $path, 'image_sha256' => hash('sha256', $png), 'image_base64' => base64_encode($png),
                 'alt_text' => $symbol.' net GEX by strike. EOD '.$snapshot['data_date'].', 2W scope. Total net GEX '.SocialCard::exposure($peaks['total']).'. Largest positive '.SocialCard::exposure($peaks['positive_value']).' at strike '.SocialCard::level($peaks['positive']).'; largest negative '.SocialCard::exposure($peaks['negative_value']).' at strike '.SocialCard::level($peaks['negative']).'. Focused range retains at least 98 percent of absolute GEX. Each bar is one strike; no grouping.'.($incomplete ? ' Incomplete source inputs: review only, do not publish.' : ''),
             ]);

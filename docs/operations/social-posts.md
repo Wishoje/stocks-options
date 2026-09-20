@@ -14,9 +14,9 @@ Both web and worker must have matching social configuration and refreshed Larave
 
 Choose the target trading session. A Monday premarket draft uses Friday's completed EOD snapshot, except when the market calendar requires an earlier session. Every included expiry must have that same expected snapshot date. Missing or stale dates block generation.
 
-The scope is two calendar weeks, resolved for the target session. Total net GEX and the largest positive and negative exposures use every returned numeric strike. The signed chart keeps individual strikes, trimming at most 1% of absolute exposure from each tail. Its caption discloses the displayed range and coverage. The source JSON retains all rows.
+The scope is the dashboard 2W window, resolved for the target session. Social drafts consume the same published `next_session` GEX response as the dashboard. Total net GEX and the largest positive and negative exposures use every returned numeric strike. The signed chart keeps individual strikes, trimming at most 1% of absolute exposure from each tail. Its caption discloses the displayed range and coverage. The source JSON retains all rows.
 
-Incomplete nonzero or unknown open-interest rows produce a marked review image and a blocked draft. The image follows the dashboard calculation but cannot be approved or published. Missing gamma, underlying price, or open interest must be repaired upstream; the social feature does not manufacture inputs. Zero-open-interest rows can safely contribute zero without gamma.
+Incomplete nonzero or unknown open-interest rows produce a blocked draft with diagnostics in the admin page and JSON. The PNG omits internal diagnostics; approval remains blocked. Missing gamma, underlying price, or open interest must be repaired upstream; the social feature does not manufacture inputs. Zero-open-interest rows can safely contribute zero without gamma.
 
 ## Review workflow
 

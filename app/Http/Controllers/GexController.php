@@ -38,7 +38,70 @@ class GexController extends Controller
     // A racing mutation gets one legacy retry, never an unbounded read loop.
     private bool $skipSnapshotHealth = false;
 
+    private ?array $viewContext = null;
+
     public function getGexLevels(Request $request)
+    {
+        if (! $request->has('view')) {
+            return $this->getGexLevelsCore($request);
+        }
+        $input = $request->validate([
+            'view' => 'required|in:latest_eod,next_session',
+            'session_date' => 'nullable|date_format:Y-m-d',
+        ]);
+        $defaults = \App\Support\EodViewContext::defaults();
+        $view = $input['view'];
+        $session = $input['session_date'] ?? $defaults['next_session'];
+        if ($view === 'next_session') {
+            $day = \Carbon\CarbonImmutable::parse($session, 'America/New_York');
+            if (! \App\Support\MarketSession::isTradingDay($day)
+                || $session < now('America/New_York')->toDateString()
+                || $session > now('America/New_York')->addDays(7)->toDateString()) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['session_date' => 'Choose a trading session within the next seven days.']);
+            }
+        }
+        // Both views start from the same published source snapshot. Only the
+        // expiry window changes; a configured calendar cutoff must not move
+        // one view to an older source than the dashboard already serves.
+        $latest = $this->getGexLevelsCore($request);
+        // A short horizon can be empty on a holiday or for weekly-only symbols.
+        // Discover the source from the wider published horizon, then resolve
+        // the originally requested scope against that source/session.
+        if ($latest->getStatusCode() === 404 && $request->query('timeframe', '90d') !== '90d') {
+            $latest = $this->getGexLevelsCore($request->duplicate([...$request->query(), 'timeframe' => '90d']));
+        }
+        $data = $latest->getData(true);
+        if ($latest->getStatusCode() !== 200 || empty($data['data_date'])) {
+            return $latest;
+        }
+        $anchor = substr($data['data_date'], 0, 10);
+        if ($view === 'latest_eod') {
+            $session = $anchor;
+        } else {
+            $anchor = min($anchor, \App\Support\EodViewContext::previousSession($session));
+        }
+        $this->viewContext = ['view' => $view, 'session_date' => $session, 'source_anchor' => $anchor];
+        $previousClock = $this->expirationResolutionClock;
+        $this->expirationResolutionClock = Carbon::parse($session.' 08:30', 'America/New_York');
+        try {
+            $response = $this->getGexLevelsCore($request);
+            $payload = $response->getData(true);
+            $payload['view_context'] = [...$this->viewContext, 'source_date' => $payload['data_date'] ?? null];
+            $response->setData($payload);
+
+            return $response;
+        } finally {
+            $this->viewContext = null;
+            $this->expirationResolutionClock = $previousClock;
+        }
+    }
+
+    private function scopedCacheKey(string $key): string
+    {
+        return $this->viewContext === null ? $key : $key.':eod-view-v1:'.implode(':', $this->viewContext);
+    }
+
+    protected function getGexLevelsCore(Request $request)
     {
         $startedAt = microtime(true);
         $symbol = Symbols::canon((string) $request->query('symbol', 'SPY'));
@@ -111,16 +174,16 @@ class GexController extends Controller
             ? app(EodSnapshotHealth::class) : null;
         $snapshotCache = app(GexSnapshotCache::class);
         if ($health !== null) {
-            $policy = $health->policy();
+            $policy = $health->policy($this->viewContext['source_anchor'] ?? null);
             // Dirty facts are allowed only for an existing last-good payload.
             // They must never choose dates for newly read in-place raw rows.
             $manifest = $health->read($symbol, $policy, requireCurrent: false);
             if ($manifest !== null) {
-                $clock = Carbon::now();
+                $clock = $this->expirationResolutionClock?->copy() ?? Carbon::now();
                 $manifestSelection = app(GexExpirationUniverse::class)->resolveFromCatalog(
                     $manifest['catalog'], $timeframe, $this->uiTimeframes, $clock
                 );
-                $manifestCacheKey = $snapshotCache->key($symbol, $timeframe, $manifest, $clock);
+                $manifestCacheKey = $this->scopedCacheKey($snapshotCache->key($symbol, $timeframe, $manifest, $clock));
                 $warm = ! $forceRefresh ? $snapshotCache->get($manifestCacheKey) : null;
                 if ($warm !== null) {
                     $this->logPerf($symbol, $timeframe, $startedAt, [
@@ -143,11 +206,17 @@ class GexController extends Controller
                 }
             }
             if ($manifest === null) {
-                $compatibility = $snapshotCache->compatibilityContext($symbol, $timeframe, $policy);
+                $compatibility = $snapshotCache->compatibilityContext($symbol, $timeframe, $policy, $this->expirationResolutionClock);
+                if ($compatibility !== null) {
+                    $compatibility['key'] = $this->scopedCacheKey($compatibility['key']);
+                }
                 $warm = $compatibility !== null && ! $forceRefresh
                     ? $snapshotCache->get($compatibility['key']) : null;
                 if ($warm !== null) {
-                    $after = $snapshotCache->compatibilityContext($symbol, $timeframe, $health->policy());
+                    $after = $snapshotCache->compatibilityContext($symbol, $timeframe, $health->policy($this->viewContext['source_anchor'] ?? null), $this->expirationResolutionClock);
+                    if ($after !== null) {
+                        $after['key'] = $this->scopedCacheKey($after['key']);
+                    }
                     if ($after === $compatibility) {
                         $this->logPerf($symbol, $timeframe, $startedAt, [
                             'status_code' => 200, 'result' => 'compatibility_cache_hit',
@@ -201,7 +270,7 @@ class GexController extends Controller
             ->toArray();
 
         $selector = app(EodSnapshotSelector::class);
-        $anchorDate = $manifest['policy']['anchor_date'] ?? $selector->resolvedAnchorDate();
+        $anchorDate = $manifest['policy']['anchor_date'] ?? $this->viewContext['source_anchor'] ?? $selector->resolvedAnchorDate();
         $latestDate = $manifest === null ? OptionChainData::whereIn('expiration_id', $expirationIds)
             ->whereDate('data_date', '<=', $anchorDate)
             ->max('data_date') : collect($expirationIds)
@@ -240,7 +309,7 @@ class GexController extends Controller
         // new readable cache generation.
         $version = $manifest['cache_version']
             ?? app(EodCacheVersion::class)->current(EodCacheVersion::DOMAIN_GEX, $symbol);
-        $cacheKey = $manifestCacheKey ?? "gex:levels:v4:{$symbol}:{$timeframe}:{$version}";
+        $cacheKey = $manifestCacheKey ?? $this->scopedCacheKey("gex:levels:v4:{$symbol}:{$timeframe}:{$version}");
         // The manifest warm path already performed its one cache retrieval.
         // Legacy v4 entries carry no anchor, ratio or calendar identity. An
         // enabled fallback may use only the separately fenced compatibility
@@ -261,10 +330,10 @@ class GexController extends Controller
             if ($after === null || $after['dirty']
                 || $after['revision'] !== $manifest['revision']
                 || $after['cache_version'] !== $manifest['cache_version']
-                || $snapshotCache->key($symbol, $timeframe, $manifest) !== $cacheKey) {
+                || $this->scopedCacheKey($snapshotCache->key($symbol, $timeframe, $manifest, $this->expirationResolutionClock)) !== $cacheKey) {
                 $this->skipSnapshotHealth = true;
                 try {
-                    return $this->getGexLevels($request);
+                    return $this->getGexLevelsCore($request);
                 } finally {
                     $this->skipSnapshotHealth = false;
                 }
@@ -276,7 +345,10 @@ class GexController extends Controller
             // A complete before/after identity includes raw state, publication
             // version, selector policy, and both calendars. No certificate or
             // old v4 generation is created from this legacy calculation.
-            $after = $snapshotCache->compatibilityContext($symbol, $timeframe, $health->policy());
+            $after = $snapshotCache->compatibilityContext($symbol, $timeframe, $health->policy($this->viewContext['source_anchor'] ?? null), $this->expirationResolutionClock);
+            if ($after !== null) {
+                $after['key'] = $this->scopedCacheKey($after['key']);
+            }
             if ($after === $compatibility) {
                 $snapshotCache->putCompatibilityIfMissing($compatibility['key'], $payload);
             }
@@ -543,7 +615,20 @@ class GexController extends Controller
             'regime_strength' => $gs['strength'] ?? null,
             'gamma_sign' => $gs['sign'] ?? null,
             'regime_source_meta' => $gs['source_meta'] ?? null,
+            ...($this->viewContext !== null ? ['social_quality' => $this->sourceQuality($todayData, $expirationIds)] : []),
         ];
+    }
+
+    private function sourceQuality($rows, array $expirationIds): array
+    {
+        $missing = $rows->filter(fn ($row) => ! is_numeric($row->open_interest) || (float) $row->open_interest < 0
+            || ((float) $row->open_interest > 0 && (! is_numeric($row->gamma) || ! is_finite((float) $row->gamma)
+                || ! is_numeric($row->underlying_price) || ! is_finite((float) $row->underlying_price) || (float) $row->underlying_price <= 0)))->count();
+
+        $missingExpirations = count(array_diff($expirationIds, $rows->pluck('expiration_id')->unique()->all()));
+
+        return ['publishable' => $missing === 0 && $missingExpirations === 0, 'missing_expiration_count' => $missingExpirations, 'missing_input_rows' => $missing, 'source_rows' => $rows->count(),
+            'source_dates' => $rows->pluck('data_date')->map(fn ($date) => substr((string) $date, 0, 10))->unique()->sort()->values()->all()];
     }
 
     protected function logPerf(string $symbol, string $timeframe, float $startedAt, array $context = []): void
@@ -578,7 +663,7 @@ class GexController extends Controller
             ];
         }
 
-        $clock = Carbon::now();
+        $clock = $this->expirationResolutionClock?->copy() ?? Carbon::now();
         $resolver = app(GexExpirationUniverse::class);
         $candidate = $resolver->resolve($symbol, $requestedTimeframe, $this->uiTimeframes, $clock);
         if (! config('gex_performance.expiration_shadow_enabled', false)) {

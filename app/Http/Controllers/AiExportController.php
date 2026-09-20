@@ -61,6 +61,7 @@ class AiExportController extends Controller
             'symbols.*' => ['required', 'string', 'max:32'],
             'indicators' => ['nullable', 'array', 'max:20'],
             'indicators.*' => ['required', 'string', 'in:'.implode(',', AiExportBuilder::EXPORTABLE_INDICATORS)],
+            'gex_view' => ['nullable', 'in:latest_eod,next_session'],
             'timeframe' => ['nullable', 'string', 'in:'.implode(',', AiExportBuilder::GEX_TIMEFRAMES)],
         ]);
 
@@ -104,6 +105,8 @@ class AiExportController extends Controller
             'indicators' => $indicators,
             'options' => [
                 'gex_timeframe' => $timeframe,
+                'gex_view' => $validated['gex_view'] ?? \App\Support\EodViewContext::defaults()['default_view'],
+                'target_session' => ($validated['gex_view'] ?? \App\Support\EodViewContext::defaults()['default_view']) === 'next_session' ? \App\Support\EodViewContext::defaults()['next_session'] : null,
                 'format' => 'json',
                 'watchlist_count' => $watchlistSymbols->count(),
             ],
@@ -155,7 +158,7 @@ class AiExportController extends Controller
             );
         }
 
-        if (!$item->file_disk || !$item->file_path || !Storage::disk($item->file_disk)->exists($item->file_path)) {
+        if (! $item->file_disk || ! $item->file_path || ! Storage::disk($item->file_disk)->exists($item->file_path)) {
             $item->forceFill([
                 'status' => 'failed',
                 'error_message' => 'Export payload missing from database and storage.',

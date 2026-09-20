@@ -30,15 +30,16 @@ class AiExportBuilder
     ];
 
     public const GEX_TIMEFRAMES = ['0d', '1d', '7d', '14d', '21d', '30d', '45d', '60d', '90d', 'monthly'];
+
     private const WALL_TIMEFRAMES = ['1d', '7d', '14d', '30d'];
 
-    public function build(array $symbols, array $indicators, string $timeframe): array
+    public function build(array $symbols, array $indicators, string $timeframe, array $context = []): array
     {
-        $items = collect($symbols)->map(function (string $symbol) use ($indicators, $timeframe) {
+        $items = collect($symbols)->map(function (string $symbol) use ($indicators, $timeframe, $context) {
             $item = ['symbol' => $symbol];
 
             foreach ($indicators as $indicator) {
-                $item[$indicator] = $this->buildIndicatorPayload($indicator, $symbol, $timeframe);
+                $item[$indicator] = $this->buildIndicatorPayload($indicator, $symbol, $timeframe, $context);
             }
 
             $item['summary'] = $this->buildSummary($item, $timeframe);
@@ -54,6 +55,9 @@ class AiExportBuilder
             'indicators' => array_values($indicators),
             'options' => [
                 'gex_timeframe' => $timeframe,
+                'gex_view' => $context['gex_view'] ?? 'legacy',
+                'target_session' => $context['target_session'] ?? null,
+                'scope_note' => 'The view applies only to gex_levels. Other indicators retain their own source dates and scopes. Next-session preparation uses recorded EOD inputs, not live or forecast values.',
                 'format' => 'json',
                 'summary_version' => 1,
             ],
@@ -102,13 +106,15 @@ class AiExportBuilder
         ];
     }
 
-    private function buildIndicatorPayload(string $indicator, string $symbol, string $timeframe): array
+    private function buildIndicatorPayload(string $indicator, string $symbol, string $timeframe, array $context): array
     {
         return match ($indicator) {
             'wall_snapshots' => $this->latestWallSnapshots($symbol),
             'gex_levels' => $this->invokeController(GexController::class, 'getGexLevels', [
                 'symbol' => $symbol,
                 'timeframe' => $timeframe,
+                ...(isset($context['gex_view']) ? ['view' => $context['gex_view']] : []),
+                ...(isset($context['target_session']) ? ['session_date' => $context['target_session']] : []),
             ]),
             'qscore' => $this->invokeController(QScoreController::class, 'show', ['symbol' => $symbol]),
             'dealer_positioning' => $this->invokeController(PositioningController::class, 'dex', ['symbol' => $symbol]),
@@ -234,7 +240,7 @@ class AiExportBuilder
 
     private function payloadData(mixed $payload): ?array
     {
-        if (!is_array($payload)) {
+        if (! is_array($payload)) {
             return null;
         }
 
@@ -258,7 +264,7 @@ class AiExportBuilder
     private function summarizeWall(?array $wallData, string $timeframe): ?array
     {
         $row = $this->pickWallSnapshot($wallData, $timeframe);
-        if (!$row) {
+        if (! $row) {
             return null;
         }
 
@@ -284,7 +290,7 @@ class AiExportBuilder
     private function summarizeQscore(?array $qscoreData): ?array
     {
         $scores = data_get($qscoreData, 'scores');
-        if (!is_array($scores)) {
+        if (! is_array($scores)) {
             return null;
         }
 
@@ -311,12 +317,15 @@ class AiExportBuilder
 
     private function summarizeGex(?array $gexData): ?array
     {
-        if (!$gexData) {
+        if (! $gexData) {
             return null;
         }
 
         return [
             'timeframe' => data_get($gexData, 'timeframe'),
+            'view_context' => data_get($gexData, 'view_context'),
+            'expiration_dates' => data_get($gexData, 'expiration_dates', []),
+            'input_quality' => data_get($gexData, 'social_quality'),
             'data_date' => data_get($gexData, 'data_date'),
             'hvl' => $this->toFloat(data_get($gexData, 'hvl')),
             'call_wall' => $this->toFloat(data_get($gexData, 'call_resistance')),
@@ -333,7 +342,7 @@ class AiExportBuilder
 
     private function summarizeDex(?array $dexData): ?array
     {
-        if (!$dexData) {
+        if (! $dexData) {
             return null;
         }
 
@@ -360,7 +369,7 @@ class AiExportBuilder
 
     private function summarizePressure(?array $pressureData): ?array
     {
-        if (!$pressureData) {
+        if (! $pressureData) {
             return null;
         }
 
@@ -380,14 +389,14 @@ class AiExportBuilder
 
     private function summarizeSkew(?array $skewData): ?array
     {
-        if (!$skewData) {
+        if (! $skewData) {
             return null;
         }
 
         $row = collect(data_get($skewData, 'items', []))
             ->first(fn ($item) => isset($item['skew_pc']) || isset($item['curvature']));
 
-        if (!$row) {
+        if (! $row) {
             return [
                 'date' => data_get($skewData, 'date'),
                 'nearest_expiry' => null,
@@ -408,7 +417,7 @@ class AiExportBuilder
 
     private function summarizeTerm(?array $termData): ?array
     {
-        if (!$termData) {
+        if (! $termData) {
             return null;
         }
 
@@ -434,7 +443,7 @@ class AiExportBuilder
 
     private function summarizeVrp(?array $vrpData): ?array
     {
-        if (!$vrpData) {
+        if (! $vrpData) {
             return null;
         }
 
@@ -450,7 +459,7 @@ class AiExportBuilder
     private function summarizeSeasonality(?array $seasonalityData): ?array
     {
         $variant = data_get($seasonalityData, 'variant');
-        if (!is_array($variant)) {
+        if (! is_array($variant)) {
             return null;
         }
 
@@ -466,7 +475,7 @@ class AiExportBuilder
 
     private function summarizeUa(?array $uaData): ?array
     {
-        if (!$uaData) {
+        if (! $uaData) {
             return null;
         }
 

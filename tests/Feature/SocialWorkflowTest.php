@@ -269,12 +269,11 @@ class SocialWorkflowTest extends TestCase
 
     public function test_source_rejects_mixed_expiry_dates_before_calculating(): void
     {
-        $universe = Mockery::mock(\App\Support\GexExpirationUniverse::class);
-        $universe->shouldReceive('resolve')->andReturn(['expiration_ids' => [1, 2], 'timeframe_expirations' => ['14d' => ['2026-09-21', '2026-09-25']]]);
-        $selector = Mockery::mock(\App\Support\EodSnapshotSelector::class);
-        $selector->shouldReceive('selectedDateRows')->andReturn(collect([(object) ['expiration_id' => 1, 'max_date' => '2026-09-18'], (object) ['expiration_id' => 2, 'max_date' => '2026-09-17']]));
-        $this->app->instance(\App\Support\GexExpirationUniverse::class, $universe);
-        $this->app->instance(\App\Support\EodSnapshotSelector::class, $selector);
+        $controller = Mockery::mock(\App\Http\Controllers\GexController::class);
+        $controller->shouldReceive('getGexLevels')->andReturn(response()->json([
+            ...$this->snapshot(), 'social_quality' => ['source_dates' => ['2026-09-17', '2026-09-18']],
+        ]));
+        $this->app->instance(\App\Http\Controllers\GexController::class, $controller);
         $this->expectException(DomainException::class);
         (new SocialGexSource)->capture('SPY', '2026-09-21');
     }

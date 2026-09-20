@@ -182,4 +182,18 @@ describe('AI export history', () => {
     expect(wrapper.text()).toContain('Download')
     wrapper.unmount()
   })
+  it('includes the selected analysis view when queuing an export', async () => {
+    axios.get.mockImplementation(url => Promise.resolve({ data: url === '/api/watchlist' ? [] : { items: [] } }))
+    axios.post.mockResolvedValue({ status: 202, data: { item: { id: 20, status: 'completed' } } })
+    const wrapper = mountPage()
+    await flushPromises()
+    wrapper.vm.selectedSymbols = ['SPY']
+    wrapper.vm.selectedIndicators = ['gex_levels']
+    await wrapper.find('#export-gex-view').setValue('next_session')
+    await wrapper.vm.exportBundle()
+    expect(axios.post).toHaveBeenCalledWith('/api/watchlist/eod-export', expect.objectContaining({ gex_view: 'next_session' }))
+    expect(wrapper.text()).toContain('not live or forecasts')
+    wrapper.unmount()
+  })
+
 })

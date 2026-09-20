@@ -413,6 +413,22 @@ class GexSnapshotManifestReadTest extends MySqlTestCase
         $this->assertNotEmpty($this->marketQueries($queries));
     }
 
+    public function test_scoped_views_keep_manifest_warm_reads_and_exact_social_parity(): void
+    {
+        $this->seedManifest();
+        $read = fn ($view) => app(GexController::class)->getGexLevels(Request::create('/', 'GET', ['symbol' => 'SPY', 'timeframe' => '14d', 'view' => $view]));
+        $latest = $this->payload($read('latest_eod'));
+        $next = $this->payload($read('next_session'));
+        $this->assertContains('2026-09-04', $latest['expiration_dates']);
+        $this->assertNotContains('2026-09-04', $next['expiration_dates']);
+        [$warm, $queries] = $this->queries(fn () => $read('next_session'));
+        $this->assertSame($next, $this->payload($warm));
+        $this->assertSame([], $this->marketQueries($queries), 'The selected-view warm response must not scan market rows.');
+        $social = app(\App\Support\Social\SocialGexSource::class)->capture('SPY', '2026-09-08');
+        $this->assertSame($next, $social);
+        $this->assertSame($latest, $this->payload($read('latest_eod')));
+    }
+
     private function seedManifest(string $shape = 'complete', ?array $dates = null): array
     {
         $token = app(EodSnapshotHealth::class)->begin('SPY', 'fixture:'.$shape);

@@ -109,6 +109,22 @@
         </div>
       </div>
 
+      <section v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab)" class="gex-eod-view" aria-label="EOD analysis view">
+        <div class="gex-segmented" aria-label="EOD analysis view options">
+          <button type="button" :aria-pressed="eodView === 'latest_eod'" @click="eodView = 'latest_eod'">Latest EOD snapshot</button>
+          <button type="button" :aria-pressed="eodView === 'next_session'" @click="eodView = 'next_session'">Next-session preparation</button>
+        </div>
+        <a class="gex-small" :href="`/ai-export?timeframe=${gexTf}&view=${eodView}`">Export this view</a>
+        <p class="gex-small gex-muted" aria-live="polite">
+          <template v-if="eodLoading">Loading the selected expiry scope…</template>
+          <template v-else-if="levels?.view_context">
+            {{ eodView === 'next_session' ? 'Preparing for' : 'Snapshot expiry scope for' }} <strong>{{ levels.view_context.session_date }}</strong>
+            · Source EOD <strong>{{ levels.view_context.source_date || 'unavailable' }}</strong>.
+            {{ eodView === 'next_session' ? 'Earlier expirations excluded. Recorded EOD inputs; not live session values.' : 'Includes expirations active on the source date.' }}
+          </template>
+        </p>
+      </section>
+
       <section
         v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab) && scopedExpirationDates.length"
         class="gex-expiry-scope"
@@ -804,6 +820,7 @@ import uiErrorBlock from './ErrorBlock.vue'
 
 const props = defineProps({
   accountId: { type: [Number, String], default: null },
+  eodViewDefault: { type: String, default: 'latest_eod' },
 })
 
 axios.defaults.withCredentials = true
@@ -835,6 +852,7 @@ const tabsIntraday = [
 
 const initialDashboardState = dashboardStateFromSearch(
   typeof window === 'undefined' ? '' : window.location.search,
+  { view: props.eodViewDefault },
 )
 const dataMode = ref(initialDashboardState.mode)
 const currentTabs = computed(() => dataMode.value === 'eod' ? tabsEOD : tabsIntraday)
@@ -884,6 +902,7 @@ function onDashboardTabKey(event, index) {
 // State
 const symbol = ref(initialDashboardState.symbol)
 const gexTf = ref(initialDashboardState.timeframe)
+const eodView = ref(initialDashboardState.view)
 const userSymbol = symbol
 const getDefaultTab = (mode) => mode === 'intraday' ? 'flow' : 'strikes'
 const activeTab = ref(initialDashboardState.tab)
@@ -1146,6 +1165,7 @@ function currentDashboardState() {
     mode: dataMode.value,
     tab: activeTab.value,
     timeframe: gexTf.value,
+    view: eodView.value,
   }
 }
 
@@ -1164,6 +1184,7 @@ async function restoreDashboardLocation() {
   dataMode.value = state.mode
   activeTab.value = state.tab
   gexTf.value = state.timeframe
+  eodView.value = state.view
   userSymbol.value = state.symbol
   if (state.mode === 'eod' && state.tab === 'positioning') positioningMounted.value = true
   if (state.mode === 'intraday' && state.tab === 'flow') intradayFlowMounted.value = true
@@ -1506,10 +1527,11 @@ let eodLoadGeneration = 0
 async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }) {
   if (disposed || userSymbol.value !== sym || dataMode.value !== 'eod') return
   const generation = ++eodLoadGeneration
+  const view = eodView.value
   const isCurrent = () => !disposed && generation === eodLoadGeneration
     && userSymbol.value === sym
-    && dataMode.value === 'eod'
-  const key = `gex|${sym}|${tf}`
+    && dataMode.value === 'eod' && eodView.value === view
+  const key = `gex|${sym}|${tf}|${view}`
   const hit = cache.get(key)
   if (hit && Array.isArray(hit.data?.strike_data) && Date.now() - hit.t < TTL_MS) {
     eodError.value = ''
@@ -1544,7 +1566,7 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
     // own generation, including a newer caller awaiting the same request.
     const response = await withInflight(`gex:${key}`, () =>
       axios.get('/api/gex-levels', {
-        params: { symbol: sym, timeframe: tf },
+        params: { symbol: sym, timeframe: tf, view },
         signal: ctl.signal
       })
     )
@@ -2509,13 +2531,13 @@ watch(userSymbol, (s) => {
   }
 })
 
-watch([userSymbol, dataMode, activeTab, gexTf], () => {
+watch([userSymbol, dataMode, activeTab, gexTf, eodView], () => {
   if (dashboardHistoryReady && !restoringDashboardHistory) syncDashboardUrl('replace')
 })
 
 watch(uaExp, () => { if (!symbolTimer && activeTab.value === 'ua') ensureUA() })
 
-watch(gexTf, tf => {
+watch([gexTf, eodView], ([tf]) => {
   if (dataMode.value === 'eod') fetchGexLevelsEOD(userSymbol.value, tf)
 })
 
@@ -2552,6 +2574,10 @@ const strikeComparisonIsStale = computed(() => strikeComparisonBasis.value === '
 </script>
 
 <style scoped>
+.gex-eod-view { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:12px 0; }
+.gex-eod-view .gex-segmented { flex-wrap:wrap; }
+.gex-eod-view p { flex:1 1 320px; margin:0; }
+
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 </style>

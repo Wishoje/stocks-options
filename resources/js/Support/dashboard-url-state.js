@@ -26,6 +26,7 @@ export function dashboardStateFromSearch(search = '', fallback = {}) {
     mode,
     tab,
     timeframe,
+    view: ['latest_eod', 'next_session'].includes(params.get('view')) ? params.get('view') : (fallback.view === 'next_session' ? 'next_session' : 'latest_eod'),
   }
 }
 
@@ -39,5 +40,6 @@ export function dashboardUrl(currentHref, state) {
     : (mode === 'intraday' ? 'flow' : 'strikes')
   url.searchParams.set('tab', tab)
   url.searchParams.set('timeframe', dashboardTimeframes.includes(state.timeframe) ? state.timeframe : '14d')
+  if (state.view) url.searchParams.set('view', state.view === 'next_session' ? 'next_session' : 'latest_eod')
   return `${url.pathname}${url.search}${url.hash}`
 }

@@ -66,10 +66,9 @@ class SocialCard
             $write = function ($x, $y, $size, $value, $ink = null, $heavy = false) use ($im, $font, $bold, $text) {
                 imagettftext($im, $size, 0, $x, $y, $ink ?? $text, $heavy ? $bold : $font, (string) $value);
             };
-            $incomplete = ($snapshot['social_quality']['publishable'] ?? false) !== true;
-            $write(65, 66, 19, $incomplete ? 'INCOMPLETE INPUTS / REVIEW ONLY / DO NOT PUBLISH' : 'PREMARKET LEVEL MAP', $incomplete ? $red : $blue, true);
+            $write(65, 66, 19, 'NEXT-SESSION PREPARATION', $blue, true);
             $write(65, 135, 46, $snapshot['symbol'].' / GEX levels', $text, true);
-            $write(65, 181, 22, 'Session '.$session.'   |   EOD '.substr($snapshot['data_date'], 0, 10).'   |   2W expiry scope', $muted);
+            $write(65, 181, 22, 'For '.$session.'   |   Source EOD '.substr($snapshot['data_date'], 0, 10).'   |   2W expiry scope', $muted);
             $peaks = self::peaks($snapshot);
             foreach ([
                 ['Total net GEX', $peaks['total'], $peaks['total'] < 0 ? $red : $green, 'All '.count($snapshot['strike_data']).' numeric strikes'],
@@ -145,9 +144,7 @@ class SocialCard
                 $write($x - 25, 826, 19, self::level($min + ($max - $min) * $i / 6), $muted);
             }
             $write(65, 871, 18, 'Focused range: '.count($rows).'/'.$totalRows.' strikes, '.$coverage.'% of absolute GEX. Individual strikes; no grouping.', $muted);
-            $write(65, 905, 17, $incomplete
-                ? ($snapshot['social_quality']['missing_input_rows'] ?? 'Unknown number of').' nonzero/unknown-OI rows lack complete inputs. Preview follows dashboard calculations.'
-                : 'All '.count($snapshot['expiration_dates']).' included expiries. Recorded exposure, not a price forecast.', $incomplete ? $red : $muted);
+            $write(65, 905, 17, 'Expiries '.min($snapshot['expiration_dates']).' to '.max($snapshot['expiration_dates']).'. Prior EOD inputs; not live session values.', $muted);
             imageline($im, 65, 934, 1535, 934, $line);
             $write(65, 977, 23, 'GEX OPTIONS', $text, true);
             $write(1220, 977, 22, 'gexoptions.com', $blue);

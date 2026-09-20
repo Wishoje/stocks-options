@@ -11,7 +11,10 @@ const watchlistError = ref('')
 const symbolFilter = ref('')
 const exporting = ref(false)
 const exportError = ref('')
-const gexTimeframe = ref('30d')
+const props = defineProps({ eodViewDefaults: Object })
+const initialScope = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search)
+const gexTimeframe = ref(['0d', '1d', '7d', '14d', '30d', '90d', 'monthly'].includes(initialScope.get('timeframe')) ? initialScope.get('timeframe') : '30d')
+const gexView = ref(['latest_eod', 'next_session'].includes(initialScope.get('view')) ? initialScope.get('view') : (props.eodViewDefaults?.default_view || 'latest_eod'))
 const selectedSymbols = ref([])
 const selectedIndicators = ref([])
 const exports = ref([])
@@ -266,6 +269,7 @@ async function exportBundle() {
       symbols: selectedSymbols.value,
       indicators: selectedIndicators.value,
       timeframe: gexTimeframe.value,
+      gex_view: gexView.value,
     })
 
     const item = data?.item || null
@@ -483,6 +487,14 @@ onUnmounted(() => {
                 </p>
 
                 <div class="mt-4">
+                  <label for="export-gex-view" class="text-sm text-gray-300">GEX analysis view</label>
+                  <select id="export-gex-view" v-model="gexView" class="mt-2 w-full rounded-xl border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white">
+                    <option value="latest_eod">Latest EOD snapshot</option>
+                    <option value="next_session">Next-session preparation</option>
+                  </select>
+                  <p class="mt-2 text-xs text-gray-400">{{ gexView === 'next_session' ? 'Earlier expirations are excluded. The export identifies the target session, recorded source date, and included expirations. Values are not live or forecasts.' : 'Includes expirations active on the latest available EOD snapshot date.' }} Other indicators keep their own scopes.</p>
+                </div>
+                <div class="mt-4">
                   <label class="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
                     GEX timeframe
                   </label>
@@ -490,7 +502,7 @@ onUnmounted(() => {
                     v-model="gexTimeframe"
                     class="mt-2 w-full rounded-xl border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
                   >
-                    <option value="1d">1D</option>
+                    <option value="0d">0DTE</option><option value="1d">1D</option>
                     <option value="7d">7D</option>
                     <option value="14d">14D</option>
                     <option value="30d">30D</option>
@@ -512,6 +524,9 @@ onUnmounted(() => {
                   symbols[]<br>
                   indicators[]<br>
                   options.gex_timeframe<br>
+                  options.gex_view / target_session<br>
+                  items[].summary.gex.view_context<br>
+                  items[].summary.gex.expiration_dates<br>
                   items[].symbol<br>
                   items[].summary.data_dates<br>
                   items[].summary.wall<br>
