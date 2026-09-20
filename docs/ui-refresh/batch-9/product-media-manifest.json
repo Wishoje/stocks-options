@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "source_revision": "f82a94a1488785b2f0c586e3be425e73ba3f607d",
+  "source_revision": "703bf52b0286af3510a887e3b4dc6311782b2036",
   "capture_policy": {
     "real_delivered_ui_only": true,
     "synthetic_product_images_allowed": false,
