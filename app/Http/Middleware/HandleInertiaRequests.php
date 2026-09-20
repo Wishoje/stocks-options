@@ -59,6 +59,7 @@ class HandleInertiaRequests extends Middleware
                 'show_glossary' => (bool) env('SHOW_GLOSSARY', false),
             ],
             'seo' => $seo,
+            'socialAdmin' => $user && in_array((int) $user->id, config('social.admin_ids', []), true),
             'billing' => [
                 ...$access,
                 'intent' => BillingIntent::current($request),

@@ -11,6 +11,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
 
+// Disabled by configuration during the initial social draft review.
+Schedule::command('social:tick')->everyMinute()->withoutOverlapping(5)->onOneServer();
+
 // Example default command
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());

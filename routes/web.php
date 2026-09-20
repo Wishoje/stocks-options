@@ -34,6 +34,18 @@ Route::post('/contact', [ContactController::class, 'store'])
 Route::get('/terms-of-service', [LegalController::class, 'terms'])->name('terms.show');
 Route::get('/privacy-policy', [LegalController::class, 'policy'])->name('policy.show');
 
+Route::prefix('admin/social')->name('social.')->middleware(['auth:sanctum', config('jetstream.auth_session'), \App\Http\Middleware\EnsureSocialAdmin::class])->group(function () {
+    Route::get('/', [\App\Http\Controllers\SocialPostController::class, 'index'])->name('index');
+    Route::post('/generate', [\App\Http\Controllers\SocialPostController::class, 'generate'])->middleware('throttle:6,1')->name('generate');
+    Route::put('/settings', [\App\Http\Controllers\SocialPostController::class, 'settings'])->name('settings');
+    Route::post('/verify', [\App\Http\Controllers\SocialPostController::class, 'verify'])->middleware('throttle:3,1')->name('verify');
+    Route::put('/{post}', [\App\Http\Controllers\SocialPostController::class, 'update'])->name('update');
+    Route::post('/{post}/approve', [\App\Http\Controllers\SocialPostController::class, 'approve'])->name('approve');
+    Route::post('/{post}/publish', [\App\Http\Controllers\SocialPostController::class, 'publish'])->middleware('throttle:3,1')->name('publish');
+    Route::get('/{post}/image', [\App\Http\Controllers\SocialPostController::class, 'image'])->name('image');
+    Route::get('/{post}/snapshot', [\App\Http\Controllers\SocialPostController::class, 'snapshot'])->name('snapshot');
+});
+
 Route::middleware(['auth:sanctum', config('jetstream.auth_session')])->group(function () {
     Route::get('/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');
     Route::get('/billing/success', [BillingController::class, 'success'])->name('billing.success');
