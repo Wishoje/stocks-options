@@ -42,7 +42,7 @@ export const productMedia = Object.freeze({
     id: 'eod-overview-spy-2w',
     title: 'EOD Overview',
     context: 'Recorded SPY example · EOD · 2W',
-    description: 'Q Score components, snapshot metrics, and option distributions in the refreshed dashboard.',
+    description: 'Q Score components, snapshot metrics, and option distributions in the dashboard.',
     requiredContext: ['Symbol', 'EOD mode', '2W scope', 'Snapshot date', 'Q Score date'],
     alt: 'GEX Options EOD Overview for SPY with the 2W expiry scope, Q-Score summary, component scores, and dated signal sources.',
     caption: 'Recorded SPY EOD Overview with the 2W expiry scope, September 2026 snapshot dates, and Q-Score components visible.',
@@ -310,7 +310,7 @@ export const productMedia = Object.freeze({
     id: 'calculator-spy',
     title: 'Options Calculator',
     context: 'Recorded SPY contract example · quote source and time shown in view',
-    description: 'Contract selection, market-data provenance, payoff scenarios, and exact tables in the refreshed calculator.',
+    description: 'Contract selection, market-data provenance, payoff scenarios, and exact tables in the calculator.',
     requiredContext: ['Symbol', 'Contract identity', 'Quote source and time', 'Pricing input', 'Scenario', 'Breakeven'],
     alt: 'GEX Options Calculator with SPY expirations, contract prices, a selected 765 call, and manual long-call scenario inputs.',
     caption: 'Recorded SPY calculator example with quote source and time, selected September 25 765 call, mid-price input, manual scenario, and trade summary.',
@@ -649,12 +649,16 @@ export const buildHomeFaqs = trialDays => Object.freeze([
     q: 'When does the trial begin?',
     a: `The current ${trialDays}-day trial begins after checkout is completed. The Pricing page shows the current billing choices and terms before you continue.`,
   },
+  {
+    q: 'Can I cancel before the trial ends?',
+    a: 'Yes. Open the billing portal from your account to cancel before the trial ends and avoid a subscription charge. Otherwise, your selected monthly or yearly subscription starts and renews automatically.',
+  },
 ])
 
 export const featureFaqs = Object.freeze([
   {
     q: 'Can I inspect exact values without relying on hover?',
-    a: 'Yes. Refreshed charts provide selected readings for pointer, keyboard, and touch users, and complete returned data remains available in tables or details.',
+    a: 'Yes. Charts provide selected readings for pointer, keyboard, and touch users, and complete returned data remains available in tables or details.',
   },
   {
     q: 'What does Live mean in Live Flow and Live Strikes?',
@@ -662,7 +666,7 @@ export const featureFaqs = Object.freeze([
   },
   {
     q: 'Can a missing value appear as zero?',
-    a: 'The refreshed views distinguish unavailable values from numeric zero. Calculation details explain documented derivations and source limitations.',
+    a: 'Views distinguish unavailable values from numeric zero. Calculation details explain derivations and source limitations.',
   },
   {
     q: 'Does the Scanner use my dashboard timeframe?',
@@ -671,9 +675,5 @@ export const featureFaqs = Object.freeze([
   {
     q: 'What does the Options Calculator model?',
     a: 'It models long-call or long-put scenarios from the selected contract, pricing input, quantity, underlying scenario, implied volatility, and time assumptions shown in the view.',
-  },
-  {
-    q: 'Is EOD Health included as a subscriber feature?',
-    a: 'EOD Health is an authorized operational diagnostic and is not presented here as a general subscriber entitlement.',
   },
 ])

@@ -1,8 +1,8 @@
 <template>
-  <figure class="mk-card mk-media" :data-media-id="media.id" :data-capture-status="media.status">
+  <figure class="mk-card mk-media" :class="{ 'mk-media--chart-detail': chartDetail }" :data-media-id="media.id" :data-capture-status="media.status">
     <template v-if="isReady">
       <picture class="mk-media__picture">
-        <source v-if="media.mobile?.src" media="(max-width: 640px)" :srcset="media.mobile.src" />
+        <source v-if="media.mobile?.src && !chartDetail" media="(max-width: 640px)" :srcset="media.mobile.src" />
         <img
           class="mk-media__image"
           :src="media.desktop.src"
@@ -35,7 +35,7 @@
       </div>
     </div>
 
-    <figcaption class="mk-media__caption">{{ media.caption }}</figcaption>
+    <figcaption class="mk-media__caption"><span v-if="chartDetail">Chart detail · Expand for the full view. </span>{{ media.caption }}</figcaption>
   </figure>
 
   <Teleport to="body">
@@ -69,6 +69,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useId } from 'vue'
 const props = defineProps({
   media: { type: Object, required: true },
   priority: { type: Boolean, default: false },
+  chartDetail: { type: Boolean, default: false },
 })
 
 const dialogOpen = ref(false)

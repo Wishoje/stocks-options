@@ -73,6 +73,6 @@ describe('public marketing content registry', () => {
     expect(publicCopy).not.toContain('pin alerts')
     expect(publicCopy).toContain('snapshot-based')
     expect(publicCopy).toContain('supported us-listed optionable stocks and etfs')
-    expect(publicCopy).toContain('not presented here as a general subscriber entitlement')
+    expect(publicCopy).not.toContain('eod health')
   })
 })

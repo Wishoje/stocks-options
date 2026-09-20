@@ -71,13 +71,20 @@ describe('public marketing pages', () => {
 
   it('renders Home from shared offer and FAQ content without hard-coded price amounts', () => {
     const wrapper = shallowMount(Home, { global: { renderStubDefaultSlot: true } })
-    expect(wrapper.text()).toContain('Read GEX levels, dealer positioning, and options flow together.')
+    expect(wrapper.text()).toContain('Plan your session with GEX levels and dealer positioning.')
     expect(wrapper.text()).toContain('Why subscribe')
-    expect(wrapper.text()).toContain('One workflow from market structure to contract risk.')
+    expect(wrapper.text()).toContain('Put the full workspace to work during your trial.')
     expect(wrapper.text()).toContain('current 7-day trial')
     expect(wrapper.findAll('details')).toHaveLength(buildHomeFaqs(7).length)
-    expect(wrapper.text()).not.toContain('$29.99')
-    expect(wrapper.text()).not.toContain('$299')
+    expect(wrapper.text()).toContain('$29.99/month')
+    expect(wrapper.text()).toContain('$299/year')
+    wrapper.unmount()
+    page.props.offer.display.monthly.amount_minor = 3599
+    page.props.offer.display.yearly.amount_minor = 35000
+    const changedOffer = shallowMount(Home, { global: { renderStubDefaultSlot: true } })
+    expect(changedOffer.text()).toContain('$35.99/month')
+    expect(changedOffer.text()).toContain('$350/year')
+    expect(changedOffer.text()).not.toContain('$29.99')
   })
 
   it('uses the configured trial length in both the visible FAQ and its structured data', () => {
@@ -122,7 +129,7 @@ describe('public marketing pages', () => {
     expect(wrapper.get('meta[name="twitter:title"]').attributes('content')).toBe(expectedTitle)
     expect(wrapper.get('meta[name="twitter:description"]').attributes('content')).toBe(expectedDescription)
     expect(wrapper.findAll('h1')).toHaveLength(1)
-    expect(wrapper.get('h1').text()).toBe('Read GEX levels, dealer positioning, and options flow together.')
+    expect(wrapper.get('h1').text()).toBe('Plan your session with GEX levels and dealer positioning.')
 
     const structuredData = wrapper.findAll('script[type="application/ld+json"]')
       .map(script => JSON.parse(script.text()))

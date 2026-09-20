@@ -65,7 +65,7 @@
       <div class="mk-container mk-grid-2 mk-page-split">
         <div class="mk-section-intro" data-reveal>
           <p class="mk-eyebrow">Feature questions</p>
-          <h2 class="mk-heading">How the refreshed views handle detail.</h2>
+          <h2 class="mk-heading">Get more from each view.</h2>
           <p class="mk-copy">The product keeps exact returned data available while using summary cards and charts for faster scanning.</p>
         </div>
         <div class="mk-faqs">
@@ -81,8 +81,8 @@
       <div class="mk-container">
         <div class="mk-card mk-callout" data-reveal>
           <p class="mk-eyebrow">Choose your next step</p>
-          <h2 class="mk-heading">Open the product or review the current offer.</h2>
-          <p class="mk-lede">Your primary action updates for guest, checkout, and active-access states.</p>
+          <h2 class="mk-heading">Bring levels, positioning, and risk into one workspace.</h2>
+          <p class="mk-lede">Explore the complete toolkit with the current trial, or compare monthly and yearly billing before you start.</p>
           <div class="mk-actions">
             <MarketingCta location="features_final" source="features" />
             <Link href="/pricing" class="mk-button mk-button--secondary">View pricing</Link>
