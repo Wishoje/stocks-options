@@ -66,7 +66,7 @@ class SocialPostController extends Controller
         $request->validate(['acknowledge_missing_inputs' => 'sometimes|boolean', 'review_token' => 'nullable|string|size:64']);
         $this->run(fn () => $workflow->approve($post, $request->user()->id, $request->boolean('acknowledge_missing_inputs'), $request->input('review_token')));
 
-        return back()->with('status', 'Approved. Publishing still requires the server publishing switch and the scheduled time window.');
+        return back()->with('status', 'Approved. Choose Send now to publish immediately. Scheduled sending applies only to SPY on Sunday, Tuesday, and Thursday mornings.');
     }
 
     public function publish(SocialPost $post)

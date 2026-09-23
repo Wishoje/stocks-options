@@ -58,7 +58,7 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
       <section class="social-settings" aria-label="Schedule and connection">
         <form class="panel" @submit.prevent="preferences.put('/admin/social/settings', { preserveScroll: true })">
           <h2>SPY on Sunday, Tuesday, and Thursday.</h2>
-          <div class="slots"><div><strong>SPY</strong><span>Automatic ? 8:45 AM ET</span></div><div><strong>QQQ / TSLA</strong><span>Manual approval and Send now</span></div></div>
+          <div class="slots"><div><strong>SPY</strong><span>Automatic at 8:45 AM ET</span></div><div><strong>QQQ / TSLA</strong><span>Manual approval and Send now</span></div></div>
           <p class="muted small">New drafts for all three symbols at 8:30 AM ET each day, using the latest completed EOD data. Sunday prepares Monday; no automatic post if Monday is a market holiday. Other market holidays are skipped. New York time follows daylight saving time.</p>
           <p class="muted small">Automatic SPY requires fresh expiry coverage and at most 1% of open interest affected by missing gamma. Other gaps wait for review. This is not a percentage of missing GEX.</p>
           <label class="check"><input v-model="preferences.paused" type="checkbox"> Pause scheduled generation and publishing</label>
@@ -75,7 +75,7 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
       <form class="generation panel" @submit.prevent="generation.post('/admin/social/generate', { preserveScroll: true })">
         <div><h2>Prepare a draft</h2><p class="muted small">A missing or stale snapshot blocks the draft. It never substitutes made-up levels.</p></div>
         <label>Session date<input v-model="generation.session_date" type="date" required></label>
-        <label>Symbol<select v-model="generation.slot"><option value="primary">SPY</option><option value="qqq">QQQ ? manual only</option><option value="tsla">TSLA ? manual only</option></select></label>
+        <label>Symbol<select v-model="generation.slot"><option value="primary">SPY</option><option value="qqq">QQQ (manual only)</option><option value="tsla">TSLA (manual only)</option></select></label>
         <button class="primary" :disabled="generation.processing">{{ generation.processing ? 'Preparing…' : 'Generate draft' }}</button>
       </form>
 
@@ -83,7 +83,7 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
         <aside class="panel drafts" aria-label="Recent drafts">
           <h2>Recent drafts</h2><p v-if="!posts.length" class="muted">Your first draft will appear here.</p>
           <button v-for="post in posts" :key="post.id" class="draft-item" :class="{ selected: post.id === selectedId }" :aria-pressed="post.id === selectedId" @click="selectedId = post.id">
-            <span><strong>{{ post.symbol }}</strong><span class="status" :data-status="post.status">{{ post.status.replaceAll('_', ' ') }}</span></span><small>{{ post.session_date }} · {{ post.symbol === 'SPY' ? 'SPY ? Sun / Tue / Thu auto' : 'Manual only' }}</small>
+            <span><strong>{{ post.symbol }}</strong><span class="status" :data-status="post.status">{{ post.status.replaceAll('_', ' ') }}</span></span><small>{{ post.session_date }} · {{ post.symbol === 'SPY' ? 'SPY: Sun / Tue / Thu auto' : 'Manual only' }}</small>
           </button>
         </aside>
         <section v-if="selected" class="draft-detail" aria-label="Selected draft">
