@@ -20,10 +20,7 @@ class SocialPostController extends Controller
 {
     public function index(XPublisher $x)
     {
-        $date = CarbonImmutable::instance(now('America/New_York'))->startOfDay();
-        while (! MarketSession::isTradingDay($date)) {
-            $date = $date->addDay();
-        }
+        $date = \App\Support\Social\SocialSchedule::manualSession();
 
         return Inertia::render('Admin/SocialPosts', [
             'posts' => SocialPost::orderByDesc('session_date')->orderBy('slot')->limit(30)->get()->map(function ($post) {
@@ -36,7 +33,8 @@ class SocialPostController extends Controller
                 return $data;
             }),
             'settings' => SocialSetting::current(),
-            'defaultDate' => $date->toDateString(),
+            'defaultDate' => $date,
+            'automaticSpyEnabled' => (bool) config('social.automatic_spy_enabled'),
             'localReview' => app()->environment('local') && filled(config('ui_review.now')),
             'connectionConfigured' => $x->configured(),
             'publishingEnabled' => (bool) config('social.publishing_enabled'),
@@ -46,7 +44,7 @@ class SocialPostController extends Controller
 
     public function generate(Request $request)
     {
-        $data = $request->validate(['session_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:'.now('America/New_York')->toDateString(), 'before_or_equal:'.now('America/New_York')->addDays(7)->toDateString()], 'slot' => ['required', Rule::in(['primary', 'secondary'])]]);
+        $data = $request->validate(['session_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:'.now('America/New_York')->toDateString(), 'before_or_equal:'.now('America/New_York')->addDays(7)->toDateString()], 'slot' => ['required', Rule::in(['primary', 'secondary', 'qqq', 'tsla'])]]);
         if (! MarketSession::isTradingDay(CarbonImmutable::parse($data['session_date'], 'America/New_York'))) {
             throw ValidationException::withMessages(['session_date' => 'Choose a market trading day.']);
         }
@@ -80,11 +78,20 @@ class SocialPostController extends Controller
         return back()->with('status', 'Publish check queued. The worker will enforce the session, freshness, and time window.');
     }
 
+    public function sendNow(Request $request, SocialPost $post, SocialWorkflow $workflow)
+    {
+        $data = $request->validate(['review_token' => 'required|string|size:64']);
+        abort_unless(config('social.publishing_enabled') && ! SocialSetting::current()->paused, 409, 'Publishing is disabled or paused.');
+        $result = $this->run(fn () => $workflow->sendNow($post, (int) $request->user()->id, $data['review_token']));
+
+        return back()->with('status', $result->status === 'published' ? 'Posted to @GexOptions.' : 'X did not confirm publication. Review the draft status before retrying.');
+    }
+
     public function settings(Request $request)
     {
-        $data = $request->validate(['second_symbol' => ['required', Rule::in(['QQQ', 'TSLA'])], 'paused' => 'required|boolean']);
+        $data = $request->validate(['second_symbol' => ['sometimes', Rule::in(['QQQ', 'TSLA'])], 'paused' => 'required|boolean']);
         $settings = SocialSetting::current();
-        if ($settings->second_symbol !== $data['second_symbol']) {
+        if (isset($data['second_symbol']) && $settings->second_symbol !== $data['second_symbol']) {
             SocialPost::where('slot', 'secondary')->where('session_date', '>=', now('America/New_York')->toDateString())
                 ->whereIn('status', ['draft', 'approved'])->update(['status' => 'blocked', 'approved_at' => null, 'approved_by' => null, 'quality_acknowledgment' => null,
                     'issue' => 'Second symbol changed. Regenerate the draft to use the new selection.']);

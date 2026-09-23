@@ -41,6 +41,7 @@ Route::prefix('admin/social')->name('social.')->middleware(['auth:sanctum', conf
     Route::post('/verify', [\App\Http\Controllers\SocialPostController::class, 'verify'])->middleware('throttle:3,1')->name('verify');
     Route::put('/{post}', [\App\Http\Controllers\SocialPostController::class, 'update'])->name('update');
     Route::post('/{post}/approve', [\App\Http\Controllers\SocialPostController::class, 'approve'])->name('approve');
+    Route::post('/{post}/send-now', [\App\Http\Controllers\SocialPostController::class, 'sendNow'])->middleware('throttle:3,1')->name('send-now');
     Route::post('/{post}/publish', [\App\Http\Controllers\SocialPostController::class, 'publish'])->middleware('throttle:3,1')->name('publish');
     Route::get('/{post}/image', [\App\Http\Controllers\SocialPostController::class, 'image'])->name('image');
     Route::get('/{post}/snapshot', [\App\Http\Controllers\SocialPostController::class, 'snapshot'])->name('snapshot');

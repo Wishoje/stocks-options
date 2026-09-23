@@ -14,16 +14,25 @@ class SocialWorkflow
 {
     public function __construct(private SocialGexSource $source, private SocialCard $card, private XPublisher $x) {}
 
-    public function generate(string $session, string $slot): SocialPost
+    public function generate(string $session, string $slot, ?string $preparedOn = null): SocialPost
     {
-        if (! in_array($slot, ['primary', 'secondary'], true)) {
+        if (! in_array($slot, ['primary', 'secondary', 'qqq', 'tsla'], true)) {
             throw new DomainException('Invalid posting slot.');
         }
-        $symbol = $slot === 'primary' ? 'SPY' : SocialSetting::current()->second_symbol;
-        $post = SocialPost::firstOrCreate(['session_date' => $session, 'slot' => $slot], ['symbol' => $symbol]);
+        $symbol = match ($slot) {
+            'primary' => 'SPY', 'qqq' => 'QQQ', 'tsla' => 'TSLA', default => SocialSetting::current()->second_symbol
+        };
+        // Reuse historical secondary records so the new manual choices cannot duplicate them.
+        $post = SocialPost::where('session_date', $session)->where('symbol', $symbol)->first()
+            ?? SocialPost::firstOrCreate(['session_date' => $session, 'slot' => $slot], ['symbol' => $symbol]);
+        if ($preparedOn !== null && ! $post->wasRecentlyCreated
+            && ($post->scheduled_prepared_on === null || $post->scheduled_prepared_on === $preparedOn)) {
+            return $post;
+        }
+        // A scheduler refresh never replaces approved, published, or manually edited content.
         $claimed = SocialPost::whereKey($post->id)->whereIn('status', ['draft', 'blocked'])->update([
             'status' => 'generating', 'symbol' => $symbol, 'approved_at' => null, 'approved_by' => null, 'quality_acknowledgment' => null,
-            'issue' => null, 'updated_at' => now(),
+            'issue' => null, 'scheduled_prepared_on' => $preparedOn, 'updated_at' => now(),
         ]);
         if (! $claimed) {
             return $post->refresh();
@@ -58,7 +67,7 @@ class SocialWorkflow
     {
         SocialText::validate($body);
         $changed = SocialPost::whereKey($post->id)->whereIn('status', ['draft', 'approved'])->update([
-            'body' => $body, 'alt_text' => $alt, 'status' => 'draft', 'approved_at' => null, 'approved_by' => null, 'quality_acknowledgment' => null, 'updated_at' => now(),
+            'body' => $body, 'alt_text' => $alt, 'status' => 'draft', 'approved_at' => null, 'approved_by' => null, 'quality_acknowledgment' => null, 'scheduled_prepared_on' => null, 'updated_at' => now(),
         ]);
         if (! $changed) {
             throw new DomainException('This post can no longer be edited.');
@@ -104,7 +113,7 @@ class SocialWorkflow
             && ($quality['source_dates'] ?? []) === [$expected]
             && ($post->snapshot['data_date'] ?? null) === $expected
             && ($post->snapshot['symbol'] ?? null) === $post->symbol
-            && ($post->slot === 'primary' ? $post->symbol === 'SPY' : $post->symbol === SocialSetting::current()->second_symbol)
+            && ($post->slot === 'primary' ? $post->symbol === 'SPY' : in_array($post->symbol, ['QQQ', 'TSLA'], true))
             && ! empty($post->snapshot['strike_data']);
     }
 
@@ -141,21 +150,64 @@ class SocialWorkflow
         return $bytes;
     }
 
+    public function approveAutomatically(SocialPost $post): void
+    {
+        DB::transaction(function () use ($post) {
+            $post = SocialPost::whereKey($post->id)->lockForUpdate()->firstOrFail();
+            $owner = (int) config('social.automatic_owner_id');
+            $q = $post->snapshot['social_quality'] ?? [];
+            $complete = ($q['publishable'] ?? false) === true;
+            $smallGap = ($q['gamma_only_gaps'] ?? false) === true && is_numeric($q['missing_gamma_oi_share'] ?? null)
+                && $q['missing_gamma_oi_share'] >= 0 && $q['missing_gamma_oi_share'] <= 0.01 && $this->canAcknowledgeMissingInputs($post);
+            if (! config('social.automatic_spy_enabled') || ! config('social.schedule_enabled') || SocialSetting::current()->paused
+                || ! in_array($owner, config('social.admin_ids', []), true) || ! SocialSchedule::inWindow(true)
+                || $post->symbol !== 'SPY' || $post->slot !== 'primary' || $post->session_date !== SocialSchedule::session()
+                || $post->scheduled_prepared_on !== now('America/New_York')->toDateString()
+                || ($q['source_dates'] ?? []) !== [SocialGexSource::expectedDate($post->session_date)]
+                || ($q['missing_expiration_count'] ?? null) !== 0 || (! $complete && ! $smallGap)
+                || $post->body !== SocialText::draft($post->snapshot, $post->session_date)) {
+                throw new DomainException('Automatic SPY approval requires the scheduled session, fresh complete expiries, and at most 1% of open interest affected by missing gamma.');
+            }
+            $this->approve($post, $owner, ! $complete, $this->reviewToken($post));
+            $post->refresh();
+            if ($post->quality_acknowledgment) {
+                $review = $post->quality_acknowledgment;
+                $review['reason'] = 'Standing owner authorization for automatic SPY posts; missing gamma affects at most 1% of open interest.';
+                $review['missing_gamma_oi_share'] = $q['missing_gamma_oi_share'];
+                $post->update(['quality_acknowledgment' => $review, 'issue' => 'Automatically approved under the owner-authorized SPY coverage limit.']);
+            }
+        });
+    }
+
     public function publish(SocialPost $post, ?CarbonImmutable $at = null): SocialPost
     {
         $now = ($at ?? CarbonImmutable::now('America/New_York'))->setTimezone('America/New_York');
+        if (! config('social.publishing_enabled') || ! config('social.schedule_enabled') || SocialSetting::current()->paused) {
+            throw new DomainException('Scheduled publishing is disabled or paused.');
+        }
+        if ($post->symbol !== 'SPY' || $post->slot !== 'primary' || ! SocialSchedule::inWindow(false, $now)
+            || $post->session_date !== SocialSchedule::session($now) || ! $this->hasAcceptedInputs($post)
+            || ($post->snapshot['data_date'] ?? null) !== SocialGexSource::expectedDate($post->session_date)) {
+            throw new DomainException('Automatic posting is SPY only, Sunday/Tuesday/Thursday at 8:45 AM ET, using the previous completed EOD snapshot.');
+        }
+
+        return $this->submitApproved($post);
+    }
+
+    public function sendNow(SocialPost $post, int $ownerId, string $reviewToken): SocialPost
+    {
+        $post->refresh();
+        if (app()->environment('local') && filled(config('ui_review.now'))) {
+            throw new DomainException('Historical local review cannot publish.');
+        }
         if (! config('social.publishing_enabled') || SocialSetting::current()->paused) {
             throw new DomainException('Publishing is disabled or paused.');
         }
-        if (! MarketSession::isTradingDay($now) || $post->session_date !== $now->toDateString()
-            || ! $this->hasAcceptedInputs($post)
-            || substr((string) ($post->snapshot['data_date'] ?? ''), 0, 10) !== SocialGexSource::expectedDate($now->toDateString())) {
-            throw new DomainException('Only a current-session draft with the previous completed snapshot can be published.');
-        }
-        $time = $post->slot === 'primary' ? '08:45' : '09:00';
-        $start = $now->setTimeFromTimeString($time);
-        if ($now->lt($start) || $now->gte($start->addMinutes(10))) {
-            throw new DomainException('This draft is outside its 10-minute publishing window.');
+        if (! in_array($ownerId, config('social.admin_ids', []), true) || ! in_array($post->symbol, ['SPY', 'QQQ', 'TSLA'], true)
+            || $post->status !== 'approved' || ! hash_equals($this->reviewToken($post), $reviewToken)
+            || $post->session_date !== SocialSchedule::manualSession() || ! $this->hasAcceptedInputs($post)
+            || ($post->snapshot['data_date'] ?? null) !== SocialGexSource::expectedDate($post->session_date)) {
+            throw new DomainException('Refresh and approve the current or upcoming session draft before sending it now.');
         }
 
         return $this->submitApproved($post);

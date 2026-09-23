@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Jobs\GenerateSocialDraft;
 use App\Jobs\PublishSocialPost;
 use App\Models\SocialPost;
 use App\Models\SocialSetting;
@@ -35,6 +34,7 @@ class SocialWorkflowTest extends TestCase
         DB::setDefaultConnection('social_test');
         (require database_path('migrations/2026_09_20_100000_create_social_posts_tables.php'))->up();
         (require database_path('migrations/2026_09_20_180000_add_quality_acknowledgment_to_social_posts.php'))->up();
+        (require database_path('migrations/2026_09_23_000000_add_scheduled_prepared_on_to_social_posts.php'))->up();
         Storage::fake('local');
         Http::preventStrayRequests();
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-21 08:45', 'America/New_York'));
@@ -140,7 +140,7 @@ class SocialWorkflowTest extends TestCase
         $workflow->approve($post, 3);
         $this->expectException(DomainException::class);
         try {
-            $workflow->publish($post->refresh());
+            $workflow->publishNextSessionNow($post->refresh(), 3, CarbonImmutable::parse('2026-09-20 08:45', 'America/New_York'));
         } finally {
             Http::assertNothingSent();
         }
@@ -156,8 +156,8 @@ class SocialWorkflowTest extends TestCase
         $workflow = $this->workflow($x);
         $post = $workflow->generate('2026-09-21', 'primary');
         $workflow->approve($post, 3);
-        $workflow->publish($post->refresh());
-        $workflow->publish($post->refresh());
+        $workflow->publishNextSessionNow($post->refresh(), 3, CarbonImmutable::parse('2026-09-20 08:45', 'America/New_York'));
+        $workflow->publishNextSessionNow($post->refresh(), 3, CarbonImmutable::parse('2026-09-20 08:45', 'America/New_York'));
         $this->assertSame('published', $post->refresh()->status);
         $this->assertSame('456', $post->x_post_id);
     }
@@ -174,7 +174,7 @@ class SocialWorkflowTest extends TestCase
         $workflow->approve($post, 3, true, $workflow->reviewToken($post));
         $workflow->publishNextSessionNow($post->refresh(), 3, CarbonImmutable::parse('2026-09-20 13:00', 'America/New_York'));
         $this->assertSame('published', $post->refresh()->status);
-        $workflow->publish($post, CarbonImmutable::parse('2026-09-21 08:45', 'America/New_York'));
+        $workflow->publishNextSessionNow($post, 3, CarbonImmutable::parse('2026-09-20 08:45', 'America/New_York'));
         $this->assertSame('456', $post->refresh()->x_post_id);
         Queue::fake();
         config(['social.schedule_enabled' => true]);
@@ -209,8 +209,11 @@ class SocialWorkflowTest extends TestCase
         $workflow = $this->workflow($x);
         $post = $workflow->generate('2026-09-21', 'primary');
         $workflow->approve($post, 3);
-        $workflow->publish($post->refresh());
-        $workflow->publish($post->refresh());
+        $workflow->publishNextSessionNow($post->refresh(), 3, CarbonImmutable::parse('2026-09-20 08:45', 'America/New_York'));
+        try {
+            $workflow->publishNextSessionNow($post->refresh(), 3, CarbonImmutable::parse('2026-09-20 08:45', 'America/New_York'));
+        } catch (DomainException) { /* Approval was revoked; no second request is allowed. */
+        }
         $this->assertSame('needs_review', $post->refresh()->status);
         $this->assertSame('needs_review', $workflow->generate('2026-09-21', 'primary')->status);
     }
@@ -246,7 +249,7 @@ class SocialWorkflowTest extends TestCase
         Queue::fake();
         config(['social.schedule_enabled' => true]);
         $this->artisan('social:tick')->assertSuccessful();
-        Queue::assertPushed(GenerateSocialDraft::class, 2);
+        Queue::assertPushed(\App\Jobs\PrepareDailySocialDraft::class, 3);
         Queue::assertNotPushed(PublishSocialPost::class);
         Queue::fake();
         SocialSetting::current()->update(['paused' => true]);
@@ -255,7 +258,8 @@ class SocialWorkflowTest extends TestCase
         SocialSetting::current()->update(['paused' => false]);
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-07 08:45', 'America/New_York'));
         $this->artisan('social:tick')->assertSuccessful();
-        Queue::assertNothingPushed();
+        Queue::assertPushed(\App\Jobs\PrepareDailySocialDraft::class, 3);
+        Queue::assertNotPushed(PublishSocialPost::class);
     }
 
     public function test_subscriber_cannot_access_any_social_endpoint(): void
@@ -333,7 +337,7 @@ class SocialWorkflowTest extends TestCase
         $this->assertFalse($post->snapshot['social_quality']['publishable']);
         $this->assertSame(3, $post->quality_acknowledgment['approved_by']);
         $this->assertStringNotContainsString('do not publish', $post->alt_text);
-        $workflow->publish($post);
+        $workflow->publishNextSessionNow($post, 3, CarbonImmutable::parse('2026-09-20 08:45', 'America/New_York'));
         $this->assertSame('published', $post->refresh()->status);
     }
 
@@ -428,6 +432,123 @@ class SocialWorkflowTest extends TestCase
         $this->assertSame('approved', $post->refresh()->status);
         $this->post('/admin/social/'.$post->id.'/publish')->assertStatus(409);
         Http::assertNothingSent();
+    }
+
+    public function test_daily_preparation_covers_three_symbols_but_only_small_gap_spy_auto_approves(): void
+    {
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-20 08:30', 'America/New_York'));
+        config(['social.schedule_enabled' => true, 'social.automatic_spy_enabled' => true, 'social.automatic_owner_id' => 3]);
+        $source = Mockery::mock(SocialGexSource::class);
+        $source->shouldReceive('capture')->andReturnUsing(fn ($symbol) => [...$this->snapshot(), 'symbol' => $symbol, 'social_quality' => [
+            'publishable' => false, 'missing_input_rows' => 2, 'source_rows' => 100, 'missing_expiration_count' => 0,
+            'source_dates' => ['2026-09-18'], 'gamma_only_gaps' => true, 'missing_gamma_oi_share' => 0.0083,
+        ]]);
+        $workflow = new SocialWorkflow($source, new SocialCard, new XPublisher);
+        foreach (['primary', 'qqq', 'tsla'] as $slot) {
+            (new \App\Jobs\PrepareDailySocialDraft('2026-09-21', $slot, '2026-09-20'))->handle($workflow);
+        }
+        $this->assertSame('approved', SocialPost::where('symbol', 'SPY')->first()->status);
+        $this->assertSame('blocked', SocialPost::where('symbol', 'QQQ')->first()->status);
+        $this->assertSame('blocked', SocialPost::where('symbol', 'TSLA')->first()->status);
+        $this->assertSame(3, SocialPost::count());
+        $this->assertSame(0.0083, SocialPost::where('symbol', 'SPY')->first()->quality_acknowledgment['missing_gamma_oi_share']);
+        Http::assertNothingSent();
+    }
+
+    public function test_large_or_unknown_gaps_are_not_automatically_approved(): void
+    {
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-20 08:30', 'America/New_York'));
+        config(['social.schedule_enabled' => true, 'social.automatic_spy_enabled' => true, 'social.automatic_owner_id' => 3]);
+        $workflow = $this->incompleteWorkflow();
+        $post = $workflow->generate('2026-09-21', 'primary', '2026-09-20');
+        foreach ([null, 0.0101] as $share) {
+            $snapshot = $post->snapshot;
+            $snapshot['social_quality']['gamma_only_gaps'] = true;
+            $snapshot['social_quality']['missing_gamma_oi_share'] = $share;
+            $post->update(['snapshot' => $snapshot]);
+            try {
+                $workflow->approveAutomatically($post);
+                $this->fail('Must retain coverage block');
+            } catch (DomainException) {
+                $this->assertSame('blocked', $post->refresh()->status);
+            }
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_schedule_dispatches_only_spy_and_manual_send_has_no_time_slot_restriction(): void
+    {
+        config(['social.schedule_enabled' => true, 'social.publishing_enabled' => true]);
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-20 08:45', 'America/New_York'));
+        $workflow = $this->workflow();
+        foreach (['primary', 'qqq', 'tsla'] as $slot) {
+            $post = $workflow->generate('2026-09-21', $slot);
+            $workflow->approve($post, 3);
+        }
+        Queue::fake();
+        $this->artisan('social:tick')->assertSuccessful();
+        $spyId = SocialPost::where('symbol', 'SPY')->first()->id;
+        Queue::assertPushed(PublishSocialPost::class, fn ($job) => $job->postId === $spyId);
+        Queue::assertPushed(PublishSocialPost::class, 1);
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-20 14:00', 'America/New_York'));
+        $x = Mockery::mock(XPublisher::class);
+        $x->shouldReceive('verifyAccount')->once()->andReturn('GexOptions');
+        $x->shouldReceive('upload')->once()->andReturn('123');
+        $x->shouldReceive('publish')->once()->andReturn('789');
+        $post = SocialPost::where('symbol', 'QQQ')->first();
+        $manual = new SocialWorkflow(Mockery::mock(SocialGexSource::class), new SocialCard, $x);
+        $manual->sendNow($post, 3, $manual->reviewToken($post));
+        $this->assertSame('published', $post->refresh()->status);
+    }
+
+    public function test_weekend_refresh_preserves_manual_edits_and_published_posts(): void
+    {
+        $workflow = $this->workflow();
+        $post = $workflow->generate('2026-09-21', 'primary', '2026-09-19');
+        $this->assertSame('2026-09-20', $workflow->generate('2026-09-21', 'primary', '2026-09-20')->scheduled_prepared_on);
+        $workflow->edit($post, 'Owner edited caption', 'Owner description');
+        $again = $workflow->generate('2026-09-21', 'primary', '2026-09-21');
+        $this->assertSame('Owner edited caption', $again->body);
+        $this->assertNull($again->scheduled_prepared_on);
+        $again->update(['status' => 'published', 'x_post_id' => '123']);
+        $this->assertSame('published', $workflow->generate('2026-09-21', 'primary', '2026-09-22')->status);
+    }
+
+    public function test_send_now_route_is_admin_only_and_publishes_exact_approved_content(): void
+    {
+        config(['social.publishing_enabled' => true]);
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-20 14:00', 'America/New_York'));
+        $workflow = $this->workflow();
+        $post = $workflow->generate('2026-09-21', 'primary');
+        $workflow->approve($post, 3);
+        $post->refresh();
+        $x = Mockery::mock(XPublisher::class);
+        $x->shouldReceive('verifyAccount')->once()->andReturn('GexOptions');
+        $x->shouldReceive('upload')->once()->andReturn('123');
+        $x->shouldReceive('publish')->once()->with($post->body, '123')->andReturn('789');
+        $this->app->instance(XPublisher::class, $x);
+        $user = new User;
+        $user->id = 99;
+        $user->setRelation('subscriptions', collect());
+        $url = '/admin/social/'.$post->id.'/send-now';
+        $this->actingAs($user)->post($url, ['review_token' => $workflow->reviewToken($post)])->assertForbidden();
+        $user->id = 3;
+        $this->actingAs($user)->post($url, ['review_token' => str_repeat('0', 64)])->assertSessionHasErrors('post');
+        $this->actingAs($user)->post($url, ['review_token' => $workflow->reviewToken($post)])->assertRedirect();
+        $this->assertSame('published', $post->refresh()->status);
+        $this->post($url, ['review_token' => $workflow->reviewToken($post)])->assertSessionHasErrors('post');
+    }
+
+    public function test_no_out_of_window_catch_up_or_unapproved_manual_send(): void
+    {
+        config(['social.schedule_enabled' => true, 'social.publishing_enabled' => true]);
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-22 12:00', 'America/New_York'));
+        Queue::fake();
+        $this->artisan('social:tick')->assertSuccessful();
+        Queue::assertNothingPushed();
+        $post = $this->workflow()->generate('2026-09-22', 'primary');
+        $this->expectException(DomainException::class);
+        $this->workflow()->sendNow($post, 3, $this->workflow()->reviewToken($post));
     }
 
     public function test_changing_second_symbol_revokes_existing_approval(): void

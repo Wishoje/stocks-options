@@ -57,4 +57,16 @@ describe('social publishing review', () => {
     wrapper.unmount()
   })
 
+  it('offers all three symbols and an immediate send only after approval', async () => {
+    const wrapper = render({ posts: [{ ...post, status: 'approved' }], publishingEnabled: true, automaticSpyEnabled: true })
+    expect(wrapper.get('.generation select').findAll('option').map(x => x.element.value)).toEqual(['primary', 'qqq', 'tsla'])
+    expect(wrapper.text()).toContain('SPY on Sunday, Tuesday, and Thursday')
+    expect(wrapper.text()).toContain('Manual approval and Send now')
+    const send = wrapper.findAll('button').find(x => x.text() === 'Send now')
+    await send.trigger('click')
+    expect(wrapper.text()).toContain('This sends immediately')
+    expect(wrapper.findAll('button').some(x => x.text() === 'Confirm send now')).toBe(true)
+    wrapper.unmount()
+  })
+
 })

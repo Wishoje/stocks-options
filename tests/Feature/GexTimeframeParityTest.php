@@ -272,6 +272,21 @@ class GexTimeframeParityTest extends MySqlTestCase
         }
     }
 
+    public function test_source_quality_reports_missing_gamma_share_from_frozen_rows(): void
+    {
+        $id = $this->expiration('SPY', '2026-09-04');
+        $this->rows($id, '2026-09-04', [['100.00', 'call', 9900, 1, .01, 100], ['101.00', 'call', 100, 1, null, 100]]);
+        $response = app(GexController::class)->getGexLevels(Request::create('/', 'GET', ['symbol' => 'SPY', 'timeframe' => '0d', 'view' => 'latest_eod']));
+        $this->assertSame(200, $response->getStatusCode());
+        $q = $response->getData(true)['social_quality'];
+        $this->assertFalse($q['publishable']);
+        $this->assertSame(1, $q['missing_input_rows']);
+        $this->assertEquals(10000, $q['total_open_interest']);
+        $this->assertEquals(100, $q['missing_gamma_open_interest']);
+        $this->assertEquals(0.01, $q['missing_gamma_oi_share']);
+        $this->assertTrue($q['gamma_only_gaps']);
+    }
+
     private function payload(string $symbol, string $timeframe): array
     {
         $response = app(GexController::class)->getGexLevels(Request::create('/api/gex-levels', 'GET', [

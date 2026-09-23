@@ -1,51 +1,41 @@
-﻿# Social post operations
+# Social post operations
 
-The owner-only page is `/admin/social`. It creates SPY and either QQQ or TSLA drafts from the same GEX calculation used by the dashboard. Subscribers have no access to this page, its images, or its source downloads.
+The owner-only page is `/admin/social`. It provides independent SPY, QQQ, and TSLA draft choices, PNG/source downloads, approval, and a confirmed Send now action. Subscribers cannot use these routes.
 
-## Initial production mode
+## Daily preparation and automatic posting
 
-Use the verified owner's user ID in `SOCIAL_ADMIN_IDS`. Keep both `SOCIAL_SCHEDULE_ENABLED=false` and `SOCIAL_PUBLISHING_ENABLED=false`. Manual draft generation and PNG downloads work without X credentials. `SOCIAL_QUEUE_CONNECTION=sync` is suitable for initial manual review; scheduled operation can use an existing supervised queue connection and its consumed queue name through `SOCIAL_QUEUE`.
+Every calendar day between 08:30 and 08:55 America/New_York, the scheduler prepares fresh drafts for all three symbols for the current or next opening session. It reads the latest completed EOD source required for that session. Weekends reuse the last completed market session and retain its actual date. It does not precompute an entire week. An existing unapproved scheduler draft can refresh the next day; owner edits, approval, publication, and ambiguous submissions are preserved.
 
-Run the additive `2026_09_20_100000_create_social_posts_tables` migration. PHP GD with FreeType is required. The bundled Atkinson Hyperlegible fonts are licensed under the accompanying SIL OFL license; their source is the Google Fonts `ofl/atkinsonhyperlegible` directory. No browser runtime or new Composer package is needed to render PNGs.
+Only SPY is eligible for automatic posting: Sunday, Tuesday, and Thursday at 08:45 AM ET, with a ten-minute execution window. Sunday prepares Monday. If Monday is a market holiday, the Sunday automatic post is skipped. Tuesday/Thursday market holidays are skipped too. There are no late catch-up sends. New York timezone rules handle daylight saving time.
 
-Both web and worker must have matching social configuration and refreshed Laravel configuration caches. Images are stored as hidden base64 fields in the shared database, alongside their hash and frozen source, because web and worker hosts do not share local disks. The database backup therefore includes the reviewed image.
+SPY scheduled drafts can be approved automatically under the owner's standing authorization. Every selected expiry must use the previous completed EOD source. Complete inputs qualify. Missing gamma alone can qualify when known affected open interest is at most 1% of total open interest. Unknown coverage, missing prices/open interest, missing expirations, mixed dates, and larger gaps require manual review. The open-interest fraction is not a measure of missing GEX. Source-quality flags remain unchanged and the acknowledgment records the policy and affected share.
 
-## Data and image rules
+QQQ, TSLA, and SPY drafts on other days are never automatically approved or sent. The owner can approve them and choose Send now. An existing manually prepared draft is not silently reapproved by the daily job.
 
-Choose the target trading session. A Monday premarket draft uses Friday's completed EOD snapshot, except when the market calendar requires an earlier session. Every included expiry must have that same expected snapshot date. Missing or stale dates block generation.
+## Configuration
 
-The scope is the dashboard 2W window, resolved for the target session. Social drafts consume the same published `next_session` GEX response as the dashboard. Total net GEX and the largest positive and negative exposures use every returned numeric strike. The signed chart keeps individual strikes, trimming at most 1% of absolute exposure from each tail. Its caption discloses the displayed range and coverage. The source JSON retains all rows.
+Both web and worker use matching configuration:
 
-Incomplete nonzero or unknown open-interest rows produce a blocked draft with diagnostics in the admin page and JSON. The PNG omits internal diagnostics. An owner may explicitly acknowledge missing inputs in the admin page and approve the available-data chart. Missing expirations, mixed source dates, absent snapshots, and invalid images remain blocked. Approval records the owner, time, missing-row count, and snapshot/image hashes in `quality_acknowledgment`. It does not change source quality flags or automatically approve future drafts. Editing or regenerating revokes the acknowledgment. Missing gamma, underlying price, or open interest must be repaired upstream; the social feature does not manufacture inputs. Zero-open-interest rows can safely contribute zero without gamma.
+- `SOCIAL_ADMIN_IDS`: explicit owner allowlist.
+- `SOCIAL_SCHEDULE_ENABLED=true`: daily preparation and scheduled dispatch.
+- `SOCIAL_PUBLISHING_ENABLED=true`: allows X writes after the applicable checks.
+- `SOCIAL_AUTOMATIC_SPY_ENABLED=true`: enables standing approval of qualifying scheduled SPY drafts.
+- `SOCIAL_AUTOMATIC_OWNER_ID`: allowlisted owner whose standing authorization is recorded.
+- `SOCIAL_QUEUE_CONNECTION` and `SOCIAL_QUEUE`: consumed queue connection/name; sync is supported.
+- X OAuth 1.0a credentials: `X_CONSUMER_KEY`, `X_CONSUMER_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`. Never commit these values. Account verification must return @GexOptions.
 
-## Review workflow
+The existing minute-level Laravel scheduler invokes `social:tick`. Refresh config caches on both hosts after configuration changes. The admin pause control stops preparation and publishing. The additive `scheduled_prepared_on` migration tracks scheduler-owned daily drafts without altering historical market data.
 
-1. Generate SPY and the selected secondary symbol for the next trading session.
-2. Compare the snapshot date, expiry scope, total, positive peak, and negative peak with the matching dashboard source. Download the PNG and source JSON.
-3. Review the caption and image description. Saving an edit revokes approval. Return an approved post to draft before regenerating it.
-4. Review the image and caption, and explicitly acknowledge disclosed input gaps when accepting an available-data chart. Approval does not enable posting when the server publishing switch is off.
+## Review and immediate send
 
-Changing QQQ to TSLA revokes existing future secondary approvals. Refresh the list after background generation. Local review can use the existing historical review clock; production publishing always uses the actual clock.
+Generate the desired symbol for a current/upcoming trading session. Compare its snapshot date, expiry scope, and metrics against the next-session dashboard. Review text and image; acknowledge disclosed missing inputs if accepting an available-data chart. Approval is bound to the current saved data and image. Saving an edit revokes approval and automatic-refresh ownership.
 
-## Future scheduled posting
+Send now requires an approved draft and a matching review token, then sends immediately after an explicit UI confirmation. It supports all three symbols outside scheduled slots, using the current session during regular hours or the next opening session otherwise. It rejects stale dates and disabled/paused publishing. Historical local-review sessions cannot publish.
 
-After image review and a separate decision to activate posting, install the four OAuth 1.0a values from the X app in server environment configuration: `X_CONSUMER_KEY`, `X_CONSUMER_SECRET`, `X_ACCESS_TOKEN`, and `X_ACCESS_TOKEN_SECRET`. The app needs Read and write permission. The connection check only reads the account identity and requires @GexOptions.
+Images remain 1600x1000 PNGs using the dashboard's exact published GEX response. Totals use every returned strike; chart focus retains at least 98% of absolute exposure. Dates and source scope remain visible. Diagnostics remain in admin/JSON, and are omitted from PNGs. Neither manual acknowledgment nor automated approval manufactures missing gamma values.
 
-The client uses OAuth 1.0a media upload and X v2 post creation. HTTP requests are covered by mocked tests. Live media upload and posting have not been verified during the draft-only rollout; verify compatibility and account access before enabling publishing. Never commit credentials.
+## Duplicate and failure handling
 
-The existing Laravel scheduler invokes `social:tick` each minute. With scheduling enabled, it prepares missing drafts between 08:30 and 09:00 America/New_York on trading days. It never approves a draft. Approved SPY posts can submit from 08:45 up to 08:55; secondary posts from 09:00 up to 09:10. Late jobs are rejected. Pausing in the admin page stops scheduled work and publishing checks.
+Publication atomically claims only approved records. Published drafts are skipped by scheduled dispatch, including Sunday posts for Monday. If X does not confirm a submission, status becomes needs_review and no automatic retry occurs. Preparation failures revoke approval. A stopped publication job becomes needs_review after five minutes. Check X before reconciling an uncertain submission.
 
-Only one record exists for each session and slot. An atomic status claim prevents duplicate submissions. An unconfirmed X submission becomes `needs_review` and is never automatically retried. Check the account manually before reconciling it. If a process remains in `publishing` for more than five minutes, the enabled scheduler also sends it to review. A failed preparation requires a fresh approval. No automatic catch-up posting is performed.
-
-## Manual review checklist
-
-- Owner sees Social posts in desktop and mobile navigation; another subscriber receives 403 on social routes.
-- Both symbols generate the expected dated card, or clearly explain why source data is blocked.
-- PNG contains all three headline metrics, signed bars, readable date/scope, and branding. No chart controls or browser chrome appear.
-- Downloads return PNG and complete JSON. Preview images are private and not indexed.
-- Caption edits, approval, and return to draft behave consistently; changing the secondary symbol revokes its old approval.
-- Publishing and scheduling remain off during draft review. No X post is sent by generation, downloads, or approval.
-
-## Owner-requested early publication
-
-The service method `publishNextSessionNow` lets the approving owner explicitly publish preparation for the next opening session outside regular trading hours. It validates the target session, previous EOD source, accepted input quality, and saved image, then uses the same atomic publication claim as scheduled posts. It does not change the recurring schedule. A post published on Sunday for Monday is skipped by Monday's scheduler. No public endpoint automatically invokes this exception.
+Existing legacy secondary records are reused by symbol/session so independent QQQ/TSLA selection does not recreate their published posts. No live post is part of automated tests; X writes are mocked.

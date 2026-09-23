@@ -98,7 +98,7 @@ class GexController extends Controller
 
     private function scopedCacheKey(string $key): string
     {
-        return $this->viewContext === null ? $key : $key.':eod-view-v1:'.implode(':', $this->viewContext);
+        return $this->viewContext === null ? $key : $key.':eod-view-v2:'.implode(':', $this->viewContext);
     }
 
     protected function getGexLevelsCore(Request $request)
@@ -627,7 +627,16 @@ class GexController extends Controller
 
         $missingExpirations = count(array_diff($expirationIds, $rows->pluck('expiration_id')->unique()->all()));
 
-        return ['publishable' => $missing === 0 && $missingExpirations === 0, 'missing_expiration_count' => $missingExpirations, 'missing_input_rows' => $missing, 'source_rows' => $rows->count(),
+        $invalidOi = $rows->contains(fn ($row) => ! is_numeric($row->open_interest) || ! is_finite((float) $row->open_interest) || (float) $row->open_interest < 0);
+        $missingGamma = $rows->filter(fn ($row) => (float) $row->open_interest > 0 && (! is_numeric($row->gamma) || ! is_finite((float) $row->gamma)));
+        $badSpot = $rows->contains(fn ($row) => (float) $row->open_interest > 0 && (! is_numeric($row->underlying_price) || ! is_finite((float) $row->underlying_price) || (float) $row->underlying_price <= 0));
+        $totalOi = $invalidOi ? null : (float) $rows->sum('open_interest');
+        $affectedOi = $invalidOi ? null : (float) $missingGamma->sum('open_interest');
+
+        return ['total_open_interest' => $totalOi, 'missing_gamma_open_interest' => $affectedOi,
+            'missing_gamma_oi_share' => $totalOi > 0 ? $affectedOi / $totalOi : null,
+            'gamma_only_gaps' => ! $invalidOi && ! $badSpot && $missingGamma->count() === $missing,
+            'publishable' => $missing === 0 && $missingExpirations === 0, 'missing_expiration_count' => $missingExpirations, 'missing_input_rows' => $missing, 'source_rows' => $rows->count(),
             'source_dates' => $rows->pluck('data_date')->map(fn ($date) => substr((string) $date, 0, 10))->unique()->sort()->values()->all()];
     }
 
