@@ -164,6 +164,7 @@ defineExpose({ qscorePayload, scores, scoreItems, overall, sourceDateItems, load
     <UiStatus
       v-if="loading"
       state="loading"
+      layout="metrics"
       :title="`Loading ${String(symbol).toUpperCase()} Q-Score`"
       message="Fetching the latest four signal readings."
     />

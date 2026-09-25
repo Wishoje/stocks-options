@@ -77,7 +77,11 @@ describe('AppShell watchlist state', () => {
 
     const wrapper = mount(AppShell)
     await flushPromises()
+    const onStart = vi.fn()
+    window.addEventListener('select-symbol-start', onStart)
     const pending = wrapper.vm.handleSelectSymbol('aapl')
+    expect(onStart.mock.calls[0][0].detail.symbol).toBe('AAPL')
+    window.removeEventListener('select-symbol-start', onStart)
     await flushPromises()
 
     expect(wrapper.get('[data-left-panel]').attributes()).toMatchObject({
@@ -124,4 +128,22 @@ describe('AppShell watchlist state', () => {
     expect(wrapper.get('[data-selected]').attributes('data-selected')).toBe('QQQ')
     wrapper.unmount()
   })
+  it('cancels a watchlist warmup when a newer dashboard selection takes ownership', async () => {
+    const status = deferred()
+    axios.get.mockImplementation(url => url === '/api/symbol/status' ? status.promise : Promise.resolve({ data: [] }))
+    const wrapper = mount(AppShell)
+    await flushPromises()
+    const onSelection = vi.fn()
+    window.addEventListener('select-symbol', onSelection)
+    const pending = wrapper.vm.handleSelectSymbol('QQQ')
+    window.dispatchEvent(new CustomEvent('dashboard-symbol-changed', { detail: { symbol: 'IWM' } }))
+    status.resolve({ status: 200, data: { status: 'ready' } })
+    await pending
+    await flushPromises()
+    expect(onSelection).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-selected]').attributes('data-selected')).toBe('IWM')
+    window.removeEventListener('select-symbol', onSelection)
+    wrapper.unmount()
+  })
+
 })

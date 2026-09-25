@@ -5,6 +5,7 @@ import '../../../css/calculator-refresh.css'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import AppShell from '@/Components/AppShell.vue'
 import axios from 'axios'
+import UiLoading from '@/Components/UI/UiLoading.vue'
 import {
   calculateLongOption,
   closestContract,
@@ -1355,7 +1356,7 @@ const refreshLiveData = async () => {
 
 const handleSelectSymbol = async (e) => {
   const sym = e.detail.symbol || 'SPY'
-  if (sym === symbol.value && chainData.value.length) return
+  if (sym === symbol.value && (chainData.value.length || loading.value)) return
 
   rememberCurrentChain()
   resetRefreshObserver({ clearReadiness: true })
@@ -1387,6 +1388,7 @@ const handleSelectSymbol = async (e) => {
 onMounted(async () => {
   mounted = true
   window.addEventListener('select-symbol', handleSelectSymbol)
+  window.addEventListener('select-symbol-start', handleSelectSymbol)
   const context = beginRequestContext()
   await loadChain({ context, startRefresh: true })
 })
@@ -1396,6 +1398,7 @@ onBeforeUnmount(() => {
   chartScheduler.dispose()
   resetRefreshObserver({ clearReadiness: true })
   window.removeEventListener('select-symbol', handleSelectSymbol)
+  window.removeEventListener('select-symbol-start', handleSelectSymbol)
   chart?.destroy()
   decayChart?.destroy()
   chart = null
@@ -1429,10 +1432,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
           <section v-if="error" class="calculator-state calculator-state--error" role="alert"><strong>Calculator unavailable</strong><span>{{ error }}</span></section>
-          <section v-else-if="loading" class="calculator-loading" role="status" aria-live="polite">
-            <span class="calculator-loading__mark" aria-hidden="true"></span>
-            <div><strong>Preparing {{ symbol }} calculator</strong><p>Loading the expiration catalog and latest publishable chain.</p></div>
-          </section>
+          <UiLoading v-else-if="loading" :key="symbol" :title="`Loading ${symbol} calculator`" message="Loading available expirations and the selected option chain. You can choose another symbol while this loads." layout="table" />
           <div v-else class="calculator-content">
             <div v-if="refreshState === 'no_options'" class="calculator-state" data-testid="calculator-no-options" role="status"><strong>No contracts available</strong><span>{{ refreshMessage }}</span></div>
             <div v-else-if="['starting', 'running'].includes(refreshState)" class="calculator-state calculator-state--data" data-testid="calculator-refresh-running" role="status" aria-live="polite">

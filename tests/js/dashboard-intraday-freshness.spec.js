@@ -373,10 +373,10 @@ describe('Dashboard intraday ingestion freshness', () => {
 
     expect(wrapper.vm.intradayTransition).toBe(true)
     expect(wrapper.vm.levels).toBeNull()
-    const loadingStatus = wrapper.findAllComponents({ name: 'UiStatus' })
-      .find(component => component.props('title') === 'Loading QQQ intraday data')
-    expect(loadingStatus).toBeTruthy()
-    expect(loadingStatus.props('message')).toBe('The previous symbol is hidden while its replacement snapshot is verified.')
+    const loadingStatus = wrapper.findComponent({ name: 'UiLoading' })
+    expect(loadingStatus.exists()).toBe(true)
+    expect(loadingStatus.props('title')).toContain('Loading QQQ')
+    expect(loadingStatus.props('title')).toContain('Intraday')
   })
 
   it('retains a closed-session unknown-time snapshot across mode/cache changes', async () => {

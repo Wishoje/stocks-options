@@ -405,7 +405,7 @@
 }
 
 @media (max-width: 920px) {
-  .gex-dashboard-context { position: relative; }
+  .gex-dashboard-context { position: relative; top: auto; }
   .gex-overview-distributions,
   .gex-volatility-view__grid,
   .gex-positioning-view__grid { grid-template-columns: 1fr; }

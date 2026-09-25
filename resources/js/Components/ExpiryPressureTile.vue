@@ -21,6 +21,7 @@ const emit = defineEmits(['reading-inspected'])
 const data = ref(null)
 const error = ref('')
 const loading = ref(false)
+const pending = ref(false)
 const selectedExpiry = ref('')
 
 let activeLoad = null
@@ -127,6 +128,7 @@ function isCurrentRetryScope(request) {
 }
 
 function resetData() {
+  pending.value = false
   data.value = null
   error.value = ''
   selectedExpiry.value = ''
@@ -148,11 +150,12 @@ async function load(options = {}) {
   error.value = ''
 
   try {
-    const { data: response } = await axios.get('/api/expiry-pressure', {
+    const { data: response, status } = await axios.get('/api/expiry-pressure', {
       params: { symbol: request.symbol, days: request.days },
       signal: request.controller.signal,
     })
     if (!isCurrentLoad(request)) return
+    pending.value = status === 202
     data.value = response && typeof response === 'object' ? response : {}
     chooseExpiry()
     if (!data.value?.data_date && autoRetryCount < MAX_AUTO_RETRIES) {
@@ -170,6 +173,7 @@ async function load(options = {}) {
   } finally {
     if (isCurrentLoad(request)) {
       loading.value = false
+      if (pending.value && !retryTimer) { pending.value = false; error.value = 'Expiry pressure is still being prepared. Retry in a moment; other panels remain available.' }
       activeLoad = null
     }
   }
@@ -219,8 +223,9 @@ onUnmounted(() => {
     </template>
 
     <UiStatus
-      v-if="loading && !data"
-      state="loading"
+      v-if="(loading && !data?.data_date) || pending"
+      :key="symbol"
+      :state="pending ? 'preparing' : 'loading'"
       title="Loading expiry pressure"
       :message="`Reading ${symbol} across ${days} trading days.`"
     />
@@ -232,6 +237,7 @@ onUnmounted(() => {
       retry
       @retry="load"
     />
+    <UiStatus v-else-if="!data?.data_date && !entries.length" state="sparse" title="No expiry pressure snapshot yet" message="Choose another symbol or retry when expiry-pressure readings are available." retry @retry="load" />
     <template v-else>
       <div class="gex-grid">
         <UiMetric

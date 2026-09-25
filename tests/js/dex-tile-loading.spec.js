@@ -243,4 +243,18 @@ describe('DexTile request and retry ownership', () => {
     expect(wrapper.vm.gammaSign).toBe(-1)
     expect(axios.get).toHaveBeenCalledTimes(4)
   })
+  it('keeps a confirmed preparation response out of metric cards and stops bounded retries', async () => {
+    axios.get.mockResolvedValue({ status: 202, data: { status: 'preparing' } })
+    start()
+    await flushPromises()
+    expect(wrapper.find('.gex-loading').exists()).toBe(true)
+    expect(wrapper.find('.gex-metric').exists()).toBe(false)
+    await vi.advanceTimersByTimeAsync(12500)
+    await flushPromises()
+    expect(wrapper.find('.gex-loading').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Retry in a moment')
+    expect(requests('/api/dex')).toHaveLength(4)
+    expect(requests('/api/gex-levels')).toHaveLength(0)
+  })
+
 })

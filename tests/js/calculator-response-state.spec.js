@@ -123,7 +123,7 @@ describe('calculator API response states', () => {
         wrapper = mount(Calculator)
         await flushPromises()
 
-        expect(wrapper.text()).toContain('Preparing SPY calculator')
+        expect(wrapper.text()).toContain('Loading SPY calculator')
         expect(axiosMock.get).toHaveBeenCalledTimes(1)
         expect(axiosMock.post).toHaveBeenCalledTimes(1)
         const refresh = wrapper.get('[data-testid="calculator-refresh"]')
@@ -145,7 +145,7 @@ describe('calculator API response states', () => {
 
         expect(axiosMock.post).not.toHaveBeenCalled()
         expect(axiosMock.get.mock.calls[1][0]).toBe('/api/work-runs/existing-run')
-        expect(wrapper.text()).toContain('Preparing SPY calculator')
+        expect(wrapper.text()).toContain('Loading SPY calculator')
     })
 
     it('shows a stable error state when the chain request fails', async () => {
@@ -156,7 +156,7 @@ describe('calculator API response states', () => {
         await flushPromises()
 
         expect(wrapper.text()).toContain('Failed to load chain')
-        expect(wrapper.text()).not.toContain('Preparing SPY calculator')
+        expect(wrapper.text()).not.toContain('Loading SPY calculator')
     })
 
     it('polls the lightweight status URL and fetches the chain only when terminal', async () => {
@@ -190,7 +190,7 @@ describe('calculator API response states', () => {
         expect(axiosMock.get).toHaveBeenCalledTimes(4)
         expect(axiosMock.post).toHaveBeenCalledTimes(1)
         expect(wrapper.text()).toContain('Live Chain')
-        expect(wrapper.text()).not.toContain('Preparing SPY calculator')
+        expect(wrapper.text()).not.toContain('Loading SPY calculator')
     })
 
     it('publishes the calculator only after a complete chain response arrives', async () => {
@@ -202,7 +202,7 @@ describe('calculator API response states', () => {
         expect(wrapper.text()).toContain('Live Chain')
         expect(wrapper.text()).toContain('Jul 17')
         expect(wrapper.text()).toContain('SPY @ $595.25')
-        expect(wrapper.text()).not.toContain('Preparing SPY calculator')
+        expect(wrapper.text()).not.toContain('Loading SPY calculator')
         expect(wrapper.text()).not.toContain('Failed to load chain')
         expect(wrapper.text()).toContain('DTE: 7 days')
     })
@@ -721,7 +721,7 @@ describe('calculator API response states', () => {
         await flushPromises()
 
         expect(axiosMock.get).toHaveBeenCalledTimes(2)
-        expect(wrapper.text()).toContain('Preparing SPY calculator')
+        expect(wrapper.text()).toContain('Loading SPY calculator')
         await vi.advanceTimersByTimeAsync(1_000)
         await flushPromises()
 
@@ -951,7 +951,7 @@ describe('calculator API response states', () => {
         window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: 'AAPL' } }))
         await flushPromises()
 
-        expect(wrapper.text()).toContain('Preparing AAPL calculator')
+        expect(wrapper.text()).toContain('Loading AAPL calculator')
         expect(wrapper.text()).not.toContain('2026-07-17 595 CALL')
     })
 
@@ -976,7 +976,7 @@ describe('calculator API response states', () => {
         wrapper = mount(Calculator)
         await flushPromises()
         const oldStatusSignal = axiosMock.get.mock.calls[1][1].signal
-        expect(wrapper.text()).toContain('Preparing SPY calculator')
+        expect(wrapper.text()).toContain('Loading SPY calculator')
 
         window.dispatchEvent(new CustomEvent('select-symbol', { detail: { symbol: 'AAPL' } }))
         await flushPromises()

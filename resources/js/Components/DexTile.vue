@@ -33,6 +33,7 @@ const windowScope = ref(null)
 const regimeSourceMeta = ref(null)
 const selectedExpiry = ref('')
 const loading = ref(false)
+const pending = ref(false)
 const error = ref('')
 
 let retryTimer = null
@@ -160,6 +161,7 @@ function isCurrentLoad(request) {
 }
 
 function resetData() {
+  pending.value = false
   dex.value = null
   byExpiry.value = []
   dataDate.value = null
@@ -188,9 +190,10 @@ async function load(options = {}) {
   error.value = ''
 
   try {
-    const { data } = await axios.get('/api/dex', { params: { symbol }, signal: controller.signal })
+    const { data, status } = await axios.get('/api/dex', { params: { symbol }, signal: controller.signal })
     if (!isCurrentLoad(request)) return
 
+    pending.value = status === 202
     dexPayload.value = data && typeof data === 'object' ? data : {}
     responseSymbol.value = data?.symbol ?? symbol
     dex.value = data?.total ?? null
@@ -205,9 +208,9 @@ async function load(options = {}) {
 
     // DEX is authoritative for this snapshot. The fixed 14d GEX dataset may
     // fill a missing regime field only when its source date is compatible.
-    if (needsRegimeFallback() && gammaPayload.value) {
+    if (!pending.value && needsRegimeFallback() && gammaPayload.value) {
       applyRegimeFallback(gammaPayload.value)
-    } else if (needsRegimeFallback()) {
+    } else if (!pending.value && needsRegimeFallback()) {
       try {
         const gammaResponse = await axios.get('/api/gex-levels', {
           params: { symbol, timeframe: '14d' },
@@ -238,7 +241,10 @@ async function load(options = {}) {
         || 'Dealer positioning is unavailable.'
     }
   } finally {
-    if (isCurrentLoad(request)) loading.value = false
+    if (isCurrentLoad(request)) {
+      loading.value = false
+      if (pending.value && !retryTimer) { pending.value = false; error.value = 'Dealer positioning is still being prepared. Retry in a moment; other panels remain available.' }
+    }
   }
 }
 
@@ -298,8 +304,9 @@ onUnmounted(() => {
     </template>
 
     <UiStatus
-      v-if="loading && !dexPayload"
-      state="loading"
+      v-if="(loading && !dataDate) || pending"
+      :key="symbol"
+      :state="pending ? 'preparing' : 'loading'"
       title="Loading dealer positioning"
       :message="`Reading ${symbol} DEX and fixed 2W gamma context.`"
     />
@@ -311,6 +318,7 @@ onUnmounted(() => {
       retry
       @retry="load"
     />
+    <UiStatus v-else-if="!dataDate && !byExpiry.length" state="sparse" title="No positioning snapshot yet" message="Choose another symbol or retry when the dealer-positioning snapshot is available." retry @retry="load" />
     <template v-else>
       <div class="gex-grid">
         <UiMetric

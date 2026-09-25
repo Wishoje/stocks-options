@@ -191,9 +191,9 @@ describe('Positioning skew', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('No skew data is available for the selected bucket')
-    const skewMetric = wrapper.findAll('.gex-metric').find(item => item.text().startsWith('Skew'))
-    expect(skewMetric.text()).toContain('Unavailable')
-    expect(skewMetric.text()).not.toContain('0.0pp')
+    expect(wrapper.find('.gex-metric').exists()).toBe(false)
+    expect(wrapper.text()).toContain('No skew snapshot yet')
+    expect(wrapper.text()).toContain('Retry')
   })
 
   it('does not load or change scope while inactive and resumes for the current symbol', async () => {

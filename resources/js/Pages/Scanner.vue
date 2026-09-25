@@ -554,7 +554,7 @@ onBeforeUnmount(() => {
             </div>
 
             <UiStatus v-if="error" state="error" :title="volumeRows.length ? 'Volume refresh failed' : 'Volume scanner unavailable'" :message="volumeErrorMessage" retry @retry="loadHotOptions" />
-            <UiStatus v-else-if="loading" state="loading" title="Loading the volume universe" :message="`Requesting the top ${pendingVolumeScope?.limit ?? limit} symbols${lookbackSelectable ? ` over ${pendingVolumeScope?.days ?? days} days` : ''}.`" />
+            <UiStatus v-else-if="loading" state="loading" layout="table" title="Loading the volume universe" :message="`Requesting the top ${pendingVolumeScope?.limit ?? limit} symbols${lookbackSelectable ? ` over ${pendingVolumeScope?.days ?? days} days` : ''}.`" />
             <UiStatus v-else-if="!volumeRows.length" state="sparse" title="No ranked symbols returned" message="The selected universe and lookback have no results." retry @retry="loadHotOptions" />
             <p v-if="watchlistActionError" class="scanner-action-error" role="alert">{{ watchlistActionError }}</p>
 
@@ -609,7 +609,7 @@ onBeforeUnmount(() => {
 
             <UiStatus v-if="wallDraftValidationMessage" id="scanner-wall-validation" state="error" title="Check the wall thresholds" :message="wallDraftValidationMessage" />
             <UiStatus v-else-if="wallError" state="error" title="Wall scan could not refresh" :message="wallHits.length ? `${wallError} Retaining results for the applied ${formatDecimal(appliedWallScope.nearPct, 1)}% threshold.` : wallError" retry @retry="loadWallHits" />
-            <UiStatus v-else :state="wallLoading || wallRefreshing ? 'loading' : (wallHits.length ? 'recorded' : 'sparse')" :title="wallStatusTitle" :message="wallStatusMessage" />
+            <UiStatus v-else layout="table" :state="wallLoading || wallRefreshing ? 'loading' : (wallHits.length ? 'recorded' : 'sparse')" :title="wallStatusTitle" :message="wallStatusMessage" />
             <div v-if="wallCoverage" class="scanner-coverage" aria-label="Wall snapshot coverage">
               <span><b>{{ wallCoverage.requested_pairs }}</b> requested pairs</span>
               <span><b>{{ wallCoverage.latest_rows }}</b> latest rows</span>

@@ -120,8 +120,8 @@
 
     <div class="watchlist-items" :aria-busy="loading || refreshing ? 'true' : 'false'">
       <div v-if="loading && watchlist.length === 0" class="watchlist-loading" role="status">
-        <span class="watchlist-spinner" aria-hidden="true" />
-        Loading saved symbols…
+        <span>Loading saved symbols…</span>
+        <div class="watchlist-loading-rows" aria-hidden="true"><span v-for="i in 5" :key="i"></span></div>
       </div>
 
       <ul v-else-if="watchlist.length" class="watchlist-list" aria-label="Saved symbols">
@@ -383,3 +383,11 @@ function handleFocusOut(event) {
 
 onBeforeUnmount(cancelSearch)
 </script>
+
+<style scoped>
+.watchlist-loading { display:block; }
+.watchlist-loading-rows { display:grid; gap:12px; margin-top:16px; }
+.watchlist-loading-rows span { height:38px; border-radius:8px; background:#253146; animation:watchlist-placeholder 1.8s ease-in-out infinite; }
+@keyframes watchlist-placeholder { 50% { opacity:.5; } }
+@media(prefers-reduced-motion:reduce) { .watchlist-loading-rows span { animation:none; } }
+</style>

@@ -128,10 +128,9 @@ describe('Positioning expiry pressure', () => {
     wrapper = mount(ExpiryPressureTile)
     await flushPromises()
 
-    const metric = wrapper.findAll('.gex-metric').find(item => item.text().includes('Headline pin score'))
-    expect(metric.text()).toContain('Unavailable')
-    expect(metric.text()).not.toContain('0of 100')
-    expect(wrapper.text()).toContain('No expiry pressure readings')
+    expect(wrapper.find('.gex-metric').exists()).toBe(false)
+    expect(wrapper.text()).toContain('No expiry pressure snapshot yet')
+    expect(wrapper.text()).toContain('Retry')
   })
 
   it('aborts and rejects a late response after the symbol changes', async () => {

@@ -75,7 +75,7 @@
         <div
           v-if="dataMode === 'eod'"
           class="gex-dashboard-freshness"
-          :data-state="activeTab === 'ua' ? (uaDate ? 'fresh' : 'stale') : (Number(levels?.data_age_days || 0) > 0 ? 'stale' : 'fresh')"
+          :data-state="activeTab === 'ua' ? (uaDate ? 'fresh' : 'stale') : (!levels?.data_date ? 'loading' : Number(levels?.data_age_days || 0) > 0 ? 'stale' : 'fresh')"
           aria-live="polite"
         >
           <template v-if="activeTab === 'ua'">
@@ -83,7 +83,7 @@
             <span>Independent latest completed activity snapshot</span>
           </template>
           <template v-else>
-            <strong>{{ levels?.data_date ? `EOD ${levels.data_date}` : (eodLoading ? 'Loading EOD snapshot' : 'EOD date unavailable') }}</strong>
+            <strong>{{ levels?.data_date ? `EOD ${levels.data_date}` : (preparing.active ? `Preparing ${userSymbol}` : eodLoading ? 'Loading EOD snapshot' : 'EOD date unavailable') }}</strong>
             <span v-if="levels?.data_age_days > 0">{{ levels.data_age_days }} day<span v-if="levels.data_age_days !== 1">s</span> old</span>
             <span v-else-if="levels?.data_date">Completed-session snapshot</span>
           </template>
@@ -188,10 +188,14 @@
       <!-- Loading / Error -->
       <ui-error-block v-if="topError" :message="'Failed to load data'" :detail="topError"
                      :onRetry="() => dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : refreshIntraday()" />
-      <ui-spinner
-        v-else-if="dataMode==='intraday'
-          ? (!firstIntradayLoadDone && intradayLoading)
-          : (loading && !preparing.active)"
+      <UiLoading
+        v-else-if="primaryViewLoading"
+        :key="`${userSymbol}:${dataMode}:${activeTab}:${gexTf}:${eodView}`"
+        :title="`${preparing.active ? 'Preparing' : 'Loading'} ${userSymbol} · ${activeGuideTabLabel}${dataMode === 'eod' ? ` · ${selectedTimeframeLabel}` : ' · Intraday'}`"
+        :preparing="preparing.active"
+        :message="preparing.active ? 'Your options data is being prepared. This view will update automatically; you can keep navigating.' : 'Fetching the selected snapshot, metrics, and chart readings.'"
+        retry
+        @retry="dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : manualRefresh()"
       />
 
       <template v-else>
@@ -311,7 +315,7 @@
         </section>
 
         <!-- POSITIONING (EOD) -->
-        <Suspense v-if="positioningMounted && dataMode==='eod' && tabState('positioning')==='ready'">
+        <Suspense v-if="positioningMounted && dataMode==='eod'">
           <section v-show="activeTab==='positioning'" class="gex-ui gex-positioning-view" data-theme="dark" data-density="compact" aria-label="End-of-day positioning">
             <div class="gex-positioning-view__grid">
               <DexTile :symbol="userSymbol" :active="activeTab === 'positioning'" @reading-inspected="recordFirstUsefulReading" />
@@ -319,6 +323,7 @@
             </div>
             <SkewTile :symbol="userSymbol" :active="activeTab === 'positioning'" @reading-inspected="recordFirstUsefulReading" />
           </section>
+          <template #fallback><UiLoading :title="`Loading ${userSymbol} positioning`" message="Loading dealer delta, expiry pressure, and put-versus-call pricing." /></template>
         </Suspense>
         <section
           v-else-if="activeTab==='positioning' && dataMode==='eod'"
@@ -327,7 +332,7 @@
           data-density="compact"
         >
           <UiStatus
-            v-if="tabState('positioning')==='pending'"
+            v-if="['idle', 'pending'].includes(tabState('positioning'))"
             state="preparing"
             :title="`Preparing ${userSymbol} positioning`"
             message="DEX, pressure, and skew will appear as their current snapshots become available."
@@ -378,6 +383,7 @@
             <UiStatus
               v-else-if="volState.vrp === 'loading' || volState.vrp === 'pending'"
               :state="volState.vrp === 'pending' ? 'preparing' : 'loading'"
+              layout="metrics"
               title="Loading variance risk premium"
               message="The 1-month implied and 20-session realized volatility comparison is being prepared."
             />
@@ -434,7 +440,7 @@
           data-density="compact"
         >
           <UiStatus
-            v-if="tabState('volatility')==='pending'"
+            v-if="['idle', 'pending'].includes(tabState('volatility'))"
             state="preparing"
             :title="`Preparing ${userSymbol} volatility`"
             message="Term structure, variance risk premium, and seasonality will appear independently as their snapshots become ready."
@@ -576,8 +582,9 @@
           data-density="compact"
         >
           <UiStatus
-            v-if="tabState('ua')==='pending'"
+            v-if="['idle', 'pending'].includes(tabState('ua'))"
             state="preparing"
+            layout="table"
             :title="`Preparing ${userSymbol} unusual activity`"
             message="The latest completed activity screen will appear here when it is ready."
           />
@@ -815,7 +822,7 @@ const DexTile = defineAsyncComponent(() => import('./DexTile.vue'))
 import QScorePanel from './QScorePanel.vue'
 const ExpiryPressureTile = defineAsyncComponent(() => import('./ExpiryPressureTile.vue'))
 import UnusualActivityTable from './UnusualActivityTable.vue'
-import uiSpinner from './Spinner.vue'
+import UiLoading from './UI/UiLoading.vue'
 import uiErrorBlock from './ErrorBlock.vue'
 
 const props = defineProps({
@@ -1005,8 +1012,11 @@ const preparing = ref({
 })
 const preparationNotice = computed(() => bootstrapPreparationNotice(preparing.value, userSymbol.value))
 const topError = computed(() => dataMode.value === 'eod'
-  ? eodError.value
-  : (intradayHasData.value ? '' : intradayError.value))
+  ? (['overview', 'strikes'].includes(activeTab.value) ? eodError.value : '')
+  : (activeTab.value !== 'ua' && !intradayHasData.value ? intradayError.value : ''))
+const primaryViewLoading = computed(() => dataMode.value === 'eod'
+  ? ['overview', 'strikes'].includes(activeTab.value) && !eodLevels.value && (eodLoading.value || preparing.value.active)
+  : activeTab.value !== 'ua' && !intradayHasData.value && (intradayLoading.value || intradayTransition.value))
 
 function recordFirstUsefulReading() {
   recordFirstUsefulReadingEvent({
@@ -1856,6 +1866,11 @@ function handleSelectSymbolEvent(evt) {
   const next = String(evt?.detail?.symbol || '').trim().toUpperCase()
   if (!next) return
 
+  if (evt.type === 'select-symbol-start') {
+    if (next !== userSymbol.value) { userSymbol.value = next; syncDashboardUrl('push') }
+    return
+  }
+
   const bootstrapStart = evt?.detail?.bootstrapStart
   const symbolStatus = evt?.detail?.symbolStatus
   const symbolStatusHttpStatus = Number(evt?.detail?.symbolStatusHttpStatus || 0)
@@ -1931,12 +1946,14 @@ onMounted(() => {
 
   // listen for watchlist / scanner clicks
   window.addEventListener('select-symbol', handleSelectSymbolEvent)
+  window.addEventListener('select-symbol-start', handleSelectSymbolEvent)
 })
 
 
 onUnmounted(() => {
   disposed = true
   window.removeEventListener('select-symbol', handleSelectSymbolEvent)
+  window.removeEventListener('select-symbol-start', handleSelectSymbolEvent)
   window.removeEventListener('popstate', restoreDashboardLocation)
   stopPageWork()
   bootstrapStartResponses.clear()
@@ -2175,10 +2192,9 @@ async function startPreparingPoll(sym, timeframe, onReady, initialResponse = nul
       }
       if (state.mode === 'legacy') {
         armLegacySafetyStop()
-      } else if (preparingLegacySafetyTimer) {
-        clearTimeout(preparingLegacySafetyTimer)
-        preparingLegacySafetyTimer = null
       }
+      // Keep the bounded observer for bootstrap runs too; server work continues
+      // independently if the user returns to this view later.
 
       applyPreparationState(sym, state, statusUrl)
 
@@ -2195,7 +2211,7 @@ async function startPreparingPoll(sym, timeframe, onReady, initialResponse = nul
 
       if (!state.shouldPoll) {
         if (!state.fastReady && state.terminal) {
-          eodError.value = `Could not prepare ${sym}. Please retry.`
+          eodError.value = state.noOptions ? `No options data is available for ${sym}. Choose another symbol.` : `Could not prepare ${sym}. Please retry.`
         }
         stopPreparingPoll()
 
@@ -2497,8 +2513,9 @@ watch(userSymbol, (s) => {
   resetAuxiliaryData()
   uaExp.value = 'ALL'
   eodLevels.value = null
-  eodLoading.value = false
-  intradayLoading.value = false
+  eodError.value = ''
+  eodLoading.value = dataMode.value === 'eod'
+  intradayLoading.value = dataMode.value === 'intraday'
   intradayRefreshing.value = false
   intradayError.value = ''
   intradayUnavailableDetailsOpen.value = false

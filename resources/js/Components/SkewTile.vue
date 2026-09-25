@@ -332,6 +332,8 @@ onUnmounted(() => {
         title="Loading skew scope"
         :message="`${symbol} · ${scopeLabel}. Summary and history update together.`"
       />
+    <UiStatus v-else-if="!row && !historyPayload.length" :state="summaryError && historyError ? 'error' : 'sparse'" title="No skew snapshot yet" :message="err || 'Try another expiry bucket or retry when the snapshot is ready.'" retry @retry="fetchSkew" />
+    <template v-else>
     <UiStatus
       v-if="err"
       :state="summaryError && historyError ? 'error' : 'sparse'"
@@ -435,6 +437,7 @@ onUnmounted(() => {
         />
       </details>
       </div>
+    </template>
     </div>
   </UiPanel>
 </template>

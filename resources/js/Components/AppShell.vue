@@ -123,7 +123,14 @@ function normalizeSymbol(symbol) {
 
 function setSelectedSymbol(symbol) {
   const normalized = normalizeSymbol(symbol)
-  if (normalized) selectedSymbol.value = normalized
+  if (normalized) {
+    selectedSymbol.value = normalized
+    if (activeSelection && activeSelection.symbol !== normalized) {
+      activeSelection.controller.abort()
+      activeSelection = null
+      selectingSymbol.value = ''
+    }
+  }
 }
 
 function syncSelectedSymbolFromEvent(event) {
@@ -235,6 +242,7 @@ function handleSelectSymbol(symbol) {
   const selection = { symbol: normalized, controller: new AbortController(), promise: null }
   activeSelection = selection
   selectingSymbol.value = normalized
+  window.dispatchEvent(new CustomEvent('select-symbol-start', { detail: { symbol: normalized } }))
   selection.promise = selectSymbol(selection).finally(() => {
     if (activeSelection === selection) {
       activeSelection = null
@@ -258,6 +266,7 @@ async function selectSymbol(selection) {
       params: { symbol, timeframe: '14d' },
       validateStatus: () => true,
       signal: controller.signal,
+      timeout: 20000,
     })
   } catch {
     // A bounded prime request remains the durable fallback when status is unavailable.
@@ -270,13 +279,13 @@ async function selectSymbol(selection) {
     statusResponse?.status || 0,
   )
   let bootstrapStart = null
-  const requests = [axios.post('/api/prime-calculator', { symbol })]
+  const requests = [axios.post('/api/prime-calculator', { symbol }, { signal: controller.signal, timeout: 20000 })]
 
   if (plan.startIntraday) {
-    requests.push(axios.post('/api/intraday/pull', { symbols: [symbol] }))
+    requests.push(axios.post('/api/intraday/pull', { symbols: [symbol] }, { signal: controller.signal, timeout: 20000 }))
   } else if (plan.startPrime) {
     requests.push(
-      axios.post('/api/prime', { symbol, timeframe: '14d' })
+      axios.post('/api/prime', { symbol, timeframe: '14d' }, { signal: controller.signal, timeout: 20000 })
         .then((response) => {
           bootstrapStart = response?.data || null
         }),
