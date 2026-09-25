@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Support\CoordinationCache;
 use App\Support\ProviderConcurrencyLimiter;
 use App\Support\QueueTelemetry;
 use Illuminate\Auth\Notifications\ResetPassword;
@@ -10,8 +11,8 @@ use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskSkipped;
 use Illuminate\Console\Events\ScheduledTaskStarting;
-use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Http\Request;
+use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessing;
@@ -92,7 +93,28 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('market-data-read', function (Request $request): Limit {
             return Limit::perMinute(300)
                 ->by('market-read:'.($request->user()?->getAuthIdentifier() ?: $request->ip()))
-                ->response(fn (Request $request, array $headers) => $this->rateLimitResponse($headers));
+                ->response(function (Request $request, array $headers) {
+                    $retryAfter = max(1, (int) ($headers['Retry-After'] ?? 60));
+                    $subject = (string) ($request->user()?->getAuthIdentifier() ?: $request->ip());
+                    // One diagnostic per account/window, with no identity,
+                    // query string, headers, or market payload in the log.
+                    $key = 'market-read-throttle-log:'.hash('sha256', $subject);
+                    if (CoordinationCache::store()->add($key, true, $retryAfter)) {
+                        Log::warning('market_data.read_rate_limited', [
+                            'route' => $request->route()?->uri(),
+                            'method' => $request->method(),
+                            'limit_per_minute' => 300,
+                            'retry_after_seconds' => $retryAfter,
+                        ]);
+                    }
+
+                    return response()->json([
+                        'message' => 'Too many data requests. Please wait before retrying.',
+                        'code' => 'work_rate_limited',
+                        'rate_limit_scope' => 'market-data-read',
+                        'retry_after_seconds' => $retryAfter,
+                    ], 429, $headers);
+                });
         });
     }
 

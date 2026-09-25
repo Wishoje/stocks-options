@@ -90,13 +90,16 @@
 <script setup>
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import axios from 'axios'
+import { usePage } from '@inertiajs/vue3'
 import LeftPanel from './LeftPanel.vue'
 import {
   APP_SHELL_UA_CONCURRENCY,
+  createActivityBadgeCache,
   loadUnusualActivityBadges,
 } from '@/Support/app-shell-activity-loader.js'
 import { selectionWarmupPlan } from '@/Support/symbol-bootstrap-state.js'
 
+const page = usePage()
 const watchlistItems = ref([])
 const pinMap = ref({})
 const uaMap = ref({})
@@ -219,7 +222,8 @@ async function loadPinsAndUA(items, sequence, controller) {
       const { data } = await axios.get('/api/ua', { params: { symbol }, signal })
       return data
     },
-    { concurrency: APP_SHELL_UA_CONCURRENCY, signal: controller.signal },
+    { concurrency: APP_SHELL_UA_CONCURRENCY, signal: controller.signal,
+      cache: createActivityBadgeCache(page.props?.auth?.user?.id) },
   )
 
   if (isCurrentReload(sequence, controller)) {

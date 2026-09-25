@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AppShell from '@/Components/AppShell.vue'
 
+vi.mock('@inertiajs/vue3', () => ({ usePage: () => ({ props: { auth: { user: { id: 4 } } } }) }))
+
 vi.mock('axios', () => ({
   default: {
     delete: vi.fn(),
@@ -49,10 +51,27 @@ function deferred() {
 
 describe('AppShell watchlist state', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     axios.delete.mockReset()
     axios.get.mockReset()
     axios.post.mockReset()
     axios.post.mockResolvedValue({ data: {} })
+  })
+
+  it('reuses activity badge summaries when the shell remounts after a browser reload', async () => {
+    axios.get.mockImplementation(url => {
+      if (url === '/api/watchlist') return Promise.resolve({ data: [{ symbol: 'SPY' }, { symbol: 'XLE' }] })
+      if (url === '/api/expiry-pressure/batch') return Promise.resolve({ data: { items: {} } })
+      if (url === '/api/ua') return Promise.resolve({ data: { data_date: '2026-09-24', items: [{}] } })
+      throw new Error('Unexpected request')
+    })
+    for (let i = 0; i < 3; i++) {
+      const wrapper = mount(AppShell)
+      await flushPromises()
+      expect(wrapper.vm.uaMap.SPY.count).toBe(1)
+      wrapper.unmount()
+    }
+    expect(axios.get.mock.calls.filter(([url]) => url === '/api/ua')).toHaveLength(2)
   })
 
   it('shows a recoverable error without replacing the current shell', async () => {

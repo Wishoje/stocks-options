@@ -1,8 +1,44 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
-import { loadUnusualActivityBadges } from '@/Support/app-shell-activity-loader.js'
+import { loadUnusualActivityBadges, createActivityBadgeCache, ACTIVITY_BADGE_TTL_MS } from '@/Support/app-shell-activity-loader.js'
 
 describe('AppShell unusual-activity loader', () => {
+    beforeEach(() => sessionStorage.clear())
+    afterEach(() => vi.useRealTimers())
+
+    it('reuses a large watchlist across ten page loads, then refreshes expired badge data', async () => {
+        vi.useFakeTimers()
+        const symbols = Array.from({ length: 80 }, (_, i) => 'SYMBOL' + i)
+        const request = vi.fn(async () => ({ data_date: '2026-09-24', items: [{}, {}] }))
+        for (let i = 0; i < 10; i++) {
+            const badges = await loadUnusualActivityBadges(symbols, request, { cache: createActivityBadgeCache(4) })
+            expect(Object.keys(badges)).toHaveLength(80)
+            expect(badges.SYMBOL0).toEqual({ data_date: '2026-09-24', count: 2 })
+        }
+        expect(request).toHaveBeenCalledTimes(80)
+        await vi.advanceTimersByTimeAsync(ACTIVITY_BADGE_TTL_MS)
+        await loadUnusualActivityBadges(symbols, request, { cache: createActivityBadgeCache(4) })
+        expect(request).toHaveBeenCalledTimes(160)
+    })
+
+    it('isolates account caches and does not cache failed or pending responses', async () => {
+        const request = vi.fn(async symbol => symbol === 'SPY'
+            ? { data_date: '2026-09-24', items: [] } : { status: 'fetching' })
+        await loadUnusualActivityBadges(['SPY', 'QQQ'], request, { cache: createActivityBadgeCache(4) })
+        await loadUnusualActivityBadges(['SPY', 'QQQ'], request, { cache: createActivityBadgeCache(4) })
+        expect(request).toHaveBeenCalledTimes(3)
+        await loadUnusualActivityBadges(['SPY'], request, { cache: createActivityBadgeCache(5) })
+        expect(request).toHaveBeenCalledTimes(4)
+        expect(createActivityBadgeCache(null)).toBeNull()
+    })
+
+    it('stops the remaining symbol fanout after a 429', async () => {
+        const request = vi.fn(async () => { throw { response: { status: 429 } } })
+        const result = await loadUnusualActivityBadges(['SPY', 'QQQ', 'XLE', 'TSLA', 'IWM'], request, { concurrency: 2 })
+        expect(request).toHaveBeenCalledTimes(2)
+        expect(Object.keys(result)).toHaveLength(5)
+    })
+
     it('bounds request concurrency while retaining every symbol result', async () => {
         let active = 0
         let maximumActive = 0

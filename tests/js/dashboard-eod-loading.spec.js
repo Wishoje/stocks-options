@@ -168,6 +168,54 @@ describe('Dashboard EOD loading', () => {
     }
   }
 
+  it('waits out a 429 and retries the selected GEX view once without manual request bursts', async () => {
+    let limited = true
+    gexResponse = (symbol, timeframe) => limited
+      ? Promise.reject({ response: { status: 429, headers: { 'retry-after': '5' }, data: { message: 'Too many data requests' } } })
+      : Promise.resolve(snapshot(symbol, timeframe))
+    const wrapper = await mountDashboard()
+    expect(wrapper.vm.eodError).toContain('retry automatically')
+    expect(gexCalls()).toHaveLength(1)
+    await wrapper.vm.fetchGexLevelsEOD('SPY', '14d')
+    await selectTimeframe(wrapper, '30d')
+    expect(gexCalls()).toHaveLength(1)
+    limited = false
+    await advance(5300)
+    expect(gexCalls()).toHaveLength(2)
+    expect(gexCalls()[1][1].params).toMatchObject({ symbol: 'SPY', timeframe: '30d' })
+    expect(wrapper.vm.eodError).toBe('')
+    expect(chartRows(wrapper)).toHaveLength(3)
+  })
+
+  it('stops automatic GEX recovery after a second 429', async () => {
+    gexResponse = () => Promise.reject({ response: { status: 429, data: { retry_after_seconds: 2 } } })
+    const wrapper = await mountDashboard()
+    await advance(3000)
+    expect(gexCalls()).toHaveLength(2)
+    expect(wrapper.vm.eodError).toContain('select Retry')
+    await advance(120000)
+    expect(gexCalls()).toHaveLength(2)
+  })
+
+  it('retries only the new symbol after a cooldown and cancels recovery on unmount', async () => {
+    gexResponse = (symbol, timeframe) => symbol === 'SPY'
+      ? Promise.reject({ response: { status: 429, data: { retry_after_seconds: 5 } } })
+      : Promise.resolve(snapshot(symbol, timeframe))
+    const wrapper = await mountDashboard()
+    wrapper.vm.userSymbol = 'QQQ'
+    await advance(300)
+    expect(gexCalls()).toHaveLength(1)
+    await advance(5000)
+    expect(gexCalls()).toHaveLength(2)
+    expect(gexCalls()[1][1].params.symbol).toBe('QQQ')
+    wrapper.vm.userSymbol = 'SPY'
+    await advance(300)
+    expect(gexCalls()).toHaveLength(3)
+    wrapper.unmount()
+    await advance(60000)
+    expect(gexCalls()).toHaveLength(3)
+  })
+
   it('uses comparison dates rather than values and passes complete raw rows to the EOD charts', async () => {
     const rawRow = {
       strike: 500,

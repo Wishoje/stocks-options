@@ -787,6 +787,7 @@ import {
   h, defineComponent, defineAsyncComponent
 } from 'vue'
 import axios from 'axios'
+import { rateLimitDelayMs } from '@/Support/market-read-cooldown.js'
 import { coalesceDashboardRequest } from '@/Support/dashboard-request-scope.js'
 import { dashboardStateFromSearch, dashboardUrl } from '@/Support/dashboard-url-state.js'
 import {
@@ -1111,6 +1112,8 @@ let uaLoadGeneration = 0
 let uaActiveKey = null
 let volatilityLoad = null
 let preparedRefreshTimer = null
+let eodRateLimitUntil = 0
+let eodRateLimitTimer = null
 const bootstrapControllers = new Map()
 const bootstrapInflight = new Map()
 const inflight = new Map()
@@ -1299,6 +1302,8 @@ function stopPageWork() {
   clearTimeout(symbolTimer)
   clearTimeout(preparedRefreshTimer)
   preparedRefreshTimer = null
+  clearTimeout(eodRateLimitTimer)
+  eodRateLimitTimer = null
   busy.value.positioning = false
   for (const type of Object.keys(controllers)) {
     controllers[type]?.abort()
@@ -1563,6 +1568,14 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
     if (!keepFillingPoll) stopPreparingPoll()
     return
   }
+  if (Date.now() < eodRateLimitUntil) {
+    eodLoading.value = false
+    eodError.value = 'Data requests are temporarily paused. The selected view will retry automatically shortly.'
+    scheduleRateLimitedGexRetry()
+    return
+  }
+  clearTimeout(eodRateLimitTimer)
+  eodRateLimitTimer = null
   cache.delete(key)
 
   eodLoading.value = true
@@ -1613,8 +1626,16 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
     if (!isCurrent()) return
     if (e.name !== 'CanceledError' && e.code !== 'ERR_CANCELED') {
       const payload = e?.response?.data || {}
-      const msg = payload?.error || e.message || ''
+      const msg = payload?.error || payload?.message || e.message || ''
       const status = e?.response?.status
+      if (status === 429) {
+        eodRateLimitUntil = Math.max(eodRateLimitUntil, Date.now() + rateLimitDelayMs(e.response) + 500)
+        eodError.value = opts?.rateLimitRetry
+          ? `Data requests are still temporarily limited. Please wait ${Math.ceil((eodRateLimitUntil - Date.now()) / 1000)} seconds, then select Retry.`
+          : 'Data requests are temporarily paused. The selected view will retry automatically shortly.'
+        if (!opts?.rateLimitRetry) scheduleRateLimitedGexRetry()
+        return
+      }
       const responsePreparation = symbolPreparationState(payload, status)
       if (responsePreparation.mode === 'bootstrap' && responsePreparation.terminal) {
         await syncPreparationResponse(sym, tf, e.response)
@@ -1660,6 +1681,18 @@ async function fetchGexLevelsEOD(sym, tf = gexTf.value, opts = { applyTf: true }
   } finally {
     if (isCurrent() && ctl === controllers.gex_eod) eodLoading.value = false
   }
+}
+
+function scheduleRateLimitedGexRetry() {
+  if (eodRateLimitTimer || disposed) return
+  const owner = pageGeneration
+  eodRateLimitTimer = setTimeout(() => {
+    eodRateLimitTimer = null
+    if (disposed || owner !== pageGeneration || dataMode.value !== 'eod') return
+    // Read the current selection, never a symbol/timeframe captured before a
+    // switch. A second 429 stops here instead of creating an automatic loop.
+    fetchGexLevelsEOD(userSymbol.value, gexTf.value, { applyTf: true, rateLimitRetry: true })
+  }, Math.max(1, eodRateLimitUntil - Date.now()))
 }
 
 async function loadTermAndVRP(sym, isCurrent) {
