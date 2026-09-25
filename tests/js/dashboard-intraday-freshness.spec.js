@@ -190,7 +190,7 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(pulls()).toHaveLength(eligible ? 1 : 0)
   })
 
-  it('keeps an available open-session snapshot with unknown source time and shows no fake clock', async () => {
+  it('keeps an available open-session data with unknown source time and shows no fake clock', async () => {
     const unknown = { asof: null, source_asof: null, source_timestamp_complete: false }
     summaryResponse = () => Promise.resolve(response(summary(unknown)))
     strikesResponse = () => Promise.resolve(response(strikes(unknown)))
@@ -200,8 +200,8 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(wrapper.vm.intradayHasData).toBe(true)
     expect(wrapper.vm.intradaySnapshotAsOf).toBeNull()
     expect(wrapper.vm.lastUpdated).toBeNull()
-    expect(wrapper.vm.intradaySourceLabel).toBe('Provider update time unavailable')
-    expect(wrapper.text()).toContain('Provider update time unavailable')
+    expect(wrapper.vm.intradaySourceLabel).toBe('Update time unavailable')
+    expect(wrapper.text()).toContain('Update time unavailable')
     expect(wrapper.vm.cacheIntraday.get('SPY')).toMatchObject({ available: true, asof: null })
     expect(pulls()).toHaveLength(0)
 
@@ -285,7 +285,7 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(wrapper.vm.lastUpdated).toBeNull()
     expect(wrapper.vm.intradayReceivedAt).toBe(receiptTime)
     expect(wrapper.vm.intradaySourceTimestampStatus).toBe('unknown')
-    expect(wrapper.text()).toContain('Provider update time unavailable')
+    expect(wrapper.text()).toContain('Update time unavailable')
     expect(wrapper.text()).not.toContain('Source as of')
   })
 
@@ -304,11 +304,11 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(wrapper.vm.intradaySnapshotAsOf).toBeNull()
     expect(wrapper.vm.lastUpdated).toBeNull()
     expect(wrapper.vm.intradaySourceTimestampStatus).toBe('unknown')
-    expect(wrapper.text()).toContain('Provider update time unavailable')
+    expect(wrapper.text()).toContain('Update time unavailable')
     expect(wrapper.text()).not.toContain('Delayed (20m)')
   })
 
-  it('keeps an explicitly available all-zero snapshot available', async () => {
+  it('keeps an explicitly available all-zero data set available', async () => {
     const emptyTotals = { call_vol: 0, put_vol: 0, total: 0, premium: 0, pcr_vol: null }
     summaryResponse = () => Promise.resolve(response(summary({ totals: emptyTotals })))
     strikesResponse = () => Promise.resolve(response(strikes({ items: [], totals: emptyTotals })))
@@ -379,7 +379,7 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(loadingStatus.props('title')).toContain('Intraday')
   })
 
-  it('retains a closed-session unknown-time snapshot across mode/cache changes', async () => {
+  it('retains a closed-session unknown-time data set across mode/cache changes', async () => {
     vi.setSystemTime(new Date('2026-09-06T15:00:00Z'))
     const closed = {
       open: false,
@@ -392,8 +392,8 @@ describe('Dashboard intraday ingestion freshness', () => {
     strikesResponse = () => Promise.resolve(response(strikes(closed)))
     const wrapper = await mountIntraday()
 
-    expect(wrapper.text()).toContain('Showing last available intraday snapshot')
-    expect(wrapper.text()).toContain('Provider update time is unavailable.')
+    expect(wrapper.text()).toContain('Showing last available intraday data')
+    expect(wrapper.text()).toContain('Update time is unavailable.')
     expect(wrapper.text()).not.toContain('Source as of')
     expect(wrapper.vm.lastUpdated).toBeNull()
     await changeMode(wrapper, 'eod')
@@ -407,7 +407,7 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(pulls()).toHaveLength(0)
   })
 
-  it('does not use five-second pending retries or POST when a closed session has no snapshot', async () => {
+  it('does not use five-second pending retries or POST when a closed session has no data set', async () => {
     vi.setSystemTime(new Date('2026-09-06T15:00:00Z'))
     const closed = {
       open: false,
@@ -424,11 +424,11 @@ describe('Dashboard intraday ingestion freshness', () => {
 
     expect(wrapper.vm.intradayHasData).toBe(false)
     expect(wrapper.vm.cacheIntraday.has('SPY')).toBe(false)
-    expect(wrapper.text()).toContain('No intraday snapshot for SPY yet')
-    expect(wrapper.text()).toContain('The market is closed. The first live snapshot can be collected')
+    expect(wrapper.text()).toContain('No intraday data for SPY yet')
+    expect(wrapper.text()).toContain('The market is closed. The next session update is available')
     expect(wrapper.text()).toContain('Sep 08')
     expect(wrapper.text()).toContain('9:30 AM')
-    expect(wrapper.text()).not.toContain('Showing last available intraday snapshot')
+    expect(wrapper.text()).not.toContain('Showing last available intraday data')
 
     await advance(25_000)
     expect(calls('/api/intraday/summary')).toHaveLength(1)
@@ -478,7 +478,7 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(wrapper.vm.intradaySourceTimestampStatus).toBe('legacy')
   })
 
-  it('polls a pending open-session snapshot without creating more work', async () => {
+  it('polls a pending open-session data without creating more work', async () => {
     let strikeReads = 0
     const missing = { asof: null, source_asof: null, snapshot_available: false, refresh_eligible: false }
     summaryResponse = () => Promise.resolve(response(summary(missing)))
@@ -518,7 +518,7 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(pulls()).toHaveLength(0)
   })
 
-  it('keeps an aligned snapshot visible when a soft refresh fails', async () => {
+  it('keeps an aligned data set visible when a soft refresh fails', async () => {
     const wrapper = await mountIntraday()
     const retained = wrapper.vm.intradayLevels
     summaryResponse = () => Promise.reject(new Error('temporary provider failure'))

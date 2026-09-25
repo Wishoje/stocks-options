@@ -151,7 +151,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 const tableColumns = [
   { key: 'expiry', label: 'Expiry', sortable: true },
   { key: 'iv_percent', label: 'ATM IV', sortable: true, numeric: true, format: value => `${Number(value).toFixed(1)}%` },
-  { key: 'source_chain_date', label: 'Source chain date', sortable: true },
+  { key: 'source_chain_date', label: 'As of', sortable: true },
 ]
 </script>
 
@@ -164,7 +164,7 @@ const tableColumns = [
   >
     <template #actions>
       <div class="gex-row">
-        <UiBadge v-if="date" tone="data">Snapshot {{ date }}</UiBadge>
+        <UiBadge v-if="date" tone="data">Data as of {{ date }}</UiBadge>
         <UiBadge tone="neutral">{{ termItems.length }} expiries</UiBadge>
         <UiHelpDialog
           id="volatility-term-guide"
@@ -174,7 +174,7 @@ const tableColumns = [
           <div class="gex-stack">
             <p><strong>Term structure</strong> compares ATM implied volatility across expiration dates. The front of the curve is the nearest usable expiry; the back is the furthest returned expiry.</p>
             <p><strong>Contango</strong> means back-expiry IV is above front-expiry IV. <strong>Backwardation</strong> means front IV is higher, which can accompany event risk or market stress.</p>
-            <p>Use the expiry control to inspect every returned point. A gap means the API returned an expiry without a usable IV; it is not treated as zero.</p>
+            <p>Use the expiry control to compare implied volatility across dates.</p>
             <p>Term shape describes relative option pricing. Pair it with VRP, positioning, liquidity, and price action before choosing a trade.</p>
           </div>
         </UiHelpDialog>
@@ -214,14 +214,14 @@ const tableColumns = [
         <output class="gex-chart-value gex-number" aria-live="polite">
           <span>{{ selectedItem?.expiry ?? `Reading ${selectedIndex + 1}` }}</span>
           <strong>{{ selectedPercent == null ? 'IV unavailable' : `${selectedPercent.toFixed(1)}% IV` }}</strong>
-          <small>{{ selectedItem?.source_chain_date ? `Chain ${selectedItem.source_chain_date}` : 'Source date unavailable' }}</small>
+          <small>{{ selectedItem?.source_chain_date ? `As of ${selectedItem.source_chain_date}` : '' }}</small>
         </output>
       </div>
 
       <div class="gex-legend" aria-label="Term structure chart legend">
         <span><i class="gex-line-swatch" aria-hidden="true" />ATM IV</span>
         <span><i class="term-selected-swatch" aria-hidden="true" />Selected expiry</span>
-        <span><i class="gex-gap-swatch" aria-hidden="true" />Missing reading</span>
+        <span><i class="gex-gap-swatch" aria-hidden="true" />No reading</span>
       </div>
 
       <svg
@@ -295,7 +295,7 @@ const tableColumns = [
       v-else
       state="sparse"
       title="No term structure data"
-      message="No expiration readings are available for this snapshot."
+      message="No expiration readings are available for this data set."
     />
   </UiPanel>
 </template>

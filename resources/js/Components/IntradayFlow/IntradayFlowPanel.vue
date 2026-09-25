@@ -53,10 +53,6 @@ function firstNumber(...values) {
   return null
 }
 
-function yesNo(value) {
-  return typeof value === 'boolean' ? (value ? 'Yes' : 'No') : 'Unavailable'
-}
-
 function booleanOrNull(value) {
   return typeof value === 'boolean' ? value : null
 }
@@ -159,30 +155,10 @@ const sourceAsOf = computed(() => {
   if (explicitSourceContract) return firstValue(props.snapshotMeta.source_asof, props.summary.source_asof)
   return firstValue(props.snapshotMeta.asof, props.summary.asof)
 })
-const rawAsOf = computed(() => firstValue(
-  props.responseMeta.rawAsOf,
-  props.snapshotMeta.asof,
-  props.summary.asof,
-))
 const tradeDate = computed(() => firstValue(
   props.responseMeta.tradeDate,
   props.snapshotMeta.trade_date,
   props.summary.trade_date,
-))
-const receivedAt = computed(() => firstValue(
-  props.responseMeta.receivedAt,
-  props.snapshotMeta.received_at,
-  props.summary.received_at,
-))
-const capturedAt = computed(() => firstValue(
-  props.responseMeta.capturedAt,
-  props.snapshotMeta.captured_at,
-  props.summary.captured_at,
-))
-const ingestionCompletedAt = computed(() => firstValue(
-  props.responseMeta.ingestionCompletedAt,
-  props.snapshotMeta.ingestion_completed_at,
-  props.summary.ingestion_completed_at,
 ))
 const marketSession = computed(() => firstValue(
   props.responseMeta.marketSession,
@@ -229,7 +205,7 @@ const calculatedSourceLabel = computed(() => {
     return ageSeconds.value < 90 ? 'Recent legacy response' : `Legacy response (${Math.floor(ageSeconds.value / 60)}m old)`
   }
   if (props.sourceLabel) return props.sourceLabel
-  if (ageSeconds.value == null) return 'Provider time unavailable'
+  if (ageSeconds.value == null) return 'Update time unavailable'
   return ageSeconds.value < 90 ? 'Live' : `Delayed (${Math.floor(ageSeconds.value / 60)}m)`
 })
 const sourceTone = computed(() => {
@@ -275,30 +251,30 @@ const statusTitle = computed(() => {
   if (props.error) return 'Intraday flow refresh failed'
   if (props.refreshing) return `Refreshing ${normalizedSymbol.value} intraday flow`
   if (!hasPayload.value) return marketOpen.value === false
-    ? `No stored intraday snapshot for ${normalizedSymbol.value}`
+    ? `No stored intraday data for ${normalizedSymbol.value}`
     : `Waiting for ${normalizedSymbol.value} intraday flow`
-  if (marketOpen.value === false) return 'Showing the last stored session snapshot'
-  if (!sourceAsOf.value || ageSeconds.value == null) return 'Provider update time is unavailable'
+  if (marketOpen.value === false) return 'Showing the last stored session data'
+  if (!sourceAsOf.value || ageSeconds.value == null) return 'Update time is unavailable'
   if (legacySourceTime.value) return ageSeconds.value < 90 ? 'Recent intraday response' : 'Delayed legacy intraday response'
-  return ageSeconds.value < 90 ? 'Current intraday snapshot' : 'Delayed intraday snapshot'
+  return ageSeconds.value < 90 ? 'Current intraday data' : 'Delayed intraday data'
 })
 const statusMessage = computed(() => {
   if (!symbolAligned.value) return 'The prior symbol remains hidden while the selected symbol loads.'
-  if (props.loading && !hasPayload.value) return 'Loading the current session totals, source clock, and strike rows.'
+  if (props.loading && !hasPayload.value) return 'Loading session activity and strike readings.'
   if (props.error) return hasPayload.value
-    ? `${props.error} The last aligned snapshot remains visible below.`
+    ? `${props.error} Your last recorded readings remain visible below.`
     : props.error
-  if (props.refreshing) return 'The displayed snapshot stays in place until the refresh completes.'
+  if (props.refreshing) return 'Your current readings stay visible while the update loads.'
   if (!hasPayload.value && marketOpen.value === false) {
-    return `The first snapshot can be collected ${props.nextOpenLabel || (nextOpen.value ? timestampEt(nextOpen.value) : 'during the next trading session')}.`
+    return `Session data collection begins ${props.nextOpenLabel || (nextOpen.value ? timestampEt(nextOpen.value) : 'during the next trading session')}.`
   }
-  if (!hasPayload.value) return 'No completed snapshot is available yet. The dashboard will retry according to the current refresh state.'
+  if (!hasPayload.value) return 'Session data is not available yet. The dashboard will retry according to the current refresh state.'
   if (marketOpen.value === false) {
     return `Session updates resume ${props.nextOpenLabel || (nextOpen.value ? timestampEt(nextOpen.value) : 'during the next trading session')}.`
   }
-  if (!sourceAsOf.value || ageSeconds.value == null) return 'The data is available, but the provider source clock was not supplied. No receipt or ingestion time is presented as market time.'
-  if (legacySourceTime.value) return `Legacy response time ${timestampEt(sourceAsOf.value)}. Provider source time is unavailable in this response. Volume remains cumulative for the stored session across all returned expiries.`
-  return `Source as of ${timestampEt(sourceAsOf.value)}. Volume is cumulative for the current stored session across all returned expiries.`
+  if (!sourceAsOf.value || ageSeconds.value == null) return 'Update time is not available.'
+  if (legacySourceTime.value) return `Recorded response ${timestampEt(sourceAsOf.value)}. Volume is cumulative for that session.`
+  return `As of ${timestampEt(sourceAsOf.value)}. Volume is cumulative for the session across all expiries.`
 })
 
 const tableRows = computed(() => normalizeFlowRows(alignedRows.value).map(row => ({
@@ -336,29 +312,6 @@ const exactTotals = computed(() => [
   { label: 'Returned volume PCR', value: firstValue(props.totals.pcr_vol, props.totals.pcr_volume, snapshotTotals.value.pcr_vol, summaryTotals.value.pcr_vol) },
   { label: 'Estimated premium notional', value: firstValue(props.totals.premium, props.totals.premium_total, snapshotTotals.value.premium, summaryTotals.value.premium) },
 ])
-const metadataRows = computed(() => [
-  { label: 'Selected symbol', value: normalizedSymbol.value || null },
-  { label: 'Data symbol', value: normalizedDataSymbol.value || null },
-  { label: 'Trade date', value: tradeDate.value },
-  { label: legacySourceTime.value ? 'Legacy response time' : 'Provider source as of', value: sourceAsOf.value, timestamp: true },
-  { label: 'Raw response as of', value: rawAsOf.value, timestamp: true },
-  { label: 'Source timestamp status', value: sourceTimestampStatus.value },
-  { label: 'Captured at', value: capturedAt.value, timestamp: true },
-  { label: 'Received at', value: receivedAt.value, timestamp: true },
-  { label: 'Ingestion completed at', value: ingestionCompletedAt.value, timestamp: true },
-  { label: 'Snapshot available', value: yesNo(snapshotAvailable.value) },
-  { label: 'Market open', value: yesNo(marketOpen.value) },
-  { label: 'Market phase', value: marketPhase.value },
-  { label: 'Refresh eligible', value: yesNo(refreshEligible.value) },
-  { label: 'Refresh reason', value: refreshReason.value },
-  { label: 'Next open', value: nextOpen.value, timestamp: true },
-])
-const returnedMetadataJson = computed(() => safeJson({
-  summary: props.summary,
-  response_meta: props.responseMeta,
-  snapshot_meta: props.snapshotMeta,
-  totals: props.totals,
-}))
 const returnedRowsJson = computed(() => safeJson(alignedRows.value))
 </script>
 
@@ -385,7 +338,7 @@ const returnedRowsJson = computed(() => safeJson(alignedRows.value))
           <UiHelpDialog id="intraday-flow-guide" title="How to read intraday flow">
             <p><strong>Volume</strong> is cumulative contract volume for the stored session, aggregated by strike across every returned expiry. It is not a day-over-day delta.</p>
             <p><strong>Volume PCR</strong> is put volume divided by call volume. Above 1 is put-led; below 1 is call-led. It describes activity mix, not trade direction.</p>
-            <p><strong>Estimated premium</strong> is price × volume × 100, summed for calls and puts. The source selects VWAP, day close, last trade, then quote; a missing price contributes zero.</p>
+            <p><strong>Estimated premium</strong> is price × volume × 100, summed for calls and puts. Compare estimates across strikes to see where activity is concentrated.</p>
             <p>Focus and grouping change only the plotted range. Every returned strike and exact value remains in the collapsed details.</p>
           </UiHelpDialog>
           <UiButton :disabled="refreshing || loading" @click="emit('refresh')">
@@ -478,14 +431,8 @@ const returnedRowsJson = computed(() => safeJson(alignedRows.value))
           data-testid="intraday-flow-snapshot-details"
           @toggle="snapshotDetailsOpen = $event.currentTarget.open"
         >
-          <summary>Snapshot and refresh details</summary>
+          <summary>Session totals</summary>
           <div v-if="snapshotDetailsOpen" class="intraday-flow__details-body">
-            <dl class="intraday-flow__definition-grid">
-              <template v-for="row in metadataRows" :key="row.label">
-                <dt>{{ row.label }}</dt>
-                <dd class="gex-number">{{ row.timestamp ? timestampEt(row.value) : exact(row.value) }}</dd>
-              </template>
-            </dl>
             <h3>Exact returned totals</h3>
             <dl class="intraday-flow__definition-grid">
               <template v-for="row in exactTotals" :key="row.label">
@@ -493,10 +440,6 @@ const returnedRowsJson = computed(() => safeJson(alignedRows.value))
                 <dd class="gex-number">{{ exact(row.value) }}</dd>
               </template>
             </dl>
-            <details class="intraday-flow__json">
-              <summary>Complete returned summary and metadata</summary>
-              <pre>{{ returnedMetadataJson }}</pre>
-            </details>
           </div>
         </details>
 
@@ -507,7 +450,7 @@ const returnedRowsJson = computed(() => safeJson(alignedRows.value))
         >
           <summary>All exact strike readings · {{ alignedRows.length }} readings</summary>
           <div v-if="strikeDetailsOpen" class="intraday-flow__details-body">
-            <p class="gex-small gex-muted">The table keeps zero distinct from unavailable. Complete returned row objects remain available beneath it.</p>
+            <p class="gex-small gex-muted">Compare call and put activity across strikes.</p>
             <UiDataTable
               caption="Exact intraday flow by strike"
               :rows="tableRows"

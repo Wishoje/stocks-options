@@ -229,7 +229,7 @@ describe('Overview option distributions', () => {
   })
 })
 
-describe('Overview snapshot metrics', () => {
+describe('Overview summary metrics', () => {
   it('keeps every metric, highlights the comparison fallback, and uses readable precision', () => {
     const wrapper = mount(OverviewMetrics, {
       props: {
@@ -261,8 +261,8 @@ describe('Overview snapshot metrics', () => {
     expect(wrapper.text()).toContain('Open-interest change+480.28Kcontracts')
     expect(wrapper.text()).toContain('Volume change−981.47Kcontracts')
     expect(wrapper.text()).toMatch(/Prior 2026-09-09\s+· 2 sessions back/)
-    expect(wrapper.text()).toContain('Fallback comparison')
-    expect(wrapper.text()).toContain('nearest usable comparison')
+    expect(wrapper.text()).toContain('Earlier comparison')
+    expect(wrapper.text()).toContain('nearest available session')
     expect(wrapper.text()).not.toContain('1.612345')
   })
 

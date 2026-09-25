@@ -38,7 +38,7 @@ const fieldLabels = {
   baseline_sigma: '30-day baseline deviation',
   history_samples: 'History samples',
   confidence: 'Baseline confidence',
-  baseline_excludes_today: 'Baseline excludes snapshot day',
+  baseline_excludes_today: 'Baseline excludes the observation day',
 }
 
 const requestSortLabels = {
@@ -333,7 +333,7 @@ defineExpose({
     <template #actions>
       <div class="gex-row ua-panel__actions">
         <UiBadge tone="data">{{ String(symbol).toUpperCase() }}</UiBadge>
-        <UiBadge v-if="dataDate" tone="neutral">Snapshot {{ dataDate }}</UiBadge>
+        <UiBadge v-if="dataDate" tone="neutral">Data as of {{ dataDate }}</UiBadge>
         <UiBadge v-if="requestSortLabel" tone="neutral">API rank: {{ requestSortLabel }}</UiBadge>
         <UiHelpDialog
           id="unusual-activity-guide"
@@ -341,11 +341,11 @@ defineExpose({
           trigger-label="Reading guide"
         >
           <div class="gex-stack ua-guide">
-            <p><strong>Z-score</strong> compares the strike-expiry row's total snapshot volume with its winsorized 30-day baseline. A reading of 3 means volume is three baseline deviations above its mean. Missing history remains unavailable.</p>
-            <p><strong>Vol/OI</strong> divides snapshot volume by current open interest with a one-contract denominator floor. A value above 1 means reported volume exceeds that adjusted denominator; zero or unavailable open interest can therefore produce a large finite ratio.</p>
-            <p><strong>Call-led and put-led</strong> describe the returned volume mix. They are not directional forecasts. Premium is an estimate when the source does not contain a stored value.</p>
-            <p>The dashboard controls define the API filters, per-expiry count, result limit, and requested rank. This card initially preserves that returned order. Column sorting changes only the current result list.</p>
-            <p>Open a row's returned fields to inspect every top-level and metadata field. Numeric zero is retained; an absent field is labeled unavailable.</p>
+            <p><strong>Z-score</strong> compares the strike-expiry row's total reported volume with its winsorized 30-day baseline. A reading of 3 means volume is three baseline deviations above its mean.</p>
+            <p><strong>Vol/OI</strong> divides reported volume by current open interest with a one-contract denominator floor. A value above 1 means reported volume exceeds that adjusted denominator; zero or unavailable open interest can therefore produce a large finite ratio.</p>
+            <p><strong>Call-led and put-led</strong> describe the returned volume mix. They are not directional forecasts. Premium estimates help compare the size of activity.</p>
+            <p>Use the dashboard filters to narrow the results, then sort a column to compare signals.</p>
+            <p>Inspect a signal to see its contract details and volume breakdown.</p>
           </div>
         </UiHelpDialog>
       </div>
@@ -355,7 +355,7 @@ defineExpose({
       v-if="!records.length"
       state="sparse"
       title="No unusual activity flags"
-      :message="dataDate ? `The ${dataDate} snapshot returned no contracts for the selected filters.` : 'No completed unusual activity snapshot is available.'"
+      :message="dataDate ? `The ${dataDate} data set returned no contracts for the selected filters.` : 'No completed unusual activity data is available.'"
     />
 
     <template v-else>
@@ -365,17 +365,17 @@ defineExpose({
           label="Highest Z-score"
           :value="formatZ(highestZ)"
           :tone="zTone(highestZ)"
-          context="Largest standardized volume signal in the returned set"
+          context="Strongest volume signal in these results"
         />
         <UiMetric
           prominence="primary"
           label="Highest Vol/OI"
           :value="formatRatio(highestVolOi)"
           tone="data"
-          context="Largest volume-to-open-interest ratio returned"
+          context="Highest volume-to-open-interest ratio"
         />
         <UiMetric
-          label="Returned signals"
+          label="Signals found"
           :value="records.length"
           :context="`${sideCounts.call} call-led, ${sideCounts.put} put-led, ${sideCounts.balanced} balanced`"
           tone="data"
@@ -449,10 +449,10 @@ defineExpose({
             <span><i data-side="put" />Puts <strong class="gex-number">{{ formatCompactCount(selectedPutVolume) }}</strong></span>
           </div>
         </div>
-        <p v-else class="ua-volume-split__missing">Call and put volume are both required for the volume mix.</p>
+        <p v-else class="ua-volume-split__missing">Volume mix is not available.</p>
 
         <details class="gex-calculation-details ua-returned-fields" data-testid="ua-selected-fields">
-          <summary>All returned fields for this signal</summary>
+          <summary>Signal details</summary>
           <div class="ua-returned-fields__body">
             <section>
               <h4>Signal fields</h4>
@@ -478,8 +478,8 @@ defineExpose({
       </section>
 
       <details class="ua-results" data-testid="ua-results-disclosure">
-        <summary>All {{ records.length }} returned unusual activity signals</summary>
-        <p class="ua-results__help">The API's requested rank is preserved until you choose a column below. Missing values always sort after available values.</p>
+        <summary>All {{ records.length }} unusual activity signals</summary>
+        <p class="ua-results__help">Select a column to sort the results. Use Inspect to review a signal.</p>
         <div class="ua-mobile-sort">
           <label>
             Sort displayed signals

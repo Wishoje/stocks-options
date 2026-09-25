@@ -192,7 +192,7 @@ describe('Positioning skew', () => {
 
     expect(wrapper.text()).toContain('No skew data is available for the selected bucket')
     expect(wrapper.find('.gex-metric').exists()).toBe(false)
-    expect(wrapper.text()).toContain('No skew snapshot yet')
+    expect(wrapper.text()).toContain('Skew data is not available yet')
     expect(wrapper.text()).toContain('Retry')
   })
 

@@ -64,7 +64,7 @@ const comparisonText = computed(() => {
     <template #actions>
       <div class="gex-row">
         <UiBadge v-if="symbol" tone="data">{{ symbol }}</UiBadge>
-        <UiBadge v-if="snapshotDate" tone="data">Snapshot {{ snapshotDate }}</UiBadge>
+        <UiBadge v-if="snapshotDate" tone="data">Data as of {{ snapshotDate }}</UiBadge>
         <UiBadge v-if="timeframe" tone="neutral">{{ timeframe }}</UiBadge>
         <UiBadge v-if="comparisonLabel" :tone="comparisonIsStale ? 'warning' : 'neutral'">{{ comparisonLabel }}</UiBadge>
         <UiHelpDialog :id="`${id}-guide`" :title="helpTitle" trigger-label="Reading guide">

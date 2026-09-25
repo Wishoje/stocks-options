@@ -1411,7 +1411,7 @@ onBeforeUnmount(() => {
     <template #header>
       <div class="calculator-app-header">
         <div><span>Strategy workspace</span><h2>Options Calculator</h2></div>
-        <span class="calculator-app-header__delay">Quote source and timing are shown with the selected contract</span>
+        <span class="calculator-app-header__delay">Review your contract and pricing assumptions before comparing outcomes</span>
       </div>
     </template>
     <div class="calculator-page">
@@ -1453,15 +1453,14 @@ onBeforeUnmount(() => {
               <strong>Underlying quote unavailable</strong><span>A trustworthy underlying quote is unavailable. Expiration payoffs remain available using hypothetical stock prices. Enter an underlying scenario price to enable time-decay calculations.</span>
             </div>
             <div v-else-if="!manualUnderlying && underlyingQuote.status === 'stale'" class="calculator-state calculator-state--warning" role="status">
-              <strong>Accepted stale quote</strong><span>Using a stale quote from {{ underlyingQuote.source || 'the market-data provider' }}<template v-if="underlyingQuote.asof"> (as of {{ underlyingQuote.asof }})</template>.</span>
+              <strong>Accepted stale quote</strong><span>Using an earlier quote<template v-if="underlyingQuote.asof"> (as of {{ underlyingQuote.asof }})</template>.</span>
             </div>
             <section class="calculator-panel calculator-expiries" aria-labelledby="calculator-expiry-heading">
               <div class="calculator-panel__header">
                 <div><span class="calculator-step">1</span><div><h2 id="calculator-expiry-heading">Choose an expiration</h2><p>Each date keeps its own readiness state.</p></div></div>
                 <dl class="calculator-provenance">
-                  <div><dt>Quote source</dt><dd>{{ underlyingQuote.source || 'Unavailable' }}</dd></div>
                   <div><dt>Quote time</dt><dd>{{ formatSourceTime(underlyingQuote.asof) }}</dd></div>
-                  <div><dt>Chain snapshot</dt><dd>{{ formatSourceTime(snapshotAt) }}</dd></div>
+                  <div><dt>Chain updated</dt><dd>{{ formatSourceTime(snapshotAt) }}</dd></div>
                 </dl>
               </div>
               <div class="calculator-expiry-list" role="list" aria-label="Available expirations">
@@ -1644,17 +1643,17 @@ onBeforeUnmount(() => {
                 </details>
               </div>
               <details class="calculator-panel calculator-details calculator-raw" data-testid="calculator-exact-market-data" @toggle="exactContractsOpen = $event.currentTarget.open">
-                <summary><span><strong>Exact market-data inputs</strong><small>{{ chainData.length }} contracts · provider fields retained</small></span><span>Open raw data</span></summary>
+                <summary><span><strong>Exact market-data inputs</strong><small>{{ chainData.length }} contracts · contract details</small></span><span>Open raw data</span></summary>
                 <div v-if="exactContractsOpen" class="calculator-details__body">
                   <dl class="calculator-provenance calculator-provenance--raw">
                     <div><dt>Quote reason</dt><dd>{{ underlyingQuote.reason || 'Unavailable' }}</dd></div>
                     <div><dt>Live age limit</dt><dd>{{ formatExact(underlyingQuote.live_max_age_seconds) }} seconds</dd></div>
                     <div><dt>Stale usable limit</dt><dd>{{ formatExact(underlyingQuote.stale_usable_max_age_seconds) }} seconds</dd></div>
-                    <div><dt>Snapshot</dt><dd>{{ snapshotAt || 'Unavailable' }}</dd></div>
+                    <div><dt>Data as of</dt><dd>{{ snapshotAt || 'Unavailable' }}</dd></div>
                   </dl>
                   <h3>Response metadata</h3><pre data-testid="calculator-response-metadata">{{ JSON.stringify(responseMetadata, null, 2) }}</pre>
                   <h3>Raw expiration publications</h3><pre data-testid="calculator-raw-expirations">{{ JSON.stringify(rawExpirations, null, 2) }}</pre>
-                  <h3>Normalized contracts with retained provider fields</h3><pre>{{ JSON.stringify(chainData, null, 2) }}</pre>
+                  <h3>Contract details</h3><pre>{{ JSON.stringify(chainData, null, 2) }}</pre>
                 </div>
               </details>
             </section>

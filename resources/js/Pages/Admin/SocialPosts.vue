@@ -4,6 +4,7 @@ import { router, useForm, usePage } from '@inertiajs/vue3'
 import AppLayout from '@/Layouts/AppLayout.vue'
 
 const props = defineProps({ posts: Array, settings: Object, defaultDate: String, connectionConfigured: Boolean, publishingEnabled: Boolean, scheduleEnabled: Boolean, automaticSpyEnabled: Boolean, localReview: Boolean })
+const displayIssue = value => String(value ?? '').replace(/Missing inputs/g, 'Calculation exclusions').replace(/missing inputs/g, 'calculation exclusions').replace(/\bsnapshot\b/gi, 'EOD data')
 const page = usePage()
 const selectedId = ref(props.posts[0]?.id ?? null)
 const selected = computed(() => props.posts.find(post => post.id === selectedId.value))
@@ -53,7 +54,7 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
 
       <div v-if="page.props.flash?.status" class="notice" role="status">{{ page.props.flash.status }}</div>
       <div v-if="localReview" class="notice">Local historical review · {{ defaultDate }}. Uses the site's existing review clock and recorded data. Historical drafts cannot be published.</div>
-      <div v-if="errors.length" class="notice error" role="alert"><p v-for="error in errors" :key="error">{{ error }}</p></div>
+      <div v-if="errors.length" class="notice error" role="alert"><p v-for="error in errors" :key="error">{{ displayIssue(error) }}</p></div>
 
       <section class="social-settings" aria-label="Schedule and connection">
         <form class="panel" @submit.prevent="preferences.put('/admin/social/settings', { preserveScroll: true })">
@@ -73,7 +74,7 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
       </section>
 
       <form class="generation panel" @submit.prevent="generation.post('/admin/social/generate', { preserveScroll: true })">
-        <div><h2>Prepare a draft</h2><p class="muted small">A missing or stale snapshot blocks the draft. It never substitutes made-up levels.</p></div>
+        <div><h2>Prepare a draft</h2><p class="muted small">Drafts use dated EOD levels. Generation waits when current source data is not available.</p></div>
         <label>Session date<input v-model="generation.session_date" type="date" required></label>
         <label>Symbol<select v-model="generation.slot"><option value="primary">SPY</option><option value="qqq">QQQ (manual only)</option><option value="tsla">TSLA (manual only)</option></select></label>
         <button class="primary" :disabled="generation.processing">{{ generation.processing ? 'Preparing…' : 'Generate draft' }}</button>
@@ -87,11 +88,11 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
           </button>
         </aside>
         <section v-if="selected" class="draft-detail" aria-label="Selected draft">
-          <div v-if="selected.issue" class="notice" :class="{ error: !selected.quality_acknowledgment }" role="status">{{ selected.issue }}</div>
+          <div v-if="selected.issue" class="notice" :class="{ error: !selected.quality_acknowledgment }" role="status">{{ displayIssue(selected.issue) }}</div>
           <div class="panel preview">
             <div class="panel-heading"><div><p class="eyebrow">{{ selected.symbol }} · {{ selected.session_date }}</p><h2>The image your audience will see</h2></div><a v-if="imageUrl" class="button" :href="imageUrl+'&download=1'">Download PNG</a></div>
             <img v-if="imageUrl" :src="imageUrl" :alt="selected.alt_text" width="1600" height="1000">
-            <div v-else class="empty-preview"><h3>{{ selected.status === 'generating' ? 'Preparing your chart' : 'No complete image yet' }}</h3><p>Refresh after generation, or regenerate when the required snapshot is available.</p></div>
+            <div v-else class="empty-preview"><h3>{{ selected.status === 'generating' ? 'Preparing your chart' : 'No complete image yet' }}</h3><p>Refresh after generation, or regenerate when the required data set is available.</p></div>
             <div v-if="selected.snapshot" class="source"><span>EOD {{ selected.snapshot.data_date }} · {{ selected.snapshot.expiration_dates?.length }} expiries · 2W scope</span><a :href="`/admin/social/${selected.id}/snapshot`">Download source JSON</a><a :href="`/dashboard?symbol=${selected.symbol}&mode=eod&tab=strikes&timeframe=14d&view=next_session`">Compare next-session dashboard</a></div>
           </div>
           <form v-if="selected.body" class="panel editor" @submit.prevent="editor.put(`/admin/social/${selected.id}`, { preserveScroll: true })">
@@ -99,7 +100,7 @@ function refresh() { router.reload({ only: ['posts', 'settings', 'flash'], prese
             <label for="post-body" class="sr-only">Post text</label><textarea id="post-body" v-model="editor.body" rows="8" :disabled="!editable" />
             <label for="post-alt">Image description</label><textarea id="post-alt" v-model="editor.alt_text" rows="3" maxlength="1000" :disabled="!editable" />
             <p class="muted small">Links use campaign tracking. Editing a draft removes its previous approval. Downloaded images can also be posted manually.</p>
-            <label v-if="canAcknowledge" class="check"><input v-model="acknowledgeInputs" type="checkbox"> I acknowledge {{ selected.snapshot.social_quality.missing_input_rows }} rows with missing inputs<span v-if="missingRowPercent"> ({{ missingRowPercent }}% of contract rows)</span> and approve this available-data chart. This is not the percentage of missing GEX.</label>
+            <label v-if="canAcknowledge" class="check"><input v-model="acknowledgeInputs" type="checkbox"> I acknowledge {{ selected.snapshot.social_quality.missing_input_rows }} contract rows excluded because required values were not supplied<span v-if="missingRowPercent"> ({{ missingRowPercent }}% of contract rows)</span> and approve this available-data chart. This is not the percentage of missing GEX.</label>
             <div class="editor-actions">
               <button type="submit" :disabled="!editable || editor.processing || !editor.isDirty || weightedLength > 280">Save draft</button>
               <button type="button" class="primary" :disabled="(canAcknowledge ? !acknowledgeInputs : selected.status !== 'draft') || !imageUrl || editor.isDirty || busy" @click="action(`/admin/social/${selected.id}/approve`, { acknowledge_missing_inputs: canAcknowledge && acknowledgeInputs, review_token: selected.review_token })">Approve draft</button>

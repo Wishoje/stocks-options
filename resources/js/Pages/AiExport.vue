@@ -27,8 +27,8 @@ let pollTimer = null
 const indicatorOptions = [
   {
     key: 'wall_snapshots',
-    label: 'Wall snapshots',
-    description: 'Latest 1d/7d/14d/30d wall snapshot rows for each symbol.',
+    label: 'Wall readings',
+    description: 'Latest 1d/7d/14d/30d wall data rows for each symbol.',
   },
   {
     key: 'gex_levels',
@@ -489,10 +489,10 @@ onUnmounted(() => {
                 <div class="mt-4">
                   <label for="export-gex-view" class="text-sm text-gray-300">GEX analysis view</label>
                   <select id="export-gex-view" v-model="gexView" class="mt-2 w-full rounded-xl border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white">
-                    <option value="latest_eod">Latest EOD snapshot</option>
+                    <option value="latest_eod">Latest EOD data</option>
                     <option value="next_session">Next-session preparation</option>
                   </select>
-                  <p class="mt-2 text-xs text-gray-400">{{ gexView === 'next_session' ? 'Earlier expirations are excluded. The export identifies the target session, recorded source date, and included expirations. Values are not live or forecasts.' : 'Includes expirations active on the latest available EOD snapshot date.' }} Other indicators keep their own scopes.</p>
+                  <p class="mt-2 text-xs text-gray-400">{{ gexView === 'next_session' ? 'Earlier expirations are excluded. The export identifies the target session, recorded source date, and included expirations. Values are not live or forecasts.' : 'Includes expirations active on the latest available EOD data date.' }} Other indicators keep their own scopes.</p>
                 </div>
                 <div class="mt-4">
                   <label class="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">

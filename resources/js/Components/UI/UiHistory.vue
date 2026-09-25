@@ -30,7 +30,7 @@ const latestIndex = computed(() => {
 })
 const latestValue = computed(() => latestIndex.value >= 0 ? numeric(props.items[latestIndex.value]?.value) : null)
 const ticks = computed(() => Array.from({length:4},(_,index)=>range.value.lo+(range.value.hi-range.value.lo)*index/3))
-const columns = computed(() => [{key:'date',label:'Snapshot date',sortable:true},{key:'value',label:`Skew (${props.unit})`,numeric:true,sortable:true,format:axis}])
+const columns = computed(() => [{key:'date',label:'Data date',sortable:true},{key:'value',label:`Skew (${props.unit})`,numeric:true,sortable:true,format:axis}])
 function axis(value) { if(value===0) return '0'; const magnitude=Math.abs(value); const label=magnitude>=10?magnitude.toFixed(0):magnitude>=1?magnitude.toFixed(1):String(Number(magnitude.toPrecision(2))); return value>0?`+${label}`:`−${label}` }
 function inspect(event) { const next=Number(event?.target?.value); if(Number.isInteger(next)&&numeric(props.items[next]?.value)!=null) emit('reading-inspected') }
 const selectedAria = computed(() => selected.value ? `${selected.value.date}, ${selectedValue.value == null ? 'unavailable' : `${axis(selectedValue.value)} ${props.unit}`}` : 'No history readings')
@@ -38,7 +38,7 @@ const selectedAria = computed(() => selected.value ? `${selected.value.date}, ${
 <template>
   <section :aria-label="title"><h3>{{ title }}</h3><div class="gex-history" style="margin-top:14px">
     <div ref="host"><div class="gex-chart-heading"><div><h3>Rolling expiry history</h3><p>{{ scope }} · {{ available }} of {{ items.length }} available</p></div><output class="gex-chart-value gex-number" aria-live="polite"><span>{{ selected ? selected.date : 'No date' }}</span><strong>{{ selectedValue == null ? 'Unavailable' : `${axis(selectedValue)} ${unit}` }}</strong></output></div>
-      <div class="gex-legend" aria-label="History chart legend"><span><i class="gex-line-swatch" aria-hidden="true"></i>Skew</span><span><i class="gex-swatch" data-zero="true" aria-hidden="true"></i>Zero baseline</span><span><i class="gex-gap-swatch" aria-hidden="true"></i>Missing reading</span></div>
+      <div class="gex-legend" aria-label="History chart legend"><span><i class="gex-line-swatch" aria-hidden="true"></i>Skew</span><span><i class="gex-swatch" data-zero="true" aria-hidden="true"></i>Zero baseline</span><span><i class="gex-gap-swatch" aria-hidden="true"></i>No reading</span></div>
       <svg class="gex-history-chart" :viewBox="`0 0 ${width} 214`" role="img" :aria-label="`${scope || 'History'}; ${items.length} dates and ${available} available readings; values in ${unit}; zero is marked. Daily values are available with the date control and table.`">
         <template v-if="available"><template v-for="tick in ticks" :key="tick"><line class="gex-chart-grid" x1="52" :x2="width-24" :y1="y(tick)" :y2="y(tick)"/><text x="44" :y="y(tick)+4" text-anchor="end">{{ axis(tick) }}</text></template>
         <line class="gex-chart-zero" x1="52" :x2="width-24" :y1="y(0)" :y2="y(0)"/>

@@ -106,7 +106,7 @@ const tableColumns = [
   { key: 'exp_date', label: 'Expiry', sortable: true },
   { key: 'expiry_state', label: 'Status', sortable: true },
   { key: 'dex_total', label: 'DEX', numeric: true, sortable: true, format: compact },
-  { key: 'source_chain_date', label: 'Source chain date', sortable: true },
+  { key: 'source_chain_date', label: 'As of', sortable: true },
 ]
 
 function ranked(direction) {
@@ -281,7 +281,7 @@ onUnmounted(() => {
   >
     <template #actions>
       <div class="gex-row">
-        <UiBadge v-if="dataDate" tone="data">Snapshot {{ dataDate }}</UiBadge>
+        <UiBadge v-if="dataDate" tone="data">Data as of {{ dataDate }}</UiBadge>
         <UiBadge tone="neutral">Gamma scope 2W</UiBadge>
         <UiHelpDialog
           id="dealer-positioning-guide"
@@ -294,7 +294,7 @@ onUnmounted(() => {
             <p>The gamma label uses the fixed 14 calendar-day GEX request. Changing the dashboard expiry timeframe does not filter this panel.</p>
             <dl class="gex-grid gex-small">
               <div><dt class="gex-muted">Response symbol</dt><dd>{{ responseSymbol ?? symbol }}</dd></div>
-              <div><dt class="gex-muted">DEX snapshot date</dt><dd>{{ dataDate ?? 'Unavailable' }}</dd></div>
+              <div><dt class="gex-muted">DEX data date</dt><dd>{{ dataDate ?? 'Unavailable' }}</dd></div>
               <div><dt class="gex-muted">Calendar today</dt><dd>{{ calendarToday ?? 'Unavailable' }}</dd></div>
               <div><dt class="gex-muted">API window</dt><dd>{{ windowScope?.start ?? 'Unavailable' }} to {{ windowScope?.end ?? 'Unavailable' }}</dd></div>
             </dl>
@@ -318,7 +318,7 @@ onUnmounted(() => {
       retry
       @retry="load"
     />
-    <UiStatus v-else-if="!dataDate && !byExpiry.length" state="sparse" title="No positioning snapshot yet" message="Choose another symbol or retry when the dealer-positioning snapshot is available." retry @retry="load" />
+    <UiStatus v-else-if="!dataDate && !byExpiry.length" state="sparse" title="Positioning data is not available yet" message="Choose another symbol or retry when the dealer-positioning data set is available." retry @retry="load" />
     <template v-else>
       <div class="gex-grid">
         <UiMetric
@@ -365,7 +365,7 @@ onUnmounted(() => {
           </div>
           <dl class="gex-grid gex-small">
             <div><dt class="gex-muted">DEX</dt><dd class="gex-number">{{ compact(selectedRow.dex_total) }}</dd></div>
-            <div><dt class="gex-muted">Source chain date</dt><dd class="gex-number">{{ selectedRow.source_chain_date ?? 'Unavailable' }}</dd></div>
+            <div><dt class="gex-muted">As of</dt><dd class="gex-number">{{ selectedRow.source_chain_date ?? 'Unavailable' }}</dd></div>
             <div><dt class="gex-muted">Displayed rows</dt><dd class="gex-number">{{ availableCount }} available of {{ byExpiry.length }}</dd></div>
           </dl>
         </section>
@@ -402,7 +402,7 @@ onUnmounted(() => {
         v-else
         state="sparse"
         title="No expiry DEX readings"
-        :message="dataDate ? `The ${dataDate} snapshot returned no expiry rows.` : 'No completed DEX snapshot is available.'"
+        :message="dataDate ? `The ${dataDate} data set returned no expiry rows.` : 'No completed DEX data set is available.'"
       />
     </template>
   </UiPanel>

@@ -71,7 +71,7 @@ describe('public marketing content registry', () => {
     expect(publicCopy).not.toContain('1-minute')
     expect(publicCopy).not.toContain('all symbols')
     expect(publicCopy).not.toContain('pin alerts')
-    expect(publicCopy).toContain('snapshot-based')
+    expect(publicCopy).toContain('periodic')
     expect(publicCopy).toContain('supported us-listed optionable stocks and etfs')
     expect(publicCopy).not.toContain('eod health')
   })

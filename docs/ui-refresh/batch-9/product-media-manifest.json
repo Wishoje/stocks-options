@@ -23,9 +23,9 @@
       "captured_on": "2026-09-19",
       "reviewed_on": "2026-09-20",
       "alt": "GEX Options EOD Overview for SPY with the 2W expiry scope, Q-Score summary, component scores, and dated signal sources.",
-      "caption": "Recorded SPY EOD Overview with the 2W expiry scope, September 2026 snapshot dates, and Q-Score components visible.",
+      "caption": "Recorded SPY EOD Overview with the 2W expiry scope, September 2026 data dates, and Q-Score components visible.",
       "placements": ["features-eod-overview"],
-      "required_context": ["symbol", "EOD mode", "2W scope", "snapshot date", "Q Score date"]
+      "required_context": ["symbol", "EOD mode", "2W scope", "data date", "Q Score date"]
     },
     {
       "id": "eod-positioning-spy",
@@ -51,7 +51,7 @@
       "alt": "GEX Options expiry pressure panel with a headline pin score, selected expiry, max pain, and ranked cluster readings.",
       "caption": "Recorded SPY expiry-pressure example covering the next three trading days with pin scores, max pain, and cluster evidence.",
       "placements": ["features-eod-positioning"],
-      "required_context": ["snapshot date", "pin score", "selected expiry", "max pain", "cluster readings"]
+      "required_context": ["data date", "pin score", "selected expiry", "max pain", "cluster readings"]
     },
     {
       "id": "eod-skew-pricing-spy",
@@ -64,7 +64,7 @@
       "alt": "GEX Options put-versus-call pricing view showing 25-delta implied volatility, skew, daily skew change, and rolling history.",
       "caption": "Recorded SPY 1W pricing example with 25-delta put and call IV, 5.5 percentage-point skew, and 30-day history visible.",
       "placements": ["features-hero", "home-put-call-pricing", "features-eod-positioning"],
-      "required_context": ["target horizon", "selected expiry", "snapshot date", "skew units", "history coverage"]
+      "required_context": ["target horizon", "selected expiry", "data date", "skew units", "history coverage"]
     },
     {
       "id": "eod-volatility-spy",
@@ -77,7 +77,7 @@
       "alt": "GEX Options term-structure panel showing a contango regime, front implied volatility, and the expiry curve.",
       "caption": "Recorded SPY term-structure example with 19 usable expiry readings, the selected front expiry, and IV units visible.",
       "placements": ["features-eod-volatility"],
-      "required_context": ["snapshot date", "expiry count", "IV units", "selected expiry"]
+      "required_context": ["data date", "expiry count", "IV units", "selected expiry"]
     },
     {
       "id": "eod-volatility-vrp-spy",
@@ -90,7 +90,7 @@
       "alt": "GEX Options variance-risk-premium panel comparing one-month implied volatility with realized volatility and historical position.",
       "caption": "Recorded SPY variance-risk-premium example with IV, RV(20), percentage-point premium, and calculation source dates.",
       "placements": ["features-eod-volatility"],
-      "required_context": ["snapshot date", "selected expiry", "IV", "RV", "historical position"]
+      "required_context": ["data date", "selected expiry", "IV", "RV", "historical position"]
     },
     {
       "id": "eod-volatility-seasonality-spy",
@@ -103,7 +103,7 @@
       "alt": "GEX Options five-session seasonality panel with cumulative return, regime, historical position, and daily forward-return bars.",
       "caption": "Recorded SPY seasonality example showing the five-session path, neutral regime, and the historical sample window.",
       "placements": ["features-eod-volatility"],
-      "required_context": ["snapshot date", "regime", "forward-return path", "sample context"]
+      "required_context": ["data date", "regime", "forward-return path", "sample context"]
     },
     {
       "id": "eod-ua-spy",
@@ -116,7 +116,7 @@
       "alt": "GEX Options SPY Unusual Activity view with applied filters, a 14-result snapshot summary, and selected signal details.",
       "caption": "Recorded SPY Unusual Activity view with the September 11 snapshot, applied screening thresholds, returned count, and selected contract evidence.",
       "placements": ["features-eod-unusual-activity"],
-      "required_context": ["symbol", "snapshot date", "applied filters", "result count", "effective premium floor"]
+      "required_context": ["symbol", "data date", "applied filters", "result count", "effective premium floor"]
     },
     {
       "id": "eod-ua-results-spy",
@@ -127,9 +127,9 @@
       "captured_on": "2026-09-19",
       "reviewed_on": "2026-09-20",
       "alt": "GEX Options Unusual Activity results with headline metrics, a selected signal, volume mix, and ranked returned contracts.",
-      "caption": "Recorded SPY Unusual Activity result set with the snapshot date, selected signal detail, and ranked returned rows visible.",
+      "caption": "Recorded SPY Unusual Activity result set with the data date, selected signal detail, and ranked returned rows visible.",
       "placements": ["features-eod-unusual-activity"],
-      "required_context": ["symbol", "snapshot date", "returned signals", "selected signal", "ranked table"]
+      "required_context": ["symbol", "data date", "returned signals", "selected signal", "ranked table"]
     },
     {
       "id": "eod-strikes-spy-2w",
@@ -142,7 +142,7 @@
       "alt": "GEX Options SPY EOD Strikes view with ten included 2W expirations, Net GEX summaries, and an interactive strike distribution.",
       "caption": "Recorded SPY EOD Strikes view with the 2W scope, September 11 snapshot, included expirations, selected strike, and signed Net GEX chart.",
       "placements": ["home-hero", "home-gex-levels", "features-eod-strikes"],
-      "required_context": ["symbol", "2W scope", "snapshot date", "included expirations", "legend", "selected strike"]
+      "required_context": ["symbol", "2W scope", "data date", "included expirations", "legend", "selected strike"]
     },
     {
       "id": "eod-strikes-volume-change-spy",
@@ -155,7 +155,7 @@
       "alt": "GEX Options chart of daily call and put contract-volume changes by strike with selected-strike context.",
       "caption": "Recorded SPY EOD strike comparison showing daily contract-volume changes, activity controls, and the selected strike.",
       "placements": ["features-eod-strikes"],
-      "required_context": ["symbol", "snapshot date", "comparison date", "units", "selected strike"]
+      "required_context": ["symbol", "data date", "comparison date", "units", "selected strike"]
     },
     {
       "id": "eod-strikes-oi-change-spy",
@@ -168,7 +168,7 @@
       "alt": "GEX Options chart of daily call and put open-interest changes by strike with selected-range context.",
       "caption": "Recorded SPY EOD strike comparison showing daily open-interest changes, activity controls, and the selected strike range.",
       "placements": ["features-eod-strikes"],
-      "required_context": ["symbol", "snapshot date", "comparison date", "units", "selected strike"]
+      "required_context": ["symbol", "data date", "comparison date", "units", "selected strike"]
     },
     {
       "id": "intraday-flow-spy",
@@ -181,7 +181,7 @@
       "alt": "GEX Options SPY Intraday Flow view with stored-response status, session volume, put-call mix, estimated premium, and strike inspection.",
       "caption": "Recorded SPY Intraday Flow snapshot for September 11 with response age, session totals, put-call ratio, premium estimate, and selected-strike context visible.",
       "placements": ["home-intraday-preview", "features-intraday-flow"],
-      "required_context": ["symbol", "trade date", "source time", "market state", "snapshot availability", "selected strike"]
+      "required_context": ["symbol", "trade date", "source time", "market state", "data availability", "selected strike"]
     },
     {
       "id": "intraday-strikes-spy",

@@ -386,7 +386,7 @@ describe('Dashboard EOD loading', () => {
     },
   )
 
-  it('refreshes an empty HTTP 200 snapshot as soon as its bootstrap is fast-ready', async () => {
+  it('refreshes an empty HTTP 200 data set as soon as its bootstrap is fast-ready', async () => {
     const wrapper = await mountDashboard('IWM')
     let reads = 0
     gexResponse = (symbol, timeframe) => {
@@ -443,7 +443,7 @@ describe('Dashboard EOD loading', () => {
     expect(axios.post).not.toHaveBeenCalled()
   })
 
-  it('accepts and caches a valid empty no-options HTTP 200 snapshot without preparing', async () => {
+  it('accepts and caches a valid empty no-options HTTP 200 data set without preparing', async () => {
     const wrapper = await mountDashboard()
     gexResponse = (symbol, timeframe) => {
       const response = snapshot(symbol, timeframe, 0)
@@ -581,7 +581,7 @@ describe('Dashboard EOD loading', () => {
       return Promise.reject({
         response: {
           status: 404,
-          data: { error: 'Snapshot unavailable', available_timeframes: ['30d'] },
+          data: { error: 'Data date unavailable', available_timeframes: ['30d'] },
         },
       })
     }
@@ -592,7 +592,7 @@ describe('Dashboard EOD loading', () => {
 
     expect(gexCalls('30d')).toHaveLength(1)
     expect(wrapper.vm.gexTf).toBe('14d')
-    expect(wrapper.vm.eodError).toBe('Snapshot unavailable')
+    expect(wrapper.vm.eodError).toBe('Data date unavailable')
     expect(wrapper.vm.eodLoading).toBe(false)
     expect(wrapper.vm.cache.has('gex|SPY|30d')).toBe(false)
     expect(axios.post).not.toHaveBeenCalled()
@@ -623,7 +623,7 @@ describe('Dashboard EOD loading', () => {
     expect(chartRows(wrapper)).toHaveLength(30)
     expect(wrapper.vm.eodError).toBe('')
   })
-  it('keeps next-session requests and cached snapshots separate from EOD', async () => {
+  it('keeps next-session requests and cached data sets separate from EOD', async () => {
     const wrapper = await mountDashboard()
     const original = wrapper.vm.eodLevels
     const pending = deferred()

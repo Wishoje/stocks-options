@@ -132,7 +132,7 @@ function handleDayKey(event, index) {
   >
     <template #actions>
       <div class="gex-row">
-        <UiBadge v-if="date" tone="data">Snapshot {{ date }}</UiBadge>
+        <UiBadge v-if="date" tone="data">Data as of {{ date }}</UiBadge>
         <UiBadge :tone="regime.tone">{{ regime.label }}</UiBadge>
         <UiHelpDialog
           id="volatility-seasonality-guide"
@@ -141,7 +141,7 @@ function handleDayKey(event, index) {
         >
           <div class="gex-stack">
             <p><strong>D1 through D5</strong> are historical average returns for each forward session. <strong>Cumulative 5D</strong> is the historical average return from the starting close through session five.</p>
-            <p>The daily values and cumulative return are calculated independently from source prices, so rounded daily values do not need to add exactly to the displayed cumulative result.</p>
+            <p>The daily values and cumulative return are calculated independently from historical prices, so rounded daily values do not need to add exactly to the displayed cumulative result.</p>
             <p>The <strong>z-score</strong> compares the average cumulative return with the unconditional five-session return distribution. Values at or beyond ±1σ receive a directional label.</p>
             <p>Seasonality is a historical tendency rather than a forecast. Use it as context with volatility pricing, positioning, trend, and current events.</p>
           </div>
@@ -214,7 +214,7 @@ function handleDayKey(event, index) {
                 :data-zero="item.percent === 0 ? 'true' : undefined"
                 :style="barStyle(item)"
               />
-              <em v-else>Missing</em>
+              <em v-else aria-label="No reading">—</em>
             </span>
             <span class="gex-number">{{ item.value == null ? 'Unavailable' : `${percent(item.value)}%` }}</span>
           </button>
@@ -228,7 +228,7 @@ function handleDayKey(event, index) {
 
       <details class="seasonality-calculation" data-testid="seasonality-calculation-disclosure">
         <summary>Calculation details</summary>
-        <p>Each D1–D5 value averages that forward session across qualifying historical anchors. Cumulative 5D averages the full close-to-close five-session move. The source selects either a calendar window across years or a rolling fallback; the sample context records which history was used.</p>
+        <p>Each D1–D5 value averages that forward session across qualifying historical anchors. Cumulative 5D averages the full close-to-close five-session move. The sample context shows the historical period used for comparison.</p>
       </details>
     </template>
 
@@ -236,7 +236,7 @@ function handleDayKey(event, index) {
       v-else
       state="sparse"
       title="No seasonality data"
-      :message="note || 'No usable five-session return readings are available for this snapshot.'"
+      :message="note || 'No usable five-session return readings are available for this data set.'"
     />
   </UiPanel>
 </template>

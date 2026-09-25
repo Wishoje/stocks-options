@@ -58,7 +58,7 @@ const expiryColumns = [
   { key: 'pin_score', label: 'Pin score (0–100)', numeric: true, sortable: true, format: formatScore },
   { key: 'max_pain', label: 'Max pain', numeric: true, sortable: true },
   { key: 'cluster_count', label: 'Clusters', numeric: true, sortable: true },
-  { key: 'source_chain_date', label: 'Source chain date', sortable: true },
+  { key: 'source_chain_date', label: 'As of', sortable: true },
 ]
 const clusterColumns = [
   { key: 'strike', label: 'Strike', numeric: true, sortable: true },
@@ -212,7 +212,7 @@ onUnmounted(() => {
   >
     <template #actions>
       <div class="gex-row">
-        <UiBadge v-if="data?.data_date" tone="data">Snapshot {{ data.data_date }}</UiBadge>
+        <UiBadge v-if="data?.data_date" tone="data">Data as of {{ data.data_date }}</UiBadge>
         <UiHelpDialog id="expiry-pressure-guide" title="How to read expiry pressure">
           <p><strong>Pin score:</strong> a 0–100 score combining open-interest density near spot and proximity. Higher scores indicate stronger pinning conditions. The score is not a probability.</p>
           <p><strong>Clusters:</strong> open-interest concentrations near spot that can behave like magnets into expiry. Density, distance, and the calculated cluster score remain available in the cluster detail table.</p>
@@ -237,7 +237,7 @@ onUnmounted(() => {
       retry
       @retry="load"
     />
-    <UiStatus v-else-if="!data?.data_date && !entries.length" state="sparse" title="No expiry pressure snapshot yet" message="Choose another symbol or retry when expiry-pressure readings are available." retry @retry="load" />
+    <UiStatus v-else-if="!data?.data_date && !entries.length" state="sparse" title="Expiry pressure is not available yet" message="Choose another symbol or retry when expiry-pressure readings are available." retry @retry="load" />
     <template v-else>
       <div class="gex-grid">
         <UiMetric
@@ -258,7 +258,7 @@ onUnmounted(() => {
         <UiMetric
           label="Dataset scope"
           :value="`${days} trading days`"
-          :context="data?.data_date ? `Starting from snapshot ${data.data_date}` : 'Snapshot unavailable'"
+          :context="data?.data_date ? `Starting from ${data.data_date}` : 'Data date unavailable'"
           tone="data"
         />
       </div>
@@ -284,7 +284,7 @@ onUnmounted(() => {
           </div>
           <dl class="gex-grid gex-small">
             <div><dt class="gex-muted">Max pain</dt><dd class="gex-number">{{ selectedEntry.max_pain ?? 'Unavailable' }}</dd></div>
-            <div><dt class="gex-muted">Source chain date</dt><dd class="gex-number">{{ selectedEntry.source_chain_date ?? 'Unavailable' }}</dd></div>
+            <div><dt class="gex-muted">As of</dt><dd class="gex-number">{{ selectedEntry.source_chain_date ?? 'Unavailable' }}</dd></div>
             <div><dt class="gex-muted">Cluster rows</dt><dd class="gex-number">{{ selectedClusters.length }} of {{ selectedClusters.length }} displayed</dd></div>
           </dl>
         </section>
@@ -320,7 +320,7 @@ onUnmounted(() => {
         v-else
         state="sparse"
         title="No expiry pressure readings"
-        :message="data?.data_date ? `The ${data.data_date} snapshot returned no expiries for this window.` : 'No completed pressure snapshot is available.'"
+        :message="data?.data_date ? `The ${data.data_date} data set returned no expiries for this window.` : 'No completed pressure data set is available.'"
         :retry="!data?.data_date"
         @retry="load"
       />

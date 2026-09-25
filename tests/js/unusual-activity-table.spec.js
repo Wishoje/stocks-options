@@ -153,7 +153,7 @@ describe('UnusualActivityTable', () => {
 
     await wrapper.findAll('.ua-select')[1].trigger('click')
     expect(wrapper.get('[data-testid="ua-selected-signal"]').text()).toContain('Side unavailable')
-    expect(wrapper.get('[data-testid="ua-selected-signal"]').text()).toContain('Call and put volume are both required')
+    expect(wrapper.get('[data-testid="ua-selected-signal"]').text()).toContain('Volume mix is not available.')
     expect(wrapper.vm.selectedMetaFields.find(field => field.key === 'total_vol').value).toBe('Unavailable')
     expect(wrapper.vm.selectedMetaFields.find(field => field.key === 'premium_usd').value).toBe('Unavailable')
   })
@@ -184,15 +184,15 @@ describe('UnusualActivityTable', () => {
     expect(JSON.stringify(rows)).toBe(before)
   })
 
-  it('shows a clear empty state with and without a completed snapshot date', async () => {
+  it('shows a clear empty state with and without a completed data date', async () => {
     const wrapper = mount(UnusualActivityTable, {
       props: { rows: [], symbol: 'AAPL', dataDate: '2026-09-11' },
     })
-    expect(wrapper.get('.gex-status').text()).toContain('2026-09-11 snapshot returned no contracts')
+    expect(wrapper.get('.gex-status').text()).toContain('2026-09-11 data set returned no contracts')
     expect(wrapper.find('[data-testid="ua-selected-signal"]').exists()).toBe(false)
 
     await wrapper.setProps({ dataDate: null })
-    expect(wrapper.get('.gex-status').text()).toContain('No completed unusual activity snapshot')
+    expect(wrapper.get('.gex-status').text()).toContain('No completed unusual activity data')
   })
 
   it('opens a contained reading guide and restores focus when Escape closes it', async () => {

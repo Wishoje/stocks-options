@@ -60,7 +60,7 @@
 
           <div v-else-if="dataMode === 'eod' && activeTab === 'positioning'" class="gex-positioning-scope" role="note">
             <strong>Positioning uses local scopes:</strong>
-            DEX snapshot window · {{ pinDays }} trading-day pressure · selectable skew bucket
+            DEX reporting window · {{ pinDays }} trading-day pressure · selectable skew bucket
           </div>
           <div v-else-if="dataMode === 'eod' && activeTab === 'volatility'" class="gex-positioning-scope" role="note">
             <strong>Volatility uses local scopes:</strong>
@@ -68,7 +68,7 @@
           </div>
           <div v-else-if="dataMode === 'eod' && activeTab === 'ua'" class="gex-positioning-scope" role="note">
             <strong>Unusual activity uses its own scope:</strong>
-            latest completed activity snapshot · all expiries or one selected expiry
+            latest completed activity data · all expiries or one selected expiry
           </div>
         </div>
 
@@ -79,13 +79,13 @@
           aria-live="polite"
         >
           <template v-if="activeTab === 'ua'">
-            <strong>{{ uaDate ? `Activity ${uaDate}` : (uaLoading ? 'Loading activity snapshot' : 'Activity date unavailable') }}</strong>
-            <span>Independent latest completed activity snapshot</span>
+            <strong>{{ uaDate ? `Activity ${uaDate}` : (uaLoading ? 'Loading activity data' : 'Activity date unavailable') }}</strong>
+            <span>Independent latest completed activity data</span>
           </template>
           <template v-else>
-            <strong>{{ levels?.data_date ? `EOD ${levels.data_date}` : (preparing.active ? `Preparing ${userSymbol}` : eodLoading ? 'Loading EOD snapshot' : 'EOD date unavailable') }}</strong>
+            <strong>{{ levels?.data_date ? `EOD ${levels.data_date}` : (preparing.active ? `Preparing ${userSymbol}` : eodLoading ? 'Loading EOD data' : 'EOD date unavailable') }}</strong>
             <span v-if="levels?.data_age_days > 0">{{ levels.data_age_days }} day<span v-if="levels.data_age_days !== 1">s</span> old</span>
-            <span v-else-if="levels?.data_date">Completed-session snapshot</span>
+            <span v-else-if="levels?.data_date">Completed-session data</span>
           </template>
         </div>
         <div
@@ -101,7 +101,7 @@
           <template v-else>
             <strong>{{ intradaySourceLabel }}</strong>
             <span v-if="intradaySnapshotAsOf">{{ intradaySourceTimeKind }} {{ intradayAsOfEtLabel }} ET</span>
-            <span v-else>Provider update time unavailable</span>
+            <span v-else>Update time unavailable</span>
           </template>
           <UiButton :disabled="intradayLoading || intradayRefreshing || intradayTransition" @click="manualRefresh">
             {{ intradayLoading || intradayTransition ? 'Loading…' : (intradayRefreshing ? 'Refreshing…' : 'Refresh') }}
@@ -111,16 +111,16 @@
 
       <section v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab)" class="gex-eod-view" aria-label="EOD analysis view">
         <div class="gex-segmented" aria-label="EOD analysis view options">
-          <button type="button" :aria-pressed="eodView === 'latest_eod'" @click="eodView = 'latest_eod'">Latest EOD snapshot</button>
+          <button type="button" :aria-pressed="eodView === 'latest_eod'" @click="eodView = 'latest_eod'">Latest EOD data</button>
           <button type="button" :aria-pressed="eodView === 'next_session'" @click="eodView = 'next_session'">Next-session preparation</button>
         </div>
         <a class="gex-small" :href="`/ai-export?timeframe=${gexTf}&view=${eodView}`">Export this view</a>
         <p class="gex-small gex-muted" aria-live="polite">
           <template v-if="eodLoading">Loading the selected expiry scope…</template>
           <template v-else-if="levels?.view_context">
-            {{ eodView === 'next_session' ? 'Preparing for' : 'Snapshot expiry scope for' }} <strong>{{ levels.view_context.session_date }}</strong>
-            · Source EOD <strong>{{ levels.view_context.source_date || 'unavailable' }}</strong>.
-            {{ eodView === 'next_session' ? 'Earlier expirations excluded. Recorded EOD inputs; not live session values.' : 'Includes expirations active on the source date.' }}
+            {{ eodView === 'next_session' ? 'Preparing for' : 'Expiry scope for' }} <strong>{{ levels.view_context.session_date }}</strong>
+            · EOD as of <strong>{{ levels.view_context.source_date || 'unavailable' }}</strong>.
+            {{ eodView === 'next_session' ? 'Earlier expirations excluded. Recorded EOD inputs; not live session values.' : 'Includes expirations active on the EOD date.' }}
           </template>
         </p>
       </section>
@@ -160,7 +160,7 @@
           </div>
         </nav>
         <div class="gex-dashboard-scope gex-small gex-muted">
-          <span>{{ dataMode === 'eod' ? 'End-of-day analysis' : 'Stored intraday snapshots' }}</span>
+          <span>{{ dataMode === 'eod' ? 'End-of-day analysis' : 'Stored intraday updates' }}</span>
           <span aria-hidden="true">·</span>
           <span>{{ userSymbol }}</span>
         </div>
@@ -193,7 +193,7 @@
         :key="`${userSymbol}:${dataMode}:${activeTab}:${gexTf}:${eodView}`"
         :title="`${preparing.active ? 'Preparing' : 'Loading'} ${userSymbol} · ${activeGuideTabLabel}${dataMode === 'eod' ? ` · ${selectedTimeframeLabel}` : ' · Intraday'}`"
         :preparing="preparing.active"
-        :message="preparing.active ? 'Your options data is being prepared. This view will update automatically; you can keep navigating.' : 'Fetching the selected snapshot, metrics, and chart readings.'"
+        :message="preparing.active ? 'Your options data is being prepared. This view will update automatically; you can keep navigating.' : 'Fetching the selected data set, metrics, and chart readings.'"
         retry
         @retry="dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : manualRefresh()"
       />
@@ -208,7 +208,7 @@
           </svg>
           <div>
             <div class="font-semibold">Preparing {{ userSymbol }} data</div>
-            <div class="text-amber-200/80">Some tabs will appear as soon as they’re ready; others are still loading the first snapshot.</div>
+            <div class="text-amber-200/80">Some tabs will appear as soon as they’re ready; others are still loading the first results.</div>
           </div>
         </div>
         <div
@@ -245,7 +245,7 @@
           <UiStatus
             state="loading"
             :title="`Loading ${userSymbol} intraday data`"
-            message="The previous symbol is hidden while its replacement snapshot is verified."
+            message="The previous symbol is hidden while its new data loads."
           />
         </div>
         <div
@@ -257,16 +257,16 @@
           </svg>
           <div>
             <div class="font-semibold">
-              {{ intradayHasData ? 'Showing last available intraday snapshot' : `No intraday snapshot for ${userSymbol} yet` }}
+              {{ intradayHasData ? 'Showing last available intraday data' : `No intraday data for ${userSymbol} yet` }}
             </div>
             <div class="text-slate-200/80">
               <template v-if="intradayHasData">
                 <span v-if="intradaySnapshotAsOf">{{ intradaySourceTimeKind }} {{ intradayAsOfEtLabel }} ET.</span>
-                <span v-else>Provider update time is unavailable.</span>
+                <span v-else>Update time is unavailable.</span>
                 Live updates resume {{ intradayNextOpenLabel }}.
               </template>
               <template v-else>
-                The market is closed. The first live snapshot can be collected {{ intradayNextOpenLabel }}.
+                The market is closed. The next session update is available {{ intradayNextOpenLabel }}.
               </template>
             </div>
           </div>
@@ -280,11 +280,19 @@
           <UiStatus
             state="error"
             title="Intraday refresh failed"
-            :message="`${intradayError} The last aligned snapshot remains visible below.`"
+            :message="`${intradayError} Your last recorded readings remain visible below.`"
             retry
             @retry="manualRefresh"
           />
         </div>
+        <WallLevels
+          v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab) && levels?.symbol === userSymbol && levels?.timeframe === gexTf && levels?.view_context?.view === eodView"
+          :levels="levels"
+          :symbol="userSymbol"
+          :scope-label="selectedTimeframeLabel"
+          :show-chart-link="activeTab === 'overview'"
+          @open-chart="activate('strikes')"
+        />
         <!-- OVERVIEW (EOD) -->
         <section
           v-show="activeTab==='overview' && dataMode==='eod'"
@@ -335,7 +343,7 @@
             v-if="['idle', 'pending'].includes(tabState('positioning'))"
             state="preparing"
             :title="`Preparing ${userSymbol} positioning`"
-            message="DEX, pressure, and skew will appear as their current snapshots become available."
+            message="DEX, pressure, and skew will appear as their latest readings arrive."
           />
           <UiStatus
             v-else
@@ -368,7 +376,7 @@
               v-else-if="volState.term === 'loading' || volState.term === 'pending'"
               :state="volState.term === 'pending' ? 'preparing' : 'loading'"
               title="Loading term structure"
-              message="All returned forward expiries will appear when this snapshot is ready."
+              message="All returned forward expiries will appear when the data is ready."
             />
             <TermTile v-else :items="term.items || []" :date="term.date" @reading-inspected="recordFirstUsefulReading" />
 
@@ -429,7 +437,7 @@
           <UiStatus
             v-if="volErr"
             state="warning"
-            title="Some volatility context is incomplete"
+            title="Some volatility readings are not available yet"
             :message="volErr"
           />
         </section>
@@ -443,7 +451,7 @@
             v-if="['idle', 'pending'].includes(tabState('volatility'))"
             state="preparing"
             :title="`Preparing ${userSymbol} volatility`"
-            message="Term structure, variance risk premium, and seasonality will appear independently as their snapshots become ready."
+            message="Term structure, variance risk premium, and seasonality will appear independently as their readings arrive."
           />
           <UiStatus
             v-else
@@ -464,12 +472,12 @@
         >
           <UiPanel
             title="Unusual activity filters"
-            :subtitle="`Screen ${userSymbol} contracts from the latest completed activity snapshot. Z-score and volume/OI are alternative signals; the other filters narrow the result.`"
+            :subtitle="`Screen ${userSymbol} contracts from the latest completed activity data. Z-score and volume/OI are alternative signals; the other filters narrow the result.`"
             tone="data"
           >
             <template #actions>
               <div class="gex-row">
-                <UiBadge v-if="uaDate" tone="data">Snapshot {{ uaDate }}</UiBadge>
+                <UiBadge v-if="uaDate" tone="data">Data as of {{ uaDate }}</UiBadge>
                 <UiBadge>{{ uaRows.length }} result<span v-if="uaRows.length !== 1">s</span></UiBadge>
               </div>
             </template>
@@ -563,7 +571,7 @@
             <UiStatus
               v-if="!uaDate"
               state="sparse"
-              title="No unusual activity snapshot is available"
+              title="No unusual activity data is available"
               message="Try another symbol or return after the next completed activity calculation."
             />
             <UnusualActivityTable :rows="uaRows || []" :dataDate="uaDate" :symbol="userSymbol" :request-sort="uaFilterView.sort" @reading-inspected="recordFirstUsefulReading" />
@@ -653,23 +661,23 @@
             <UiPanel
               v-if="!intradaySnapshotAvailable"
               title="Live strikes"
-              subtitle="A completed intraday strike snapshot is not available yet."
+              subtitle="A completed intraday strike data set is not available yet."
               tone="data"
             >
               <UiStatus
                 :state="intradayLoading ? 'loading' : (marketOpen === true ? 'preparing' : (marketOpen === false ? 'closed' : 'sparse'))"
-                :title="`No completed intraday strike snapshot for ${userSymbol}`"
+                :title="`No completed intraday strike data set for ${userSymbol}`"
                 :message="marketOpen === true
-                  ? 'The dashboard will retry according to the current refresh state. Returned pre-snapshot rows are not presented as live activity.'
+                  ? 'The dashboard will retry according to the current refresh state. Returned pre-update rows are not presented as live activity.'
                   : (marketOpen === false
-                    ? `The first live strike snapshot can be collected ${intradayNextOpenLabel}.`
-                    : 'Market-session status is unavailable. Returned pre-snapshot rows are not presented as live activity.')"
+                    ? `The next strike update is available ${intradayNextOpenLabel}.`
+                    : 'Market-session status is unavailable. Returned pre-update rows are not presented as live activity.')"
               />
               <details
                 class="gex-intraday-diagnostic"
                 @toggle="intradayUnavailableDetailsOpen = $event.currentTarget.open"
               >
-                <summary>Returned pre-snapshot diagnostic rows · {{ levels?.strike_data?.length || 0 }}</summary>
+                <summary>Returned pre-update diagnostic rows · {{ levels?.strike_data?.length || 0 }}</summary>
                 <div v-if="intradayUnavailableDetailsOpen">
                   <p class="gex-small gex-muted">These rows can contain EOD open-interest scaffolding. They are preserved exactly and are not labeled as intraday volume, ratios, or premium.</p>
                   <pre>{{ JSON.stringify(levels?.strike_data || [], null, 2) }}</pre>
@@ -802,6 +810,7 @@ import UiPanel from './UI/UiPanel.vue'
 import UiSelect from './UI/UiSelect.vue'
 import UiStatus from './UI/UiStatus.vue'
 import OverviewMetrics from './OverviewMetrics.vue'
+import WallLevels from './WallLevels.vue'
 import FirstUseGuide from './FirstUseGuide.vue'
 import { recordFirstUsefulReading as recordFirstUsefulReadingEvent } from '@/Support/first-use.js'
 
@@ -1143,10 +1152,10 @@ const intradaySourceLabel = computed(() => {
       ? 'Recent legacy response'
       : `Legacy response (${Math.floor(intradaySourceAge.value / 60)}m old)`
   }
-  if (intradaySourceAge.value === null) return 'Provider update time unavailable'
+  if (intradaySourceAge.value === null) return 'Update time unavailable'
   return intradaySourceAge.value < 90 ? 'Live' : `Delayed (${Math.floor(intradaySourceAge.value / 60)}m)`
 })
-const intradaySourceTimeKind = computed(() => intradaySourceIsLegacy.value ? 'Legacy response time' : 'Provider source as of')
+const intradaySourceTimeKind = computed(() => intradaySourceIsLegacy.value ? 'Legacy response time' : 'As of')
 const intradayFreshnessState = computed(() => {
   if (intradayTransition.value) return 'loading'
   if (marketOpen.value === null) return intradayLoading.value ? 'loading' : 'stale'

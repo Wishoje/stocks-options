@@ -112,7 +112,7 @@ describe('public marketing pages', () => {
     const wrapper = mount(Home, { global: { stubs: publicPageStubs } })
 
     const expectedTitle = 'GexOptions - Premarket Levels, Positioning, and Options Flow'
-    const expectedDescription = 'Map dated GEX levels and dealer positioning, inspect put-versus-call pricing and stored intraday flow, and scan optionable stocks with source scope visible.'
+    const expectedDescription = 'Map dated GEX levels and dealer positioning, inspect put-versus-call pricing and stored intraday flow, and scan optionable stocks to find your next chart to review.'
     expect(wrapper.get('title').text()).toBe(expectedTitle)
     expect(wrapper.get('link[rel="canonical"]').attributes('href')).toBe('https://gexoptions.com/')
     expect(wrapper.get('meta[name="description"]').attributes('content')).toBe(expectedDescription)
@@ -164,7 +164,7 @@ describe('public marketing pages', () => {
     const wrapper = mount(Features, { global: { stubs: publicPageStubs } })
 
     const expectedTitle = 'GexOptions Features - Flow, GEX Levels, DEX, Scanners, VRP & Term Structure'
-    const expectedDescription = 'Explore GEX Options EOD and intraday analytics, watchlist, scanners, options calculator, and structured export with timing and coverage explained.'
+    const expectedDescription = 'Explore GEX Options EOD and intraday analytics, watchlist, scanners, options calculator, and structured exports to compare market levels, positioning, and risk.'
     expect(wrapper.get('title').text()).toBe(expectedTitle)
     expect(wrapper.get('link[rel="canonical"]').attributes('href')).toBe('https://gexoptions.com/features')
     expect(wrapper.get('meta[name="description"]').attributes('content')).toBe(expectedDescription)

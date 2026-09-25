@@ -81,7 +81,7 @@ describe('DexTile request and retry ownership', () => {
     expect(requests('/api/gex-levels')).toHaveLength(0)
   })
 
-  it('does not mix a missing DEX regime with a different-date GEX snapshot', async () => {
+  it('does not mix a missing DEX regime with a different-date GEX data set', async () => {
     axios.get.mockImplementation(url => Promise.resolve(url === '/api/dex'
       ? dexResponse()
       : gexResponse(0.99, -1, '2026-09-03')))
@@ -95,7 +95,7 @@ describe('DexTile request and retry ownership', () => {
     expect(requests('/api/gex-levels')).toHaveLength(1)
   })
 
-  it('fills only a missing field from a date-compatible GEX snapshot and preserves zero', async () => {
+  it('fills only a missing field from a date-compatible GEX data set and preserves zero', async () => {
     const response = dexResponse()
     response.data.regime_strength = 0.55
     response.data.gamma_sign = null

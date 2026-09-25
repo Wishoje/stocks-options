@@ -150,7 +150,7 @@ describe('intraday volume / open interest by strike', () => {
 
     expect(wrapper.get('[data-testid="intraday-vol-oi"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('Volume / open interest by strike')
-    expect(wrapper.text()).toContain('Provider source time: Sep 11, 2026, 11:30 AM ET')
+    expect(wrapper.text()).toContain('As of: Sep 11, 2026, 11:30 AM ET')
     expect(wrapper.text()).toContain('Market open')
     const liveBadge = wrapper.findAllComponents({ name: 'UiBadge' }).find(badge => badge.text() === 'Live')
     expect(liveBadge.props('tone')).toBe('positive')
@@ -217,11 +217,11 @@ describe('intraday volume / open interest by strike', () => {
     await wrapper.setProps({
       snapshotAsOf: null,
       sourceTimestampStatus: 'unknown',
-      sourceLabel: 'Provider update time unavailable',
+      sourceLabel: 'Update time unavailable',
     })
-    expect(wrapper.text()).toContain('Provider source time: Unavailable')
+    expect(wrapper.text()).toContain('As of: Unavailable')
     const unknownBadge = wrapper.findAllComponents({ name: 'UiBadge' })
-      .find(badge => badge.text() === 'Provider update time unavailable')
+      .find(badge => badge.text() === 'Update time unavailable')
     expect(unknownBadge.props('tone')).toBe('warning')
   })
 })
@@ -305,7 +305,7 @@ describe('intraday premium estimate by strike', () => {
     expect(wrapper.vm.totalPremium).toBeNull()
     expect(wrapper.vm.totalCall).toBe(1000.25)
     expect(wrapper.vm.totalPut).toBe(500.75)
-    expect(wrapper.text()).toContain('Incomplete coverage')
+    expect(wrapper.text()).toContain('Call readings')
     expect(wrapper.vm.downloadName).toBe('premium-IWM-current')
     expect(wrapper.vm.tableColumns.map(column => column.key)).toEqual(expect.arrayContaining([
       'premium_call',
@@ -327,7 +327,7 @@ describe('intraday premium estimate by strike', () => {
 
     await wrapper.findAll('button').find(button => button.text() === 'Reading guide').trigger('click')
     expect(document.body.textContent).toContain('Values are US dollars')
-    expect(document.body.textContent).toContain('missing price input also contributes zero')
+    expect(document.body.textContent).toContain('price-based estimates, not confirmed cash flows')
   })
 
   it('groups a dense plot without dropping rows from the complete table', async () => {

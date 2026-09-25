@@ -378,7 +378,7 @@ export default {
 
     <template #details>
       <UiDataTable
-        caption="Every field and row returned for the intraday strike snapshot, plus the displayed ratio audit"
+        caption="Every field and row returned for the intraday strike data set, plus the displayed ratio audit"
         :rows="tableRows"
         :columns="tableColumns"
         row-key="__row_key"

@@ -4,7 +4,7 @@
       <p>Quick start</p>
       <h2 id="first-use-guide-title">Read the current view in three steps.</h2>
       <ol>
-        <li><strong>Confirm context.</strong> Check symbol, dataset, expiry scope, and snapshot time.</li>
+        <li><strong>Confirm context.</strong> Check symbol, dataset, expiry scope, and source time.</li>
         <li><strong>Read the headline.</strong> Use the primary metric for context, then compare nearby levels.</li>
         <li><strong>Inspect a reading.</strong> Select a chart point or row before acting on the summary.</li>
       </ol>

@@ -28,7 +28,7 @@ const fallbackMessage = computed(() => {
   return null
 })
 const emptyMessage = computed(() => fallbackMessage.value
-  ?? 'Implied volatility, realized volatility, VRP, and the historical z-score are unavailable for this snapshot.')
+  ?? 'Implied volatility, realized volatility, VRP, and the historical z-score are unavailable for this data set.')
 
 function percent(value, { signed = false } = {}) {
   const number = numeric(value)
@@ -97,13 +97,13 @@ const gaugeLabel = computed(() => zValue.value == null
 <template>
   <UiPanel
     title="Variance risk premium"
-    subtitle="One-month implied volatility minus the stored RV(20) measure"
+    subtitle="Compare one-month implied volatility with recent realized volatility"
     tone="data"
     data-testid="volatility-vrp"
   >
     <template #actions>
       <div class="gex-row">
-        <UiBadge v-if="date" tone="data">Snapshot {{ date }}</UiBadge>
+        <UiBadge v-if="date" tone="data">Data as of {{ date }}</UiBadge>
         <UiBadge :tone="regime.tone">{{ regime.label }}</UiBadge>
         <UiHelpDialog
           id="volatility-vrp-guide"
@@ -111,7 +111,7 @@ const gaugeLabel = computed(() => zValue.value == null
           trigger-label="Reading guide"
         >
           <div class="gex-stack">
-            <p><strong>IV (1M)</strong> is the ATM implied volatility nearest to roughly 21 calendar days. <strong>RV (20)</strong> is the annualized recent realized-volatility measure returned by the API.</p>
+            <p><strong>IV (1M)</strong> is the ATM implied volatility nearest to roughly 21 calendar days. <strong>RV (20)</strong> is the annualized recent realized-volatility measure.</p>
             <p><strong>VRP = IV (1M) − RV (20).</strong> A positive value means options imply more volatility than the underlying recently realized. A negative value means implied volatility is lower.</p>
             <p>The <strong>z-score</strong> compares the current VRP with up to 252 prior daily VRP readings. Values at or beyond ±1σ receive the rich or cheap labels.</p>
             <p>VRP measures relative pricing, not direction. Read it with term structure, skew, positioning, liquidity, and price action.</p>
@@ -142,7 +142,7 @@ const gaugeLabel = computed(() => zValue.value == null
           :value="percent(rvValue)"
           unit="%"
           tone="data"
-          context="Annualized recent volatility stored as RV(20)"
+          context="Annualized recent realized volatility"
         />
       </div>
 
@@ -191,14 +191,12 @@ const gaugeLabel = computed(() => zValue.value == null
     />
 
     <details v-if="hasAnyData || sourceMeta" class="vrp-calculation" data-testid="vrp-calculation-disclosure">
-      <summary>Calculation and source details</summary>
+      <summary>How this is calculated</summary>
       <div>
-        <p>VRP uses stored decimal volatility values and displays them in percentage points. The z-score needs at least 30 earlier non-missing VRP observations and uses up to 252.</p>
+        <p>VRP is implied volatility minus realized volatility, shown in percentage points. The z-score compares the reading with 30 to 252 earlier observations.</p>
         <dl v-if="sourceMeta" class="vrp-source gex-small">
           <div><dt>Anchor date</dt><dd>{{ sourceMeta.anchor_date ?? date ?? 'Unavailable' }}</dd></div>
           <div><dt>Selected expiry</dt><dd>{{ sourceMeta.selected_exp_date ?? 'Unavailable' }}</dd></div>
-          <div><dt>Source chain date</dt><dd>{{ sourceMeta.source_chain_date ?? 'Unavailable' }}</dd></div>
-          <div><dt>Fallback reason</dt><dd>{{ fallbackMessage ?? 'None' }}</dd></div>
         </dl>
       </div>
     </details>

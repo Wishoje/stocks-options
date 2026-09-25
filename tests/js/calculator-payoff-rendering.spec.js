@@ -163,7 +163,7 @@ describe('calculator payoff trust and rendering', () => {
         wrapper.unmount()
 
         await mountResponse(response({ price: 110, status: 'stale', usable_for_calculation: true }))
-        expect(wrapper.text()).toContain('Using a stale quote from provider')
+        expect(wrapper.text()).toContain('Using an earlier quote')
         expect(underlyingInput().element.value).toBe('110')
         expect(decayRows()).toHaveLength(8)
     })

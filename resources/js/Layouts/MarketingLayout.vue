@@ -92,7 +92,7 @@
               loading="lazy"
             />
           </Link>
-          <p class="mk-meta">Options analytics software. Data availability and timing vary by dataset and provider.</p>
+          <p class="mk-meta">Options analytics for market levels, positioning, and activity.</p>
           <p class="mk-meta">&copy; {{ year }} GEX Options.</p>
         </div>
         <nav class="mk-footer-links" aria-label="Footer navigation">

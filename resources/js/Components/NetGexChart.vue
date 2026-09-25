@@ -543,7 +543,7 @@ export default {
     :selected-value="selectedLabel"
     @update:selected-value="selectFromControl"
     title="Net GEX by strike"
-    subtitle="Dealer gamma exposure across selected expirations; the date summarizes their selected snapshots"
+    subtitle="Dealer gamma exposure across selected expirations; dated for the selected expiry scope"
     help-title="How to read net GEX by strike"
     :symbol="symbol"
     :timeframe="timeframe"
@@ -564,7 +564,7 @@ export default {
         <p><strong>Net GEX</strong> is call gamma exposure minus put gamma exposure at each strike. Positive values often align with hedging that dampens moves; negative values can align with hedging that amplifies moves.</p>
         <p><strong>Split call/put</strong> shows call magnitude above zero and put magnitude below zero so the two sides remain visually distinct. The raw put value is preserved in the selected detail and table.</p>
         <p><strong>Focus on activity</strong> narrows the visible strike band without deleting rows. <strong>Group dense strikes</strong> sums nearby values for rendering; every source strike stays available in the collapsed table.</p>
-        <p>The panel date is an aggregate snapshot label. Included expirations can come from separately selected EOD source dates.</p>
+        <p>Compare the selected expiry range and date when reviewing levels.</p>
         <p>Large concentrations are reaction areas rather than price targets. Confirm them with current price action, expiration timing, and liquidity.</p>
       </div>
     </template>
@@ -691,7 +691,7 @@ export default {
             title="Download chart with GexOptions.com watermark"
             @click="snapshot"
           >
-            Snapshot
+            Download PNG
           </button>
         </div>
       </div>

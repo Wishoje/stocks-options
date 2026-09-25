@@ -227,7 +227,7 @@ defineExpose({
         <input v-model="groupDenseStrikes" type="checkbox">
         <span>Group dense strikes</span>
       </label>
-      <span>Display controls leave every source row available below.</span>
+      <span>Inspect any strike in the table below.</span>
     </div>
 
     <div v-if="selectedOptions.length" class="intraday-flow-chart__selection">
@@ -250,7 +250,7 @@ defineExpose({
       v-if="!hasChartData"
       state="sparse"
       title="Session volume by strike is unavailable"
-      message="No numeric call or put volume readings were returned. Zero remains a valid reading when the source provides it."
+      message="No volume readings are available for this view yet."
     />
     <div v-else class="intraday-flow-chart__canvas">
       <Bar

@@ -317,7 +317,7 @@ export default {
           :context="topReading ? `Strike ${topReading.strike}` : 'No usable strike ratio'"
         />
         <UiMetric
-          label="Ratio coverage"
+          label="Strikes analyzed"
           :value="`${ratioAvailableCount}/${sortedData.length}`"
           tone="neutral"
           :context="`${aggregate.zeroDenominatorCount} complete strikes have zero EOD OI`"
@@ -357,7 +357,7 @@ export default {
 
     <template #details>
       <UiDataTable
-        caption="Every field and row returned for the intraday strike snapshot, plus the displayed ratio audit"
+        caption="Every field and row returned for the intraday strike data set, plus the displayed ratio audit"
         :rows="tableRows"
         :columns="tableColumns"
         row-key="__row_key"

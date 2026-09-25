@@ -145,3 +145,6 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware(['subscribed', 'work-run-feature', 'throttle:work-status'])
         ->name('api.work-runs.show');
 });
+
+Route::get('/wall-foundation/audit', [\App\Http\Controllers\WallFoundationController::class, 'audit'])
+    ->middleware([\App\Http\Middleware\EnsureLocalWallReview::class, 'auth:sanctum', 'feature:app.access,strict', 'throttle:10,1']);

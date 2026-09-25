@@ -83,7 +83,7 @@
           <article class="mk-card" data-reveal data-reveal-order="1">
             <p class="mk-eyebrow">02 · Add context</p>
             <h3 class="mk-subheading">Compare positioning and activity.</h3>
-            <p class="mk-copy">Check SPY's dealer DEX and put-versus-call pricing. During the session, inspect call and put activity near your selected strikes and check the source time.</p>
+            <p class="mk-copy">Check SPY's dealer DEX and put-versus-call pricing. During the session, inspect call and put activity near your selected strikes to compare where activity is building.</p>
             <Link href="/features#eod-positioning" class="mk-button mk-button--quiet">Compare pricing and flow <span aria-hidden="true">&rarr;</span></Link>
           </article>
           <article class="mk-card" data-reveal data-reveal-order="2">
@@ -123,7 +123,7 @@
       <div class="mk-container mk-grid-2 mk-page-split">
         <div class="mk-section-intro" data-reveal>
           <p class="mk-eyebrow">Questions before subscribing</p>
-          <h2 class="mk-heading">Clear about data timing and coverage.</h2>
+          <h2 class="mk-heading">Understand the market before your next move.</h2>
           <p class="mk-copy">Know when your trial starts, how cancellation works, and what to expect from the data.</p>
         </div>
         <div class="mk-faqs">
@@ -166,7 +166,7 @@ import { useMarketingMotion } from '@/Support/marketing-motion'
 const page = usePage()
 const motionRoot = useMarketingMotion()
 const homeTitle = computed(() => page.props.seo?.title || 'GexOptions - Premarket Levels, Positioning, and Options Flow')
-const homeDescription = computed(() => page.props.seo?.description || 'Map dated GEX levels and dealer positioning, inspect put-versus-call pricing and stored intraday flow, and scan optionable stocks with source scope visible.')
+const homeDescription = computed(() => page.props.seo?.description || 'Map dated GEX levels and dealer positioning, inspect put-versus-call pricing and stored intraday flow, and scan optionable stocks to find your next chart to review.')
 const homeCanonical = computed(() => page.props.seo?.canonical || 'https://gexoptions.com/')
 const trialDays = computed(() => Number(page.props.offer?.trial_days) || 7)
 function offerPrice(billing) {
@@ -195,7 +195,7 @@ const homeStructuredDataJson = computed(() => {
 })
 const offerFeatures = Object.freeze([
   'GEX levels, dealer DEX, gamma regime, expiry pressure, skew, and volatility context',
-  'Stored intraday Flow and Strikes views with source time and freshness',
+  'Intraday Flow and Strikes views with clear session timing',
   'Watchlist, Volume Scanner, Wall Scanner, Options Calculator, and AI Export',
 ])
 </script>

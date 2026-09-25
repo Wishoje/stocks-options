@@ -64,7 +64,7 @@ const overall = computed(() => {
 
 const overallDisplay = computed(() => overall.value === null ? 'Unavailable' : overall.value.toFixed(1))
 const overallLabel = computed(() => {
-  if (overall.value === null) return 'Incomplete score'
+  if (overall.value === null) return 'Score not available'
   if (overall.value >= 3.2) return 'Strong'
   if (overall.value >= 2.4) return 'Constructive'
   if (overall.value >= 1.6) return 'Mixed'
@@ -206,8 +206,8 @@ defineExpose({ qscorePayload, scores, scoreItems, overall, sourceDateItems, load
         />
       </div>
 
-      <div v-if="hasSourceDates" class="gex-qscore-panel__sources" aria-label="Q-Score source dates">
-        <p>Signal source dates</p>
+      <div v-if="hasSourceDates" class="gex-qscore-panel__sources" aria-label="Q-Score dates">
+        <p>Signal dates</p>
         <dl>
           <div v-for="item in sourceDateItems" :key="item.label">
             <dt>{{ item.label }}</dt>

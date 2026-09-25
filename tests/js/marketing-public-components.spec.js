@@ -38,7 +38,7 @@ const readyMedia = {
   ...pendingMedia,
   id: 'ready-product',
   status: 'ready',
-  caption: 'SPY EOD example with its snapshot date.',
+  caption: 'SPY EOD example with its data date.',
   alt: 'Positioning dashboard for a recorded SPY EOD example.',
   desktop: { src: '/marketing/current/positioning.webp', width: 1600, height: 900 },
   mobile: { src: '/marketing/current/positioning-mobile.webp', width: 780, height: 1200 },

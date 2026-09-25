@@ -113,9 +113,9 @@ describe('EOD net GEX by strike', () => {
     expect(wrapper.text()).toContain('Strike 105')
     expect(wrapper.text()).toContain('Largest negative')
     expect(wrapper.text()).toContain('Strike 110')
-    expect(wrapper.text()).toContain('Snapshot 2026-09-11')
+    expect(wrapper.text()).toContain('Data as of 2026-09-11')
     expect(wrapper.text()).toContain('30D')
-    expect(wrapper.text()).toContain('date summarizes their selected snapshots')
+    expect(wrapper.text()).toContain('dated for the selected expiry scope')
     expect(wrapper.vm.downloadName).toBe('net-gex-SPY-30D-2026-09-11')
     expect(wrapper.vm.rawRows).toHaveLength(4)
     expect(wrapper.vm.sortedData).toHaveLength(3)
@@ -194,7 +194,7 @@ describe('EOD net GEX by strike', () => {
     expect(wrapper.text()).toContain('Focus on activity')
     expect(wrapper.text()).toContain('Auto bucket')
     expect(wrapper.text()).toContain('Reset zoom')
-    expect(wrapper.text()).toContain('Snapshot')
+    expect(wrapper.text()).toContain('Download PNG')
     expect(wrapper.vm.displayPoints).toEqual([
       { label: '500', value: 0, call: 0, put: 0 },
       { label: '505', value: 2_000, call: 3_000, put: 1_000 },
@@ -244,9 +244,9 @@ describe('EOD open interest change by strike', () => {
     expect(wrapper.vm.chartData.datasets[0].data).toEqual([0, 200])
     expect(wrapper.vm.chartData.datasets[1].data).toEqual([null, -50])
     expect(wrapper.vm.totalChange).toBeNull()
-    expect(wrapper.text()).toContain('Incomplete coverage')
-    expect(wrapper.text()).toContain('Call 2/2')
-    expect(wrapper.text()).toContain('Put 1/2')
+    expect(wrapper.text()).toContain('Call readings')
+    expect(wrapper.text()).toContain('Call readings 2')
+    expect(wrapper.text()).toContain('Put readings 1')
     expect(wrapper.text()).toContain('Daily comparison against 2026-09-10')
     expect(wrapper.text()).toContain('1 trading day back')
     expect(wrapper.text()).toContain('current raw strike set')
@@ -287,7 +287,7 @@ describe('EOD open interest change by strike', () => {
     expect(wrapper.vm.tableRows[1]).toMatchObject({ call_daily: 200, call_weekly: 700 })
     expect(wrapper.text()).toContain('No dated comparison source is available')
     expect(wrapper.text()).toContain('Open interest comparison unavailable')
-    expect(wrapper.text()).toContain('No dated earlier snapshot was returned')
+    expect(wrapper.text()).toContain('No dated earlier data set was returned')
     expect(wrapper.text()).toContain('Returned daily call field')
     expect(wrapper.find('select').exists()).toBe(false)
     expect(wrapper.findAll('.strike-chart-frame__actions button').every(button => button.attributes('disabled') !== undefined)).toBe(true)
@@ -349,7 +349,7 @@ describe('EOD contract volume branch', () => {
     expect(wrapper.vm.chartData.datasets[0].data).toEqual([0, 2_500])
     expect(wrapper.vm.chartData.datasets[1].data).toEqual([null, -1_000])
     expect(wrapper.vm.totalChange).toBeNull()
-    expect(wrapper.text()).toContain('Incomplete coverage')
+    expect(wrapper.text()).toContain('Call readings')
     expect(wrapper.text()).toContain('Daily comparison against 2026-09-10')
     expect(wrapper.findAll('tbody tr')).toHaveLength(2)
     expect(wrapper.get('[data-testid="eod-volume-change-readings"]').attributes('open')).toBeUndefined()
@@ -379,7 +379,7 @@ describe('EOD contract volume branch', () => {
     expect(wrapper.vm.tableRows[1]).toMatchObject({ call_daily: 2_500, call_weekly: 8_000 })
     expect(wrapper.text()).toContain('No dated comparison source is available')
     expect(wrapper.text()).toContain('Contract volume comparison unavailable')
-    expect(wrapper.text()).toContain('No dated earlier snapshot was returned')
+    expect(wrapper.text()).toContain('No dated earlier data set was returned')
     expect(wrapper.text()).toContain('Returned daily call field')
   })
 
@@ -400,7 +400,7 @@ describe('EOD contract volume branch', () => {
     expect(wrapper.text()).toContain('Focus on activity')
     expect(wrapper.text()).toContain('Auto bucket')
     expect(wrapper.text()).toContain('Reset zoom')
-    expect(wrapper.text()).toContain('Snapshot')
+    expect(wrapper.text()).toContain('Download PNG')
     expect(wrapper.vm.displayPoints).toEqual([
       { label: '100', call: 0, put: 0 },
       { label: '105', call: 2_000, put: -1_000 },

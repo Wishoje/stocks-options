@@ -17,7 +17,7 @@
         <div class="mk-hero-copy" data-reveal data-reveal-order="0">
           <p class="mk-eyebrow">Complete feature map</p>
           <h1 class="mk-title">Explore GEX, DEX, options flow, scanners, and volatility.</h1>
-          <p class="mk-lede">Move through EOD context, stored intraday activity, scanners, watchlist, calculator, and export without losing the dates, units, or filters behind a reading.</p>
+          <p class="mk-lede">Move through EOD context, intraday activity, scanners, watchlist, calculator, and export without losing the dates, units, or filters behind a reading.</p>
           <div class="mk-actions">
             <MarketingCta location="features_hero" source="features" />
             <Link href="/pricing" class="mk-button mk-button--secondary">See current pricing</Link>
@@ -66,7 +66,7 @@
         <div class="mk-section-intro" data-reveal>
           <p class="mk-eyebrow">Feature questions</p>
           <h2 class="mk-heading">Get more from each view.</h2>
-          <p class="mk-copy">The product keeps exact returned data available while using summary cards and charts for faster scanning.</p>
+          <p class="mk-copy">Start with the key metrics, compare the charts, and inspect a reading when you want more detail.</p>
         </div>
         <div class="mk-faqs">
           <details v-for="(item, index) in featureFaqs" :key="item.q" class="mk-faq" data-reveal :data-reveal-order="index % 2">
@@ -108,6 +108,6 @@ import { useMarketingMotion } from '@/Support/marketing-motion'
 const motionRoot = useMarketingMotion()
 const page = usePage()
 const featuresTitle = computed(() => page.props.seo?.title || 'GexOptions Features - Flow, GEX Levels, DEX, Scanners, VRP & Term Structure')
-const featuresDescription = computed(() => page.props.seo?.description || 'Explore GEX Options EOD and intraday analytics, watchlist, scanners, options calculator, and structured export with timing and coverage explained.')
+const featuresDescription = computed(() => page.props.seo?.description || 'Explore GEX Options EOD and intraday analytics, watchlist, scanners, options calculator, and structured exports to compare market levels, positioning, and risk.')
 const featuresCanonical = computed(() => page.props.seo?.canonical || 'https://gexoptions.com/features')
 </script>

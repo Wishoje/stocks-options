@@ -129,7 +129,7 @@ describe('Positioning expiry pressure', () => {
     await flushPromises()
 
     expect(wrapper.find('.gex-metric').exists()).toBe(false)
-    expect(wrapper.text()).toContain('No expiry pressure snapshot yet')
+    expect(wrapper.text()).toContain('Expiry pressure is not available yet')
     expect(wrapper.text()).toContain('Retry')
   })
 
@@ -152,7 +152,7 @@ describe('Positioning expiry pressure', () => {
     expect(wrapper.text()).not.toContain('AAPL')
   })
 
-  it('retries a missing snapshot only while active and stops after three retries', async () => {
+  it('retries a missing data set only while active and stops after three retries', async () => {
     axios.get.mockResolvedValue({
       data: { symbol: 'SPY', data_date: null, headline_pin: null, entries: [] },
     })

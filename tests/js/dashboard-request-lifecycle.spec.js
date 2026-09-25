@@ -115,7 +115,7 @@ describe('Dashboard request lifecycle', () => {
 
     expect(wrapper.find('.gex-expiry-scope').exists()).toBe(false)
     expect(wrapper.text()).toContain('Unusual activity uses its own scope:')
-    expect(wrapper.text()).toContain('Independent latest completed activity snapshot')
+    expect(wrapper.text()).toContain('Independent latest completed activity data')
     expect(wrapper.vm.uaExpiryOptions.map(option => option.value)).toEqual([
       'ALL',
       '2026-09-11',
@@ -127,7 +127,7 @@ describe('Dashboard request lifecycle', () => {
     expect(calls('/api/ua')[0][1].params.include_scope).toBe(true)
   })
 
-  it('uses the dashboard snapshot for Overview Q-Score and shows local volatility scopes', async () => {
+  it('uses the dashboard data set for Overview Q-Score and shows local volatility scopes', async () => {
     const wrapper = await mountDashboard()
     await activate(wrapper, 'Overview')
     expect(wrapper.findComponent({ name: 'QScorePanel' }).props('snapshotDate')).toBe('2026-09-04')

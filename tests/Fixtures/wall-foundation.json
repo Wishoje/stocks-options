@@ -1,0 +1,15 @@
+{
+  "symbol": "SPY", "timeframe": "14d", "data_date": "2026-08-20",
+  "expiration_dates": ["2026-08-21", "2026-08-28"],
+  "view_context": {"view": "latest_eod", "session_date": "2026-08-20", "source_anchor": "2026-08-20"},
+  "put_support": 550, "call_resistance": 560, "hvl": 560,
+  "strike_data": [
+    {"strike": 550, "call_gex": 10000000, "put_gex": 20000000, "net_gex": -10000000, "put_oi_delta": 0},
+    {"strike": 560, "call_gex": 4000000, "put_gex": 1000000, "net_gex": 3000000}
+  ],
+  "social_quality": {
+    "publishable": true, "missing_input_rows": 0, "missing_expiration_count": 0,
+    "source_rows": 4, "source_dates": ["2026-08-20"], "total_open_interest": 200,
+    "missing_gamma_open_interest": 0, "missing_gamma_oi_share": 0
+  }
+}

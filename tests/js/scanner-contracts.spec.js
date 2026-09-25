@@ -233,12 +233,12 @@ describe('scanner page', () => {
     const wrapper = mountScanner()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Stored source window 2026-09-02 to 2026-09-11')
+    expect(wrapper.text()).toContain('Ranking window 2026-09-02 to 2026-09-11')
     expect(wrapper.text()).toContain('200 available / requested top 200')
     const lookbackButtons = wrapper.findAll('.scanner-toolbar fieldset').at(1).findAll('button')
     expect(lookbackButtons).toHaveLength(3)
     expect(lookbackButtons.every(button => button.attributes('disabled') !== undefined)).toBe(true)
-    expect(wrapper.text()).toContain('source-defined')
+    expect(wrapper.text()).toContain('fixed window')
     expect(axios.get.mock.calls.filter(([url]) => url === '/api/hot-options')).toHaveLength(1)
     wrapper.unmount()
   })
@@ -256,7 +256,7 @@ describe('scanner page', () => {
     const wrapper = mountScanner()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Source-defined current-session ranking')
+    expect(wrapper.text()).toContain('Current-session ranking')
     expect(window.location.search).not.toContain('days=')
     wrapper.unmount()
   })
@@ -380,7 +380,7 @@ describe('scanner page', () => {
     expect(scans).toHaveLength(2)
     expect(scans.map(([, body]) => body.symbols.length)).toEqual([500, 1])
     expect(wrapper.findAll('.scanner-wall-result')).toHaveLength(501)
-    expect(wrapper.text()).toContain('2004 requested pairs')
+    expect(wrapper.text()).toContain('2004 symbol/timeframe pairs')
     wrapper.unmount()
   })
 
@@ -475,8 +475,8 @@ describe('scanner page', () => {
     const wrapper = mountScanner()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Wall snapshots are outside the freshness window')
-    expect(wrapper.text()).toContain('4 latest rows: 4 stale')
+    expect(wrapper.text()).toContain('Wall readings are outside the freshness window')
+    expect(wrapper.text()).toContain('Current wall readings are not available. Try again after the next update.')
     expect(wrapper.text()).not.toContain('No walls matched the applied thresholds')
     wrapper.unmount()
   })

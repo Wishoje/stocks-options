@@ -48,7 +48,7 @@ const sessionLabel = computed(() => {
 
 const sourceTimeKind = computed(() => String(props.sourceTimestampStatus || '').toLowerCase() === 'legacy'
   ? 'Legacy response time'
-  : 'Provider source time')
+  : 'As of')
 
 const formattedSnapshotAsOf = computed(() => {
   if (!props.snapshotAsOf) return null

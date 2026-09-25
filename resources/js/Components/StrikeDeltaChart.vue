@@ -85,7 +85,7 @@ export default {
     emptyMessage() {
       return this.comparisonBasis === 'daily' || this.comparisonBasis === 'weekly'
         ? 'No usable call or put open interest changes were returned for these current strikes.'
-        : 'No dated earlier snapshot was returned, so change values are not plotted. Returned raw fields remain available below.'
+        : 'No dated earlier data set was returned, so change values are not plotted. Returned raw fields remain available below.'
     },
     rawRows() {
       return normalizedStrikeRows(this.strikeData)
@@ -135,9 +135,9 @@ export default {
       return this.totalCall + this.totalPut
     },
     totalChangeContext() {
-      if (this.comparisonBasis !== 'daily' && this.comparisonBasis !== 'weekly') return 'No dated comparison source'
+      if (this.comparisonBasis !== 'daily' && this.comparisonBasis !== 'weekly') return 'No comparison available'
       if (!this.comparisonCoverageComplete) {
-        return `Incomplete coverage · Call ${this.callAvailableCount}/${this.sortedData.length} · Put ${this.putAvailableCount}/${this.sortedData.length}`
+        return `Call readings ${this.callAvailableCount} · Put readings ${this.putAvailableCount}`
       }
       return this.comparisonBasis === 'daily' ? 'Call plus put daily change' : 'Call plus put weekly change'
     },
@@ -344,11 +344,11 @@ export default {
   >
     <template #help>
       <div class="gex-stack">
-        <p><strong>Open interest change</strong> compares contracts at each strike with the named source snapshot. Positive values added open interest; negative values removed it.</p>
+        <p><strong>Open interest change</strong> compares contracts at each strike with the selected comparison date. Positive values added open interest; negative values removed it.</p>
         <p>Green identifies calls and red identifies puts. Bar direction shows whether contracts increased or decreased; color identifies the option side.</p>
         <p><strong>Focus on activity</strong> narrows the visible band without deleting rows. <strong>Group dense strikes</strong> sums nearby changes while the complete daily, weekly, and percentage fields remain in the collapsed table.</p>
         <p>If a weekly fallback is active, the panel labels it and shows its comparison date. Do not read a weekly change as a one-session move.</p>
-        <p><strong>Scope:</strong> the API compares strikes in the current snapshot. Strikes that existed only in the earlier snapshot are not returned, so removals at those prior-only strikes are outside this view.</p>
+        <p><strong>Scope:</strong> the API compares strikes in the current data set. Strikes that existed only in the earlier data set are not returned, so removals at those prior-only strikes are outside this view.</p>
         <p>When no dated comparison exists, returned daily and weekly fields stay available in the collapsed table but are not plotted as a valid change.</p>
       </div>
     </template>

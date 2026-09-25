@@ -79,3 +79,8 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'subscribed
         ->middleware('eodhealth')
         ->name('eod.health');
 });
+
+// Batch 1 verification surface: local only, with the normal account access checks.
+Route::get('/wall-foundation', [\App\Http\Controllers\WallFoundationController::class, 'index'])
+    ->middleware([\App\Http\Middleware\EnsureLocalWallReview::class, 'auth:sanctum', config('jetstream.auth_session'), 'subscribed'])
+    ->name('wall-foundation.review');

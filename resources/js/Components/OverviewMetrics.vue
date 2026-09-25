@@ -24,13 +24,13 @@ function completeTotal(left, right) {
 const totalOi = computed(() => completeTotal(callOi.value, putOi.value))
 const totalVolume = computed(() => completeTotal(callVolume.value, putVolume.value))
 const comparisonContext = computed(() => {
-  if (!props.levels?.date_prev) return 'Prior source snapshot unavailable'
+  if (!props.levels?.date_prev) return 'Prior-session data not available'
   const gap = numeric(props.levels?.date_prev_gap_trading_days)
   const age = gap == null
     ? ''
     : ` (${gap} trading session${gap === 1 ? '' : 's'} back)`
   const fallback = props.levels?.date_prev_is_stale
-    ? ' The prior-session snapshot was incomplete, so this is the nearest usable comparison.'
+    ? ' The prior-session data was not usable for this comparison; the nearest available session is shown.'
     : ''
   return `Compared with ${props.levels.date_prev}${age}.${fallback}`
 })
@@ -69,14 +69,14 @@ function signedTone(value) {
 
 <template>
   <UiPanel
-    title="Options snapshot"
+    title="Options overview"
     subtitle="The main positioning and participation readings for the selected expiry scope"
     tone="data"
     data-testid="overview-metrics"
   >
     <template #actions>
       <div class="gex-row">
-        <UiBadge v-if="levels?.data_date" tone="data">Snapshot {{ levels.data_date }}</UiBadge>
+        <UiBadge v-if="levels?.data_date" tone="data">Data as of {{ levels.data_date }}</UiBadge>
         <UiBadge v-if="scopeLabel" tone="neutral">{{ scopeLabel }} scope</UiBadge>
         <UiBadge v-if="levels?.date_prev" tone="neutral">
           Prior {{ levels.date_prev }}
@@ -84,17 +84,17 @@ function signedTone(value) {
             · {{ levels.date_prev_gap_trading_days }} session<span v-if="Number(levels.date_prev_gap_trading_days) !== 1">s</span> back
           </template>
         </UiBadge>
-        <UiBadge v-if="levels?.date_prev_is_stale" tone="warning">Fallback comparison</UiBadge>
+        <UiBadge v-if="levels?.date_prev_is_stale" tone="warning">Earlier comparison</UiBadge>
         <UiHelpDialog
           id="overview-metrics-guide"
-          title="How to read the options snapshot"
+          title="How to read the options overview"
           trigger-label="Reading guide"
         >
           <div class="gex-stack">
             <p><strong>HVL</strong> is the first strike where net GEX crosses from negative to non-negative in the selected strike set. Treat it as context around a hedging transition, not a price target.</p>
             <p><strong>Volume PCR</strong> is put volume divided by call volume. A value above 1 means more put volume; below 1 means more call volume.</p>
-            <p><strong>Open interest</strong> describes outstanding contracts. <strong>Volume</strong> describes contracts traded in the snapshot. Their changes compare with the prior source date shown above.</p>
-            <p>Call and put shares always refer to the selected dashboard symbol and expiry scope. Missing source values remain unavailable instead of being converted to zero.</p>
+            <p><strong>Open interest</strong> describes outstanding contracts. <strong>Volume</strong> describes contracts traded in the reported session. Their changes compare with the comparison date shown above.</p>
+            <p>Call and put shares always refer to the selected dashboard symbol and expiry scope.</p>
           </div>
         </UiHelpDialog>
       </div>

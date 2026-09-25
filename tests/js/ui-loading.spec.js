@@ -7,7 +7,7 @@ describe('Loading feedback', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
   it('offers recovery for long requests without claiming preparation or showing fake numbers', async () => {
-    const wrapper = mount(UiLoading, { props: { title: 'Loading QQQ', message: 'Fetching the selected snapshot.', retry: true } })
+    const wrapper = mount(UiLoading, { props: { title: 'Loading QQQ', message: 'Fetching the selected data set.', retry: true } })
     expect(wrapper.attributes('aria-busy')).toBe('true')
     expect(wrapper.find('[aria-hidden="true"] .gex-loading__metrics').exists()).toBe(true)
     expect(wrapper.find('button').exists()).toBe(false)

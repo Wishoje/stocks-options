@@ -154,7 +154,7 @@ describe('IntradayFlowPanel', () => {
     expect(wrapper.text()).toContain('Call volume1.2Mcontracts')
     expect(wrapper.text()).toContain('Put volume800Kcontracts')
     expect(wrapper.text()).toContain('Estimated premium notional$1.23M')
-    expect(wrapper.text()).toContain('Current intraday snapshot')
+    expect(wrapper.text()).toContain('Current intraday data')
     expect(wrapper.getComponent(IntradayFlowChart).vm.groupDenseStrikes).toBe(true)
     expect(wrapper.get('[aria-label="Session volume"]').attributes('title')).toBe('2000000')
     expect(wrapper.get('[aria-label="Volume put/call ratio"]').attributes('title')).toBe('0.6667')
@@ -185,11 +185,11 @@ describe('IntradayFlowPanel', () => {
   it('shows stale, unknown-source, and closed states without presenting an ingestion clock as market time', async () => {
     const wrapper = mountPanel({ sourceAgeSeconds: 600, sourceLabel: 'Delayed (10m)' })
     expect(wrapper.get('.gex-status').attributes('data-state')).toBe('stale')
-    expect(wrapper.text()).toContain('Delayed intraday snapshot')
+    expect(wrapper.text()).toContain('Delayed intraday data')
 
     await wrapper.setProps({
       sourceAgeSeconds: null,
-      sourceLabel: 'Provider update time unavailable',
+      sourceLabel: 'Update time unavailable',
       responseMeta: {
         ...wrapper.props('responseMeta'),
         sourceAsOf: null,
@@ -198,8 +198,9 @@ describe('IntradayFlowPanel', () => {
       },
     })
     expect(wrapper.get('.gex-status').attributes('data-state')).toBe('sparse')
-    expect(wrapper.text()).toContain('Provider update time is unavailable')
-    expect(wrapper.text()).toContain('No receipt or ingestion time is presented as market time')
+    expect(wrapper.text()).toContain('Update time is unavailable')
+    expect(wrapper.text()).not.toContain('15:58:03')
+    expect(wrapper.text()).not.toContain('15:58:05')
 
     await wrapper.setProps({
       responseMeta: {
@@ -210,7 +211,7 @@ describe('IntradayFlowPanel', () => {
       sourceLabel: 'Market Closed',
     })
     expect(wrapper.get('.gex-status').attributes('data-state')).toBe('closed')
-    expect(wrapper.text()).toContain('Showing the last stored session snapshot')
+    expect(wrapper.text()).toContain('Showing the last stored session data')
     expect(wrapper.text()).toContain('Session updates resume at Sep 12, 9:30 AM ET')
   })
 
@@ -228,7 +229,7 @@ describe('IntradayFlowPanel', () => {
       sourceLabel: '',
     })
 
-    expect(wrapper.text()).toContain('Provider update time is unavailable')
+    expect(wrapper.text()).toContain('Update time is unavailable')
     expect(wrapper.text()).not.toContain('Source as of Sep 11')
   })
 
@@ -246,8 +247,8 @@ describe('IntradayFlowPanel', () => {
 
     expect(wrapper.get('.gex-status').attributes('data-state')).toBe('sparse')
     expect(wrapper.text()).toContain('Recent legacy response')
-    expect(wrapper.text()).toContain('Provider source time is unavailable in this response')
-    expect(wrapper.text()).not.toContain('Current intraday snapshot')
+    expect(wrapper.text()).toContain('Volume is cumulative for that session.')
+    expect(wrapper.text()).not.toContain('Current intraday data')
   })
 
   it('uses snapshot_available for no-data state and never renders an old symbol under the new heading', async () => {
@@ -275,15 +276,15 @@ describe('IntradayFlowPanel', () => {
         marketSession: { phase: 'closed', next_open_at: '2026-09-12T13:30:00Z' },
       },
     })
-    expect(wrapper.text()).toContain('No stored intraday snapshot for QQQ')
+    expect(wrapper.text()).toContain('No stored intraday data for QQQ')
     expect(wrapper.text()).not.toContain('Session volume0contracts')
     expect(wrapper.findComponent(IntradayFlowChart).exists()).toBe(false)
   })
 
-  it('keeps aligned data visible on a refresh error and exposes retry when no snapshot exists', async () => {
+  it('keeps aligned data visible on a refresh error and exposes retry when no data set exists', async () => {
     const wrapper = mountPanel({ error: 'Network unavailable' })
     expect(wrapper.get('.gex-status').attributes('data-state')).toBe('error')
-    expect(wrapper.text()).toContain('last aligned snapshot remains visible')
+    expect(wrapper.text()).toContain('last recorded readings remain visible')
     expect(wrapper.findComponent(IntradayFlowChart).exists()).toBe(true)
 
     await wrapper.setProps({

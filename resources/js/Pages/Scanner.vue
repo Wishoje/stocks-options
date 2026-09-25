@@ -102,8 +102,8 @@ const usingFallback = computed(() => universeMeta.value.source === 'fallback_db'
 const lookbackSelectable = computed(() => hotResponse.value == null || universeMeta.value.lookbackApplied === true)
 const volumeScopeLabel = computed(() => {
   if (universeMeta.value.lookbackApplied) return `${appliedVolumeScope.value.days}-day EOD fallback window`
-  if (universeMeta.value.windowStart && universeMeta.value.windowEnd) return `Stored source window ${universeMeta.value.windowStart} to ${universeMeta.value.windowEnd}`
-  return 'Source-defined current-session ranking'
+  if (universeMeta.value.windowStart && universeMeta.value.windowEnd) return `Ranking window ${universeMeta.value.windowStart} to ${universeMeta.value.windowEnd}`
+  return 'Current-session ranking'
 })
 const volumeErrorMessage = computed(() => {
   if (!error.value) return ''
@@ -152,7 +152,7 @@ const sortedWallHitsByTimeframe = computed(() => Object.fromEntries(
 const wallTradeDates = computed(() => [...new Set(wallHits.value.map(hit => hit?.trade_date).filter(Boolean))].sort().reverse())
 const modeTitle = computed(() => scannerMode.value === 'volume' ? 'Most active options underlyings' : 'Symbols trading near major GEX walls')
 const modeSubtitle = computed(() => scannerMode.value === 'volume'
-  ? 'Compare activity, put/call balance, and watchlist membership without losing the source ranking.'
+  ? 'Compare activity, put/call balance, and watchlist membership to prioritize your next chart.'
   : 'Scan the shared watchlist universe across four horizons, then inspect the wall profile or continue in the matching dashboard view.')
 const wallStatusTitle = computed(() => {
   if (wallLoading.value) return 'Scanning the wall universe'
@@ -160,19 +160,19 @@ const wallStatusTitle = computed(() => {
   if (wallHits.value.length) return `${wallHits.value.length} wall ${wallHits.value.length === 1 ? 'match' : 'matches'}`
   if (!wallUniverseSymbols.value.length) return 'No scanner universe yet'
   if (!wallCoverage.value) return 'No fresh usable wall matches returned'
-  if (wallCoverage.value.latest_rows === 0) return 'No wall snapshots returned'
-  if (wallCoverage.value.usable_rows === 0 && wallCoverage.value.stale_rows > 0) return 'Wall snapshots are outside the freshness window'
-  if (wallCoverage.value.usable_rows === 0) return 'No fresh usable wall snapshots'
+  if (wallCoverage.value.latest_rows === 0) return 'No wall readings returned'
+  if (wallCoverage.value.usable_rows === 0 && wallCoverage.value.stale_rows > 0) return 'Wall readings are outside the freshness window'
+  if (wallCoverage.value.usable_rows === 0) return 'No fresh usable wall readings'
   return 'No walls matched the applied thresholds'
 })
 const wallStatusMessage = computed(() => {
   if (!wallUniverseSymbols.value.length) return 'Add a symbol to your watchlist to create a fallback scanner universe.'
   if (wallLoading.value || wallRefreshing.value) return `${wallUniverseSymbols.value.length} symbols across ${SCANNER_TIMEFRAMES.length} timeframes in ${wallRequestCount.value} ${wallRequestCount.value === 1 ? 'request' : 'requests'}.`
-  if (wallHits.value.length) return `${wallUniverseSource.value}; authoritative wall source ${wallTradeDates.value.join(', ')}. ${wallCoverage.value?.usable_rows ?? wallHits.value.length} fresh usable rows checked.`
+  if (wallHits.value.length) return `${wallUniverseSource.value}; as of ${wallTradeDates.value.join(', ')}. ${wallCoverage.value?.usable_rows ?? wallHits.value.length} fresh usable rows checked.`
   const threshold = `${formatDecimal(appliedWallScope.value.nearPct, 1)}%${appliedWallScope.value.nearPts != null ? ` or $${formatDecimal(appliedWallScope.value.nearPts, 2)}` : ''}`
-  if (!wallCoverage.value) return `No fresh usable matches were returned within ${threshold}; this server did not report coverage details.`
-  if (wallCoverage.value.latest_rows === 0) return `${wallCoverage.value.requested_pairs} symbol/timeframe pairs were requested, but no latest snapshot rows were found.`
-  if (wallCoverage.value.usable_rows === 0) return `${wallCoverage.value.latest_rows} latest rows: ${wallCoverage.value.stale_rows} stale and ${wallCoverage.value.invalid_or_no_wall_rows} invalid or without walls.`
+  if (!wallCoverage.value) return `No fresh usable matches were returned within ${threshold}; try a wider distance filter.`
+  if (wallCoverage.value.latest_rows === 0) return `${wallCoverage.value.requested_pairs} symbol/timeframe pairs were requested, but no current readings were found.`
+  if (wallCoverage.value.usable_rows === 0) return `Current wall readings are not available. Try again after the next update.`
   return `${wallCoverage.value.usable_rows} fresh usable rows were checked; none were within ${threshold}.`
 })
 
@@ -531,7 +531,7 @@ onBeforeUnmount(() => {
                 </div>
               </fieldset>
               <fieldset>
-                <legend>Lookback window <span v-if="!lookbackSelectable">(source-defined)</span></legend>
+                <legend>Lookback window <span v-if="!lookbackSelectable">(fixed window)</span></legend>
                 <div class="gex-segmented">
                   <button v-for="option in [5, 10, 20]" :key="option" type="button" :disabled="!lookbackSelectable" :aria-pressed="lookbackSelectable ? days === option : universeMeta.effectiveDays === option" @click="days = option">{{ option }} days</button>
                 </div>
@@ -541,13 +541,12 @@ onBeforeUnmount(() => {
 
             <div class="scanner-metrics">
               <UiMetric label="Results returned" :value="formatInteger(volumeRows.length)" :context="`${formatInteger(universeMeta.availableCount)} available / requested top ${appliedVolumeScope.limit}`" tone="data" prominence="primary" />
-              <UiMetric label="Total option volume" :value="formatCompact(universeMeta.totalVol)" :context="universeMeta.windowStart && universeMeta.windowEnd ? `${universeMeta.windowStart} to ${universeMeta.windowEnd}` : (universeMeta.tradeDate ? `Source date ${universeMeta.tradeDate}` : 'Source date unavailable')" tone="data" prominence="primary" />
-              <UiMetric label="Average put/call ratio" :value="formatDecimal(universeMeta.avgPcr, 2)" :context="universeMeta.avgPcr == null ? 'Not returned by this source' : pcrTag(universeMeta.avgPcr)" :tone="pcrTone(universeMeta.avgPcr)" />
+              <UiMetric label="Total option volume" :value="formatCompact(universeMeta.totalVol)" :context="universeMeta.windowStart && universeMeta.windowEnd ? `${universeMeta.windowStart} to ${universeMeta.windowEnd}` : (universeMeta.tradeDate ? `As of ${universeMeta.tradeDate}` : 'Date unavailable')" tone="data" prominence="primary" />
+              <UiMetric label="Average put/call ratio" :value="formatDecimal(universeMeta.avgPcr, 2)" :context="universeMeta.avgPcr == null ? 'Not available' : pcrTag(universeMeta.avgPcr)" :tone="pcrTone(universeMeta.avgPcr)" />
               <UiMetric label="Watchlist matches" :value="formatInteger(watchlistHitCount)" :context="`${watchlist.length} saved symbols`" tone="positive" />
             </div>
 
-            <div class="scanner-freshness" aria-label="Volume universe provenance">
-              <UiBadge :tone="usingFallback ? 'warning' : 'data'">{{ usingFallback ? 'Local-chain fallback ranking' : (universeMeta.backendSource || universeMeta.source || 'Source unavailable') }}</UiBadge>
+            <div class="scanner-freshness" aria-label="Ranking context">
               <span>{{ volumeScopeLabel }}</span>
               <span>Universe date: {{ universeMeta.tradeDate || 'Unavailable' }}</span>
               <span v-if="refreshing" role="status">Loading top {{ pendingVolumeScope?.limit }}<template v-if="lookbackSelectable"> / {{ pendingVolumeScope?.days }} days</template>; applied rows remain visible.</span>
@@ -578,7 +577,7 @@ onBeforeUnmount(() => {
 
             <details class="scanner-raw" @toggle="rawVolumeOpen = $event.currentTarget.open">
               <summary>Exact volume scanner response</summary>
-              <p>Every field returned for this ranking request. Missing values remain absent or null.</p>
+              <p>Explore the ranking details for this scan.</p>
               <pre v-if="rawVolumeOpen">{{ safeJson(hotResponse) }}</pre>
             </details>
           </section>
@@ -603,20 +602,17 @@ onBeforeUnmount(() => {
 
             <div class="scanner-wall-context">
               <div><span class="scanner-eyebrow">Scan universe</span><strong>{{ wallUniverseSource }}</strong><small>{{ wallUniverseSymbols.length }} unique symbols / {{ wallRequestCount }} API {{ wallRequestCount === 1 ? 'request' : 'requests' }}</small></div>
-              <div><span class="scanner-eyebrow">Applied scan</span><strong>{{ formatDecimal(appliedWallScope.nearPct, 1) }}%<template v-if="appliedWallScope.nearPts != null"> or ${{ formatDecimal(appliedWallScope.nearPts, 2) }}</template> / {{ appliedWallScope.sort }}</strong><small>{{ formatScanTime(wallUpdatedAt) }}; {{ wallTradeDates.length ? `wall source ${wallTradeDates.join(', ')}` : 'no source date returned' }}</small></div>
+              <div><span class="scanner-eyebrow">Applied scan</span><strong>{{ formatDecimal(appliedWallScope.nearPct, 1) }}%<template v-if="appliedWallScope.nearPts != null"> or ${{ formatDecimal(appliedWallScope.nearPts, 2) }}</template> / {{ appliedWallScope.sort }}</strong><small>{{ formatScanTime(wallUpdatedAt) }}; {{ wallTradeDates.length ? `as of ${wallTradeDates.join(', ')}` : 'date unavailable' }}</small></div>
               <div class="scanner-wall-legend" aria-label="Wall legend"><UiBadge tone="positive"><i aria-hidden="true" /> Call wall</UiBadge><UiBadge tone="negative"><i aria-hidden="true" /> Put wall</UiBadge><UiBadge tone="data">EOD / Live</UiBadge></div>
             </div>
 
             <UiStatus v-if="wallDraftValidationMessage" id="scanner-wall-validation" state="error" title="Check the wall thresholds" :message="wallDraftValidationMessage" />
             <UiStatus v-else-if="wallError" state="error" title="Wall scan could not refresh" :message="wallHits.length ? `${wallError} Retaining results for the applied ${formatDecimal(appliedWallScope.nearPct, 1)}% threshold.` : wallError" retry @retry="loadWallHits" />
             <UiStatus v-else layout="table" :state="wallLoading || wallRefreshing ? 'loading' : (wallHits.length ? 'recorded' : 'sparse')" :title="wallStatusTitle" :message="wallStatusMessage" />
-            <div v-if="wallCoverage" class="scanner-coverage" aria-label="Wall snapshot coverage">
-              <span><b>{{ wallCoverage.requested_pairs }}</b> requested pairs</span>
-              <span><b>{{ wallCoverage.latest_rows }}</b> latest rows</span>
-              <span><b>{{ wallCoverage.usable_rows }}</b> fresh usable</span>
-              <span><b>{{ wallCoverage.stale_rows }}</b> stale</span>
-              <span><b>{{ wallCoverage.invalid_or_no_wall_rows }}</b> invalid / no wall</span>
-              <span><b>{{ wallCoverage.matched_rows }}</b> matched</span>
+            <div v-if="wallCoverage" class="scanner-coverage" aria-label="Scan results">
+              <span><b>{{ wallCoverage.requested_pairs }}</b> symbol/timeframe pairs</span>
+              <span><b>{{ wallCoverage.usable_rows }}</b> current readings</span>
+              <span><b>{{ wallCoverage.matched_rows }}</b> matches</span>
             </div>
 
             <div v-if="!wallLoading && orderedTimeframes.length" class="scanner-wall-groups">
@@ -630,7 +626,7 @@ onBeforeUnmount(() => {
                         <div><dt>Spot</dt><dd>{{ formatPrice(hit?.spot) }}</dd></div>
                         <div><dt>Nearest</dt><dd>{{ nearestWallDistance(hit)?.pct == null ? 'Unavailable' : `${formatDecimal(nearestWallDistance(hit).pct, 2)}%` }}</dd></div>
                         <div><dt>Points</dt><dd>{{ nearestWallDistance(hit)?.pts == null ? 'Unavailable' : `$${formatDecimal(nearestWallDistance(hit).pts, 2)}` }}</dd></div>
-                        <div><dt>Source date</dt><dd>{{ hit?.trade_date || 'Unavailable' }}</dd></div>
+                        <div><dt>As of</dt><dd>{{ hit?.trade_date || 'Unavailable' }}</dd></div>
                       </dl>
                     </div>
                     <div class="scanner-wall-result__tags">
@@ -660,7 +656,7 @@ onBeforeUnmount(() => {
             <template #content>
               <div class="scanner-detail">
                 <div class="scanner-detail__metrics">
-                  <UiMetric label="Spot" :value="formatPrice(wallDetail?.spot)" :context="wallDetail?.tradeDate ? `Wall source ${wallDetail.tradeDate}` : 'Wall source date unavailable'" tone="data" prominence="primary" />
+                  <UiMetric label="Spot" :value="formatPrice(wallDetail?.spot)" :context="wallDetail?.tradeDate ? `As of ${wallDetail.tradeDate}` : 'Date unavailable'" tone="data" prominence="primary" />
                   <UiMetric label="Wall strike" :value="wallDetail?.tag?.strike == null ? null : formatDecimal(wallDetail.tag.strike, 2)" :context="wallDetail?.tag?.timeframe || 'Session unavailable'" :tone="wallDetail?.tag?.side === 'call' ? 'positive' : 'negative'" prominence="primary" />
                   <UiMetric label="Distance" :value="wallDetail?.tag?.distancePct == null ? null : formatDecimal(wallDetail.tag.distancePct, 2)" unit="%" :context="wallDetail?.tag?.distancePts == null ? 'Point distance unavailable' : `$${formatDecimal(wallDetail.tag.distancePts, 2)} from spot`" />
                   <UiMetric label="EOD Net GEX near wall" :value="wallDetail?.wallGex ? formatCompact(wallDetail.wallGex.netGex) : null" :context="wallDetail?.wallGex?.pctOfMax == null ? 'EOD profile has no comparable reading' : `EOD profile comparison; ${formatDecimal(wallDetail.wallGex.pctOfMax, 1)}% of maximum absolute GEX`" :tone="wallDetail?.wallGex?.netGex > 0 ? 'positive' : (wallDetail?.wallGex?.netGex < 0 ? 'negative' : 'neutral')" />

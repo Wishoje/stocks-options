@@ -103,9 +103,9 @@ export default {
     totalContext() {
       if (!this.sortedData.length) return 'No numeric strikes were returned'
       if (!this.coverageComplete) {
-        return `Incomplete coverage / Call ${this.callAvailableCount}/${this.sortedData.length} / Put ${this.putAvailableCount}/${this.sortedData.length}`
+        return `Call readings ${this.callAvailableCount} / Put readings ${this.putAvailableCount}`
       }
-      return 'Call plus put returned estimate; zero can include unavailable-input fallback'
+      return 'Combined call and put premium estimate'
     },
     largestStrike() {
       return this.sortedData.reduce((largest, row) => {
@@ -312,11 +312,11 @@ export default {
   >
     <template #help>
       <div class="gex-stack">
-        <p><strong>Session premium estimate</strong> is the cumulative option premium notional attributed to calls and puts at each strike in the current intraday snapshot. Values are US dollars.</p>
+        <p><strong>Session premium estimate</strong> is the cumulative option premium notional attributed to calls and puts at each strike in the current intraday data. Values are US dollars.</p>
         <p>Green identifies calls and red identifies puts. The stacked height is their combined estimate. This is not profit and loss, trade direction, or a claim that every contract was bought.</p>
-        <p>A returned null remains unavailable. The endpoint initializes an absent side to zero, and a missing price input also contributes zero. A displayed zero is therefore the returned estimate, but it does not prove measured $0 premium. Incomplete returned-field coverage is labeled above the chart.</p>
+        <p>Premium estimates help compare activity across strikes. They are price-based estimates, not confirmed cash flows.</p>
         <p><strong>Focus on activity</strong> narrows the visible band without deleting data. <strong>Group dense strikes</strong> sums nearby call and put dollar values. Every original row and field remains in the collapsed table.</p>
-        <p>The endpoint aggregates its included expirations by strike. Repriced GEX fields travel with the same rows and remain inspectable below, but they are not premium values. The returned net_gex_delta field currently uses a zero baseline and is not presented as a time change.</p>
+        <p>Each bar combines the selected expirations at that strike. Inspect a bar to compare its call and put premium.</p>
       </div>
     </template>
 
@@ -370,7 +370,7 @@ export default {
 
     <template #details>
       <UiDataTable
-        caption="Every field and row returned for the intraday strike snapshot"
+        caption="Every field and row returned for the intraday strike data set"
         :rows="rawRows"
         :columns="tableColumns"
         row-key="__row_key"

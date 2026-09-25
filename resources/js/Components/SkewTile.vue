@@ -82,7 +82,7 @@ function errorMessage(reason, fallback) {
 
 const activeBucket = computed(() => bucket())
 const scopeKey = computed(() => `${props.symbol}:${tab.value}`)
-const scopeLabel = computed(() => `${activeBucket.value.label} target · nearest expiry by calendar days for each snapshot`)
+const scopeLabel = computed(() => `${activeBucket.value.label} target · nearest expiry by calendar days for each observation date`)
 const dailySkewChangeDisplay = computed(() => {
   const change = numeric(row.value?.skew_pc_dod)
   if (change == null) return null
@@ -314,7 +314,7 @@ onUnmounted(() => {
             <p><strong>Skew:</strong> put IV minus call IV at 25 delta, shown in percentage points. About −1 to +1 pp is near flat, +2 to +5 pp is moderate put skew, +5 pp or more is steep put skew, and −1 pp or less is a call-skew tilt.</p>
             <p><strong>Curvature:</strong> the quadratic term of implied volatility versus log-moneyness near at-the-money. Positive curvature indicates a stronger smile and relatively expensive wings; negative curvature indicates relatively inexpensive wings.</p>
             <p><strong>Quality:</strong> the badge appears only when quote-fit diagnostics are supplied. At least 20 usable quotes and a k span of at least 0.05 are treated as adequate.</p>
-            <p>The server chooses the expiry nearest to the target calendar days for each snapshot and prefers a non-past expiry on ties. DTE can therefore vary across history rows.</p>
+            <p>The server chooses the expiry nearest to the target calendar days for each observation date and prefers a non-past expiry on ties. DTE can therefore vary across history rows.</p>
           </div>
         </UiHelpDialog>
       </div>
@@ -332,12 +332,12 @@ onUnmounted(() => {
         title="Loading skew scope"
         :message="`${symbol} · ${scopeLabel}. Summary and history update together.`"
       />
-    <UiStatus v-else-if="!row && !historyPayload.length" :state="summaryError && historyError ? 'error' : 'sparse'" title="No skew snapshot yet" :message="err || 'Try another expiry bucket or retry when the snapshot is ready.'" retry @retry="fetchSkew" />
+    <UiStatus v-else-if="!row && !historyPayload.length" :state="summaryError && historyError ? 'error' : 'sparse'" title="Skew data is not available yet" :message="err || 'Try another expiry bucket or retry when the data set is ready.'" retry @retry="fetchSkew" />
     <template v-else>
     <UiStatus
       v-if="err"
       :state="summaryError && historyError ? 'error' : 'sparse'"
-      :title="summaryError && historyError ? 'Skew unavailable' : 'Skew data is incomplete'"
+      :title="summaryError && historyError ? 'Skew unavailable' : 'Some skew readings are not available yet'"
       :message="err"
       retry
       @retry="fetchSkew"
@@ -346,8 +346,8 @@ onUnmounted(() => {
     <div class="gex-row" style="margin: 16px 0">
       <UiBadge tone="data">{{ activeBucket.label }} target</UiBadge>
       <UiBadge v-if="row?.exp" tone="neutral">Expiry {{ row.exp }}</UiBadge>
-      <UiBadge v-if="summaryDte != null" tone="neutral">{{ summaryDte }} calendar DTE at snapshot</UiBadge>
-      <UiBadge v-if="row?.data_date" tone="data">Snapshot {{ row.data_date }}</UiBadge>
+      <UiBadge v-if="summaryDte != null" tone="neutral">{{ summaryDte }} calendar DTE at the data date</UiBadge>
+      <UiBadge v-if="row?.data_date" tone="data">Data as of {{ row.data_date }}</UiBadge>
       <UiBadge v-if="hasQuoteDiagnostics" :tone="qualityTone">Quality {{ qualityText }}</UiBadge>
       <UiBadge tone="neutral">{{ historyPayload.length }} daily readings</UiBadge>
     </div>
@@ -381,7 +381,7 @@ onUnmounted(() => {
         :value="dailySkewChangeDisplay"
         unit="pp"
         :tone="numeric(row?.skew_pc_dod) == null || numeric(row?.skew_pc_dod) === 0 ? 'neutral' : numeric(row?.skew_pc_dod) > 0 ? 'positive' : 'negative'"
-        context="Compared with the prior available snapshot for this expiry"
+        context="Compared with the prior available reading for this expiry"
       />
     </div>
 
@@ -398,7 +398,7 @@ onUnmounted(() => {
         label="Daily curvature change"
         :value="fixed(row?.curvature_dod)"
         tone="data"
-        context="Compared with the prior available snapshot for this expiry"
+        context="Compared with the prior available reading for this expiry"
       />
     </div>
     <p v-else class="gex-inline-status" role="status">Curvature is not available for this expiry. The IV and skew readings above remain available.</p>
@@ -413,22 +413,22 @@ onUnmounted(() => {
         :scope="scopeLabel"
         :scope-key="scopeKey"
         @reading-inspected="emit('reading-inspected')"
-        explanation="Skew in percentage points equals (25-delta put IV − 25-delta call IV) × 100. Positive values mean puts carry more implied volatility; negative values mean calls carry more. Each history row uses the expiry nearest to the selected calendar-day target on that snapshot date."
+        explanation="Skew in percentage points equals (25-delta put IV − 25-delta call IV) × 100. Positive values mean puts carry more implied volatility; negative values mean calls carry more. Each history row uses the expiry nearest to the selected calendar-day target on that observation date."
       >
         <template #calculation>
           <dl class="gex-stack gex-small" style="margin-top: 12px">
             <div><dt class="gex-muted">Selected target</dt><dd>{{ activeBucket.days }} calendar days</dd></div>
             <div><dt class="gex-muted">Selected expiry</dt><dd>{{ row?.exp ?? 'Unavailable' }}</dd></div>
-            <div><dt class="gex-muted">Snapshot/source date</dt><dd>{{ row?.data_date ?? 'Unavailable' }} / {{ row?.source_chain_date ?? 'Unavailable' }}</dd></div>
+            <div><dt class="gex-muted">As of</dt><dd>{{ row?.data_date ?? 'Unavailable' }}</dd></div>
             <div v-if="hasQuoteDiagnostics"><dt class="gex-muted">Quality result</dt><dd>{{ qualityText }}</dd></div>
-            <div><dt class="gex-muted">History coverage</dt><dd>{{ historyChartRows.filter(item => numeric(item.value) != null).length }} available of {{ historyChartRows.length }} returned</dd></div>
+            <div><dt class="gex-muted">History readings</dt><dd>{{ historyChartRows.length }} daily readings</dd></div>
           </dl>
         </template>
       </UiHistory>
 
       <details aria-label="Complete skew history readings" data-testid="skew-history-complete">
         <summary>Complete skew history · {{ historyPayload.length }} readings</summary>
-        <p class="gex-small gex-muted">Every field and every row returned by the selected history request remains available here.</p>
+        <p class="gex-small gex-muted">Explore the daily readings for your selected timeframe.</p>
         <UiDataTable
           caption="Skew history fields"
           :rows="historyPayload"
