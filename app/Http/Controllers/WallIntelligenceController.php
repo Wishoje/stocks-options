@@ -27,7 +27,7 @@ class WallIntelligenceController extends Controller
             return $response;
         }
         $levels = $response->getData(true);
-        $key = 'wall-intelligence:v1:'.hash('sha256', json_encode([$levels, $version]));
+        $key = 'wall-intelligence:v2:'.hash('sha256', json_encode([$levels, $version]));
         $result = Cache::remember($key, now()->addMinutes(5), fn () => app(WallIntelligenceService::class)->build($levels));
         abort_if($version !== $versions->current(EodCacheVersion::DOMAIN_GEX, $symbol), 409, 'Refresh the dashboard to update wall analysis.');
 

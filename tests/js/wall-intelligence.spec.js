@@ -72,4 +72,31 @@ describe('Wall intelligence', () => {
     expect(metrics).toEqual(['0.0×', '—', '0.0%', '—'])
     wrapper.unmount()
   })
+
+  it('shows current reference exposure and explains changed expiration baskets without invented history', async () => {
+    const source = levels(), response = result(source)
+    Object.assign(response.walls.put[0], {
+      gex_magnitude_change_1d_pct: null, top_three_streak_sessions: null, oi_change_1d: null,
+      history: [
+        { date: '2026-09-30', net_gex: null, display_net_gex: -100, display_status: 'current_reference', comparable: false },
+        { date: '2026-09-29', net_gex: null, display_net_gex: null, display_status: 'expiry_scope_changed', comparable: false },
+        { date: '2026-09-28', net_gex: null, display_net_gex: null, display_status: 'no_comparison', comparable: false },
+      ],
+    })
+    axios.get.mockResolvedValue({ data: response })
+    const wrapper = render(source); await flushPromises()
+    const days = wrapper.findAll('.history-day')
+    expect(days[0].text()).toContain('Not compared')
+    expect(days[1].text()).toContain('Different expirations')
+    expect(days[1].find('i').exists()).toBe(false)
+    expect(days[2].text()).toContain('Current level')
+    expect(days[2].find('i').exists()).toBe(true)
+    expect(days[2].get('b').text()).toBe(wrapper.get('.wall-reading strong').text())
+    expect(wrapper.text()).toContain('Expiration set changed')
+    expect(wrapper.text()).toContain('shown for reference')
+    expect(wrapper.text()).toContain('A dash means not compared, never zero exposure')
+    expect(wrapper.text()).toContain('They are not the length of the history chart')
+    expect(wrapper.text()).toContain('not a count of successful price holds')
+    wrapper.unmount()
+  })
 })

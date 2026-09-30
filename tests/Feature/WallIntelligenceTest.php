@@ -100,6 +100,21 @@ class WallIntelligenceTest extends TestCase
         $this->assertNull($result['walls']['put'][0]['distance_pct']);
     }
 
+    public function test_current_history_matches_headline_when_a_contract_uses_the_existing_gamma_fallback(): void
+    {
+        DB::table('option_chain_data')->where('data_date', '2026-09-30')->where('option_type', 'call')->update(['gamma' => null]);
+        $levels = $this->levels();
+        $levels['strike_data'][0]['call_gex'] = 0;
+        $levels['strike_data'][0]['net_gex'] = -20000000;
+        $wall = app(WallIntelligenceService::class)->build($levels)['walls']['put'][0];
+        $this->assertSame(-200000.0, $wall['net_gex']);
+        $this->assertSame($wall['net_gex'], $wall['history'][0]['display_net_gex']);
+        $this->assertSame('current_reference', $wall['history'][0]['display_status']);
+        $this->assertFalse($wall['history'][0]['comparable']);
+        $this->assertNull($wall['gex_magnitude_change_1d_pct']);
+        $this->assertNull($wall['top_three_streak_sessions']);
+    }
+
     public function test_changed_chain_generation_cannot_be_attached_to_cached_levels(): void
     {
         DB::table('option_chain_data')->where('data_date', '2026-09-30')->update(['gamma' => 4]);

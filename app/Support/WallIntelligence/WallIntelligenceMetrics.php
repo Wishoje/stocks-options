@@ -20,6 +20,7 @@ final class WallIntelligenceMetrics
             $days[$session] = [
                 'comparable' => $this->comparable($rows, $expiries, $session, $minSideRatio),
                 'strikes' => $this->byStrike($rows),
+                'expiries' => array_values(array_unique(array_column($rows, 'expiry'))),
             ];
         }
         $walls = [];
@@ -52,8 +53,23 @@ final class WallIntelligenceMetrics
                     // A newly listed expiry/strike is not a zero historical reading.
                     $sameStrikeExpiries = $r && $r['expiries'] === $reading['expiries'];
                     $usable = $currentComparable && $day['comparable'] && $sameStrikeExpiries && $r['inputs_valid'] && $reading['inputs_valid'];
+                    $isCurrent = $session === $date;
+                    $scopeMatches = count(array_diff($expiries, $day['expiries'])) === 0
+                        && count(array_diff($day['expiries'], $expiries)) === 0;
+                    $status = match (true) {
+                        $isCurrent => $usable ? 'current' : 'current_reference',
+                        $usable => 'comparable',
+                        $day['expiries'] !== [] && (! $scopeMatches || ($r && ! $sameStrikeExpiries)) => 'expiry_scope_changed',
+                        default => 'no_comparison',
+                    };
                     $series[] = [
                         'date' => $session, 'net_gex' => $usable ? $r['net_gex'] : null,
+                        // Display the same current exposure as the headline without
+                        // treating it as evidence for a historical change or streak.
+                        'display_net_gex' => $isCurrent ? $reading['net_gex'] : ($usable ? $r['net_gex'] : null),
+                        'display_status' => $status, 'is_current' => $isCurrent,
+                        'selected_expiry_count' => count($expiries),
+                        'recorded_expiry_count' => count(array_intersect($expiries, $day['expiries'])),
                         'open_interest' => $usable ? $r['open_interest'] : null,
                         'rank' => $usable ? $this->rank($day['strikes'], $strike, $side) : null,
                         'comparable' => $usable,
@@ -109,6 +125,7 @@ final class WallIntelligenceMetrics
                 'neighbors' => 'Nearest two available strikes below and two above; target excluded; mean absolute net GEX, including zero peers.',
                 'expiry_share' => 'Absolute net GEX for an expiry divided by the sum of absolute expiry net GEX at this strike.',
                 'history' => 'Retrospective EOD reconstruction using the current fixed expiry set across five consecutive market sessions. A gap stops the streak; not point-in-time signal validation.',
+                'history_display' => 'display_net_gex shows the current headline even when comparable is false. Only comparable readings support daily changes and streaks. expiry_scope_changed is a different expiry basket, not zero exposure.',
                 'persistence' => 'Consecutive comparable sessions in the top three net-GEX strikes on the same side, including the current session; capped at five.',
                 'change' => '100 * (abs(current) - abs(previous)) / abs(previous). Zero baseline returns null. Sign changes are separate. GEX changes do not establish OI changes.',
             ],

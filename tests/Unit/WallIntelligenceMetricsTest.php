@@ -97,4 +97,44 @@ class WallIntelligenceMetricsTest extends TestCase
             $this->assertSame(1, $r['top_three_streak_sessions'], $case);
         }
     }
+
+    public function test_current_exposure_is_visible_without_creating_a_change_or_streak(): void
+    {
+        $current = $this->row(100, -100);
+        $current['inputs_valid'] = false;
+        $wall = $this->calculate([$current], ['2026-09-29' => [$this->row(100, -50, date: '2026-09-29')]])['walls']['put'][0];
+        $this->assertSame($wall['net_gex'], $wall['history'][0]['display_net_gex']);
+        $this->assertSame('current_reference', $wall['history'][0]['display_status']);
+        $this->assertFalse($wall['history'][0]['comparable']);
+        $this->assertNull($wall['history'][0]['net_gex']);
+        $this->assertNull($wall['gex_magnitude_change_1d_pct']);
+        $this->assertNull($wall['oi_change_1d']);
+        $this->assertNull($wall['top_three_streak_sessions']);
+    }
+
+    public function test_changed_expiry_basket_is_explicit_without_displaying_partial_totals(): void
+    {
+        $wall = $this->calculate([$this->row(100, -100), $this->row(100, -50, '2026-10-09')],
+            ['2026-09-29' => [$this->row(100, -80, date: '2026-09-29')]], ['2026-10-02', '2026-10-09'])['walls']['put'][0];
+        $this->assertSame(-150.0, $wall['history'][0]['display_net_gex']);
+        $this->assertSame('current', $wall['history'][0]['display_status']);
+        $this->assertSame('expiry_scope_changed', $wall['history'][1]['display_status']);
+        $this->assertSame(2, $wall['history'][1]['selected_expiry_count']);
+        $this->assertSame(1, $wall['history'][1]['recorded_expiry_count']);
+        $this->assertNull($wall['history'][1]['display_net_gex']);
+        $this->assertNull($wall['gex_magnitude_change_1d_pct']);
+        $this->assertSame(1, $wall['top_three_streak_sessions']);
+        $this->assertSame('no_comparison', $wall['history'][2]['display_status']);
+    }
+
+    public function test_matching_zero_history_and_mixed_current_dates_keep_distinct_display_states(): void
+    {
+        $wall = $this->calculate([$this->row(100, 0)], ['2026-09-29' => [$this->row(100, 0, date: '2026-09-29')]])['walls']['put'][0];
+        $this->assertSame(0.0, $wall['history'][1]['display_net_gex']);
+        $this->assertSame('comparable', $wall['history'][1]['display_status']);
+        $mixed = $this->calculate([$this->row(100, -10, date: '2026-09-29')])['walls']['put'][0];
+        $this->assertSame(-10.0, $mixed['history'][0]['display_net_gex']);
+        $this->assertSame('current_reference', $mixed['history'][0]['display_status']);
+        $this->assertNull($mixed['top_three_streak_sessions']);
+    }
 }
