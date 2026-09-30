@@ -18,6 +18,41 @@ beforeEach(() => { axios.get.mockReset(); window.history.replaceState({}, '', '/
 afterEach(() => { vi.useRealTimers() })
 
 describe('Intraday wall tracker', () => {
+  it('offers real recorded scopes with dates and opens one without changing the EOD scope', async () => {
+    window.history.replaceState({}, '', '/dashboard?timeframe=7d&wall_timeframe=14d')
+    axios.get.mockResolvedValueOnce({ data: { ...payload('AAPL'), session: null, sessions: [], segments: [],
+      availability: { state: 'model_not_ready', message: 'Wall tracking is not ready for AAPL.' },
+      available_scopes: [{ timeframe: '30d', session: '2026-09-30', readings: 45 }, { timeframe: '90d', session: '2026-09-29', readings: 1 }] } })
+      .mockResolvedValueOnce({ data: { ...payload('AAPL'), timeframe: '30d' } })
+    const wrapper = mount(IntradayWallTracker, { props: { symbol: 'AAPL' } }); await flushPromises()
+    expect(wrapper.text()).toContain('No readings recorded for AAPL · 2W')
+    expect(wrapper.text()).not.toContain('Wall tracking is not ready for AAPL.')
+    const options = wrapper.findAll('.wall-tracker__recorded-scopes button')
+    expect(options.map(button => button.text())).toEqual(['Open 1M45 readings · 2026-09-30', 'Open 3M1 reading · 2026-09-29'])
+    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(false)
+    await options[0].trigger('click'); await flushPromises()
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    expect(axios.get.mock.calls[1][1].params).toMatchObject({ symbol: 'AAPL', timeframe: '30d' })
+    expect(axios.get.mock.calls[1][1].params.session).toBeUndefined()
+    expect(window.location.search).toBe('?timeframe=7d&wall_timeframe=30d')
+    expect(wrapper.get('.wall-tracker__scope button[aria-pressed="true"]').text()).toBe('1M')
+    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(true)
+    expect(wrapper.find('.wall-tracker__recorded-scopes').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('can open a recorded session in the same scope when the selected session is empty', async () => {
+    axios.get.mockResolvedValueOnce({ data: { ...payload(), segments: [], session: '2026-09-29',
+      available_scopes: [{ timeframe: '14d', session: '2026-09-30', readings: 2 }] } })
+      .mockResolvedValueOnce({ data: payload() })
+    const wrapper = render(); await flushPromises()
+    expect(wrapper.text()).toContain('No readings recorded for SPY · 2W · 2026-09-29')
+    await wrapper.get('.wall-tracker__recorded-scopes button').trigger('click'); await flushPromises()
+    expect(axios.get.mock.calls[1][1].params).toMatchObject({ timeframe: '14d', session: '2026-09-30' })
+    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('changes expiry scope without changing EOD scope and rejects a late scope response', async () => {
     window.history.replaceState({}, '', '/dashboard?timeframe=7d&wall_timeframe=30d')
     axios.get.mockResolvedValueOnce({ data: { ...payload(), timeframe: '30d' } })

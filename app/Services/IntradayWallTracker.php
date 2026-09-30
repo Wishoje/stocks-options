@@ -175,8 +175,32 @@ class IntradayWallTracker
         $result['local_demo_available'] = app()->environment('local');
         $result['truncated'] = $records->count() === 500;
         $result['availability'] = $this->availability($symbol, $session, $observations !== [], $timeframe);
+        $result['available_scopes'] = $observations === [] ? $this->recordedScopes($symbol) : [];
 
         return $result;
+    }
+
+    private function recordedScopes(string $symbol): array
+    {
+        $base = WallObservation::where('symbol', $symbol)->where('dataset', 'intraday_capture')
+            ->where('schema_version', IntradayWallModel::SCHEMA)->where('observation_kind', 'model_observation');
+        // Bound the lookup to recent recorded sessions. Only aggregate metadata
+        // is loaded; the stored contracts and timeline payloads stay in the DB.
+        $dates = (clone $base)->select('analysis_session')->distinct()->orderByDesc('analysis_session')
+            ->limit(10)->pluck('analysis_session')->all();
+        if (! $dates) {
+            return [];
+        }
+        $scopes = $base->whereIn('analysis_session', $dates)
+            ->whereIn('payload_json->scope->timeframe', self::TIMEFRAMES)
+            ->select(['payload_json->scope->timeframe as timeframe', 'analysis_session'])
+            ->selectRaw('COUNT(*) as readings')->groupBy('payload_json->scope->timeframe', 'analysis_session')
+            ->orderByDesc('analysis_session')->get()->unique('timeframe')->keyBy('timeframe');
+
+        return collect(self::TIMEFRAMES)->filter(fn ($scope) => $scopes->has($scope))->map(fn ($scope) => [
+            'timeframe' => $scope, 'session' => (string) $scopes[$scope]->analysis_session,
+            'readings' => (int) $scopes[$scope]->readings,
+        ])->values()->all();
     }
 
     private function availability(string $symbol, ?string $session, bool $hasReadings, string $timeframe): array

@@ -35,7 +35,19 @@
         <span v-if="sessionLatest">As of {{ time(sessionLatest.observed_at) }} ET · {{ sessionReadingCount }} {{ sessionReadingCount === 1 ? 'reading' : 'readings' }} this session</span>
         <button v-if="data.local_demo_available" type="button" @click="chooseDemo(!demo)">{{ demo ? 'Return to recorded sessions' : 'Preview local demonstration' }}</button>
       </div>
-      <p v-if="!data.segments.length" class="wall-tracker__empty">{{ data.availability?.message || `No wall readings have been recorded yet for ${symbol}. Eligible symbols are checked every five minutes during market sessions.` }}</p>
+      <div v-if="!data.segments.length" class="wall-tracker__empty" role="status">
+        <template v-if="data.available_scopes?.length">
+          <h3>No readings recorded for {{ symbol }} · {{ scopeLabel(scope) }}{{ data.session ? ` · ${data.session}` : '' }}</h3>
+          <p>Open a recorded scope below. Each scope follows a different set of option expirations.</p>
+          <div class="wall-tracker__recorded-scopes" aria-label="Recorded wall scopes">
+            <button v-for="option in data.available_scopes" :key="option.timeframe" type="button" @click="openRecordedScope(option)">
+              <strong>Open {{ scopeLabel(option.timeframe) }}</strong>
+              <span>{{ option.readings }} {{ option.readings === 1 ? 'reading' : 'readings' }} · {{ option.session }}</span>
+            </button>
+          </div>
+        </template>
+        <p v-else>{{ data.availability?.message || `No wall readings have been recorded yet for ${symbol}. Eligible symbols are checked every five minutes during market sessions.` }}</p>
+      </div>
       <template v-else>
         <p class="wall-tracker__model">Modeled with changing price and time. Prior-session open interest and IV stay fixed.</p>
         <p v-if="data.truncated">Showing the latest 500 readings for this session.</p>
@@ -112,6 +124,7 @@ import { useIntradayWalls } from '@/composables/useIntradayWalls'
 const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean })
 defineEmits(['open-eod'])
 const scopeOptions = [{ value: '0d', label: '0DTE' }, { value: '1d', label: '1DTE' }, { value: '7d', label: '1W' }, { value: '14d', label: '2W' }, { value: '30d', label: '1M' }, { value: '90d', label: '3M' }]
+const scopeLabel = value => scopeOptions.find(option => option.value === value)?.label || value
 const readScope = () => {
   const value = new URLSearchParams(window.location.search).get('wall_timeframe')
   return scopeOptions.some(option => option.value === value) ? value : '14d'
@@ -127,6 +140,12 @@ const restoreScope = () => { scope.value = readScope() }
 window.addEventListener('popstate', restoreScope)
 onScopeDispose(() => window.removeEventListener('popstate', restoreScope))
 const { data, loading, refreshing, error, demo, load, chooseSession, chooseDemo } = useIntradayWalls(() => props.symbol, () => scope.value)
+function openRecordedScope(option) {
+  // A different scope loads its latest recorded session. The same scope can
+  // also offer a newer session when the user chose a date without readings.
+  if (scope.value === option.timeframe) chooseSession(option.session)
+  else chooseScope(option.timeframe)
+}
 const sides = ['put', 'call'], segmentIndex = ref(0), selectedIndex = ref(0)
 const chartElement = ref(null), chartWidth = ref(840)
 let observer
@@ -194,6 +213,7 @@ function download() {
 </script>
 
 <style scoped>
+.wall-tracker__empty h3{font-size:1rem;font-weight:650;margin-bottom:6px}.wall-tracker__recorded-scopes{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.wall-tracker__recorded-scopes button{text-align:left;display:grid;gap:5px;min-width:180px;padding:12px 16px;border-color:#526f93}.wall-tracker__recorded-scopes strong{color:#a7ceff;font-size:.95rem}.wall-tracker__recorded-scopes span{color:#bfccdd;font-size:.78rem}
 .wall-tracker__scope{margin:20px 0 12px;min-width:0}.wall-tracker__scope legend{font-size:.8rem;font-weight:650;margin-bottom:8px}.wall-tracker__scope .wall-tracker__actions{justify-content:flex-start;gap:6px}.wall-tracker__scope button[aria-pressed="true"]{background:#304869;border-color:#93bdfa;color:#fff}.wall-tracker__scope p{margin-top:8px;font-size:.78rem}
 .wall-tracker{padding:clamp(16px,2vw,26px);margin-bottom:20px;border:1px solid #354052;border-radius:16px;background:#171c27;color:#e7edf6}
 .wall-tracker__header,.wall-tracker__actions,.wall-tracker__context,.wall-tracker__legend{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}

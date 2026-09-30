@@ -150,6 +150,45 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertSame('BBB', Cache::get('walls:capture-cursor'));
     }
 
+    public function test_empty_history_offers_the_latest_recorded_session_and_count_for_each_scope(): void
+    {
+        $this->travelTo($this->now());
+        $tracker = app(IntradayWallTracker::class);
+        $this->rows('2026-09-28');
+        DB::table('underlying_quotes')->update(['asof' => '2026-09-29 14:00:00']);
+        $tracker->capture('SPY', $this->now()->subDay(), '30d');
+        $tracker->capture('SPY', $this->now()->subDay(), '90d');
+        $this->rows();
+        DB::table('underlying_quotes')->update(['asof' => '2026-09-30 14:00:00']);
+        $first = $tracker->capture('SPY', $this->now(), '30d');
+        DB::table('underlying_quotes')->update(['asof' => '2026-09-30 14:05:00']);
+        $tracker->capture('SPY', $this->now()->addMinutes(5), '30d');
+
+        // Neither demonstration records nor other symbols/record kinds inflate counts.
+        foreach ([['dataset' => 'synthetic_review'], ['symbol' => 'QQQ'],
+            ['schema_version' => 'other.v1'], ['observation_kind' => 'model_inputs']] as $attributes) {
+            $copy = WallObservation::findOrFail($first['id'])->replicate();
+            $copy->forceFill($attributes + ['content_hash' => hash('sha256', json_encode($attributes))])->save();
+        }
+        $expected = [
+            ['timeframe' => '30d', 'session' => '2026-09-30', 'readings' => 2],
+            ['timeframe' => '90d', 'session' => '2026-09-29', 'readings' => 1],
+        ];
+        $empty = $tracker->history('SPY', null, '14d');
+        $this->assertSame([], $empty['segments']);
+        $this->assertSame('14d', $empty['timeframe']);
+        $this->assertSame($expected, $empty['available_scopes']);
+        $this->assertSame($expected, $tracker->history('SPY', '2026-09-28', '30d')['available_scopes']);
+        $this->assertSame([], $tracker->history('SPY', null, '30d')['available_scopes']);
+        $this->assertSame([], $tracker->history('AAPL')['available_scopes']);
+        $this->assertNotContains('90d', $tracker->requestedTimeframes('SPY'));
+        $this->signIn();
+        $this->getJson('/api/intraday/walls?symbol=SPY&timeframe=14d')->assertOk()
+            ->assertJsonPath('available_scopes', $expected)->assertJsonCount(0, 'segments');
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
     private function signIn(bool $entitled = true): void
     {
         $user = (new User)->forceFill(['id' => 987, 'email' => 'review@example.test', 'trial_ends_at' => $entitled ? now()->addDays(2) : null]);
