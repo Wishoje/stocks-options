@@ -1,0 +1,96 @@
+import { mount, flushPromises } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import axios from 'axios'
+import GammaProfile from '@/Components/GammaProfile.vue'
+vi.mock('axios', () => ({ default: { get: vi.fn() } }))
+const levels = (symbol = 'SPY', timeframe = '14d') => ({ symbol, timeframe, data_date: '2026-09-30', expiration_dates: ['2026-10-02'], view_context: { view: 'next_session', session_date: '2026-10-01' } })
+const result = source => ({ ...source, schema_version: 'gamma-profile.v1', status: 'ready', regime: 'positive_gamma', current_sign: 1,
+  net_gex_at_spot: 10000, reference_price: { value: 100, live: false }, gamma_flip: 95, flip_status: 'single_crossing', distance_to_flip_pct: 5,
+  crossings: [{ price: 95, below_sign: -1, above_sign: 1 }], audit: { zero_dte_floor_rows: 0 },
+  curve: [{ price: 90, net_gex: -5000 }, { price: 95, net_gex: 0 }, { price: 100, net_gex: 10000 }, { price: 110, net_gex: 15000 }] })
+const render = source => mount(GammaProfile, { props: { levels: source, scopeLabel: '2W' } })
+async function expand(wrapper) { wrapper.get('details').element.open = true; await wrapper.get('details').trigger('toggle') }
+beforeEach(() => axios.get.mockReset())
+
+describe('Gamma regime and flip', () => {
+  it('starts at EOD close and lets users inspect without changing the summary or requesting new data', async () => {
+    const source = levels(); axios.get.mockResolvedValue({ data: result(source) })
+    const wrapper = render(source); expect(wrapper.text()).toContain('Calculating SPY')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Positive gamma')
+    expect(wrapper.text()).toContain('5.00% below the EOD close')
+    expect(wrapper.find('svg').exists()).toBe(false)
+    await expand(wrapper)
+    expect(wrapper.get('input[type="range"]').element.value).toBe('2')
+    await wrapper.get('input[type="range"]').setValue('0')
+    expect(wrapper.get('.chart-heading').text()).toContain('Inspect $90.00')
+    expect(wrapper.get('.metrics').text()).toContain('Positive gamma')
+    await wrapper.findAll('button').find(b => b.text() === 'Back to EOD close').trigger('click')
+    expect(wrapper.get('input[type="range"]').element.value).toBe('2')
+    await wrapper.get('.crossings button').trigger('click')
+    expect(wrapper.get('.chart-heading').text()).toContain('Inspect $95.00')
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    expect(axios.get.mock.calls[0][1].params).toMatchObject({ symbol: 'SPY', timeframe: '14d', view: 'next_session', session_date: '2026-10-01' })
+    wrapper.unmount()
+  })
+  it('displays every crossing without inventing a single flip', async () => {
+    const source = levels(), data = result(source)
+    Object.assign(data, { gamma_flip: null, flip_status: 'multiple_crossings', distance_to_flip_pct: null })
+    data.crossings.push({ price: 105, below_sign: 1, above_sign: -1 })
+    axios.get.mockResolvedValue({ data })
+    const wrapper = render(source); await flushPromises(); await expand(wrapper)
+    expect(wrapper.get('.metrics').text()).toContain('2 crossings')
+    expect(wrapper.findAll('.crossings button')).toHaveLength(2)
+    expect(wrapper.get('.metrics').text()).not.toContain('5.00%')
+    wrapper.unmount()
+  })
+  it('handles flat and no-crossing curves with a visible zero baseline', async () => {
+    const source = levels(), data = result(source)
+    Object.assign(data, { gamma_flip: null, flip_status: 'no_crossing', regime: 'balanced', current_sign: 0, net_gex_at_spot: 0, crossings: [] })
+    data.curve = data.curve.map(p => ({ ...p, net_gex: 0 }))
+    axios.get.mockResolvedValue({ data })
+    const wrapper = render(source); await flushPromises(); await expand(wrapper)
+    expect(wrapper.text()).toContain('Balanced gamma')
+    expect(wrapper.text()).toContain('No crossing in range')
+    expect(wrapper.get('svg path').attributes('d')).not.toMatch(/NaN|Infinity/)
+    wrapper.unmount()
+  })
+  it('cancels the old scope and ignores its late response', async () => {
+    let first, second
+    axios.get.mockImplementationOnce(() => new Promise(resolve => { first = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { second = resolve }))
+    const source = levels(), next = levels('QQQ', '7d'), wrapper = render(source)
+    const signal = axios.get.mock.calls[0][1].signal
+    await wrapper.setProps({ levels: next })
+    expect(signal.aborted).toBe(true)
+    first({ data: result(source) }); await flushPromises()
+    expect(wrapper.find('.metrics').exists()).toBe(false)
+    second({ data: result(next) }); await flushPromises()
+    expect(wrapper.find('.metrics').exists()).toBe(true)
+    wrapper.unmount()
+    expect(axios.get.mock.calls[1][1].signal.aborted).toBe(true)
+  })
+  it('rejects a different EOD view and offers retry; not-ready responses never show a fabricated regime', async () => {
+    const source = levels()
+    axios.get.mockResolvedValueOnce({ data: { ...result(source), view_context: { view: 'latest_eod' } } })
+      .mockResolvedValueOnce({ data: { ...result(source), status: 'not_ready', curve: [], crossings: [], regime: null } })
+    const wrapper = render(source); await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    await wrapper.findAll('button').find(b => b.text() === 'Retry gamma profile').trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('not ready for the selected EOD view')
+    expect(wrapper.find('.metrics').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('opens the reading guide in a dialog with the model and crossing limitations', async () => {
+    const source = levels(); axios.get.mockResolvedValue({ data: result(source) })
+    const wrapper = render(source); await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Reading guide').trigger('click')
+    await flushPromises()
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog.textContent).toContain('one-minute time floor')
+    expect(dialog.textContent).toContain('or HVL')
+    expect(dialog.textContent).toContain('not a trade trigger')
+    wrapper.unmount()
+  })
+})

@@ -46,6 +46,11 @@ const indicatorOptions = [
     description: 'Option, vol, momentum, and seasonality blend with explanations.',
   },
   {
+    key: 'gamma_profile',
+    label: 'Gamma regime & flip',
+    description: 'Scoped EOD price-scenario curve, all detected crossings, reference close, and model assumptions.',
+  },
+  {
     key: 'dealer_positioning',
     label: 'Dealer positioning',
     description: 'DEX by expiry and total dealer delta positioning.',

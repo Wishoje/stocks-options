@@ -275,14 +275,14 @@ onUnmounted(() => {
 <template>
   <UiPanel
     title="Dealer positioning"
-    subtitle="Net dealer delta by expiry with fixed 2W gamma context"
+    subtitle="Net dealer delta by expiry · separate stored 2W gamma context"
     tone="data"
     data-testid="dealer-positioning"
   >
     <template #actions>
       <div class="gex-row">
         <UiBadge v-if="dataDate" tone="data">Data as of {{ dataDate }}</UiBadge>
-        <UiBadge tone="neutral">Gamma scope 2W</UiBadge>
+        <UiBadge tone="neutral">Stored gamma · fixed 2W</UiBadge>
         <UiHelpDialog
           id="dealer-positioning-guide"
           title="How to read dealer positioning"
@@ -291,7 +291,7 @@ onUnmounted(() => {
           <div class="gex-stack">
             <p><strong>DEX</strong> is approximately Σ(Delta × open interest × 100) across the chain. Positive net delta commonly supports selling advances and buying declines; negative net delta can require dealers to chase moves.</p>
             <p><strong>Gamma sign</strong> describes whether hedging flows tend to dampen or amplify price moves. Regime strength is the coherence ratio |Σ GammaNotional| / Σ|GammaNotional|, not a probability.</p>
-            <p>The gamma label uses the fixed 14 calendar-day GEX request. Changing the dashboard expiry timeframe does not filter this panel.</p>
+            <p>Stored gamma uses a fixed 14 calendar-day scope and provider Greeks. The Gamma regime &amp; flip panel above recalculates gamma from fixed IV for the selected dashboard scope. Different scope and modeling assumptions can produce different signs. Changing the dashboard expiry timeframe does not filter this DEX panel.</p>
             <dl class="gex-grid gex-small">
               <div><dt class="gex-muted">Response symbol</dt><dd>{{ responseSymbol ?? symbol }}</dd></div>
               <div><dt class="gex-muted">DEX data date</dt><dd>{{ dataDate ?? 'Unavailable' }}</dd></div>
@@ -331,13 +331,13 @@ onUnmounted(() => {
         />
         <UiMetric
           prominence="primary"
-          label="Gamma regime"
+          label="Stored gamma · fixed 2W"
           :value="gammaLabel"
           :tone="gammaTone"
-          context="Fixed 14 calendar-day GEX context"
+          context="Provider-Greek context; separate from the selected scenario profile"
         />
         <UiMetric
-          label="Regime strength"
+          label="Stored gamma coherence"
           :value="percent(strength, 0)"
           unit="% coherence"
           tone="data"

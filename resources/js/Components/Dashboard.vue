@@ -314,6 +314,8 @@
           <UiButton @click="navigateWallView('eod', 'positioning')">Explore wall analysis</UiButton>
           <UiButton @click="navigateWallView('intraday', 'walls')">Track during the session</UiButton>
         </div>
+        <GammaProfile v-if="dataMode === 'eod' && activeTab === 'positioning' && levels?.symbol === userSymbol && levels?.timeframe === gexTf && levels?.view_context?.view === eodView"
+          :levels="levels" :scope-label="selectedTimeframeLabel" />
         <!-- OVERVIEW (EOD) -->
         <section
           v-show="activeTab==='overview' && dataMode==='eod'"
@@ -832,6 +834,7 @@ import UiSelect from './UI/UiSelect.vue'
 import UiStatus from './UI/UiStatus.vue'
 import OverviewMetrics from './OverviewMetrics.vue'
 import WallLevels from './WallLevels.vue'
+import GammaProfile from './GammaProfile.vue'
 import FirstUseGuide from './FirstUseGuide.vue'
 import { recordFirstUsefulReading as recordFirstUsefulReadingEvent } from '@/Support/first-use.js'
 
