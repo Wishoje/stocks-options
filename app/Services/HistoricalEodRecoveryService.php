@@ -1925,10 +1925,8 @@ class HistoricalEodRecoveryService
         if ($iv === null) {
             return null;
         }
-        if ($iv > 1.0) {
-            $iv /= 100.0;
-        }
-
+        // Massive snapshots and their archived intraday rows use decimal IV.
+        // Values above 1.0 are above 100%, not percentage-formatted inputs.
         return $iv > 0 ? $iv : null;
     }
 
@@ -2153,7 +2151,7 @@ class HistoricalEodRecoveryService
             'strike_band_pct' => max(0.0, (float) config('services.massive.eod_strike_band_pct', 2.0)),
             'min_keep_oi' => max(0, (int) config('services.massive.eod_min_keep_oi', 1)),
             'min_keep_vol' => max(0, (int) config('services.massive.eod_min_keep_vol', 1)),
-            'iv_rule' => 'numeric_gt_1_divide_100_nonpositive_null',
+            'iv_rule' => 'decimal_v1_positive_finite_nonpositive_null',
             'greek_rule' => 'target_session_provider_with_exact_archive_fallback_gamma_gates_delta_and_vega',
         ];
     }

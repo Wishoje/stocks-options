@@ -344,17 +344,9 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                                 continue;
                             }
 
-                            $ivRaw = $opt['impliedVolatility'] ?? null;
-                            $iv = null;
-                            if ($ivRaw !== null) {
-                                $iv = (float) $ivRaw;
-                                if ($iv > 1.0) {
-                                    $iv = $iv / 100.0;
-                                }
-                                if ($iv <= 0) {
-                                    $iv = null;
-                                }
-                            }
+                            // Both chain adapters supply decimal IV: 1.5 means
+                            // 150%, not 1.5%. Never infer units from magnitude.
+                            $iv = $this->decimalIv($opt['impliedVolatility'] ?? null);
 
                             $T = $this->timeToExpirationYears($expTs);
 
@@ -440,6 +432,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                     'min_keep_vol' => $this->minKeepVol,
                     'min_side_strike_ratio' => $this->minSideStrikeRatio,
                     'repair_partial_expiries' => $this->repairPartialExpiries,
+                    'iv_unit' => 'decimal',
+                    'iv_normalization_version' => 'decimal.v1',
                 ], $providerMeta);
                 Log::channel('eod_repair')->info('eod.fetch.symbol.ok', $meta);
                 $this->storeFetchMeta($symbol, $date, $meta);
@@ -2325,16 +2319,7 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
             $oi = (int) ($c['open_interest'] ?? 0);
             $vol = (int) ($session['volume'] ?? 0);
 
-            $iv = $c['implied_volatility'] ?? null;
-            if ($iv !== null) {
-                $iv = (float) $iv;
-                if ($iv > 1.0) {
-                    $iv = $iv / 100.0;
-                }
-                if ($iv <= 0) {
-                    $iv = null;
-                }
-            }
+            $iv = $this->decimalIv($c['implied_volatility'] ?? null);
 
             if (! isset($byExp[$expDate])) {
                 $byExp[$expDate] = [
@@ -2346,10 +2331,8 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
                 ];
             }
 
-            // Pass pre-computed Greeks from the API (Polygon provides them directly).
-            // We prefer these over our own IV-derived computation because the IV > 1.0
-            // conversion in this normalizer is wrong for Polygon's decimal IV format,
-            // which causes near-zero gamma for high-IV far-OTM options.
+            // Keep provider Greeks when present; corrected decimal IV is used
+            // only when the writer must compute fallback Greeks.
             $apiGreeks = $c['greeks'] ?? [];
             $apiGamma = isset($apiGreeks['gamma']) ? (float) $apiGreeks['gamma'] : null;
             $apiDelta = isset($apiGreeks['delta']) ? (float) $apiGreeks['delta'] : null;
@@ -2367,6 +2350,16 @@ class FetchOptionChainDataJob extends QueueJob implements ShouldQueue
         }
 
         return $byExp;
+    }
+
+    protected function decimalIv(mixed $value): ?float
+    {
+        if (! is_numeric($value)) {
+            return null;
+        }
+        $iv = (float) $value;
+
+        return is_finite($iv) && $iv > 0 ? $iv : null;
     }
 
     /**

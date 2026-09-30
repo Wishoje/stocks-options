@@ -1267,7 +1267,7 @@ class HistoricalEodRecoveryServiceTest extends TestCase
                 $row['gamma'] = 0.023;
                 $row['delta'] = 0.44;
                 $row['vega'] = 0.31;
-                $row['implied_volatility'] = 0.29;
+                $row['implied_volatility'] = 1.29;
             }
 
             return $row;
@@ -1320,7 +1320,7 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         $this->assertEqualsWithDelta(0.023, (float) $persisted->gamma, 0.00000001);
         $this->assertEqualsWithDelta(0.44, (float) $persisted->delta, 0.00000001);
         $this->assertEqualsWithDelta(0.31, (float) $persisted->vega, 0.00000001);
-        $this->assertEqualsWithDelta(0.29, (float) $persisted->iv, 0.00000001);
+        $this->assertEqualsWithDelta(1.29, (float) $persisted->iv, 0.00000001);
     }
 
     public function test_recovery_does_not_replace_present_snapshot_greeks_when_gamma_alone_uses_archive_fallback(): void
@@ -1407,12 +1407,12 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         ];
     }
 
-    public function test_archive_normalization_matches_eod_null_zero_and_percent_iv_rules(): void
+    public function test_archive_normalization_preserves_high_decimal_iv_and_null_zero_rules(): void
     {
         $archiveRows = $this->validArchiveRows();
         $archiveRows[0]['open_interest'] = null;
         $archiveRows[0]['volume'] = 1;
-        $archiveRows[0]['implied_volatility'] = 20.0;
+        $archiveRows[0]['implied_volatility'] = 1.5;
         $archiveRows[0]['delta'] = 0.0;
         $archiveRows[0]['gamma'] = 0.0;
         $archiveRows[0]['vega'] = 0.0;
@@ -1440,13 +1440,23 @@ class HistoricalEodRecoveryServiceTest extends TestCase
         $put = $rows->firstWhere('option_type', 'put');
         $this->assertSame(0, (int) $call->open_interest);
         $this->assertSame(1, (int) $call->volume);
-        $this->assertEqualsWithDelta(0.2, (float) $call->iv, 0.00000001);
+        $this->assertEqualsWithDelta(1.5, (float) $call->iv, 0.00000001);
         $this->assertSame(0.0, (float) $call->delta);
         $this->assertSame(0.0, (float) $call->gamma);
         $this->assertSame(0.0, (float) $call->vega);
         $this->assertSame(1, (int) $put->open_interest);
         $this->assertSame(0, (int) $put->volume);
         $this->assertNull($put->iv);
+    }
+
+    public function test_current_snapshot_recovery_preserves_iv_above_one(): void
+    {
+        [$runDirectory, $validation] = $this->validatedRun(failureMode: 'high_snapshot_iv');
+        $published = $this->service()->publish($runDirectory, (string) $validation['candidate_sha256']);
+        $this->assertTrue((bool) ($published['ok'] ?? false), json_encode($published));
+        $iv = DB::table('option_chain_data as o')->join('option_expirations as e', 'e.id', '=', 'o.expiration_id')
+            ->where('e.expiration_date', self::FUTURE_EXPIRY)->where('o.option_type', 'call')->value('o.iv');
+        $this->assertEqualsWithDelta(1.75, (float) $iv, .00000001);
     }
 
     public function test_publish_rolls_back_the_whole_symbol_when_an_insert_fails(): void
@@ -1812,6 +1822,9 @@ class HistoricalEodRecoveryServiceTest extends TestCase
                 }
 
                 $contract = $this->currentContract($expiry, $side);
+                if ($failureMode === 'high_snapshot_iv') {
+                    $contract['implied_volatility'] = 1.75;
+                }
                 if ($failureMode === 'missing_underlying' && $expiry === self::FUTURE_EXPIRY && $side === 'call') {
                     unset($contract['underlying_asset']['ticker']);
                     unset($contract['details']['underlying_ticker']);
@@ -2157,10 +2170,10 @@ class HistoricalEodRecoveryServiceTest extends TestCase
     }
 
     /** @param null|array<int,array<string,mixed>> $archiveRows @return array{0:string,1:array<string,mixed>} */
-    private function validatedRun(?array $archiveRows = null): array
+    private function validatedRun(?array $archiveRows = null, string $failureMode = ''): array
     {
         $requests = [];
-        $this->fakeProvider($requests);
+        $this->fakeProvider($requests, failureMode: $failureMode);
         [$archivePath, $archiveSha] = $this->writeArchive($archiveRows ?? $this->validArchiveRows());
         $runDirectory = $this->runDirectory();
 
