@@ -8,7 +8,7 @@
       </div>
       <div class="wall-tracker__actions">
         <button v-if="showEodLink" type="button" @click="$emit('open-eod')">Explore EOD wall analysis</button>
-        <button type="button" :disabled="loading" @click="load">{{ loading ? 'Loading…' : 'Refresh timeline' }}</button>
+        <button type="button" :disabled="loading || refreshing" @click="load">{{ loading ? 'Loading…' : refreshing ? 'Refreshing…' : 'Refresh timeline' }}</button>
         <button v-if="data?.segments.length" type="button" @click="download">Export timeline JSON</button>
       </div>
     </header>
@@ -23,7 +23,7 @@
 
     <p v-if="demo" class="wall-tracker__demo" role="status">Local demonstration · Synthetic prices and contracts. These are example readings for reviewing the interface.</p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <div v-else-if="loading" class="wall-tracker__loading" role="status">Loading {{ symbol }} wall history…</div>
+    <div v-if="loading" class="wall-tracker__loading" role="status">Loading {{ symbol }} wall history…</div>
     <template v-else-if="data">
       <div class="wall-tracker__context">
         <span v-if="!demo && data.quote_delay_seconds > 0">Quotes delayed {{ Math.round(data.quote_delay_seconds / 60) }} min · Times shown are market times</span>
@@ -32,7 +32,7 @@
             <option v-for="date in data.sessions" :key="date" :value="date">{{ date }}</option>
           </select>
         </label>
-        <span v-if="latest">As of {{ time(latest.observed_at) }} ET · {{ observations.length }} readings</span>
+        <span v-if="sessionLatest">As of {{ time(sessionLatest.observed_at) }} ET · {{ sessionReadingCount }} {{ sessionReadingCount === 1 ? 'reading' : 'readings' }} this session</span>
         <button v-if="data.local_demo_available" type="button" @click="chooseDemo(!demo)">{{ demo ? 'Return to recorded sessions' : 'Preview local demonstration' }}</button>
       </div>
       <p v-if="!data.segments.length" class="wall-tracker__empty">{{ data.availability?.message || `No wall readings have been recorded yet for ${symbol}. Eligible symbols are checked every five minutes during market sessions.` }}</p>
@@ -63,6 +63,8 @@
         </div>
         <div class="wall-tracker__chart">
           <div class="wall-tracker__legend"><span class="put">● Put wall</span><span class="call">● Call wall</span><span class="price">— Price</span></div>
+          <p v-if="data.segments.length > 1">Showing {{ observations.length }} of {{ sessionReadingCount }} session readings in this comparison window.</p>
+          <p v-if="observations.length === 1" role="status">One reading in this window. The dots show the current levels; lines appear after another reading.</p>
           <svg ref="chartElement" :viewBox="`0 0 ${chartWidth} 260`" role="img" :aria-label="`Put and call wall levels for ${symbol}; select a reading below for values`">
             <g v-for="tick in ticks" :key="tick">
               <line x1="65" :y1="y(tick)" :x2="chartWidth - 20" :y2="y(tick)" stroke="currentColor" opacity=".14" />
@@ -74,20 +76,24 @@
             <template v-for="side in sides" :key="`${side}-point`">
               <circle v-if="selected?.walls[side]?.[0]" :cx="x(selectedIndex)" :cy="y(selected.walls[side][0].strike)" r="5" :fill="side === 'put' ? '#ef9d8f' : '#7ee0b0'" />
             </template>
-            <text x="65" y="251">{{ time(observations[0]?.observed_at) }} ET</text>
-            <text :x="chartWidth - 20" y="251" text-anchor="end">{{ time(latest?.observed_at) }} ET</text>
+            <circle v-if="Number.isFinite(selected?.spot)" class="wall-tracker__price-point" :cx="x(selectedIndex)" :cy="y(selected.spot)" r="6" fill="#1b2230" stroke="#93bdfa" stroke-width="2"><title>Price {{ number(selected.spot, 2) }}</title></circle>
+            <text v-if="observations.length === 1" :x="x(0)" y="251" text-anchor="middle">{{ time(latest?.observed_at) }} ET</text>
+            <template v-else>
+              <text x="65" y="251">{{ time(observations[0]?.observed_at) }} ET</text>
+              <text :x="chartWidth - 20" y="251" text-anchor="end">{{ time(latest?.observed_at) }} ET</text>
+            </template>
           </svg>
           <label class="wall-tracker__scrubber">Inspect reading <strong>{{ time(selected?.observed_at) }} ET</strong>
             <input v-model.number="selectedIndex" type="range" min="0" :max="Math.max(0, observations.length - 1)" :disabled="observations.length < 2" aria-label="Inspect wall reading" :aria-valuetext="`${time(selected?.observed_at)} ET, put ${number(selected?.walls.put?.[0]?.strike)}, call ${number(selected?.walls.call?.[0]?.strike)}`" />
           </label>
         </div>
-        <p class="wall-tracker__interpretation">A stable wall is an area to monitor, not confirmation of support or resistance. Migration shows a change in the leading strike; it does not confirm a breakout.</p>
+        <p class="wall-tracker__interpretation">The leading wall strike can stay unchanged while price and exposure change. Price can trade above or below either wall. A stable wall is an area to monitor, not confirmation of support or resistance. Migration shows a change in the leading strike; it does not confirm a breakout.</p>
         <details>
           <summary>Session readings and model details</summary>
           <p>{{ data.model_description }}</p>
           <p>Open interest and IV date: {{ latest?.provenance.oi_date }}. Each expiry uses its own remaining time to the modeled regular-session close.</p>
           <div class="wall-tracker__table"><table>
-            <caption>Selected comparison window · {{ observations.length }} readings · Times in ET</caption>
+            <caption>Selected comparison window · {{ observations.length }} {{ observations.length === 1 ? 'reading' : 'readings' }} · Times in ET</caption>
             <thead><tr><th>Time</th><th>Price</th><th>Put wall</th><th>Call wall</th><th>Net GEX / 1%</th></tr></thead>
             <tbody><tr v-for="(row, index) in observations" :key="row.observed_at" :class="{ selected: index === selectedIndex }">
               <td><button type="button" @click="selectedIndex = index">{{ time(row.observed_at) }}</button></td><td>{{ number(row.spot, 2) }}</td>
@@ -120,7 +126,7 @@ function chooseScope(value) {
 const restoreScope = () => { scope.value = readScope() }
 window.addEventListener('popstate', restoreScope)
 onScopeDispose(() => window.removeEventListener('popstate', restoreScope))
-const { data, loading, error, demo, load, chooseSession, chooseDemo } = useIntradayWalls(() => props.symbol, () => scope.value)
+const { data, loading, refreshing, error, demo, load, chooseSession, chooseDemo } = useIntradayWalls(() => props.symbol, () => scope.value)
 const sides = ['put', 'call'], segmentIndex = ref(0), selectedIndex = ref(0)
 const chartElement = ref(null), chartWidth = ref(840)
 let observer
@@ -137,12 +143,24 @@ const segment = computed(() => data.value?.segments[segmentIndex.value])
 const observations = computed(() => segment.value?.observations || [])
 const latest = computed(() => observations.value.at(-1))
 const selected = computed(() => observations.value[selectedIndex.value])
-watch(data, value => { segmentIndex.value = Math.max(0, (value?.segments.length || 1) - 1) })
-watch(observations, value => { selectedIndex.value = Math.max(0, value.length - 1) })
+const sessionReadingCount = computed(() => data.value?.segments.reduce((total, item) => total + item.observations.length, 0) || 0)
+const sessionLatest = computed(() => data.value?.segments.at(-1)?.observations.at(-1))
+watch(segmentIndex, () => { selectedIndex.value = Math.max(0, observations.value.length - 1) }, { flush: 'sync' })
+watch(data, (value, previous) => {
+  const oldWindow = previous?.segments[segmentIndex.value]
+  const oldReading = oldWindow?.observations[selectedIndex.value]
+  const sameContext = previous && value && ['symbol', 'session', 'timeframe', 'dataset'].every(key => previous[key] === value[key])
+  const followingLatest = segmentIndex.value === previous?.segments.length - 1 && selectedIndex.value === oldWindow?.observations.length - 1
+  const preservedWindow = sameContext && !followingLatest
+    ? value.segments.findIndex(item => item.id === oldWindow?.id && item.observations[0]?.observed_at === oldWindow?.observations[0]?.observed_at) : -1
+  segmentIndex.value = preservedWindow >= 0 ? preservedWindow : Math.max(0, (value?.segments.length || 1) - 1)
+  const preservedReading = preservedWindow >= 0 ? observations.value.findIndex(item => item.observed_at === oldReading?.observed_at) : -1
+  selectedIndex.value = preservedReading >= 0 ? preservedReading : Math.max(0, observations.value.length - 1)
+})
 const number = (value, digits = 0) => Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: digits }) : '—'
 const compact = value => Number.isFinite(value) ? value.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 2, signDisplay: 'exceptZero' }) : '—'
 const time = value => value ? new Date(value).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) : '—'
-const reason = value => ({ first_observation: 'Session start', scope_changed: 'Expiry scope changed', inputs_changed: 'Model inputs updated', observation_gap: 'New observations after a pause', same_time_revision: 'Revised reading', quote_source_changed: 'Price basis changed' }[value] || 'New comparison')
+const reason = value => ({ first_observation: 'First recorded reading', scope_changed: 'Expiry scope changed', inputs_changed: 'Model inputs updated', observation_gap: 'New observations after a pause', same_time_revision: 'Revised reading', quote_source_changed: 'Price basis changed' }[value] || 'New comparison')
 const migrationLabel = migration => migration?.amount == null ? 'Building the comparison' : migration.amount === 0 ? 'Unchanged · 0 points' : `${migration.amount > 0 ? '↑ Up' : '↓ Down'} ${number(Math.abs(migration.amount), 2)} points`
 const range = computed(() => {
   const values = observations.value.flatMap(row => [row.spot, ...sides.map(side => row.walls[side]?.[0]?.strike)]).filter(Number.isFinite)

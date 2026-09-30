@@ -61,6 +61,26 @@ class IntradayWallTrackerTest extends TestCase
         return CarbonImmutable::parse('2026-09-30 14:01:00', 'UTC');
     }
 
+    public function test_refresh_window_uses_the_market_calendar_and_early_close(): void
+    {
+        $tracker = app(IntradayWallTracker::class);
+        foreach ([
+            ['2026-09-30T14:00:00Z', '2026-09-30T20:15:00+00:00'],
+            ['2026-09-30T20:05:00Z', '2026-09-30T20:15:00+00:00'],
+            ['2026-09-30T20:15:00Z', null],
+            ['2026-09-30T12:00:00Z', null],
+            ['2026-10-03T14:00:00Z', null],
+            ['2026-11-26T15:00:00Z', null],
+            ['2026-11-27T17:00:00Z', '2026-11-27T18:15:00+00:00'],
+        ] as [$at, $until]) {
+            $this->travelTo(CarbonImmutable::parse($at));
+            $response = $tracker->response('SPY', null, []);
+            $this->assertSame($until, $response['refresh_until']);
+            $this->assertSame(substr($at, 0, 10), $response['market_session_date']);
+        }
+        $this->travelBack();
+    }
+
     public function test_any_ready_options_symbol_is_discovered_and_recorded(): void
     {
         DB::table('underlying_quotes')->insert([

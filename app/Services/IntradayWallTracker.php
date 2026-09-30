@@ -208,10 +208,15 @@ class IntradayWallTracker
 
     public function response(string $symbol, ?string $session, array $observations, string $timeframe = '14d'): array
     {
+        $market = MarketSession::describe();
+
         return ['schema_version' => IntradayWallModel::SCHEMA, 'symbol' => $symbol, 'session' => $session,
             'dataset' => 'intraday_capture', 'timeframe' => $timeframe, 'units' => 'USD_per_1pct_move',
             'model_version' => IntradayWallModel::MODEL, 'generated_at' => now()->toIso8601String(),
             'quote_delay_seconds' => (int) config('wall_tracking.quote_delay_seconds', 0),
+            'market_session_date' => $market['session_date'],
+            'refresh_until' => $market['refresh_allowed']
+                ? CarbonImmutable::parse($market['closes_at'])->addMinutes(15)->toIso8601String() : null,
             'model_description' => 'Modeled walls using changing price and time, with prior-session OI and IV held fixed. Zero interest and dividends; 100-share contracts; European gamma approximation.',
             'migration_basis' => 'last_strike_minus_first_comparable_strike',
             'segments' => (new IntradayWallModel)->timeline($observations),

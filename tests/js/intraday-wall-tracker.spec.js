@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import axios from 'axios'
 import IntradayWallTracker from '@/Components/IntradayWallTracker.vue'
 vi.mock('axios', () => ({ default: { get: vi.fn() } }))
@@ -15,6 +15,7 @@ const payload = (symbol = 'SPY') => ({ symbol, schema_version: 'intraday-walls.v
   model_description: 'Prior-session OI and IV held fixed.' })
 const render = () => mount(IntradayWallTracker, { props: { symbol: 'SPY' } })
 beforeEach(() => { axios.get.mockReset(); window.history.replaceState({}, '', '/') })
+afterEach(() => { vi.useRealTimers() })
 
 describe('Intraday wall tracker', () => {
   it('changes expiry scope without changing EOD scope and rejects a late scope response', async () => {
@@ -71,6 +72,21 @@ describe('Intraday wall tracker', () => {
     wrapper.unmount()
   })
 
+  it.each([80, 120])('keeps a lone price outside the walls visible at %s', async spot => {
+    const data = payload()
+    data.segments[0].observations = [{ ...reading('00'), spot }]
+    axios.get.mockResolvedValue({ data })
+    const wrapper = render(); await flushPromises()
+    const marker = wrapper.get('.wall-tracker__price-point')
+    expect(Number(marker.attributes('cy'))).toBeGreaterThan(20)
+    expect(Number(marker.attributes('cy'))).toBeLessThan(225)
+    expect(marker.text()).toBe(`Price ${spot}`)
+    expect(wrapper.text()).toContain('1 reading this session')
+    expect(wrapper.text()).toContain('lines appear after another reading')
+    expect(wrapper.findAll('svg text').filter(label => label.text() === '10:00 AM ET')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
   it('cancels old requests and ignores late results when the symbol changes', async () => {
     let first, second
     axios.get.mockImplementationOnce(() => new Promise(resolve => { first = resolve }))
@@ -116,8 +132,86 @@ describe('Intraday wall tracker', () => {
     const wrapper = render(); await flushPromises()
     expect(wrapper.get('.wall-tracker__metric--put strong').text()).toBe('90')
     expect(wrapper.text()).toContain('Model inputs updated')
+    expect(wrapper.text()).toContain('3 readings this session')
+    expect(wrapper.text()).toContain('Showing 1 of 3 session readings')
     await wrapper.get('[aria-label="Wall comparison window"]').setValue('0')
     expect(wrapper.get('.wall-tracker__metric--put strong').text()).toBe('95')
+    wrapper.unmount()
+  })
+
+  it('refreshes visible current sessions without clearing the chart or losing an inspected point', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:10:00Z'))
+    const data = { ...payload(), market_session_date: '2026-09-30', refresh_until: '2026-09-30T20:15:00Z' }
+    let finish
+    axios.get.mockResolvedValueOnce({ data }).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = render(); await flushPromises()
+    await wrapper.get('input[type="range"]').setValue('0')
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(true)
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(axios.get).toHaveBeenCalledTimes(2) // No overlapping request.
+    const updated = structuredClone(data)
+    updated.segments[0].observations.push(reading('10', 90, 115))
+    finish({ data: updated }); await flushPromises()
+    expect(wrapper.get('input[type="range"]').element.value).toBe('0')
+    expect(wrapper.get('.wall-tracker__metric--call strong').text()).toBe('105')
+    expect(wrapper.text()).toContain('3 readings this session')
+    await wrapper.get('input[type="range"]').setValue('2')
+    const later = structuredClone(updated)
+    later.segments.push({ ...later.segments[0], id: 2, start_reason: 'observation_gap', observations: [reading('30', 85, 120)] })
+    axios.get.mockResolvedValue({ data: later })
+    await vi.advanceTimersByTimeAsync(60000); await flushPromises()
+    expect(wrapper.get('.wall-tracker__metric--call strong').text()).toBe('120')
+    expect(wrapper.text()).toContain('4 readings this session')
+    wrapper.unmount()
+    const count = axios.get.mock.calls.length
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(axios.get).toHaveBeenCalledTimes(count)
+  })
+
+  it('pauses hidden tabs, resumes once visible and retains the chart with rate-limit backoff', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:10:00Z'))
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const data = { ...payload(), market_session_date: '2026-09-30', refresh_until: '2026-09-30T20:15:00Z' }
+    axios.get.mockResolvedValueOnce({ data }).mockRejectedValueOnce({ response: { status: 429, headers: { 'retry-after': '180' } } }).mockResolvedValue({ data })
+    const wrapper = render(); await flushPromises()
+    visibility.mockReturnValue('hidden')
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    visibility.mockReturnValue('visible'); document.dispatchEvent(new Event('visibilitychange')); await flushPromises()
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Please wait a moment')
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(60000); await flushPromises()
+    expect(axios.get).toHaveBeenCalledTimes(3)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('does not automatically refresh a chosen historical session or local demonstration', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:10:00Z'))
+    const data = { ...payload(), market_session_date: '2026-09-30', refresh_until: '2026-09-30T20:15:00Z' }
+    axios.get.mockResolvedValueOnce({ data }).mockResolvedValueOnce({ data: { ...data, session: '2026-09-29' } })
+      .mockResolvedValueOnce({ data: { ...data, dataset: 'synthetic_review' } })
+    const wrapper = render(); await flushPromises()
+    await wrapper.get('[aria-label="Wall timeline session"]').setValue('2026-09-29'); await flushPromises()
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    await wrapper.get('.wall-tracker__context button').trigger('click'); await flushPromises()
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(axios.get).toHaveBeenCalledTimes(3)
+    wrapper.unmount()
+  })
+
+  it('stops automatic refresh when the server collection window ends', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T20:14:30Z'))
+    axios.get.mockResolvedValue({ data: { ...payload(), market_session_date: '2026-09-30', refresh_until: '2026-09-30T20:15:00Z' } })
+    const wrapper = render(); await flushPromises()
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(axios.get).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 
