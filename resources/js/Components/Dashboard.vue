@@ -290,6 +290,7 @@
           :levels="levels"
           :symbol="userSymbol"
           :scope-label="selectedTimeframeLabel"
+          intelligence-enabled
           :show-chart-link="activeTab === 'overview'"
           @open-chart="activate('strikes')"
         />

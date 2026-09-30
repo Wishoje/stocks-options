@@ -36,6 +36,11 @@ const indicatorOptions = [
     description: 'Full EOD GEX payload including strike data and wall levels.',
   },
   {
+    key: 'wall_intelligence',
+    label: 'Wall intelligence',
+    description: 'Wall concentration, expiry contributions, closing-price distance and same-expiry EOD history.',
+  },
+  {
     key: 'qscore',
     label: 'Q-score',
     description: 'Option, vol, momentum, and seasonality blend with explanations.',
@@ -483,7 +488,7 @@ onUnmounted(() => {
               <div class="rounded-2xl border border-gray-800 bg-gray-900/90 p-5">
                 <h3 class="text-lg font-semibold text-white">Export options</h3>
                 <p class="mt-1 text-sm text-gray-400">
-                  GEX payloads use one timeframe. Everything else pulls the latest available EOD-style dataset for each symbol.
+                  GEX levels and Wall intelligence use the selected timeframe and analysis view. Other indicators use their own EOD scopes.
                 </p>
 
                 <div class="mt-4">
@@ -541,6 +546,7 @@ onUnmounted(() => {
                   items[].summary.unusual_activity<br>
                   items[].wall_snapshots<br>
                   items[].gex_levels<br>
+                  items[].wall_intelligence<br>
                   items[].qscore<br>
                   items[].dealer_positioning<br>
                   items[].expiry_pressure<br>

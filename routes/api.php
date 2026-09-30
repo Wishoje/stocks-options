@@ -80,6 +80,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('feature:app.access,strict')->group(function () {
         Route::middleware('throttle:market-data-read')->group(function () {
             Route::get('/gex-levels', [GexController::class, 'getGexLevels']);
+            Route::get('/wall-intelligence', [\App\Http\Controllers\WallIntelligenceController::class, 'show']);
             Route::get('/symbols', [SymbolSearchController::class, 'lookup']);
             Route::get('/symbol/status', [\App\Http\Controllers\SymbolStatusController::class, 'show']);
 

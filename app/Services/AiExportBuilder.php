@@ -19,6 +19,7 @@ class AiExportBuilder
     public const EXPORTABLE_INDICATORS = [
         'wall_snapshots',
         'gex_levels',
+        'wall_intelligence',
         'qscore',
         'dealer_positioning',
         'expiry_pressure',
@@ -57,7 +58,7 @@ class AiExportBuilder
                 'gex_timeframe' => $timeframe,
                 'gex_view' => $context['gex_view'] ?? 'legacy',
                 'target_session' => $context['target_session'] ?? null,
-                'scope_note' => 'The view applies only to gex_levels. Other indicators retain their own source dates and scopes. Next-session preparation uses recorded EOD inputs, not live or forecast values.',
+                'scope_note' => 'The view applies to gex_levels and wall_intelligence. Other indicators retain their own source dates and scopes. Next-session preparation uses recorded EOD inputs, not live or forecast values.',
                 'format' => 'json',
                 'summary_version' => 1,
             ],
@@ -84,6 +85,7 @@ class AiExportBuilder
             'data_dates' => array_filter([
                 'wall_snapshots' => data_get($this->pickWallSnapshot($wallData, $timeframe), 'trade_date'),
                 'gex_levels' => data_get($gexData, 'data_date'),
+                'wall_intelligence' => data_get($item, 'wall_intelligence.data.data_date'),
                 'qscore' => data_get($qscoreData, 'date'),
                 'dealer_positioning' => data_get($dexData, 'data_date'),
                 'expiry_pressure' => data_get($pressureData, 'data_date'),
@@ -113,6 +115,11 @@ class AiExportBuilder
             'gex_levels' => $this->invokeController(GexController::class, 'getGexLevels', [
                 'symbol' => $symbol,
                 'timeframe' => $timeframe,
+                ...(isset($context['gex_view']) ? ['view' => $context['gex_view']] : []),
+                ...(isset($context['target_session']) ? ['session_date' => $context['target_session']] : []),
+            ]),
+            'wall_intelligence' => $this->invokeController(\App\Http\Controllers\WallIntelligenceController::class, 'show', [
+                'symbol' => $symbol, 'timeframe' => $timeframe,
                 ...(isset($context['gex_view']) ? ['view' => $context['gex_view']] : []),
                 ...(isset($context['target_session']) ? ['session_date' => $context['target_session']] : []),
             ]),
