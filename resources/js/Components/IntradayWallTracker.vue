@@ -18,6 +18,7 @@
     <div v-else-if="loading" class="wall-tracker__loading" role="status">Loading {{ symbol }} wall history…</div>
     <template v-else-if="data">
       <div class="wall-tracker__context">
+        <span v-if="!demo && data.quote_delay_seconds > 0">Quotes delayed {{ Math.round(data.quote_delay_seconds / 60) }} min · Times shown are market times</span>
         <label v-if="data.sessions?.length">Session
           <select aria-label="Wall timeline session" :value="data.session" @change="chooseSession($event.target.value)">
             <option v-for="date in data.sessions" :key="date" :value="date">{{ date }}</option>

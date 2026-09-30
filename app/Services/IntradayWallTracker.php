@@ -21,13 +21,21 @@ class IntradayWallTracker
             throw new DomainException('Unsupported tracking symbol.');
         }
         $session = MarketSession::describe($now);
-        if (! $session['is_rth']) {
+        $delay = (int) config('wall_tracking.quote_delay_seconds', 0);
+        $maxAge = (int) config('wall_tracking.quote_max_age_seconds');
+        $delayedClose = $delay > 0 && $session['closes_at']
+            && $now->greaterThanOrEqualTo(CarbonImmutable::parse($session['closes_at']))
+            && $now->lessThan(CarbonImmutable::parse($session['closes_at'])->addSeconds($delay + $maxAge));
+        if (! $session['is_rth'] && ! $delayedClose) {
             return ['status' => 'outside_session'];
         }
         $quote = UnderlyingQuote::where('symbol', $symbol)->first();
         $at = $quote?->asof ? CarbonImmutable::instance($quote->asof) : null;
+        $received = $quote?->updated_at ? CarbonImmutable::instance($quote->updated_at) : null;
         if (! $at || ! $quote->source || str_contains($quote->source, ':ingested-at') || ! $quote->last_price
-            || $at->greaterThan($now) || $now->getTimestamp() - $at->getTimestamp() > config('wall_tracking.quote_max_age_seconds')
+            || $at->greaterThan($now) || $now->getTimestamp() - $at->getTimestamp() > $delay + $maxAge
+            || ($delay > 0 && (! $received || $received->greaterThan($now) || $received->lessThan($at)
+                || $now->getTimestamp() - $received->getTimestamp() > $maxAge))
             || ! MarketSession::describe($at)['is_rth'] || MarketSession::describe($at)['session_date'] !== $session['session_date']) {
             return ['status' => 'waiting_for_current_quote'];
         }
@@ -134,6 +142,7 @@ class IntradayWallTracker
         return ['schema_version' => IntradayWallModel::SCHEMA, 'symbol' => $symbol, 'session' => $session,
             'dataset' => 'intraday_capture', 'timeframe' => '14d', 'units' => 'USD_per_1pct_move',
             'model_version' => IntradayWallModel::MODEL, 'generated_at' => now()->toIso8601String(),
+            'quote_delay_seconds' => (int) config('wall_tracking.quote_delay_seconds', 0),
             'model_description' => 'Modeled walls using changing price and time, with prior-session OI and IV held fixed. Zero interest and dividends; 100-share contracts; European gamma approximation.',
             'migration_basis' => 'last_strike_minus_first_comparable_strike',
             'segments' => (new IntradayWallModel)->timeline($observations),

@@ -31,6 +31,7 @@ class IntradayWallTrackerTest extends TestCase
             $t->string('source');
             $t->double('last_price');
             $t->timestamp('asof');
+            $t->timestamps();
         });
         Schema::create('option_expirations', function (Blueprint $t) {
             $t->id();
@@ -143,6 +144,37 @@ class IntradayWallTrackerTest extends TestCase
         DB::table('underlying_quotes')->update(['asof' => '2026-09-30 14:00:00', 'source' => 'massive:ingested-at']);
         $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', $this->now())['status']);
         $this->assertSame(0, WallObservation::count());
+    }
+
+    public function test_delayed_feed_preserves_market_time_and_requires_recent_receipt(): void
+    {
+        config(['wall_tracking.quote_delay_seconds' => 900]);
+        $now = $this->now()->addMinutes(15);
+        DB::table('underlying_quotes')->update(['updated_at' => '2026-09-30 14:15:00']);
+        $tracker = app(IntradayWallTracker::class);
+        $this->assertSame('recorded', $tracker->capture('SPY', $now)['status']);
+        $history = $tracker->history('SPY');
+        $this->assertSame(900, $history['quote_delay_seconds']);
+        $this->assertSame('2026-09-30T14:00:00+00:00', $history['segments'][0]['observations'][0]['observed_at']);
+        foreach ([null, '2026-09-30 14:00:00', '2026-09-30 14:17:00'] as $received) {
+            DB::table('underlying_quotes')->update(['updated_at' => $received]);
+            $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', $now)['status']);
+        }
+        DB::table('underlying_quotes')->update(['updated_at' => '2026-09-30 14:15:00', 'asof' => '2026-09-30 13:50:00']);
+        $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', $now)['status']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_delayed_final_session_quotes_can_arrive_after_the_close(): void
+    {
+        config(['wall_tracking.quote_delay_seconds' => 900]);
+        DB::table('underlying_quotes')->update(['asof' => '2026-09-30 19:55:00', 'updated_at' => '2026-09-30 20:10:00']);
+        $tracker = app(IntradayWallTracker::class);
+        $this->assertSame('recorded', $tracker->capture('SPY', CarbonImmutable::parse('2026-09-30 20:11:00', 'UTC'))['status']);
+        $this->assertSame('outside_session', $tracker->capture('SPY', CarbonImmutable::parse('2026-09-30 20:23:00', 'UTC'))['status']);
+        DB::table('underlying_quotes')->update(['asof' => '2026-09-30 20:05:00']);
+        $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', CarbonImmutable::parse('2026-09-30 20:11:00', 'UTC'))['status']);
     }
 
     public function test_old_chain_and_closed_sessions_cannot_fabricate_history(): void

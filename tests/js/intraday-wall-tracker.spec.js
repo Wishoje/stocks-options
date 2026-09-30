@@ -17,10 +17,11 @@ beforeEach(() => axios.get.mockReset())
 
 describe('Intraday wall tracker', () => {
   it('shows rounded levels, real zero migration and a keyboard-accessible timeline', async () => {
-    axios.get.mockResolvedValue({ data: payload() })
+    axios.get.mockResolvedValue({ data: { ...payload(), quote_delay_seconds: 900 } })
     const wrapper = render()
     expect(wrapper.text()).toContain('Loading SPY wall history')
     await flushPromises()
+    expect(wrapper.text()).toContain('Quotes delayed 15 min')
     expect(wrapper.text()).toContain('Unchanged · 0 points')
     expect(wrapper.text()).toContain('↑ Up 5 points')
     expect(wrapper.find('details').attributes('open')).toBeUndefined()
