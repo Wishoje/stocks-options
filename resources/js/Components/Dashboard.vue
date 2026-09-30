@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="min-h-screen bg-gray-950 text-white">
     <section ref="dashboardContext" class="gex-ui gex-dashboard-context" data-theme="dark" data-density="compact" aria-label="Dashboard data context">
       <div class="gex-dashboard-context__primary">
@@ -43,7 +43,7 @@
             </div>
           </fieldset>
 
-          <fieldset v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab)" class="gex-control-group">
+          <fieldset v-if="dataMode === 'eod' && ['overview', 'positioning', 'strikes'].includes(activeTab)" class="gex-control-group">
             <legend>Expiry scope</legend>
             <div class="gex-segmented" aria-label="EOD expiry timeframe">
               <button
@@ -58,9 +58,9 @@
             </div>
           </fieldset>
 
-          <div v-else-if="dataMode === 'eod' && activeTab === 'positioning'" class="gex-positioning-scope" role="note">
-            <strong>Positioning uses local scopes:</strong>
-            DEX reporting window · {{ pinDays }} trading-day pressure · selectable skew bucket
+          <div v-if="dataMode === 'eod' && activeTab === 'positioning'" class="gex-positioning-scope" role="note">
+            <strong>Wall analysis follows the selected expiry scope.</strong>
+            DEX uses its reporting window · pressure covers {{ pinDays }} trading days · skew has its own selector
           </div>
           <div v-else-if="dataMode === 'eod' && activeTab === 'volatility'" class="gex-positioning-scope" role="note">
             <strong>Volatility uses local scopes:</strong>
@@ -88,6 +88,10 @@
             <span v-else-if="levels?.data_date">Completed-session data</span>
           </template>
         </div>
+        <div v-else-if="wallTrackingActive" class="gex-dashboard-freshness">
+          <strong>Wall tracking · 2W</strong>
+          <span>Choose a recorded session below</span>
+        </div>
         <div
           v-else
           class="gex-dashboard-freshness"
@@ -109,7 +113,7 @@
         </div>
       </div>
 
-      <section v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab)" class="gex-eod-view" aria-label="EOD analysis view">
+      <section v-if="dataMode === 'eod' && ['overview', 'positioning', 'strikes'].includes(activeTab)" class="gex-eod-view" aria-label="EOD analysis view">
         <div class="gex-segmented" aria-label="EOD analysis view options">
           <button type="button" :aria-pressed="eodView === 'latest_eod'" @click="eodView = 'latest_eod'">Latest EOD data</button>
           <button type="button" :aria-pressed="eodView === 'next_session'" @click="eodView = 'next_session'">Next-session preparation</button>
@@ -126,7 +130,7 @@
       </section>
 
       <section
-        v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab) && scopedExpirationDates.length"
+        v-if="dataMode === 'eod' && ['overview', 'positioning', 'strikes'].includes(activeTab) && scopedExpirationDates.length"
         class="gex-expiry-scope"
         aria-label="Included expiration dates"
       >
@@ -160,7 +164,7 @@
           </div>
         </nav>
         <div class="gex-dashboard-scope gex-small gex-muted">
-          <span>{{ dataMode === 'eod' ? 'End-of-day analysis' : 'Stored intraday updates' }}</span>
+          <span>{{ dataMode === 'eod' ? 'End-of-day analysis' : wallTrackingActive ? 'Modeled wall history · fixed 2W scope' : 'Stored intraday updates' }}</span>
           <span aria-hidden="true">·</span>
           <span>{{ userSymbol }}</span>
         </div>
@@ -172,7 +176,7 @@
       :symbol="userSymbol"
       :mode="dataMode"
       :tab-label="activeGuideTabLabel"
-      :timeframe="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab) ? selectedTimeframeLabel : ''"
+      :timeframe="wallTrackingActive ? '2W' : dataMode === 'eod' && ['overview', 'positioning', 'strikes'].includes(activeTab) ? selectedTimeframeLabel : ''"
       @continue="startGuidedView"
       @dismiss="dismissOnboarding"
     />
@@ -186,7 +190,10 @@
       tabindex="0"
     >
       <!-- Loading / Error -->
-      <ui-error-block v-if="topError" :message="'Failed to load data'" :detail="topError"
+      <div v-if="wallTrackingActive" class="gex-ui" data-theme="dark" data-density="compact">
+        <IntradayWallTracker :symbol="userSymbol" show-eod-link @open-eod="navigateWallView('eod', 'positioning')" />
+      </div>
+      <ui-error-block v-else-if="topError" :message="'Failed to load data'" :detail="topError"
                      :onRetry="() => dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : refreshIntraday()" />
       <UiLoading
         v-else-if="primaryViewLoading"
@@ -286,14 +293,27 @@
           />
         </div>
         <WallLevels
-          v-if="dataMode === 'eod' && ['overview', 'strikes'].includes(activeTab) && levels?.symbol === userSymbol && levels?.timeframe === gexTf && levels?.view_context?.view === eodView"
+          v-if="dataMode === 'eod' && ['overview', 'positioning'].includes(activeTab) && levels?.symbol === userSymbol && levels?.timeframe === gexTf && levels?.view_context?.view === eodView"
           :levels="levels"
           :symbol="userSymbol"
           :scope-label="selectedTimeframeLabel"
-          intelligence-enabled
-          :show-chart-link="activeTab === 'overview'"
+          :intelligence-enabled="activeTab === 'positioning'"
+          :summary-only="activeTab === 'overview'"
+          :show-analysis-link="activeTab === 'overview'"
+          :show-chart-link="activeTab === 'positioning'"
+          show-tracking-link
+          @open-analysis="navigateWallView('eod', 'positioning')"
+          @open-tracking="navigateWallView('intraday', 'walls')"
           @open-chart="activate('strikes')"
         />
+        <div v-else-if="dataMode === 'eod' && activeTab === 'positioning'" class="gex-ui" data-theme="dark">
+          <UiStatus :state="eodError ? 'error' : 'loading'" :title="eodError ? 'Wall analysis could not load' : `Loading ${userSymbol} wall analysis`"
+            message="Dealer positioning and other readings remain available below." :retry="!!eodError" @retry="fetchGexLevelsEOD(userSymbol, gexTf)" />
+        </div>
+        <div v-if="dataMode === 'eod' && activeTab === 'strikes'" class="gex-ui flex flex-wrap gap-3" data-theme="dark">
+          <UiButton @click="navigateWallView('eod', 'positioning')">Explore wall analysis</UiButton>
+          <UiButton @click="navigateWallView('intraday', 'walls')">Track during the session · 2W</UiButton>
+        </div>
         <!-- OVERVIEW (EOD) -->
         <section
           v-show="activeTab==='overview' && dataMode==='eod'"
@@ -826,6 +846,7 @@ import VolOverOiChart from './VolOverOiChart.vue'
 import PcrByStrikeChart from './PcrByStrikeChart.vue'
 import PremiumByStrikeChart from './PremiumByStrikeChart.vue'
 import IntradayFlowPanel from './IntradayFlow/IntradayFlowPanel.vue'
+import IntradayWallTracker from './IntradayWallTracker.vue'
 import TermTile from './TermTile.vue'
 import VRPTile from './VRPTile.vue'
 const SkewTile = defineAsyncComponent(() => import('./SkewTile.vue'))
@@ -865,6 +886,7 @@ const tabsEOD = [
 
 const tabsIntraday = [
   { key: 'flow', label: 'Live Flow', icon: defineComponent({ render: () => h('svg', { class: 'w-4 h-4', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: 'M13 10V3L4 14h7v7l9-11h-7z' })]) }) },
+  { key: 'walls', label: 'Wall tracking' },
   { key: 'strikes', label: 'Live Strikes', icon: defineComponent({ render: () => h('svg', { class: 'w-4 h-4', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' })]) }) },
 ]
 
@@ -924,6 +946,7 @@ const eodView = ref(initialDashboardState.view)
 const userSymbol = symbol
 const getDefaultTab = (mode) => mode === 'intraday' ? 'flow' : 'strikes'
 const activeTab = ref(initialDashboardState.tab)
+const wallTrackingActive = computed(() => dataMode.value === 'intraday' && activeTab.value === 'walls')
 const activeGuideTabLabel = computed(() =>
   dashboardTabItems.value.find(item => item.value === activeTab.value)?.label ?? activeTab.value
 )
@@ -1267,7 +1290,7 @@ const intradayTransition = computed(() =>
 function pickSymbol(sym) {
   const s = String(sym || '').trim().toUpperCase().replace(/[^A-Z0-9.^-]/g, '').slice(0, 15)
   if (s) {
-    kickoffSymbolWarm(s, gexTf.value)
+    if (!wallTrackingActive.value) kickoffSymbolWarm(s, gexTf.value)
     userSymbol.value = s
     syncDashboardUrl('push')
   }
@@ -1406,11 +1429,35 @@ function setMode(mode) {
   syncDashboardUrl('push')
 }
 
+function navigateWallView(mode, tab) {
+  lastTabByMode[dataMode.value] = activeTab.value
+  dataMode.value = mode
+  activeTab.value = tab
+  lastTabByMode[mode] = tab
+  if (mode === 'eod') positioningMounted.value = true
+  syncDashboardUrl('push')
+  scrollToDashboardContext()
+  nextTick(() => dashboardTabButtons.value[dashboardTabItems.value.findIndex(item => item.value === tab)]?.focus())
+}
+
 // Data refresh on mode/tab change
 watch([dataMode, activeTab], ([mode, tab], [oldMode, oldTab]) => {
   if (disposed) return
   stopAuxiliaryWork()
   ensureActiveTab()
+  if (mode === 'intraday' && tab === 'walls') {
+    stopRefresh()
+    clearIntradayPendingRetry()
+    cancel('gex_intraday')
+    intradayLoading.value = false
+    intradayRefreshing.value = false
+    return
+  }
+  if (mode === 'intraday' && oldMode === 'intraday' && oldTab === 'walls') {
+    refreshIntraday()
+    startAutoRefresh()
+    return
+  }
   // Mode change
   if (mode !== oldMode) {
     if (mode === 'intraday') {
@@ -1935,7 +1982,7 @@ function handleSelectSymbolEvent(evt) {
       headers: {},
     })
   }
-  if (!bootstrapStart && !hintedState?.fastReady) {
+  if (!wallTrackingActive.value && !bootstrapStart && !hintedState?.fastReady) {
     kickoffSymbolWarm(next, gexTf.value)
   }
 
@@ -2374,13 +2421,13 @@ function applyIntradayResponseMeta(meta, now = Date.now()) {
 }
 
 function startAutoRefresh() {
-  if (disposed || dataMode.value !== 'intraday') return
+  if (disposed || dataMode.value !== 'intraday' || wallTrackingActive.value) return
   if (refreshTimer.value) clearInterval(refreshTimer.value)
   refreshTimer.value = setInterval(refreshIntraday, 30_000)
 }
 
 async function refreshIntraday({ force = false } = {}) {
-  if (disposed || dataMode.value !== 'intraday') return
+  if (disposed || dataMode.value !== 'intraday' || wallTrackingActive.value) return
   const sym = userSymbol.value
   const now = Date.now()
   intradayError.value = ''

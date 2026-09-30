@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { dashboardStateFromSearch, dashboardUrl } from '@/Support/dashboard-url-state.js'
 
 describe('dashboard URL state', () => {
+  it('restores the dedicated tracker without changing the saved EOD timeframe', () => {
+    const state = dashboardStateFromSearch('?symbol=QQQ&mode=intraday&tab=walls&timeframe=7d&view=next_session')
+    expect(state).toEqual({ symbol: 'QQQ', mode: 'intraday', tab: 'walls', timeframe: '7d', view: 'next_session' })
+    expect(dashboardUrl('/dashboard', state)).toContain('tab=walls')
+    expect(dashboardStateFromSearch('?mode=eod&tab=walls').tab).toBe('strikes')
+  })
   it('restores the explicit view and uses the server market-session default otherwise', () => {
     expect(dashboardStateFromSearch('', { view: 'next_session' }).view).toBe('next_session')
     expect(dashboardStateFromSearch('?view=latest_eod', { view: 'next_session' }).view).toBe('latest_eod')

@@ -117,6 +117,8 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::middleware('feature:intraday.access,strict')->group(function () {
+        Route::get('/intraday/walls', [\App\Http\Controllers\IntradayWallController::class, 'show'])
+            ->middleware('throttle:market-data-read');
         Route::middleware('throttle:market-data-read')->group(function () {
             Route::get('/intraday/summary', [IntradayController::class, 'summary']);
             Route::get('/intraday/volume-by-strike', [IntradayController::class, 'volumeByStrike']);

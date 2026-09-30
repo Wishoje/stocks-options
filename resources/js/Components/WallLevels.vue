@@ -5,14 +5,14 @@ import { wallReadings } from '@/lib/wall-levels'
 import WallIntelligenceDetails from './WallIntelligenceDetails.vue'
 import { useWallIntelligence } from '@/composables/useWallIntelligence'
 
-const props = defineProps({ levels: { type: Object, default: null }, symbol: String, scopeLabel: String, showChartLink: Boolean, intelligenceEnabled: Boolean })
+const props = defineProps({ levels: { type: Object, default: null }, symbol: String, scopeLabel: String, showChartLink: Boolean, intelligenceEnabled: Boolean, summaryOnly: Boolean, showAnalysisLink: Boolean, showTrackingLink: Boolean })
 const { data: intelligence, loading: intelligenceLoading, error: intelligenceError, retry: retryIntelligence } = useWallIntelligence(() => props.levels, () => props.intelligenceEnabled)
-defineEmits(['open-chart'])
+defineEmits(['open-chart', 'open-analysis', 'open-tracking'])
 const selection = ref({ put: 0, call: 0 })
 watch(() => props.levels, () => { selection.value = { put: 0, call: 0 } })
 const sides = computed(() => ['put', 'call'].map(side => {
   const readings = wallReadings(props.levels, side)
-  return { side, title: side === 'put' ? 'Put wall' : 'Call wall', readings, selected: readings[selection.value[side]] ?? readings[0] }
+  return { side, title: side === 'put' ? 'Put wall' : 'Call wall', readings, selected: props.summaryOnly ? readings[0] : readings[selection.value[side]] ?? readings[0] }
 }))
 const price = value => value == null ? 'Not available' : value.toLocaleString('en-US', { maximumFractionDigits: 2 })
 const exposure = value => value == null ? 'Not available' : compact(value)
@@ -24,6 +24,8 @@ const tone = value => value == null || value === 0 ? 'neutral' : value > 0 ? 'po
     <header class="walls-heading">
       <div><p class="walls-eyebrow">{{ symbol }} · {{ scopeLabel }} · END OF DAY</p><h2>Wall levels</h2><p class="walls-muted">Find the key price levels shaped by options positioning.</p></div>
       <div class="walls-actions">
+        <button v-if="showAnalysisLink" type="button" class="walls-button" @click="$emit('open-analysis')">Explore wall analysis</button>
+        <button v-if="showTrackingLink" type="button" class="walls-button" @click="$emit('open-tracking')">Track during the session · 2W</button>
         <span v-if="levels?.data_date" class="walls-chip">Data as of {{ levels.data_date }}</span>
         <button v-if="showChartLink" type="button" class="walls-button" @click="$emit('open-chart')">Explore strike chart <span aria-hidden="true">→</span></button>
       </div>
@@ -32,26 +34,27 @@ const tone = value => value == null || value === 0 ? 'neutral' : value > 0 ? 'po
     <div v-else-if="intelligenceError" class="wall-analysis-status" role="status">{{ intelligenceError }} <button type="button" class="walls-button" @click="retryIntelligence">Retry wall details</button></div>
     <div class="walls-grid" :aria-busy="intelligenceLoading">
       <article v-for="group in sides" :key="group.side" class="wall-card" :data-side="group.side">
-        <div class="wall-title"><h3>{{ group.title }}</h3><span class="walls-muted">{{ selection[group.side] === 0 ? 'Primary level' : 'Additional level' }}</span></div>
+        <div class="wall-title"><h3>{{ group.title }}</h3><span class="walls-muted">{{ summaryOnly || selection[group.side] === 0 ? 'Primary level' : 'Additional level' }}</span></div>
         <strong class="wall-price">{{ price(group.selected?.strike) }}</strong>
-        <p class="walls-muted wall-description">{{ group.side === 'put' ? 'Ranked by negative net GEX, from largest magnitude.' : 'Ranked by positive net GEX, from largest magnitude.' }}</p>
-        <div v-if="group.readings.length" class="wall-choices" :aria-label="`${group.title} levels`">
+        <p v-if="!summaryOnly" class="walls-muted wall-description">{{ group.side === 'put' ? 'Ranked by negative net GEX, from largest magnitude.' : 'Ranked by positive net GEX, from largest magnitude.' }}</p>
+        <div v-if="!summaryOnly && group.readings.length" class="wall-choices" :aria-label="`${group.title} levels`">
           <button v-for="(reading, index) in group.readings" :key="reading.strike" type="button" :aria-pressed="selection[group.side] === index" @click="selection[group.side] = index"><span>{{ index === 0 ? 'Primary' : `Level ${index + 1}` }}</span> {{ price(reading.strike) }}</button>
         </div>
         <div class="wall-reading" aria-live="polite">
           <div><span class="walls-muted">Net GEX at this strike</span><strong :data-tone="tone(group.selected?.net)">{{ exposure(group.selected?.net) }}</strong></div>
           <span class="walls-unit">USD per 1% underlying move</span>
         </div>
-        <div class="wall-legs"><span>Call GEX <b>{{ exposure(group.selected?.call) }}</b></span><span>Put GEX <b>{{ exposure(group.selected?.put) }}</b></span></div>
+        <div v-if="!summaryOnly" class="wall-legs"><span>Call GEX <b>{{ exposure(group.selected?.call) }}</b></span><span>Put GEX <b>{{ exposure(group.selected?.put) }}</b></span></div>
         <WallIntelligenceDetails
+          v-if="!summaryOnly"
           :reading="intelligence?.walls?.[group.side]?.find(wall => wall.strike === group.selected?.strike)"
           :reference="intelligence?.reference_price"
         />
       </article>
     </div>
     <footer class="walls-footer">
-      <p>Build your watch levels, compare nearby exposure, and open the strike chart for context.</p>
-      <details>
+      <p>{{ summaryOnly ? 'Start with these levels. Explore wall analysis for concentration, expiry contributions, and daily changes.' : 'Compare exposure across expiries, then track how the modeled walls move during the session.' }}</p>
+      <details v-if="!summaryOnly">
         <summary>How to read these levels</summary>
         <div class="walls-detail">
           <p>Levels follow the selected dashboard symbol, expiry view, and timeframe. Data as of {{ levels?.data_date || 'not available' }}<template v-if="levels?.view_context?.session_date"> · Analysis session {{ levels.view_context.session_date }}</template>.</p>

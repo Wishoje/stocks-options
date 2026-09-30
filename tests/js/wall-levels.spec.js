@@ -9,6 +9,24 @@ function levels() { return {
   strike_data: [{ strike: 550, net_gex: -2000000, call_gex: 1000000, put_gex: 3000000 }, { strike: 545, net_gex: 0, call_gex: 100, put_gex: 100 }],
 } }
 describe('Wall levels', () => {
+  it('shows only primary levels in Overview and links to analysis and fixed-scope tracking', async () => {
+    const wrapper = mount(WallLevels, { props: { levels: levels(), showAnalysisLink: true, showTrackingLink: true } })
+    await wrapper.get('[aria-label="Put wall levels"]').findAll('button')[1].trigger('click')
+    await wrapper.setProps({ summaryOnly: true })
+    expect(wrapper.get('.wall-price').text()).toBe('550')
+    expect(wrapper.find('.wall-choices').exists()).toBe(false)
+    expect(wrapper.find('.wall-legs').exists()).toBe(false)
+    expect(wrapper.find('details').exists()).toBe(false)
+    const actions = wrapper.findAll('.walls-button')
+    await actions[0].trigger('click')
+    await actions[1].trigger('click')
+    expect(wrapper.emitted('open-analysis')).toHaveLength(1)
+    expect(wrapper.emitted('open-tracking')).toHaveLength(1)
+    expect(actions[1].text()).toContain('2W')
+    await wrapper.setProps({ summaryOnly: false })
+    expect(wrapper.find('.wall-choices').exists()).toBe(true)
+    wrapper.unmount()
+  })
   it('normalizes the original strike data without mutation, preserving zero and missing readings', () => {
     const source = levels(), original = JSON.stringify(source)
     expect(wallReadings(source, 'put').map(r => r.net)).toEqual([-20000, 0])

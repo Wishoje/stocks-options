@@ -1,7 +1,7 @@
 export const dashboardTimeframes = ['0d', '1d', '7d', '14d', '30d', '90d']
 export const dashboardTabs = {
   eod: ['overview', 'positioning', 'volatility', 'ua', 'strikes'],
-  intraday: ['flow', 'strikes'],
+  intraday: ['flow', 'walls', 'strikes'],
 }
 
 function symbol(value, fallback = 'SPY') {
