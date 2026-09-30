@@ -25,7 +25,7 @@ const tone = value => value == null || value === 0 ? 'neutral' : value > 0 ? 'po
       <div><p class="walls-eyebrow">{{ symbol }} · {{ scopeLabel }} · END OF DAY</p><h2>Wall levels</h2><p class="walls-muted">Find the key price levels shaped by options positioning.</p></div>
       <div class="walls-actions">
         <button v-if="showAnalysisLink" type="button" class="walls-button" @click="$emit('open-analysis')">Explore wall analysis</button>
-        <button v-if="showTrackingLink" type="button" class="walls-button" @click="$emit('open-tracking')">Track during the session · 2W</button>
+        <button v-if="showTrackingLink" type="button" class="walls-button" @click="$emit('open-tracking')">Track during the session</button>
         <span v-if="levels?.data_date" class="walls-chip">Data as of {{ levels.data_date }}</span>
         <button v-if="showChartLink" type="button" class="walls-button" @click="$emit('open-chart')">Explore strike chart <span aria-hidden="true">→</span></button>
       </div>

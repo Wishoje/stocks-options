@@ -2,7 +2,7 @@
   <section class="wall-tracker gex-panel" aria-label="Intraday wall timeline" :aria-busy="loading">
     <header class="wall-tracker__header">
       <div>
-        <p class="wall-tracker__eyebrow">{{ symbol }} · 2-week expiry scope</p>
+        <p class="wall-tracker__eyebrow">{{ symbol }} · Intraday modeled walls</p>
         <h2>How the walls move</h2>
         <p>Follow put and call wall levels through the session.</p>
       </div>
@@ -12,6 +12,14 @@
         <button v-if="data?.segments.length" type="button" @click="download">Export timeline JSON</button>
       </div>
     </header>
+
+    <fieldset class="wall-tracker__scope">
+      <legend>Expiry scope</legend>
+      <div class="wall-tracker__actions" aria-label="Wall tracking expiry scope">
+        <button v-for="option in scopeOptions" :key="option.value" type="button" :aria-pressed="scope === option.value" @click="chooseScope(option.value)">{{ option.label }}</button>
+      </div>
+      <p>Choose which option expirations shape the walls. The timeline follows their movement during the selected session.</p>
+    </fieldset>
 
     <p v-if="demo" class="wall-tracker__demo" role="status">Local demonstration · Synthetic prices and contracts. These are example readings for reviewing the interface.</p>
     <p v-if="error" role="alert">{{ error }}</p>
@@ -27,7 +35,7 @@
         <span v-if="latest">As of {{ time(latest.observed_at) }} ET · {{ observations.length }} readings</span>
         <button v-if="data.local_demo_available" type="button" @click="chooseDemo(!demo)">{{ demo ? 'Return to recorded sessions' : 'Preview local demonstration' }}</button>
       </div>
-      <p v-if="!data.segments.length" class="wall-tracker__empty">The wall timeline will appear here as session observations are recorded. Tracking starts with SPY, QQQ and TSLA.</p>
+      <p v-if="!data.segments.length" class="wall-tracker__empty">{{ data.availability?.message || `No wall readings have been recorded yet for ${symbol}. Eligible symbols are checked every five minutes during market sessions.` }}</p>
       <template v-else>
         <p class="wall-tracker__model">Modeled with changing price and time. Prior-session open interest and IV stay fixed.</p>
         <p v-if="data.truncated">Showing the latest 500 readings for this session.</p>
@@ -97,7 +105,22 @@ import { computed, ref, watch, onScopeDispose } from 'vue'
 import { useIntradayWalls } from '@/composables/useIntradayWalls'
 const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean })
 defineEmits(['open-eod'])
-const { data, loading, error, demo, load, chooseSession, chooseDemo } = useIntradayWalls(() => props.symbol)
+const scopeOptions = [{ value: '0d', label: '0DTE' }, { value: '1d', label: '1DTE' }, { value: '7d', label: '1W' }, { value: '14d', label: '2W' }, { value: '30d', label: '1M' }, { value: '90d', label: '3M' }]
+const readScope = () => {
+  const value = new URLSearchParams(window.location.search).get('wall_timeframe')
+  return scopeOptions.some(option => option.value === value) ? value : '14d'
+}
+const scope = ref(readScope())
+function chooseScope(value) {
+  scope.value = value
+  const url = new URL(window.location.href)
+  url.searchParams.set('wall_timeframe', value)
+  window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
+}
+const restoreScope = () => { scope.value = readScope() }
+window.addEventListener('popstate', restoreScope)
+onScopeDispose(() => window.removeEventListener('popstate', restoreScope))
+const { data, loading, error, demo, load, chooseSession, chooseDemo } = useIntradayWalls(() => props.symbol, () => scope.value)
 const sides = ['put', 'call'], segmentIndex = ref(0), selectedIndex = ref(0)
 const chartElement = ref(null), chartWidth = ref(840)
 let observer
@@ -153,6 +176,7 @@ function download() {
 </script>
 
 <style scoped>
+.wall-tracker__scope{margin:20px 0 12px;min-width:0}.wall-tracker__scope legend{font-size:.8rem;font-weight:650;margin-bottom:8px}.wall-tracker__scope .wall-tracker__actions{justify-content:flex-start;gap:6px}.wall-tracker__scope button[aria-pressed="true"]{background:#304869;border-color:#93bdfa;color:#fff}.wall-tracker__scope p{margin-top:8px;font-size:.78rem}
 .wall-tracker{padding:clamp(16px,2vw,26px);margin-bottom:20px;border:1px solid #354052;border-radius:16px;background:#171c27;color:#e7edf6}
 .wall-tracker__header,.wall-tracker__actions,.wall-tracker__context,.wall-tracker__legend{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 h2{font-size:1.2rem;font-weight:700;margin:3px 0 7px}p,small{color:#b8c5d8}p{font-size:.88rem;line-height:1.6}button,select{border:1px solid #43516a;border-radius:8px;background:#242d3e;color:#e7edf6;padding:8px 12px;font-size:.82rem}button:hover{background:#303e54}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #93bdfa;outline-offset:3px}button:disabled{opacity:.55;cursor:wait}.wall-tracker__eyebrow{text-transform:uppercase;letter-spacing:.08em;font-size:.7rem;color:#99b5d8}.wall-tracker__context{justify-content:flex-start;margin:18px 0;font-size:.8rem;color:#b8c5d8}.wall-tracker__context label{display:flex;gap:10px;align-items:center}.wall-tracker__demo{border-left:3px solid #e6c86f;background:#302d22;padding:12px;margin-top:16px;color:#f2df9d}.wall-tracker__model{margin:14px 0}.wall-tracker__metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.wall-tracker__metric{border:1px solid #354052;border-top:2px solid #93bdfa;border-radius:12px;padding:18px}.wall-tracker__metric h3{font-size:.8rem;color:#bdcce0}.wall-tracker__metric strong{display:block;font-size:1.9rem;font-weight:750;margin:8px 0;color:#93bdfa}.wall-tracker__metric--put{border-top-color:#ef9d8f}.wall-tracker__metric--put strong,.put{color:#ef9d8f}.wall-tracker__metric--call{border-top-color:#7ee0b0}.wall-tracker__metric--call strong,.call{color:#7ee0b0}.wall-tracker__metric small{font-size:.72rem}.wall-tracker__chart{margin-top:20px;border:1px solid #354052;border-radius:12px;padding:16px;background:#1b2230}.wall-tracker__legend{justify-content:flex-start;font-size:.8rem;gap:20px}.price{color:#93bdfa}svg{width:100%;height:260px;margin-top:12px}svg text{fill:#b8c5d8;font-size:11px}.wall-tracker__scrubber{display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:.8rem}.wall-tracker__scrubber strong{margin-left:auto}.wall-tracker__scrubber input{width:100%;accent-color:#93bdfa;margin-top:8px;min-height:28px}.wall-tracker__interpretation{margin:16px 0}.wall-tracker__table{overflow:auto;margin-top:16px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:.8rem}caption{text-align:left;color:#b8c5d8;padding:8px 0}th,td{text-align:right;padding:10px;border-bottom:1px solid #354052}th:first-child,td:first-child{text-align:left}.selected{background:#25344b}summary{cursor:pointer;font-size:.85rem;padding:12px 0}details p{margin:10px 0}.wall-tracker__empty,.wall-tracker__loading{padding:24px 0}@media(max-width:640px){.wall-tracker__metrics{grid-template-columns:1fr}.wall-tracker__metric strong{font-size:1.65rem}.wall-tracker__header{align-items:flex-start}.wall-tracker__actions{justify-content:flex-start}svg{height:260px}.wall-tracker__context select{max-width:240px}}

@@ -89,8 +89,8 @@
           </template>
         </div>
         <div v-else-if="wallTrackingActive" class="gex-dashboard-freshness">
-          <strong>Wall tracking · 2W</strong>
-          <span>Choose a recorded session below</span>
+          <strong>Intraday wall tracking</strong>
+          <span>Choose an expiry scope and recorded session below</span>
         </div>
         <div
           v-else
@@ -164,7 +164,7 @@
           </div>
         </nav>
         <div class="gex-dashboard-scope gex-small gex-muted">
-          <span>{{ dataMode === 'eod' ? 'End-of-day analysis' : wallTrackingActive ? 'Modeled wall history · fixed 2W scope' : 'Stored intraday updates' }}</span>
+          <span>{{ dataMode === 'eod' ? 'End-of-day analysis' : wallTrackingActive ? 'Modeled walls through the session' : 'Stored intraday updates' }}</span>
           <span aria-hidden="true">·</span>
           <span>{{ userSymbol }}</span>
         </div>
@@ -176,7 +176,7 @@
       :symbol="userSymbol"
       :mode="dataMode"
       :tab-label="activeGuideTabLabel"
-      :timeframe="wallTrackingActive ? '2W' : dataMode === 'eod' && ['overview', 'positioning', 'strikes'].includes(activeTab) ? selectedTimeframeLabel : ''"
+      :timeframe="dataMode === 'eod' && ['overview', 'positioning', 'strikes'].includes(activeTab) ? selectedTimeframeLabel : ''"
       @continue="startGuidedView"
       @dismiss="dismissOnboarding"
     />
@@ -312,7 +312,7 @@
         </div>
         <div v-if="dataMode === 'eod' && activeTab === 'strikes'" class="gex-ui flex flex-wrap gap-3" data-theme="dark">
           <UiButton @click="navigateWallView('eod', 'positioning')">Explore wall analysis</UiButton>
-          <UiButton @click="navigateWallView('intraday', 'walls')">Track during the session · 2W</UiButton>
+          <UiButton @click="navigateWallView('intraday', 'walls')">Track during the session</UiButton>
         </div>
         <!-- OVERVIEW (EOD) -->
         <section

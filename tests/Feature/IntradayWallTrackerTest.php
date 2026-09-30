@@ -9,6 +9,7 @@ use App\Support\EodSnapshotSelector;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
@@ -58,6 +59,75 @@ class IntradayWallTrackerTest extends TestCase
     private function now(): CarbonImmutable
     {
         return CarbonImmutable::parse('2026-09-30 14:01:00', 'UTC');
+    }
+
+    public function test_any_ready_options_symbol_is_discovered_and_recorded(): void
+    {
+        DB::table('underlying_quotes')->insert([
+            ['symbol' => 'NVDA', 'source' => 'massive-v2-snapshot', 'last_price' => 100, 'asof' => '2026-09-30 14:00:00'],
+            ['symbol' => 'OLD', 'source' => 'massive-v2-snapshot', 'last_price' => 100, 'asof' => '2026-09-29 14:00:00'],
+            ['symbol' => 'NOCHAIN', 'source' => 'massive-v2-snapshot', 'last_price' => 100, 'asof' => '2026-09-30 14:00:00'],
+        ]);
+        DB::table('option_expirations')->where('id', 1)->update(['symbol' => 'NVDA']);
+        $tracker = app(IntradayWallTracker::class);
+        $this->assertSame(['NVDA'], $tracker->symbols($this->now()));
+        $this->assertSame('recorded', $tracker->capture('NVDA', $this->now())['status']);
+        $this->assertCount(1, $tracker->history('NVDA')['segments']);
+        $this->assertSame([], $tracker->history('SPY')['segments']);
+    }
+
+    public function test_small_input_gaps_are_accepted_but_substantial_gaps_remain_blocked(): void
+    {
+        $rows = collect(range(1, 20))->map(fn ($i) => (object) ['expiration_id' => 1, 'option_type' => $i % 2 ? 'call' : 'put', 'strike' => 90 + $i, 'open_interest' => $i === 1 ? 10 : 100, 'iv' => $i === 1 ? null : .2, 'data_date' => '2026-09-29']);
+        $selector = Mockery::mock(EodSnapshotSelector::class);
+        $selector->shouldReceive('selectedRows')->andReturn($rows);
+        $this->app->instance(EodSnapshotSelector::class, $selector);
+        $tracker = app(IntradayWallTracker::class);
+        $this->assertSame('recorded', $tracker->capture('SPY', $this->now())['status']);
+        $this->assertGreaterThan(99, $tracker->history('SPY')['segments'][0]['observations'][0]['audit']['oi_input_coverage_pct']);
+        $rows[0]->open_interest = 50;
+        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now())['status']);
+        $rows[0]->open_interest = 1;
+        foreach ([1, 2] as $i) {
+            $rows[$i]->iv = null;
+            $rows[$i]->open_interest = 1;
+        }
+        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now())['status']);
+        $this->assertSame(2, WallObservation::count());
+    }
+
+    public function test_expiry_scopes_are_requested_recorded_and_queried_separately(): void
+    {
+        $this->travelTo($this->now());
+        $tracker = app(IntradayWallTracker::class);
+        $this->assertSame('no_expirations', $tracker->capture('SPY', $this->now(), '0d')['status']);
+        $this->assertSame('no_expirations', $tracker->history('SPY', null, '0d')['availability']['state']);
+        $a = $tracker->capture('SPY', $this->now(), '7d');
+        $b = $tracker->capture('SPY', $this->now(), '30d');
+        $this->assertNotSame($a['id'], $b['id']);
+        $this->assertSame('7d', $tracker->history('SPY', null, '7d')['segments'][0]['observations'][0]['scope']['timeframe']);
+        $this->assertSame([], $tracker->history('SPY', null, '14d')['segments']);
+        $this->assertContains('7d', $tracker->requestedTimeframes('SPY'));
+        $this->assertNotContains('90d', $tracker->requestedTimeframes('SPY'));
+        $this->signIn();
+        $this->getJson('/api/intraday/walls?symbol=SPY&timeframe=30d')->assertOk()->assertJsonPath('timeframe', '30d')->assertJsonCount(1, 'segments');
+        $this->getJson('/api/intraday/walls?symbol=SPY&timeframe=999d')->assertUnprocessable();
+    }
+
+    public function test_capture_budget_rotates_symbols_instead_of_starving_later_symbols(): void
+    {
+        config(['wall_tracking.enabled' => true, 'wall_tracking.capture_budget_seconds' => 0]);
+        $tracker = Mockery::mock(IntradayWallTracker::class);
+        $tracker->shouldReceive('symbols')->andReturn(['AAA', 'BBB']);
+        $tracker->shouldReceive('requestedTimeframes')->with('AAA')->once()->andReturn(['14d']);
+        $tracker->shouldReceive('requestedTimeframes')->with('BBB')->once()->andReturn(['14d']);
+        $tracker->shouldReceive('capture')->with('AAA', Mockery::type(CarbonImmutable::class), '14d')->once()->andReturn(['status' => 'recorded']);
+        $tracker->shouldReceive('capture')->with('BBB', Mockery::type(CarbonImmutable::class), '14d')->once()->andReturn(['status' => 'recorded']);
+        $this->app->instance(IntradayWallTracker::class, $tracker);
+        $this->artisan('walls:capture-intraday')->assertSuccessful();
+        $this->assertSame('AAA', Cache::get('walls:capture-cursor'));
+        $this->artisan('walls:capture-intraday')->assertSuccessful();
+        $this->assertSame('BBB', Cache::get('walls:capture-cursor'));
     }
 
     private function signIn(bool $entitled = true): void

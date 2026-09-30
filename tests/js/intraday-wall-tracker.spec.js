@@ -8,14 +8,38 @@ const reading = (minute, put = 95, call = 105) => ({ observed_at: `2026-09-30T14
   walls: { put: put == null ? [] : [{ strike: put, net_gex: -1000 }], call: [{ strike: call, net_gex: 1200 }] },
   net_gex: 200, provenance: { oi_date: '2026-09-29' } })
 const payload = (symbol = 'SPY') => ({ symbol, schema_version: 'intraday-walls.v1', dataset: 'intraday_capture',
+  timeframe: '14d',
   session: '2026-09-30', sessions: ['2026-09-30', '2026-09-29'], local_demo_available: true,
   segments: [{ id: 1, start_reason: 'first_observation', observations: [reading('00'), reading('05', 95, 110)],
     migration: { put: { amount: 0 }, call: { amount: 5 } } }],
   model_description: 'Prior-session OI and IV held fixed.' })
 const render = () => mount(IntradayWallTracker, { props: { symbol: 'SPY' } })
-beforeEach(() => axios.get.mockReset())
+beforeEach(() => { axios.get.mockReset(); window.history.replaceState({}, '', '/') })
 
 describe('Intraday wall tracker', () => {
+  it('changes expiry scope without changing EOD scope and rejects a late scope response', async () => {
+    window.history.replaceState({}, '', '/dashboard?timeframe=7d&wall_timeframe=30d')
+    axios.get.mockResolvedValueOnce({ data: { ...payload(), timeframe: '30d' } })
+      .mockResolvedValueOnce({ data: payload() })
+    const wrapper = render(); await flushPromises()
+    expect(axios.get.mock.calls[0][1].params.timeframe).toBe('30d')
+    await wrapper.findAll('.wall-tracker__scope button').find(button => button.text() === '0DTE').trigger('click')
+    await flushPromises()
+    expect(axios.get.mock.calls[1][1].params.timeframe).toBe('0d')
+    expect(window.location.search).toContain('timeframe=7d')
+    expect(window.location.search).toContain('wall_timeframe=0d')
+    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(false)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows the selected symbol readiness rather than a three-symbol restriction', async () => {
+    axios.get.mockResolvedValue({ data: { ...payload('NVDA'), segments: [], availability: { state: 'no_expirations', message: 'There are no option expirations in this scope for NVDA. Choose a wider expiry scope.' } } })
+    const wrapper = mount(IntradayWallTracker, { props: { symbol: 'NVDA' } }); await flushPromises()
+    expect(wrapper.text()).toContain('Choose a wider expiry scope')
+    expect(wrapper.text()).not.toContain('SPY, QQQ and TSLA')
+    wrapper.unmount()
+  })
   it('shows rounded levels, real zero migration and a keyboard-accessible timeline', async () => {
     axios.get.mockResolvedValue({ data: { ...payload(), quote_delay_seconds: 900 } })
     const wrapper = render()
@@ -77,7 +101,8 @@ describe('Intraday wall tracker', () => {
     axios.get.mockResolvedValueOnce({ data: { ...payload(), segments: [] } })
       .mockResolvedValueOnce({ data: { ...payload(), dataset: 'synthetic_review' } })
     const wrapper = render(); await flushPromises()
-    expect(wrapper.text()).toContain('as session observations are recorded')
+    expect(wrapper.text()).toContain('No wall readings have been recorded yet for SPY')
+    expect(wrapper.text()).not.toContain('Tracking starts with')
     await wrapper.get('.wall-tracker__context button').trigger('click'); await flushPromises()
     expect(axios.get.mock.calls[1][1].params).toMatchObject({ demo: 1 })
     expect(wrapper.get('.wall-tracker__demo').text()).toContain('Synthetic prices and contracts')

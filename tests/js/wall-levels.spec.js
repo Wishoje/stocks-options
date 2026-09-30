@@ -9,7 +9,7 @@ function levels() { return {
   strike_data: [{ strike: 550, net_gex: -2000000, call_gex: 1000000, put_gex: 3000000 }, { strike: 545, net_gex: 0, call_gex: 100, put_gex: 100 }],
 } }
 describe('Wall levels', () => {
-  it('shows only primary levels in Overview and links to analysis and fixed-scope tracking', async () => {
+  it('shows only primary levels in Overview and links to analysis and tracking', async () => {
     const wrapper = mount(WallLevels, { props: { levels: levels(), showAnalysisLink: true, showTrackingLink: true } })
     await wrapper.get('[aria-label="Put wall levels"]').findAll('button')[1].trigger('click')
     await wrapper.setProps({ summaryOnly: true })
@@ -22,7 +22,7 @@ describe('Wall levels', () => {
     await actions[1].trigger('click')
     expect(wrapper.emitted('open-analysis')).toHaveLength(1)
     expect(wrapper.emitted('open-tracking')).toHaveLength(1)
-    expect(actions[1].text()).toContain('2W')
+    expect(actions[1].text()).toBe('Track during the session')
     await wrapper.setProps({ summaryOnly: false })
     expect(wrapper.find('.wall-choices').exists()).toBe(true)
     wrapper.unmount()

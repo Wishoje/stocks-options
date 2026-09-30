@@ -43,7 +43,7 @@ describe('Wall navigation', () => {
     const wrapper = await render('symbol=TSLA&mode=intraday&tab=walls&timeframe=7d')
     expect(wrapper.findComponent({ name: 'IntradayWallTracker' }).props('symbol')).toBe('TSLA')
     expect(wrapper.findComponent({ name: 'IntradayFlowPanel' }).exists()).toBe(false)
-    expect(wrapper.text()).toContain('Wall tracking · 2W')
+    expect(wrapper.text()).toContain('Intraday wall tracking')
     await vi.advanceTimersByTimeAsync(90_000); await flushPromises()
     expect(axios.get).not.toHaveBeenCalled()
     expect(axios.post).not.toHaveBeenCalled()

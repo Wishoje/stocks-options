@@ -1,7 +1,7 @@
 import { ref, watch, onScopeDispose } from 'vue'
 import axios from 'axios'
 
-export function useIntradayWalls(symbol) {
+export function useIntradayWalls(symbol, timeframe = () => '14d') {
   const data = ref(null), loading = ref(false), error = ref(''), demo = ref(false), session = ref('')
   let controller, generation = 0
   async function load() {
@@ -10,17 +10,19 @@ export function useIntradayWalls(symbol) {
     data.value = null
     error.value = ''
     const selected = symbol()
+    const selectedScope = timeframe()
     if (!selected) { loading.value = false; return }
     controller = new AbortController()
     loading.value = true
     try {
       const response = await axios.get('/api/intraday/walls', {
-        params: { symbol: selected, ...(session.value ? { session: session.value } : {}), ...(demo.value ? { demo: 1 } : {}) },
+        params: { symbol: selected, timeframe: selectedScope, ...(session.value ? { session: session.value } : {}), ...(demo.value ? { demo: 1 } : {}) },
         signal: controller.signal, timeout: 20000,
       })
       if (run !== generation) return
       const result = response.data
       if (result?.symbol !== selected || result?.schema_version !== 'intraday-walls.v1'
+        || result?.timeframe !== selectedScope
         || !Array.isArray(result.segments) || (demo.value ? result.dataset !== 'synthetic_review' : result.dataset !== 'intraday_capture')
         || (session.value && result.session !== session.value)) throw new Error('scope')
       data.value = result
@@ -33,7 +35,7 @@ export function useIntradayWalls(symbol) {
       if (run === generation) loading.value = false
     }
   }
-  watch(symbol, () => { session.value = ''; load() }, { immediate: true })
+  watch([symbol, timeframe], () => { session.value = ''; load() }, { immediate: true })
   // Explicit controls avoid background polling and watchlist request fan-out.
   function chooseSession(value) { session.value = value; return load() }
   function chooseDemo(value) { demo.value = value; session.value = ''; return load() }

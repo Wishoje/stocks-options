@@ -12,11 +12,11 @@ final class IntradayWallModel
 
     public const MODEL = 'frozen-eod-iv-bs.v1';
 
-    public function basis(string $symbol, string $session, string $sourceDate, array $expiries, array $contracts): array
+    public function basis(string $symbol, string $session, string $sourceDate, array $expiries, array $contracts, string $timeframe = '14d'): array
     {
         sort($expiries, SORT_STRING);
         usort($contracts, fn ($a, $b) => [$a['expiry'], $a['strike'], $a['type']] <=> [$b['expiry'], $b['strike'], $b['type']]);
-        $scope = ['symbol' => $symbol, 'session' => $session, 'timeframe' => '14d', 'expiries' => $expiries,
+        $scope = ['symbol' => $symbol, 'session' => $session, 'timeframe' => $timeframe, 'expiries' => $expiries,
             'model_version' => self::MODEL, 'inventory_convention' => 'call_minus_put', 'multiplier' => 100,
             'risk_free_rate' => 0, 'dividend_yield' => 0, 'units' => 'USD_per_1pct_move'];
         $scope['expiry_time_convention'] = 'NYSE_regular_session_close';
