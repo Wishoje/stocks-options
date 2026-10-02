@@ -57,7 +57,18 @@ Manual local collection, when needed:
 php artisan walls:capture-interactions --local-review --symbol=SPY --session=2026-10-01
 ```
 
-The command requires existing wall observations for that symbol/session. Historical collection and the demonstration are restricted to the local environment.
+The command requires existing wall observations for that symbol/session. Arbitrary historical collection and the demonstration are restricted to the local environment.
+
+### Recover the last completed production session
+
+When collection is enabled after a session has finished, its recorded wall lines can exist without the price bars needed for event icons. Run this bounded recovery on the worker to populate that session with real provider bars:
+
+```text
+php artisan walls:capture-interactions --recover-previous --symbol=SPY --symbol=QQQ --symbol=TSLA --dry-run
+php artisan walls:capture-interactions --recover-previous --symbol=SPY --symbol=QQQ --symbol=TSLA
+```
+
+Recovery requires the collection flag, one to five explicit symbols, and a time outside the market collection window. It accepts only the latest completed market session after the price-delay cutoff. It skips existing price evidence and symbols without recorded walls. One provider request per eligible symbol serves all its recorded expiry scopes. The normal provider limits, append-only evidence storage and detector rules remain in force. Wall observations are unchanged. These retrospective descriptions remain ineligible for point-in-time outcome statistics. The automatic schedule continues to collect the current session only.
 
 ## Validation
 

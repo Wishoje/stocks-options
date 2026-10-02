@@ -156,4 +156,67 @@ class WallInteractionCollectionTest extends TestCase
             return response('ok');
         });
     }
+
+    public function test_previous_session_recovery_previews_then_records_real_bars_once_across_scopes(): void
+    {
+        config(['wall_tracking.interactions_enabled' => true]);
+        $this->observation();
+        $this->observation('7d');
+        $this->travelTo(CarbonImmutable::parse('2026-10-01T06:00:00Z'));
+        Http::fake(['*' => Http::response($this->provider())]);
+        $wallRows = WallObservation::where('dataset', 'intraday_capture')->pluck('payload_json', 'id')->all();
+        $this->artisan('walls:capture-interactions --recover-previous --symbol=SPY --dry-run')
+            ->expectsOutput('SPY: {"session":"2026-09-30","wall_readings":2,"status":"would_collect"}')->assertSuccessful();
+        Http::assertNothingSent();
+        $this->assertSame(2, WallObservation::count());
+        $this->artisan('walls:capture-interactions --recover-previous --symbol=SPY --session=2026-09-30')->assertSuccessful();
+        Http::assertSentCount(1);
+        $this->assertSame(1, WallObservation::where('dataset', 'intraday_price_bars')->count());
+        $this->assertSame(2, WallObservation::where('dataset', 'wall_interactions')->count());
+        $assessment = json_decode(WallObservation::where('dataset', 'wall_interactions')->first()->payload_json, true);
+        $this->assertNotEmpty($assessment['events']);
+        $this->assertFalse($assessment['historical_outcome_eligible']);
+        $this->assertSame($wallRows, WallObservation::where('dataset', 'intraday_capture')->pluck('payload_json', 'id')->all());
+        $this->travel(6)->minutes(); // Skip already stored evidence even after the request cache expires.
+        $this->artisan('walls:capture-interactions --recover-previous --symbol=SPY')
+            ->expectsOutput('SPY: {"session":"2026-09-30","wall_readings":2,"status":"already_recorded"}')->assertSuccessful();
+        Http::assertSentCount(1);
+        $this->assertSame(5, WallObservation::count());
+    }
+
+    public function test_recovery_requires_enabled_collection_and_a_small_explicit_symbol_list(): void
+    {
+        $this->observation();
+        $this->travelTo(CarbonImmutable::parse('2026-10-01T06:00:00Z'));
+        config(['wall_tracking.interactions_enabled' => false]);
+        $this->artisan('walls:capture-interactions --recover-previous --symbol=SPY')
+            ->expectsOutput('Wall interaction collection is disabled.')->assertSuccessful();
+        config(['wall_tracking.interactions_enabled' => true]);
+        $this->artisan('walls:capture-interactions --recover-previous')->assertFailed();
+        $this->artisan('walls:capture-interactions --recover-previous --symbol=SPY --symbol=QQQ --symbol=TSLA --symbol=AAPL --symbol=IWM --symbol=NVDA')->assertFailed();
+        $this->artisan('walls:capture-interactions --recover-previous --symbol=bad/symbol')->assertFailed();
+        $this->artisan('walls:capture-interactions --recover-previous --local-review --symbol=SPY')->assertFailed();
+        $this->artisan('walls:capture-interactions --dry-run')->assertFailed();
+        $this->artisan('walls:capture-interactions --recover-previous --symbol=QQQ')->assertSuccessful();
+        Http::assertNothingSent();
+        $this->assertSame(1, WallObservation::count());
+    }
+
+    public function test_recovery_rejects_other_dates_and_live_hours_and_respects_early_closes(): void
+    {
+        config(['wall_tracking.interactions_enabled' => true]);
+        $this->travelTo(CarbonImmutable::parse('2026-10-01T06:00:00Z'));
+        foreach (['2026-10-01', '2026-09-29', '2026-02-30'] as $date) {
+            $this->artisan('walls:capture-interactions --recover-previous --symbol=SPY --session='.$date)->assertFailed();
+        }
+        $this->travelTo(CarbonImmutable::parse('2026-10-01T15:00:00Z'));
+        $this->artisan('walls:capture-interactions --recover-previous --symbol=SPY')->assertFailed();
+        foreach (['2026-11-27T18:30:00Z', '2026-11-28T12:00:00Z'] as $at) {
+            $this->travelTo(CarbonImmutable::parse($at));
+            $this->artisan('walls:capture-interactions --recover-previous --symbol=SPY --dry-run')
+                ->expectsOutput('SPY: {"session":"2026-11-27","wall_readings":0,"status":"waiting_for_walls"}')->assertSuccessful();
+        }
+        Http::assertNothingSent();
+        $this->assertSame(0, WallObservation::count());
+    }
 }
