@@ -642,6 +642,7 @@
             <div ref="netGexSection" class="gex-strikes-view__primary">
               <NetGexChart
                 eod
+                per-one-percent
                 :strikeData="levels?.strike_data || []"
                 :symbol="userSymbol"
                 :timeframe="selectedTimeframeLabel"
@@ -650,6 +651,11 @@
                 @reading-inspected="recordFirstUsefulReading"
               />
             </div>
+            <GexExpiryStrike
+              v-if="levels?.symbol === userSymbol && levels?.timeframe === gexTf && levels?.view_context?.view === eodView"
+              :levels="levels" :scope-label="selectedTimeframeLabel" :enabled="activeTab === 'strikes'"
+              @reading-inspected="recordFirstUsefulReading"
+            />
             <StrikeDeltaChart
               :strikeData="strikeSeriesForDelta"
               :symbol="userSymbol"
@@ -835,6 +841,7 @@ import UiStatus from './UI/UiStatus.vue'
 import OverviewMetrics from './OverviewMetrics.vue'
 import WallLevels from './WallLevels.vue'
 import GammaProfile from './GammaProfile.vue'
+import GexExpiryStrike from './GexExpiryStrike.vue'
 import FirstUseGuide from './FirstUseGuide.vue'
 import { recordFirstUsefulReading as recordFirstUsefulReadingEvent } from '@/Support/first-use.js'
 

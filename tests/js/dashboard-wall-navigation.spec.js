@@ -82,9 +82,12 @@ describe('Wall navigation', () => {
   it('keeps the strike chart focused and provides an analysis link', async () => {
     const wrapper = await render('symbol=SPY&mode=eod&tab=strikes')
     expect(wrapper.findComponent({ name: 'WallLevels' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'GexExpiryStrike' }).props('enabled')).toBe(true)
+    expect(wrapper.findComponent({ name: 'NetGexChart' }).props('perOnePercent')).toBe(true)
     const button = wrapper.findAllComponents({ name: 'UiButton' }).find(item => item.text() === 'Explore wall analysis')
     button.vm.$emit('click'); await flushPromises()
     expect(wrapper.vm.activeTab).toBe('positioning')
+    expect(wrapper.findComponent({ name: 'GexExpiryStrike' }).props('enabled')).toBe(false)
     expect(wrapper.findComponent({ name: 'WallLevels' }).props('intelligenceEnabled')).toBe(true)
   })
 

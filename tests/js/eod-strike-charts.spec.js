@@ -89,6 +89,19 @@ describe('EOD strike chart data helpers', () => {
 })
 
 describe('EOD net GEX by strike', () => {
+  it('normalizes only the opted-in EOD display while preserving original API values and default consumers', async () => {
+    const source = Object.freeze([Object.freeze({ strike: 100, net_gex: -200000, call_gex: 600000, put_gex: 800000 }),
+      Object.freeze({ strike: 101, net_gex: null, call_gex: 0, put_gex: null })])
+    wrapper = mount(NetGexChart, { props: { eod: true, perOnePercent: true, strikeData: source } })
+    expect(wrapper.vm.rawRows[0]).toMatchObject({ net_gex: -2000, call_gex: 6000, put_gex: 8000 })
+    expect(wrapper.vm.chartData.datasets[0].data).toEqual([-2000, null])
+    expect(wrapper.text()).toContain('USD per 1% underlying move')
+    await wrapper.setData({ splitView: true })
+    expect(wrapper.vm.chartData.datasets[1].data).toEqual([-8000, null])
+    expect(source[0].net_gex).toBe(-200000)
+    await wrapper.setProps({ perOnePercent: false })
+    expect(wrapper.vm.rawRows[0].net_gex).toBe(-200000)
+  })
   it('creates a readable self-contained panel without mutating or dropping raw readings', async () => {
     const source = Object.freeze([
       Object.freeze({ strike: 110, net_gex: -5_000, call_gex: 1_100, put_gex: 6_100, raw_marker: 'negative' }),

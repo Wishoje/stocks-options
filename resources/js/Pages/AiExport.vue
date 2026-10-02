@@ -51,6 +51,11 @@ const indicatorOptions = [
     description: 'Scoped EOD price-scenario curve, all detected crossings, reference close, and model assumptions.',
   },
   {
+    key: 'gex_expiry_strike',
+    label: 'GEX by strike & expiration',
+    description: 'Every strike and expiry, signed call/put exposure, concentration, and next-expiry share in USD per 1% move.',
+  },
+  {
     key: 'dealer_positioning',
     label: 'Dealer positioning',
     description: 'DEX by expiry and total dealer delta positioning.',
@@ -542,6 +547,7 @@ onUnmounted(() => {
                   items[].summary.wall<br>
                   items[].summary.qscore<br>
                   items[].summary.gex<br>
+                  items[].summary.gex_expiry_strike<br>
                   items[].summary.dealer_positioning<br>
                   items[].summary.expiry_pressure<br>
                   items[].summary.iv_skew<br>
@@ -552,6 +558,7 @@ onUnmounted(() => {
                   items[].wall_snapshots<br>
                   items[].gex_levels<br>
                   items[].wall_intelligence<br>
+                  items[].gex_expiry_strike<br>
                   items[].qscore<br>
                   items[].dealer_positioning<br>
                   items[].expiry_pressure<br>

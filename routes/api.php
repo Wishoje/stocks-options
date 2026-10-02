@@ -82,6 +82,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/gex-levels', [GexController::class, 'getGexLevels']);
             Route::get('/wall-intelligence', [\App\Http\Controllers\WallIntelligenceController::class, 'show']);
             Route::get('/gamma-profile', [\App\Http\Controllers\GammaProfileController::class, 'show']);
+            Route::get('/gex-expiry-strike', [\App\Http\Controllers\GexExpiryStrikeController::class, 'show']);
             Route::get('/symbols', [SymbolSearchController::class, 'lookup']);
             Route::get('/symbol/status', [\App\Http\Controllers\SymbolStatusController::class, 'show']);
 

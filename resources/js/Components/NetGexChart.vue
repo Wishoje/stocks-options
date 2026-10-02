@@ -48,6 +48,7 @@ export default {
     snapshotName: { type: String, default: 'net-gex' },
     heightClass: { type: String, default: 'h-80 md:h-96 xl:h-[26rem]' },
     eod: { type: Boolean, default: false },
+    perOnePercent: { type: Boolean, default: false },
     symbol: String,
     timeframe: String,
     snapshotDate: String,
@@ -63,8 +64,16 @@ export default {
     }
   },
   computed: {
+    exposureRows() {
+      if (!this.eod || !this.perOnePercent) return this.strikeData
+      return this.strikeData.map(row => ({ ...row,
+        net_gex: netValue(row) == null ? null : netValue(row) * .01,
+        call_gex: callValue(row) == null ? null : callValue(row) * .01,
+        put_gex: putValue(row) == null ? null : putValue(row) * .01,
+      }))
+    },
     rawRows() {
-      return normalizedStrikeRows(this.strikeData)
+      return normalizedStrikeRows(this.exposureRows)
     },
     sortedData() {
       if (!this.eod) {
@@ -72,7 +81,7 @@ export default {
           .filter(row => row && row.strike != null)
           .sort((left, right) => Number(left.strike) - Number(right.strike))
       }
-      return chartStrikeRows(this.strikeData)
+      return chartStrikeRows(this.exposureRows)
     },
     focusedData() {
       if (!this.eod) {
@@ -425,7 +434,7 @@ export default {
           y: {
             min: span ? minimum - padding : undefined,
             max: span ? maximum + padding : undefined,
-            title: { display: true, text: this.splitView ? 'GEX · calls above / puts below' : 'Net GEX', color: '#aeb7c2', font: { size: 11 } },
+            title: { display: true, text: this.perOnePercent ? 'GEX · USD per 1% move' : this.splitView ? 'GEX · calls above / puts below' : 'Net GEX', color: '#aeb7c2', font: { size: 11 } },
             grid: {
               color: context => Number(context.tick?.value) === 0 ? 'rgba(174,183,194,0.82)' : 'rgba(49,62,76,0.62)',
               lineWidth: context => Number(context.tick?.value) === 0 ? 2 : 1,
@@ -543,7 +552,7 @@ export default {
     :selected-value="selectedLabel"
     @update:selected-value="selectFromControl"
     title="Net GEX by strike"
-    subtitle="Dealer gamma exposure across selected expirations; dated for the selected expiry scope"
+    :subtitle="perOnePercent ? 'Dealer gamma exposure across selected expirations · USD per 1% underlying move' : 'Dealer gamma exposure across selected expirations; dated for the selected expiry scope'"
     help-title="How to read net GEX by strike"
     :symbol="symbol"
     :timeframe="timeframe"
@@ -561,6 +570,7 @@ export default {
   >
     <template #help>
       <div class="gex-stack">
+        <p v-if="perOnePercent">Values in this chart and its table use USD per 1% underlying move, matching the expiration map and wall analysis. The display is the legacy API exposure multiplied by 0.01; original API and existing export fields retain their units.</p>
         <p><strong>Net GEX</strong> is call gamma exposure minus put gamma exposure at each strike. Positive values often align with hedging that dampens moves; negative values can align with hedging that amplifies moves.</p>
         <p><strong>Split call/put</strong> shows call magnitude above zero and put magnitude below zero so the two sides remain visually distinct. The raw put value is preserved in the selected detail and table.</p>
         <p><strong>Focus on activity</strong> narrows the visible strike band without deleting rows. <strong>Group dense strikes</strong> sums nearby values for rendering; every source strike stays available in the collapsed table.</p>
