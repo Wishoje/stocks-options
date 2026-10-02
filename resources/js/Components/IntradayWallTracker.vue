@@ -59,9 +59,13 @@
         <p class="wall-tracker__model">Modeled with changing price and time. Prior-session open interest and IV stay fixed.</p>
         <p v-if="data.truncated">Showing the latest 500 readings for this session.</p>
         <div v-if="data.segments.length > 1" class="wall-tracker__context">
+          <div class="wall-tracker__view" role="group" aria-label="Timeline view">
+            <button type="button" :aria-pressed="showFullSession" @click="showFullSession = true">Full session</button>
+            <button type="button" :aria-pressed="!showFullSession" @click="showFullSession = false">Selected window</button>
+          </div>
           <label>Comparison window
-            <select v-model.number="segmentIndex" aria-label="Wall comparison window">
-              <option v-for="(item, index) in data.segments" :key="item.id" :value="index">{{ time(item.observations[0].observed_at) }} ET · {{ reason(item.start_reason) }}</option>
+            <select :value="segmentIndex" aria-label="Wall comparison window" @change="chooseWindow(Number($event.target.value))">
+              <option v-for="(item, index) in data.segments" :key="item.id" :value="index">{{ time(item.observations[0].observed_at) }} ET · {{ item.observations.length }} {{ item.observations.length === 1 ? 'reading' : 'readings' }} · {{ reason(item.start_reason) }}</option>
             </select>
           </label>
           <span>Each window compares the same inputs. Lines do not bridge changes or long pauses.</span>
@@ -82,8 +86,9 @@
         </div>
         <div class="wall-tracker__chart">
           <div class="wall-tracker__legend"><span class="put">● Put wall</span><span class="call">● Call wall</span><span class="price">— Price</span></div>
-          <p v-if="data.segments.length > 1">Showing {{ observations.length }} of {{ sessionReadingCount }} session readings in this comparison window.</p>
-          <p v-if="observations.length === 1" role="status">One reading in this window. The dots show the current levels; lines appear after another reading.</p>
+          <p v-if="showFullSession && data.segments.length > 1">Showing all {{ sessionReadingCount }} session readings. Gaps separate comparison windows; lines connect readings within each window.</p>
+          <p v-else-if="data.segments.length > 1">Showing {{ observations.length }} of {{ sessionReadingCount }} session readings in this comparison window.</p>
+          <p v-if="displayRows.length === 1" role="status">One reading in this window. The dots show the current levels; lines appear after another reading.</p>
           <svg ref="chartElement" class="wall-tracker__plot" :viewBox="`0 0 ${chartWidth} 260`" role="img" :aria-label="`Put and call wall levels for ${symbol}; select a reading below for values`">
             <g v-for="tick in ticks" :key="tick">
               <line x1="65" :y1="y(tick)" :x2="chartWidth - 20" :y2="y(tick)" stroke="currentColor" opacity=".14" />
@@ -91,11 +96,17 @@
             </g>
             <path :d="path('spot')" fill="none" stroke="#93bdfa" stroke-width="2" stroke-dasharray="5 4" />
             <path v-for="side in sides" :key="side" :d="path(side)" fill="none" :stroke="side === 'put' ? '#ef9d8f' : '#7ee0b0'" stroke-width="3" />
-            <line :x1="x(selectedIndex)" y1="20" :x2="x(selectedIndex)" y2="225" stroke="#dbe6f6" stroke-dasharray="3 4" opacity=".6" />
+            <g v-for="(row, index) in displayRows" :key="`${row.windowIndex}-${row.readingIndex}`" class="wall-tracker__recorded-point">
+              <circle v-if="Number.isFinite(row.spot)" :cx="x(index)" :cy="y(row.spot)" r="2.5" fill="#93bdfa" />
+              <template v-for="side in sides" :key="side">
+                <circle v-if="row.walls[side]?.[0]" :cx="x(index)" :cy="y(row.walls[side][0].strike)" r="2.5" :fill="side === 'put' ? '#ef9d8f' : '#7ee0b0'" />
+              </template>
+            </g>
+            <line :x1="x(displayIndex)" y1="20" :x2="x(displayIndex)" y2="225" stroke="#dbe6f6" stroke-dasharray="3 4" opacity=".6" />
             <template v-for="side in sides" :key="`${side}-point`">
-              <circle v-if="selected?.walls[side]?.[0]" :cx="x(selectedIndex)" :cy="y(selected.walls[side][0].strike)" r="5" :fill="side === 'put' ? '#ef9d8f' : '#7ee0b0'" />
+              <circle v-if="selected?.walls[side]?.[0]" :cx="x(displayIndex)" :cy="y(selected.walls[side][0].strike)" r="5" :fill="side === 'put' ? '#ef9d8f' : '#7ee0b0'" />
             </template>
-            <circle v-if="Number.isFinite(selected?.spot)" class="wall-tracker__price-point" :cx="x(selectedIndex)" :cy="y(selected.spot)" r="6" fill="#1b2230" stroke="#93bdfa" stroke-width="2"><title>Price {{ number(selected.spot, 2) }}</title></circle>
+            <circle v-if="Number.isFinite(selected?.spot)" class="wall-tracker__price-point" :cx="x(displayIndex)" :cy="y(selected.spot)" r="6" fill="#1b2230" stroke="#93bdfa" stroke-width="2"><title>Price {{ number(selected.spot, 2) }}</title></circle>
             <g v-for="event in visibleEvents" :key="event.id" :class="['wall-tracker__event', event.side]" role="button" tabindex="0"
               :aria-label="`${interactionTitle(event.status)}, ${event.side} wall ${number(event.strike)}, ${time(event.observed_at)} ET`"
               aria-haspopup="dialog" :aria-expanded="previewEvent?.id === event.id" :aria-controls="previewEvent?.id === event.id ? 'wall-event-summary' : undefined"
@@ -103,10 +114,10 @@
               <circle :cx="eventX(event)" :cy="y(event.strike)" r="12" fill="#182537" stroke="currentColor" stroke-width="2" />
               <WallInteractionIcon :status="event.status" :x="eventX(event) - 9" :y="y(event.strike) - 9" width="18" height="18" />
             </g>
-            <text v-if="observations.length === 1" :x="x(0)" y="251" text-anchor="middle">{{ time(latest?.observed_at) }} ET</text>
+            <text v-if="displayRows.length === 1" :x="x(0)" y="251" text-anchor="middle">{{ time(displayRows[0]?.observed_at) }} ET</text>
             <template v-else>
-              <text x="65" y="251">{{ time(observations[0]?.observed_at) }} ET</text>
-              <text :x="chartWidth - 20" y="251" text-anchor="end">{{ time(latest?.observed_at) }} ET</text>
+              <text x="65" y="251">{{ time(displayRows[0]?.observed_at) }} ET</text>
+              <text :x="chartWidth - 20" y="251" text-anchor="end">{{ time(displayRows.at(-1)?.observed_at) }} ET</text>
             </template>
           </svg>
           <ul v-if="eventLegend.length" class="wall-tracker__event-legend" aria-label="Price event symbols">
@@ -114,7 +125,7 @@
           </ul>
           <p v-if="visibleEvents.length" class="wall-tracker__event-help">Click an icon for a summary. Coral marks put-wall events; green marks call-wall events. The selector below includes every event.</p>
           <label class="wall-tracker__scrubber">Inspect reading <strong>{{ time(selected?.observed_at) }} ET</strong>
-            <input v-model.number="selectedIndex" type="range" min="0" :max="Math.max(0, observations.length - 1)" :disabled="observations.length < 2" aria-label="Inspect wall reading" :aria-valuetext="`${time(selected?.observed_at)} ET, put ${number(selected?.walls.put?.[0]?.strike)}, call ${number(selected?.walls.call?.[0]?.strike)}`" />
+            <input v-model.number="displayIndex" type="range" min="0" :max="Math.max(0, displayRows.length - 1)" :disabled="displayRows.length < 2" aria-label="Inspect wall reading" :aria-valuetext="`${time(selected?.observed_at)} ET, put ${number(selected?.walls.put?.[0]?.strike)}, call ${number(selected?.walls.call?.[0]?.strike)}`" />
           </label>
         </div>
         <p class="wall-tracker__interpretation">The leading wall strike can stay unchanged while price and exposure change. Price can trade above or below either wall. A stable wall is an area to monitor, not confirmation of support or resistance. Migration shows a change in the leading strike; it does not confirm a breakout.</p>
@@ -124,12 +135,14 @@
           <p>{{ data.model_description }}</p>
           <p>Open interest and IV date: {{ latest?.provenance.oi_date }}. Each expiry uses its own remaining time to the modeled regular-session close.</p>
           <div class="wall-tracker__table"><table>
-            <caption>Selected comparison window · {{ observations.length }} {{ observations.length === 1 ? 'reading' : 'readings' }} · Times in ET</caption>
+            <caption>{{ showFullSession ? 'Full session' : 'Selected comparison window' }} · {{ displayRows.length }} {{ displayRows.length === 1 ? 'reading' : 'readings' }} · Times in ET</caption>
             <thead><tr><th>Time</th><th>Price</th><th>Put wall</th><th>Call wall</th><th>Net GEX / 1%</th></tr></thead>
-            <tbody><tr v-for="(row, index) in observations" :key="row.observed_at" :class="{ selected: index === selectedIndex }">
-              <td><button type="button" @click="selectedIndex = index">{{ time(row.observed_at) }}</button></td><td>{{ number(row.spot, 2) }}</td>
+            <tbody><template v-for="(row, index) in displayRows" :key="`${row.windowIndex}-${row.readingIndex}`">
+              <tr v-if="showFullSession && row.readingIndex === 0 && row.windowIndex > 0" class="wall-tracker__window-break"><td colspan="5">{{ reason(data.segments[row.windowIndex].start_reason) }} · {{ time(row.observed_at) }} ET</td></tr>
+              <tr :class="{ selected: index === displayIndex }" data-wall-reading>
+              <td><button type="button" @click="displayIndex = index">{{ time(row.observed_at) }}</button></td><td>{{ number(row.spot, 2) }}</td>
               <td>{{ number(row.walls.put?.[0]?.strike) }}</td><td>{{ number(row.walls.call?.[0]?.strike) }}</td><td>{{ compact(row.net_gex) }}</td>
-            </tr></tbody>
+            </tr></template></tbody>
           </table></div>
         </details>
       </template>
@@ -183,6 +196,8 @@ function openRecordedScope(option) {
   else chooseScope(option.timeframe)
 }
 const sides = ['put', 'call'], segmentIndex = ref(0), selectedIndex = ref(0)
+const showFullSession = ref(true)
+function chooseWindow(index) { segmentIndex.value = index; showFullSession.value = false }
 const chartElement = ref(null), chartWidth = ref(840)
 let observer
 watch(chartElement, element => {
@@ -200,6 +215,16 @@ const latest = computed(() => observations.value.at(-1))
 const selected = computed(() => observations.value[selectedIndex.value])
 const sessionReadingCount = computed(() => data.value?.segments.reduce((total, item) => total + item.observations.length, 0) || 0)
 const sessionLatest = computed(() => data.value?.segments.at(-1)?.observations.at(-1))
+const displayRows = computed(() => (data.value?.segments || []).flatMap((window, windowIndex) =>
+  showFullSession.value || windowIndex === segmentIndex.value
+    ? window.observations.map((row, readingIndex) => ({ ...row, windowIndex, readingIndex })) : []))
+const displayIndex = computed({
+  get: () => Math.max(0, displayRows.value.findIndex(row => row.windowIndex === segmentIndex.value && row.readingIndex === selectedIndex.value)),
+  set: index => {
+    const row = displayRows.value[index]
+    if (row) { segmentIndex.value = row.windowIndex; selectedIndex.value = row.readingIndex }
+  },
+})
 const selectedEventId = ref(null)
 const interactionPanel = ref(null)
 const previewId = ref(null), eventSummary = ref(null), summaryPosition = ref({ visibility: 'hidden' })
@@ -253,12 +278,13 @@ async function openPreviewEvidence() {
   await inspectInteraction(event, true)
   interactionPanel.value?.$el.querySelector('.evidence')?.focus({ preventScroll: true })
 }
-watch([scope, segmentIndex, loading], () => closePreview())
+watch([scope, segmentIndex, loading, showFullSession], () => closePreview())
 const eventLegend = computed(() => [...new Set(visibleEvents.value.map(event => event.status))])
 const visibleEvents = computed(() => {
   const candidates = (data.value?.wall_interaction?.events || []).filter(event =>
-    Date.parse(event.observed_at) >= Date.parse(observations.value[0]?.observed_at)
-    && Date.parse(event.observed_at) <= Date.parse(latest.value?.observed_at)
+    (data.value?.segments || []).some((window, index) => (showFullSession.value || index === segmentIndex.value)
+      && Date.parse(event.observed_at) >= Date.parse(window.observations[0]?.observed_at)
+      && Date.parse(event.observed_at) <= Date.parse(window.observations.at(-1)?.observed_at))
     && event.strike >= range.value.min && event.strike <= range.value.max)
   // Keep touch targets apart on small charts. The event selector retains every event.
   const visible = []
@@ -268,7 +294,7 @@ const visibleEvents = computed(() => {
   return visible
 })
 const eventX = event => {
-  const start = Date.parse(observations.value[0]?.observed_at), end = Date.parse(latest.value?.observed_at)
+  const start = Date.parse(displayRows.value[0]?.observed_at), end = Date.parse(displayRows.value.at(-1)?.observed_at)
   return start === end ? (chartWidth.value + 45) / 2 : 65 + (Date.parse(event.observed_at) - start) / (end - start) * (chartWidth.value - 85)
 }
 async function inspectInteraction(event, scroll = false) {
@@ -285,6 +311,7 @@ watch(data, (value, previous) => {
   const oldWindow = previous?.segments[segmentIndex.value]
   const oldReading = oldWindow?.observations[selectedIndex.value]
   const sameContext = previous && value && ['symbol', 'session', 'timeframe', 'dataset'].every(key => previous[key] === value[key])
+  if (!sameContext) showFullSession.value = true
   if (!sameContext || !value?.wall_interaction?.events?.some(event => event.id === selectedEventId.value)) selectedEventId.value = null
   if (!sameContext || !value?.wall_interaction?.events?.some(event => event.id === previewId.value)) closePreview()
   const followingLatest = segmentIndex.value === previous?.segments.length - 1 && selectedIndex.value === oldWindow?.observations.length - 1
@@ -300,7 +327,7 @@ const time = value => value ? new Date(value).toLocaleTimeString('en-US', { time
 const reason = value => ({ first_observation: 'First recorded reading', scope_changed: 'Expiry scope changed', inputs_changed: 'Model inputs updated', observation_gap: 'New observations after a pause', same_time_revision: 'Revised reading', quote_source_changed: 'Price basis changed' }[value] || 'New comparison')
 const migrationLabel = migration => migration?.amount == null ? 'Building the comparison' : migration.amount === 0 ? 'Unchanged · 0 points' : `${migration.amount > 0 ? '↑ Up' : '↓ Down'} ${number(Math.abs(migration.amount), 2)} points`
 const range = computed(() => {
-  const values = observations.value.flatMap(row => [row.spot, ...sides.map(side => row.walls[side]?.[0]?.strike)]).filter(Number.isFinite)
+  const values = displayRows.value.flatMap(row => [row.spot, ...sides.map(side => row.walls[side]?.[0]?.strike)]).filter(Number.isFinite)
   const min = values.length ? Math.min(...values) : 0, max = values.length ? Math.max(...values) : 1
   const pad = Math.max((max - min) * .15, 1)
   return { min: min - pad, max: max + pad }
@@ -308,13 +335,15 @@ const range = computed(() => {
 const ticks = computed(() => Array.from({ length: 5 }, (_, index) => range.value.min + index * (range.value.max - range.value.min) / 4))
 // Position readings by elapsed time, not by array index.
 const x = index => {
-  const start = Date.parse(observations.value[0]?.observed_at), end = Date.parse(latest.value?.observed_at)
-  return !Number.isFinite(start) || end === start ? (65 + chartWidth.value - 20) / 2 : 65 + (Date.parse(observations.value[index]?.observed_at) - start) / (end - start) * (chartWidth.value - 85)
+  const start = Date.parse(displayRows.value[0]?.observed_at), end = Date.parse(displayRows.value.at(-1)?.observed_at)
+  return !Number.isFinite(start) || end === start ? (65 + chartWidth.value - 20) / 2 : 65 + (Date.parse(displayRows.value[index]?.observed_at) - start) / (end - start) * (chartWidth.value - 85)
 }
 const y = value => 225 - (value - range.value.min) / (range.value.max - range.value.min) * 205
 function path(side) {
-  let previous = null
-  return observations.value.map((row, index) => {
+  let previous = null, previousWindow = null
+  return displayRows.value.map((row, index) => {
+    if (row.windowIndex !== previousWindow) previous = null
+    previousWindow = row.windowIndex
     const value = side === 'spot' ? row.spot : row.walls[side]?.[0]?.strike
     if (!Number.isFinite(value)) { previous = null; return '' }
     const point = previous === null ? `M ${x(index)} ${y(value)}` : side === 'spot' ? `L ${x(index)} ${y(value)}` : `H ${x(index)} V ${y(value)}`
@@ -331,6 +360,7 @@ function download() {
 </script>
 
 <style scoped>
+.wall-tracker__view{display:flex;gap:6px}.wall-tracker__view button[aria-pressed="true"]{background:#304869;border-color:#93bdfa}.wall-tracker__window-break td{text-align:left;font-size:.75rem;color:#bdcce0;background:#202b3c}
 .wall-tracker__history{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;border:1px solid #526f93;border-radius:10px;background:#1b2b40;padding:14px 16px;margin:12px 0 18px}.wall-tracker__history strong{color:#b4d5ff;font-size:.9rem}.wall-tracker__history p{margin:4px 0 0}
 .wall-tracker__event{cursor:pointer}.wall-tracker__event:focus-visible{outline:2px solid #a2ceff;outline-offset:3px}.wall-tracker__event:hover circle,.wall-tracker__event[aria-expanded=true] circle{fill:#30445e;stroke-width:3}
 .wall-tracker__event-legend{display:flex;flex-wrap:wrap;gap:8px 18px;list-style:none;margin:6px 0 8px;padding:0;color:#d2deed;font-size:.76rem}.wall-tracker__event-legend li{display:flex;align-items:center;gap:6px}.wall-tracker__event-help{font-size:.78rem;margin-bottom:12px}

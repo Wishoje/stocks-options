@@ -35,6 +35,8 @@ Intraday snapshot pages allow up to two seconds to acquire their existing provid
 
 Wall capture uses a separate copy of the regular quote feed, published only after the quote delivery passes its session and ownership checks. Calculator snapshots can have newer timestamps than that delayed feed. Previously, they replaced the shared quote and prevented regular quotes from advancing the wall series until their timestamps caught up. The separate value retains the provider timestamp and actual receipt time, rejects out-of-order updates, and is scoped to one symbol and market date. The existing freshness checks still apply. On cache recovery, capture waits for the regular feed instead of switching to calculator prices. No additional provider requests are made, and stored observations are unchanged. Calculator scheduling frequency and worker counts remain unchanged.
 
+The timeline and readings table show the full recorded session by default. Paths restart at every comparison boundary, so collection gaps, price-basis changes, and input changes remain visible. Single readings are shown as points. The range control can inspect every recorded point; migration still uses only that point's comparable window. Selecting a comparison window narrows the chart and table, and Full session restores the complete view. Historical sessions are labeled with their date and offer Check latest session.
+
 ## Validation
 
 - Wall capture, model, and coordinator suites: 47 tests, 325 assertions.
