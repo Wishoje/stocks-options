@@ -15,6 +15,9 @@ use Illuminate\Support\Facades\Schedule;
 Schedule::command('walls:capture-intraday')->everyFiveMinutes()->withoutOverlapping(3)->onOneServer()
     ->when(fn () => (bool) config('wall_tracking.enabled'));
 
+Schedule::command('walls:capture-interactions')->everyFiveMinutes()->withoutOverlapping(3)->onOneServer()
+    ->when(fn () => (bool) config('wall_tracking.interactions_enabled'));
+
 Schedule::command('social:tick')->everyMinute()->withoutOverlapping(5)->onOneServer();
 
 // Example default command

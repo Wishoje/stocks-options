@@ -18,6 +18,47 @@ beforeEach(() => { axios.get.mockReset(); window.history.replaceState({}, '', '/
 afterEach(() => { vi.useRealTimers() })
 
 describe('Intraday wall tracker', () => {
+  it('previews an event without scrolling, then opens its evidence only on request', async () => {
+    const event = { id: 'event', side: 'put', strike: 95, status: 'touch', observed_at: '2026-09-30T14:05:00Z',
+      episode_started_at: '2026-09-30T14:00:00Z', wall_observed_at: '2026-09-30T14:00:00Z',
+      close: 95.01, tolerance: .0475, evidence_bar_ids: ['bar'], reason: 'Price reached the wall.' }
+    const data = { ...payload(), wall_interaction: { rule_version: 'completed-5m.v1', state: 'ready',
+      events: [event], readings: [event], current: { put: event },
+      bars: [{ id: 'bar', t: Date.parse(event.episode_started_at), o: 96, h: 96.1, l: 95, c: 95.01 }] } }
+    axios.get.mockResolvedValue({ data })
+    const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    const wrapper = mount(IntradayWallTracker, { props: { symbol: 'SPY' }, attachTo: document.body }); await flushPromises()
+    const marker = wrapper.get('.wall-tracker__event')
+    expect(marker.attributes('tabindex')).toBe('0')
+    await marker.trigger('keydown', { key: 'Enter' }); await flushPromises()
+    const summary = document.querySelector('[role="dialog"]')
+    expect(summary.textContent).toContain('Price reached the wall')
+    expect(document.activeElement).toBe(summary)
+    expect(marker.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('.evidence').exists()).toBe(false)
+    expect(scroll).not.toHaveBeenCalled()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(marker.element)
+    await marker.trigger('keydown', { key: ' ' }); await flushPromises()
+    document.querySelector('.wall-event-summary__evidence').click(); await flushPromises()
+    expect(wrapper.find('.evidence').exists()).toBe(true)
+    expect(wrapper.get('.evidence').text()).toContain('Price reached the wall')
+    expect(scroll).toHaveBeenCalled()
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    await wrapper.get('.review-context button').trigger('click'); await flushPromises()
+    expect(wrapper.find('.evidence').exists()).toBe(false)
+    await marker.trigger('click'); await flushPromises()
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })); await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await marker.trigger('click'); await flushPromises()
+    axios.get.mockResolvedValue({ data: payload('QQQ') })
+    await wrapper.setProps({ symbol: 'QQQ' }); await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    wrapper.unmount()
+    scroll.mockRestore()
+  })
+
   it('offers real recorded scopes with dates and opens one without changing the EOD scope', async () => {
     window.history.replaceState({}, '', '/dashboard?timeframe=7d&wall_timeframe=14d')
     axios.get.mockResolvedValueOnce({ data: { ...payload('AAPL'), session: null, sessions: [], segments: [],

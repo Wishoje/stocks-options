@@ -3,6 +3,7 @@
 return [
     // Enable on the worker only after the local review and deployment checks.
     'enabled' => (bool) env('WALL_TRACKING_ENABLED', false),
+    'interactions_enabled' => (bool) env('WALL_INTERACTIONS_ENABLED', false),
     // Discover symbols from current stored quotes and their options universe.
     'capture_budget_seconds' => 90,
     'quote_max_age_seconds' => 420,

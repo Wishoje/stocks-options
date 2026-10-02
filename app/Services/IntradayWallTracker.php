@@ -167,6 +167,7 @@ class IntradayWallTracker
             // Full strike evidence stays in append-only storage. The timeline
             // and its AI-ready JSON need the ranked walls and aggregate only.
             unset($payload['strike_data']);
+            $payload['evidence_hash'] = $row->content_hash;
 
             return $payload;
         })->values()->all();
@@ -176,6 +177,7 @@ class IntradayWallTracker
         $result['truncated'] = $records->count() === 500;
         $result['availability'] = $this->availability($symbol, $session, $observations !== [], $timeframe);
         $result['available_scopes'] = $observations === [] ? $this->recordedScopes($symbol) : [];
+        $result['wall_interaction'] = app(WallInteractionService::class)->read($symbol, $session, $timeframe, $observations);
 
         return $result;
     }

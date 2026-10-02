@@ -8,6 +8,50 @@ use Illuminate\Support\Facades\Log;
 
 class PolygonClient
 {
+    /** One bounded session request, shared by every wall expiry scope. */
+    public function wallPriceBars(string $symbol, string $session): array
+    {
+        if (! Symbols::isValid($symbol) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/D', $session)) {
+            throw new \InvalidArgumentException('Invalid wall price request.');
+        }
+        $url = rtrim(config('services.massive.base', 'https://api.massive.com'), '/')
+            .'/v2/aggs/ticker/'.rawurlencode(Symbols::canon($symbol)).'/range/5/minute/'.$session.'/'.$session;
+        $params = ['adjusted' => 'false', 'sort' => 'asc', 'limit' => 5000];
+        if (config('services.massive.mode', 'header') === 'query') {
+            $key = (string) config('services.massive.qparam', 'apiKey');
+            if (array_key_exists($key, $params)) {
+                throw new \InvalidArgumentException('Aggregate authentication cannot replace bar parameters.');
+            }
+            $params[$key] = config('services.massive.key');
+        }
+        try {
+            $response = app(ProviderConcurrencyLimiter::class)->massive(
+                fn () => $this->http()->get($url, $params),
+                requestKey: ProviderRequestReplay::fingerprint($url, $params)
+            );
+        } catch (\Throwable) {
+            // Exceptions can contain query authentication; never propagate those URLs.
+            return ['status' => 'provider_unavailable', 'bars' => []];
+        }
+        if (! $response->ok()) {
+            return ['status' => match ($response->status()) {
+                401, 403 => 'access_not_available', 429 => 'rate_limited', default => 'provider_unavailable',
+            }, 'bars' => []];
+        }
+        $json = $response->json();
+        if (! is_array($json) || ($json['ticker'] ?? null) !== Symbols::canon($symbol)
+            || ($json['adjusted'] ?? null) !== false || ! empty($json['next_url'])
+            || ! in_array($json['status'] ?? '', ['OK', 'DELAYED'], true)
+            || ! is_array($json['results'] ?? []) || count($json['results'] ?? []) > 288
+            || count(array_filter($json['results'] ?? [], 'is_array')) !== count($json['results'] ?? [])) {
+            return ['status' => 'unexpected_response', 'bars' => []];
+        }
+
+        return ['status' => 'ready', 'bars' => array_map(fn ($bar) => array_intersect_key($bar,
+            array_flip(['t', 'o', 'h', 'l', 'c', 'v', 'n'])), $json['results'] ?? []),
+            'request_id' => $json['request_id'] ?? null];
+    }
+
     private static function endpointForLog(string $url): string
     {
         $parts = parse_url($url);

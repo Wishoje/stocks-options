@@ -15,7 +15,9 @@ class UseLocalReviewClock
     {
         $configured = trim((string) config('ui_review.now', ''));
 
-        if (! app()->environment('local') || $configured === '') {
+        // Recorded intraday sessions carry their own dates. The EOD fixture
+        // clock must not hide newer imported bars or mark them unfinished.
+        if (! app()->environment('local') || $configured === '' || $request->is('api/intraday/walls')) {
             return $next($request);
         }
 
