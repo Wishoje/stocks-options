@@ -217,11 +217,11 @@ Schedule::call(function () {
 })
     ->everyFiveMinutes()
     ->weekdays()
+    ->timezone('America/New_York')
     ->between('09:35', '15:55')
     ->name('intraday:polygon:pull')
     ->withoutOverlapping(2)
-    ->onOneServer()
-    ->timezone('America/New_York');
+    ->onOneServer();
 
 Schedule::command('prices:refresh --source=both --limit=400')
     ->everyFiveMinutes()

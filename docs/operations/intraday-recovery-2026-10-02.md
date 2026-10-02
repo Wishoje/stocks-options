@@ -29,6 +29,8 @@ Follow-up production checks found capacity waits consuming the failure budget af
 
 Laravel reconstructs a command for its terminal failure callback without its queue transport object. Reading attempts from that command returned one even after a third failed attempt, leaving the durable run active. Intraday and calculator callbacks now lock the current slot and run, verify the delivery token, and finish the persisted attempt. A stale token cannot fail a replacement delivery.
 
+The intraday options schedule also applied its `between` filter before setting the New York timezone. Laravel captures the timezone when that filter is built. On the UTC production server, the schedule stopped creating new intraday requests after 15:55 UTC (11:55 AM ET during daylight time). The timezone now precedes the window filter. Regression cases cover the first and final pulls, noon, afternoon, weekends, and both daylight and standard time. The existing 9:35 AM–3:55 PM ET five-minute schedule is preserved.
+
 ## Validation
 
 - Wall capture, model, and coordinator suites: 47 tests, 325 assertions.
