@@ -68,7 +68,7 @@
               <option v-for="(item, index) in data.segments" :key="item.id" :value="index">{{ time(item.observations[0].observed_at) }} ET · {{ item.observations.length }} {{ item.observations.length === 1 ? 'reading' : 'readings' }} · {{ reason(item.start_reason) }}</option>
             </select>
           </label>
-          <span>Each window compares the same inputs. Lines do not bridge changes or long pauses.</span>
+          <span>Each window compares the same inputs. Dashed connectors mark gaps between equal wall levels.</span>
         </div>
         <div class="wall-tracker__metrics">
           <article v-for="side in sides" :key="side" :class="`wall-tracker__metric wall-tracker__metric--${side}`">
@@ -85,28 +85,36 @@
           </article>
         </div>
         <div class="wall-tracker__chart">
-          <div class="wall-tracker__legend"><span class="put">● Put wall</span><span class="call">● Call wall</span><span class="price">— Price</span></div>
-          <p v-if="showFullSession && data.segments.length > 1">Showing all {{ sessionReadingCount }} session readings. Gaps separate comparison windows; lines connect readings within each window.</p>
-          <p v-else-if="data.segments.length > 1">Showing {{ observations.length }} of {{ sessionReadingCount }} session readings in this comparison window.</p>
+          <div class="wall-tracker__chart-heading">
+            <div><h3>Wall levels &amp; price</h3><p>{{ showFullSession ? `Showing all ${sessionReadingCount} session readings` : `Showing ${observations.length} of ${sessionReadingCount} session readings` }} · Times in ET</p></div>
+            <div class="wall-tracker__legend"><span class="put"><i aria-hidden="true"></i>Put wall</span><span class="call"><i aria-hidden="true"></i>Call wall</span><span class="price"><i aria-hidden="true"></i>Price</span></div>
+          </div>
           <p v-if="displayRows.length === 1" role="status">One reading in this window. The dots show the current levels; lines appear after another reading.</p>
-          <svg ref="chartElement" class="wall-tracker__plot" :viewBox="`0 0 ${chartWidth} 260`" role="img" :aria-label="`Put and call wall levels for ${symbol}; select a reading below for values`">
+          <svg ref="chartElement" class="wall-tracker__plot" :viewBox="`0 0 ${chartWidth} 300`" role="img" :aria-label="`Put and call wall levels for ${symbol}; dashed wall connectors span recording gaps, price lines show recorded windows only. Select a reading below for values.`">
+            <g v-for="gap in chartGaps" :key="gap.index" class="wall-tracker__chart-gap">
+              <rect :x="gap.start" y="20" :width="Math.max(0, gap.end - gap.start)" height="230" fill="#b8c5d8" opacity=".035" />
+              <text v-if="gap.end - gap.start > 155 && gap.minutes > 15" :x="(gap.start + gap.end) / 2" y="36" text-anchor="middle">{{ gap.minutes }} min between readings</text>
+            </g>
             <g v-for="tick in ticks" :key="tick">
-              <line x1="65" :y1="y(tick)" :x2="chartWidth - 20" :y2="y(tick)" stroke="currentColor" opacity=".14" />
-              <text x="55" :y="y(tick) + 4" text-anchor="end">{{ number(tick, 1) }}</text>
+              <line :x1="plotLeft" :y1="y(tick)" :x2="plotRight" :y2="y(tick)" stroke="currentColor" opacity=".09" />
+              <text :x="plotLeft - 12" :y="y(tick) + 4" text-anchor="end">{{ number(tick, 2) }}</text>
             </g>
-            <path :d="path('spot')" fill="none" stroke="#93bdfa" stroke-width="2" stroke-dasharray="5 4" />
-            <path v-for="side in sides" :key="side" :d="path(side)" fill="none" :stroke="side === 'put' ? '#ef9d8f' : '#7ee0b0'" stroke-width="3" />
-            <g v-for="(row, index) in displayRows" :key="`${row.windowIndex}-${row.readingIndex}`" class="wall-tracker__recorded-point">
-              <circle v-if="Number.isFinite(row.spot)" :cx="x(index)" :cy="y(row.spot)" r="2.5" fill="#93bdfa" />
-              <template v-for="side in sides" :key="side">
-                <circle v-if="row.walls[side]?.[0]" :cx="x(index)" :cy="y(row.walls[side][0].strike)" r="2.5" :fill="side === 'put' ? '#ef9d8f' : '#7ee0b0'" />
-              </template>
+            <g class="wall-tracker__gap-connectors" aria-hidden="true">
+              <path v-for="side in sides" :key="side" :data-side="side" :d="gapPath(side)" fill="none" :stroke="seriesColor(side)" stroke-width="2" stroke-dasharray="6 6" opacity=".55" />
             </g>
-            <line :x1="x(displayIndex)" y1="20" :x2="x(displayIndex)" y2="225" stroke="#dbe6f6" stroke-dasharray="3 4" opacity=".6" />
+            <path class="wall-tracker__series" data-side="spot" :d="path('spot')" fill="none" :stroke="seriesColor('spot')" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+            <path v-for="side in sides" :key="side" class="wall-tracker__series" :data-side="side" :d="path(side)" fill="none" :stroke="seriesColor(side)" stroke-width="2.75" stroke-linejoin="round" />
+            <circle v-for="point in isolatedPoints" :key="`${point.index}-${point.side}`" class="wall-tracker__isolated-point" :cx="x(point.index)" :cy="y(point.value)" r="3" :fill="seriesColor(point.side)" />
+            <line :x1="x(displayIndex)" y1="20" :x2="x(displayIndex)" y2="250" stroke="#dbe6f6" stroke-dasharray="3 5" opacity=".35" />
             <template v-for="side in sides" :key="`${side}-point`">
               <circle v-if="selected?.walls[side]?.[0]" :cx="x(displayIndex)" :cy="y(selected.walls[side][0].strike)" r="5" :fill="side === 'put' ? '#ef9d8f' : '#7ee0b0'" />
             </template>
-            <circle v-if="Number.isFinite(selected?.spot)" class="wall-tracker__price-point" :cx="x(displayIndex)" :cy="y(selected.spot)" r="6" fill="#1b2230" stroke="#93bdfa" stroke-width="2"><title>Price {{ number(selected.spot, 2) }}</title></circle>
+            <circle v-if="Number.isFinite(selected?.spot)" class="wall-tracker__price-point" :cx="x(displayIndex)" :cy="y(selected.spot)" r="5" fill="#1b2230" :stroke="seriesColor('spot')" stroke-width="2"><title>Price {{ number(selected.spot, 2) }}</title></circle>
+            <g v-for="label in endLabels" :key="label.side" class="wall-tracker__end-label" :data-side="label.side" :aria-label="`${label.name} ${number(label.value, 2)} at ${time(displayRows.at(-1)?.observed_at)} ET`">
+              <path :d="`M ${x(displayRows.length - 1) + 7} ${y(label.value)} L ${plotRight + 13} ${label.position} H ${plotRight + 19}`" fill="none" :stroke="seriesColor(label.side)" opacity=".5" />
+              <rect :x="plotRight + 20" :y="label.position - 11" width="70" height="22" rx="5" :fill="seriesColor(label.side)" fill-opacity=".12" />
+              <text :x="plotRight + 27" :y="label.position + 4" :style="{ fill: seriesColor(label.side) }">{{ number(label.value, 2) }}</text>
+            </g>
             <g v-for="event in visibleEvents" :key="event.id" :class="['wall-tracker__event', event.side]" role="button" tabindex="0"
               :aria-label="`${interactionTitle(event.status)}, ${event.side} wall ${number(event.strike)}, ${time(event.observed_at)} ET`"
               aria-haspopup="dialog" :aria-expanded="previewEvent?.id === event.id" :aria-controls="previewEvent?.id === event.id ? 'wall-event-summary' : undefined"
@@ -114,12 +122,9 @@
               <circle :cx="eventX(event)" :cy="y(event.strike)" r="12" fill="#182537" stroke="currentColor" stroke-width="2" />
               <WallInteractionIcon :status="event.status" :x="eventX(event) - 9" :y="y(event.strike) - 9" width="18" height="18" />
             </g>
-            <text v-if="displayRows.length === 1" :x="x(0)" y="251" text-anchor="middle">{{ time(displayRows[0]?.observed_at) }} ET</text>
-            <template v-else>
-              <text x="65" y="251">{{ time(displayRows[0]?.observed_at) }} ET</text>
-              <text :x="chartWidth - 20" y="251" text-anchor="end">{{ time(displayRows.at(-1)?.observed_at) }} ET</text>
-            </template>
+            <text v-for="tick in timeTicks" :key="tick.at" :x="tick.x" y="280" :text-anchor="tick.anchor">{{ time(tick.at) }}{{ displayRows.length === 1 ? ' ET' : '' }}</text>
           </svg>
+          <p v-if="chartGaps.length" class="wall-tracker__gap-help"><span aria-hidden="true"></span>Dashed wall lines connect equal levels across recording gaps; movement within a gap is unknown.</p>
           <ul v-if="eventLegend.length" class="wall-tracker__event-legend" aria-label="Price event symbols">
             <li v-for="status in eventLegend" :key="status"><WallInteractionIcon :status="status" width="20" height="20" />{{ interactionTitle(status) }}</li>
           </ul>
@@ -293,10 +298,7 @@ const visibleEvents = computed(() => {
   }
   return visible
 })
-const eventX = event => {
-  const start = Date.parse(displayRows.value[0]?.observed_at), end = Date.parse(displayRows.value.at(-1)?.observed_at)
-  return start === end ? (chartWidth.value + 45) / 2 : 65 + (Date.parse(event.observed_at) - start) / (end - start) * (chartWidth.value - 85)
-}
+const eventX = event => timeX(Date.parse(event.observed_at))
 async function inspectInteraction(event, scroll = false) {
   selectedEventId.value = event?.id || null
   await nextTick()
@@ -329,16 +331,69 @@ const migrationLabel = migration => migration?.amount == null ? 'Building the co
 const range = computed(() => {
   const values = displayRows.value.flatMap(row => [row.spot, ...sides.map(side => row.walls[side]?.[0]?.strike)]).filter(Number.isFinite)
   const min = values.length ? Math.min(...values) : 0, max = values.length ? Math.max(...values) : 1
-  const pad = Math.max((max - min) * .15, 1)
-  return { min: min - pad, max: max + pad }
+  const pad = Math.max((max - min) * .1, Math.abs(max) * .001, .01)
+  const rawStep = (max - min + 2 * pad) / 5
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep))
+  const step = [1, 2, 2.5, 5, 10].find(value => value * magnitude >= rawStep) * magnitude
+  return { min: Math.floor((min - pad) / step) * step, max: Math.ceil((max + pad) / step) * step, step }
 })
-const ticks = computed(() => Array.from({ length: 5 }, (_, index) => range.value.min + index * (range.value.max - range.value.min) / 4))
+const ticks = computed(() => Array.from({ length: Math.round((range.value.max - range.value.min) / range.value.step) + 1 }, (_, index) => range.value.min + index * range.value.step))
+const plotLeft = 52
+const plotRight = computed(() => chartWidth.value - 96)
 // Position readings by elapsed time, not by array index.
-const x = index => {
+const timeX = at => {
   const start = Date.parse(displayRows.value[0]?.observed_at), end = Date.parse(displayRows.value.at(-1)?.observed_at)
-  return !Number.isFinite(start) || end === start ? (65 + chartWidth.value - 20) / 2 : 65 + (Date.parse(displayRows.value[index]?.observed_at) - start) / (end - start) * (chartWidth.value - 85)
+  return !Number.isFinite(start) || end === start ? (plotLeft + plotRight.value) / 2 : plotLeft + (at - start) / (end - start) * (plotRight.value - plotLeft)
 }
-const y = value => 225 - (value - range.value.min) / (range.value.max - range.value.min) * 205
+const x = index => timeX(Date.parse(displayRows.value[index]?.observed_at))
+const y = value => 250 - (value - range.value.min) / (range.value.max - range.value.min) * 230
+const seriesValue = (row, side) => side === 'spot' ? row?.spot : row?.walls[side]?.[0]?.strike
+const seriesColor = side => ({ put: '#ef9d8f', call: '#7ee0b0', spot: '#b5bcff' }[side])
+const chartGaps = computed(() => displayRows.value.flatMap((row, index) => {
+  const before = displayRows.value[index - 1]
+  return before && before.windowIndex !== row.windowIndex ? [{ index, start: x(index - 1), end: x(index), minutes: Math.round((Date.parse(row.observed_at) - Date.parse(before.observed_at)) / 60000) }] : []
+}))
+function gapPath(side) {
+  // Equal endpoints get a visual guide only. Never infer a level change, a
+  // price path, or an available wall where either endpoint has no reading.
+  return chartGaps.value.map(gap => {
+    const before = seriesValue(displayRows.value[gap.index - 1], side)
+    const after = seriesValue(displayRows.value[gap.index], side)
+    return Number.isFinite(before) && before === after ? `M ${gap.start} ${y(before)} H ${gap.end}` : ''
+  }).join(' ')
+}
+const isolatedPoints = computed(() => displayRows.value.flatMap((row, index, rows) => ['spot', ...sides].flatMap(side => {
+  const value = seriesValue(row, side)
+  const hasNeighbor = [rows[index - 1], rows[index + 1]].some(other => other?.windowIndex === row.windowIndex && Number.isFinite(seriesValue(other, side)))
+  return Number.isFinite(value) && !hasNeighbor && index !== displayIndex.value ? [{ index, side, value }] : []
+})))
+const endLabels = computed(() => {
+  const row = displayRows.value.at(-1)
+  const labels = ['spot', ...sides].flatMap(side => {
+    const value = seriesValue(row, side)
+    return Number.isFinite(value) ? [{ side, name: side === 'spot' ? 'Price' : `${side === 'put' ? 'Put' : 'Call'} wall`, value, position: y(value) }] : []
+  }).sort((a, b) => a.position - b.position)
+  labels.forEach((label, index) => { label.position = Math.max(label.position, index ? labels[index - 1].position + 26 : 20) })
+  if (labels.length && labels.at(-1).position > 250) {
+    labels.at(-1).position = 250
+    for (let index = labels.length - 2; index >= 0; index--) labels[index].position = Math.min(labels[index].position, labels[index + 1].position - 26)
+  }
+  return labels
+})
+const timeTicks = computed(() => {
+  const start = Date.parse(displayRows.value[0]?.observed_at), end = Date.parse(displayRows.value.at(-1)?.observed_at)
+  if (!Number.isFinite(start)) return []
+  if (start === end) return [{ at: start, x: timeX(start), anchor: 'middle' }]
+  const targetCount = Math.max(2, Math.floor((plotRight.value - plotLeft) / 135))
+  const rawStep = (end - start) / targetCount / 60000
+  const step = ([1, 5, 10, 15, 30, 60, 120, 240, 480].find(value => value >= rawStep) || 480) * 60000
+  const middle = []
+  for (let at = Math.ceil(start / step) * step; at < end; at += step) {
+    const position = timeX(at)
+    if (position - plotLeft > 85 && plotRight.value - position > 85) middle.push({ at, x: position, anchor: 'middle' })
+  }
+  return [{ at: start, x: plotLeft, anchor: 'start' }, ...middle, { at: end, x: plotRight.value, anchor: 'end' }]
+})
 function path(side) {
   let previous = null, previousWindow = null
   return displayRows.value.map((row, index) => {
@@ -360,6 +415,7 @@ function download() {
 </script>
 
 <style scoped>
+.wall-tracker__chart-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.wall-tracker__chart-heading h3{margin:0;font-size:.95rem;font-weight:650}.wall-tracker__chart-heading p{margin:5px 0 0;font-size:.75rem}.wall-tracker__legend span{display:inline-flex;align-items:center;gap:7px}.wall-tracker__legend i{display:inline-block;width:22px;border-top:3px solid currentColor;border-radius:2px}.wall-tracker__legend .price{color:#b5bcff}.wall-tracker__chart-gap text{font-size:10px;fill:#8796ab}.wall-tracker__end-label text{font-size:11px;font-weight:650;font-variant-numeric:tabular-nums}.wall-tracker__gap-help{display:flex;align-items:center;gap:9px;font-size:.72rem;margin:0 0 14px;color:#9eafc5}.wall-tracker__gap-help span{width:24px;flex-shrink:0;border-top:2px dashed #8997aa}.wall-tracker__scrubber{border-top:1px solid #354052;padding-top:14px;margin-top:14px}
 .wall-tracker__view{display:flex;gap:6px}.wall-tracker__view button[aria-pressed="true"]{background:#304869;border-color:#93bdfa}.wall-tracker__window-break td{text-align:left;font-size:.75rem;color:#bdcce0;background:#202b3c}
 .wall-tracker__history{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;border:1px solid #526f93;border-radius:10px;background:#1b2b40;padding:14px 16px;margin:12px 0 18px}.wall-tracker__history strong{color:#b4d5ff;font-size:.9rem}.wall-tracker__history p{margin:4px 0 0}
 .wall-tracker__event{cursor:pointer}.wall-tracker__event:focus-visible{outline:2px solid #a2ceff;outline-offset:3px}.wall-tracker__event:hover circle,.wall-tracker__event[aria-expanded=true] circle{fill:#30445e;stroke-width:3}
@@ -369,5 +425,5 @@ function download() {
 .wall-tracker__scope{margin:20px 0 12px;min-width:0}.wall-tracker__scope legend{font-size:.8rem;font-weight:650;margin-bottom:8px}.wall-tracker__scope .wall-tracker__actions{justify-content:flex-start;gap:6px}.wall-tracker__scope button[aria-pressed="true"]{background:#304869;border-color:#93bdfa;color:#fff}.wall-tracker__scope p{margin-top:8px;font-size:.78rem}
 .wall-tracker{padding:clamp(16px,2vw,26px);margin-bottom:20px;border:1px solid #354052;border-radius:16px;background:#171c27;color:#e7edf6}
 .wall-tracker__header,.wall-tracker__actions,.wall-tracker__context,.wall-tracker__legend{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-h2{font-size:1.2rem;font-weight:700;margin:3px 0 7px}p,small{color:#b8c5d8}p{font-size:.88rem;line-height:1.6}button,select{border:1px solid #43516a;border-radius:8px;background:#242d3e;color:#e7edf6;padding:8px 12px;font-size:.82rem}button:hover{background:#303e54}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #93bdfa;outline-offset:3px}button:disabled{opacity:.55;cursor:wait}.wall-tracker__eyebrow{text-transform:uppercase;letter-spacing:.08em;font-size:.7rem;color:#99b5d8}.wall-tracker__context{justify-content:flex-start;margin:18px 0;font-size:.8rem;color:#b8c5d8}.wall-tracker__context label{display:flex;gap:10px;align-items:center}.wall-tracker__demo{border-left:3px solid #e6c86f;background:#302d22;padding:12px;margin-top:16px;color:#f2df9d}.wall-tracker__model{margin:14px 0}.wall-tracker__metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.wall-tracker__metric{border:1px solid #354052;border-top:2px solid #93bdfa;border-radius:12px;padding:18px}.wall-tracker__metric h3{font-size:.8rem;color:#bdcce0}.wall-tracker__metric strong{display:block;font-size:1.9rem;font-weight:750;margin:8px 0;color:#93bdfa}.wall-tracker__metric--put{border-top-color:#ef9d8f}.wall-tracker__metric--put strong,.put{color:#ef9d8f}.wall-tracker__metric--call{border-top-color:#7ee0b0}.wall-tracker__metric--call strong,.call{color:#7ee0b0}.wall-tracker__metric small{font-size:.72rem}.wall-tracker__chart{margin-top:20px;border:1px solid #354052;border-radius:12px;padding:16px;background:#1b2230}.wall-tracker__legend{justify-content:flex-start;font-size:.8rem;gap:20px}.price{color:#93bdfa}.wall-tracker__plot{width:100%;height:260px;margin-top:12px}svg text{fill:#b8c5d8;font-size:11px}.wall-tracker__scrubber{display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:.8rem}.wall-tracker__scrubber strong{margin-left:auto}.wall-tracker__scrubber input{width:100%;accent-color:#93bdfa;margin-top:8px;min-height:28px}.wall-tracker__interpretation{margin:16px 0}.wall-tracker__table{overflow:auto;margin-top:16px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:.8rem}caption{text-align:left;color:#b8c5d8;padding:8px 0}th,td{text-align:right;padding:10px;border-bottom:1px solid #354052}th:first-child,td:first-child{text-align:left}.selected{background:#25344b}summary{cursor:pointer;font-size:.85rem;padding:12px 0}details p{margin:10px 0}.wall-tracker__empty,.wall-tracker__loading{padding:24px 0}@media(max-width:640px){.wall-tracker__metrics{grid-template-columns:1fr}.wall-tracker__metric strong{font-size:1.65rem}.wall-tracker__header{align-items:flex-start}.wall-tracker__actions{justify-content:flex-start}.wall-tracker__plot{height:260px}.wall-tracker__context select{max-width:240px}}
+h2{font-size:1.2rem;font-weight:700;margin:3px 0 7px}p,small{color:#b8c5d8}p{font-size:.88rem;line-height:1.6}button,select{border:1px solid #43516a;border-radius:8px;background:#242d3e;color:#e7edf6;padding:8px 12px;font-size:.82rem}button:hover{background:#303e54}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #93bdfa;outline-offset:3px}button:disabled{opacity:.55;cursor:wait}.wall-tracker__eyebrow{text-transform:uppercase;letter-spacing:.08em;font-size:.7rem;color:#99b5d8}.wall-tracker__context{justify-content:flex-start;margin:18px 0;font-size:.8rem;color:#b8c5d8}.wall-tracker__context label{display:flex;gap:10px;align-items:center}.wall-tracker__demo{border-left:3px solid #e6c86f;background:#302d22;padding:12px;margin-top:16px;color:#f2df9d}.wall-tracker__model{margin:14px 0}.wall-tracker__metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.wall-tracker__metric{border:1px solid #354052;border-top:2px solid #93bdfa;border-radius:12px;padding:18px}.wall-tracker__metric h3{font-size:.8rem;color:#bdcce0}.wall-tracker__metric strong{display:block;font-size:1.9rem;font-weight:750;margin:8px 0;color:#93bdfa}.wall-tracker__metric--put{border-top-color:#ef9d8f}.wall-tracker__metric--put strong,.put{color:#ef9d8f}.wall-tracker__metric--call{border-top-color:#7ee0b0}.wall-tracker__metric--call strong,.call{color:#7ee0b0}.wall-tracker__metric small{font-size:.72rem}.wall-tracker__chart{margin-top:20px;border:1px solid #354052;border-radius:12px;padding:16px;background:#1b2230}.wall-tracker__legend{justify-content:flex-start;font-size:.8rem;gap:20px}.price{color:#93bdfa}.wall-tracker__plot{width:100%;height:300px;margin-top:14px}svg text{fill:#b8c5d8;font-size:11px}.wall-tracker__scrubber{display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:.8rem}.wall-tracker__scrubber strong{margin-left:auto}.wall-tracker__scrubber input{width:100%;accent-color:#93bdfa;margin-top:8px;min-height:28px}.wall-tracker__interpretation{margin:16px 0}.wall-tracker__table{overflow:auto;margin-top:16px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:.8rem}caption{text-align:left;color:#b8c5d8;padding:8px 0}th,td{text-align:right;padding:10px;border-bottom:1px solid #354052}th:first-child,td:first-child{text-align:left}.selected{background:#25344b}summary{cursor:pointer;font-size:.85rem;padding:12px 0}details p{margin:10px 0}.wall-tracker__empty,.wall-tracker__loading{padding:24px 0}@media(max-width:640px){.wall-tracker__metrics{grid-template-columns:1fr}.wall-tracker__metric strong{font-size:1.65rem}.wall-tracker__header{align-items:flex-start}.wall-tracker__actions{justify-content:flex-start}.wall-tracker__plot{height:300px}.wall-tracker__context select{max-width:240px}}
 </style>
