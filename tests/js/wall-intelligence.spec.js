@@ -28,6 +28,21 @@ describe('Wall intelligence', () => {
     expect(axios.get.mock.calls[0][1].params).toMatchObject({ symbol: 'SPY', timeframe: '14d', view: 'latest_eod' })
     wrapper.unmount()
   })
+  it('renders side-specific OI for the selected wall using the existing intelligence request', async () => {
+    const source = levels(), response = result(source)
+    for (const [index, reading] of response.walls.put.entries()) {
+      reading.wall_flow = { side: 'put', strike: reading.strike, data_date: '2026-09-30', wall_build_state: index ? 'unwinding' : 'building', stable_band_pct: 2,
+        open_interest: 100, daily: { comparable: true, change: index ? -10 : 10, change_pct: index ? -10 : 10, baseline_date: '2026-09-29' }, five_session: { comparable: false }, expiry_contributions: [] }
+    }
+    axios.get.mockResolvedValue({ data: response })
+    const wrapper = render(source); await flushPromises()
+    expect(wrapper.get('.flow-state').text()).toBe('Building')
+    await wrapper.get('[aria-label="Put wall levels"]').findAll('button')[1].trigger('click')
+    expect(wrapper.get('.flow-state').text()).toBe('Unwinding')
+    expect(wrapper.get('.flow-current').text()).toContain('Put OI at 95')
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
   it('ignores late responses after a symbol switch and aborts the old request', async () => {
     const spy = levels(), qqq = levels('QQQ')
     let first, second

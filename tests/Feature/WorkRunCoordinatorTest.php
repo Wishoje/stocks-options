@@ -177,6 +177,22 @@ class WorkRunCoordinatorTest extends TestCase
         $this->assertSame(2, $second['run']->dispatch_attempts);
     }
 
+    public function test_bounded_retry_scans_advance_past_repeatedly_deferred_old_work(): void
+    {
+        $at = CarbonImmutable::parse('2026-10-02 14:00:00', 'UTC');
+        $old = $this->runs->claim('calculator_refresh', 'SPY', ['expiry' => '2026-10-09'], 'calculator-fill', at: $at->subHour())['run'];
+        $quote = $this->runs->claim('quote_refresh', 'SPY', ['session_date' => '2026-10-02', 'phase' => 'regular'], 'quotes', at: $at->subMinutes(5))['run'];
+        // The old fill is re-deferred every minute. The quote has been due longer.
+        $old->update(['next_dispatch_at' => $at->subSeconds(20)]);
+        $quote->update(['next_dispatch_at' => $at->subMinutes(4)]);
+        $this->assertSame([$quote->id], $this->runs->dispatchable(1, $at)->modelKeys());
+        $reservation = $this->runs->reserveDispatch($quote->id, $at);
+        $this->runs->markDispatched($quote->id, $reservation['delivery_token'], $at);
+        $this->assertSame([$old->id], $this->runs->dispatchable(1, $at)->modelKeys());
+        $old->update(['next_dispatch_at' => $at->addMinute()]);
+        $this->assertCount(0, $this->runs->dispatchable(1, $at));
+    }
+
     public function test_newer_attempt_fences_stale_start_and_terminal_transitions(): void
     {
         $at = CarbonImmutable::parse('2026-08-16 14:00:00', 'UTC');

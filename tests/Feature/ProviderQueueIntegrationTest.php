@@ -97,6 +97,63 @@ class ProviderQueueIntegrationTest extends MySqlTestCase
         $this->assertFalse(app(CalculatorExecutionFreshness::class)->isFresh('SPY'));
     }
 
+    public function test_an_old_pending_calculator_refresh_dispatches_once_when_transport_is_empty(): void
+    {
+        $run = app(WorkRunCoordinator::class)->claim('calculator_refresh', 'SPY', ['expiry' => null],
+            'calculator-fill-heavy', at: now('UTC')->toImmutable()->subHour())['run'];
+        // Production telemetry: an old durable intent, but no queued deliveries.
+        Cache::put('provider-backpressure:queue-sample:v2', [[
+            'queue' => $run->queue, 'interactive' => false, 'ready' => 0,
+            'ready_head_age_seconds' => null, 'oldest_due_intent_age_seconds' => 3600,
+        ]], 2);
+        $this->app->instance(ScheduledFillBackpressure::class, new ScheduledFillBackpressure);
+        $dispatcher = app(WorkRunDispatcher::class);
+        $this->assertTrue($dispatcher->dispatch($run));
+        $this->assertFalse($dispatcher->dispatch($run->fresh()));
+        $this->assertSame(1, $run->fresh()->dispatch_attempts);
+        Bus::assertDispatchedTimes(FetchCalculatorChainJob::class, 1);
+        Bus::assertDispatched(FetchCalculatorChainJob::class, fn ($job): bool => $job->workRunId === $run->id && $job->expiry === null);
+        Http::assertNothingSent();
+    }
+
+    public function test_pending_live_quotes_defer_calculator_admission_without_delaying_the_quote(): void
+    {
+        $runs = app(WorkRunCoordinator::class);
+        $calculator = $runs->claim('calculator_refresh', 'SPY', ['expiry' => null], 'calculator-fill-heavy')['run'];
+        $quote = $runs->claim('quote_refresh', 'SPY', ['session_date' => '2026-09-08', 'phase' => 'regular'], 'quotes')['run'];
+        Cache::put('provider-backpressure:queue-sample:v2', [[
+            'queue' => 'quotes', 'interactive' => false, 'market_data' => true, 'ready' => 0,
+            'reserved' => 0, 'oldest_due_intent_age_seconds' => 0,
+        ]], 2);
+        $this->app->instance(ScheduledFillBackpressure::class, new ScheduledFillBackpressure);
+        $dispatcher = app(WorkRunDispatcher::class);
+        $this->assertFalse($dispatcher->dispatch($calculator));
+        $this->assertTrue($dispatcher->dispatch($quote));
+        $this->assertSame(0, $calculator->fresh()->dispatch_attempts);
+        Bus::assertNotDispatched(FetchCalculatorChainJob::class);
+        $this->travel(21)->seconds();
+        Cache::put('provider-backpressure:queue-sample:v2', [], 2);
+        $this->assertTrue($dispatcher->dispatch($calculator->fresh()));
+        Bus::assertDispatchedTimes(FetchCalculatorChainJob::class, 1);
+        Http::assertNothingSent();
+    }
+
+    public function test_an_already_queued_background_calculator_yields_before_http_when_intraday_work_is_busy(): void
+    {
+        Cache::put('provider-backpressure:queue-sample:v2', [[
+            'queue' => 'intraday-heavy', 'interactive' => false, 'market_data' => true, 'ready' => 0,
+            'reserved' => 1, 'oldest_due_intent_age_seconds' => null,
+        ]], 2);
+        $this->app->instance(ScheduledFillBackpressure::class, new ScheduledFillBackpressure);
+        try {
+            (new FetchCalculatorChainJob('SPY'))->onQueue('calculator-fill-heavy')->handle();
+            $this->fail('Background calculator work must yield before fetching a catalog.');
+        } catch (ProviderDeferred $exception) {
+            $this->assertSame(ProviderDeferred::BACKPRESSURE, $exception->reason);
+        }
+        Http::assertNothingSent();
+    }
+
     public function test_middleware_persists_durable_wait_without_releasing_old_token_payload(): void
     {
         $runs = app(WorkRunCoordinator::class);

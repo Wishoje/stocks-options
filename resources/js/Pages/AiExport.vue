@@ -38,7 +38,7 @@ const indicatorOptions = [
   {
     key: 'wall_intelligence',
     label: 'Wall intelligence',
-    description: 'Wall concentration, expiry contributions, closing-price distance and same-expiry EOD history.',
+    description: 'Wall concentration, expiry contributions, EOD history and daily/five-session OI build or unwind at each wall.',
   },
   {
     key: 'qscore',

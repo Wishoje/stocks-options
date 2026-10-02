@@ -33,7 +33,7 @@ class WallIntelligenceTest extends TestCase
             $t->integer('expiration_id');
             $t->date('data_date');
             $t->string('option_type');
-            foreach (['strike', 'gamma', 'open_interest', 'underlying_price'] as $field) {
+            foreach (['strike', 'gamma', 'open_interest', 'underlying_price', 'volume'] as $field) {
                 $t->double($field)->nullable();
             }
         });
@@ -88,6 +88,10 @@ class WallIntelligenceTest extends TestCase
         $this->assertSame(3, $wall['top_three_streak_sessions']);
         $this->assertSame(['2026-09-30', '2026-09-29', '2026-09-28', '2026-09-25', '2026-09-24'], array_column($wall['history'], 'date'));
         $this->assertFalse($result['audit']['historical_outcome_eligible']);
+        $this->assertSame('stable', $wall['wall_flow']['wall_build_state']);
+        $this->assertSame(10.0, $wall['wall_flow']['open_interest']);
+        $this->assertSame('2026-09-23', $wall['wall_flow']['five_session']['baseline_date']);
+        $this->assertNull($wall['wall_flow']['five_session']['change']);
         Http::assertNothingSent();
         Bus::assertNothingDispatched();
     }
@@ -113,6 +117,7 @@ class WallIntelligenceTest extends TestCase
         $this->assertFalse($wall['history'][0]['comparable']);
         $this->assertNull($wall['gex_magnitude_change_1d_pct']);
         $this->assertNull($wall['top_three_streak_sessions']);
+        $this->assertSame('stable', $wall['wall_flow']['wall_build_state']);
     }
 
     public function test_changed_chain_generation_cannot_be_attached_to_cached_levels(): void
@@ -156,5 +161,44 @@ class WallIntelligenceTest extends TestCase
         $this->assertTrue($export['items'][0]['wall_intelligence']['ok']);
         $this->assertSame($response, $export['items'][0]['wall_intelligence']['data']);
         $this->assertSame('2026-09-30', $export['items'][0]['summary']['data_dates']['wall_intelligence']);
+        $this->assertSame('wall-flow-oi.v1', $export['items'][0]['wall_intelligence']['data']['walls']['put'][0]['wall_flow']['schema_version']);
+    }
+
+    public function test_side_oi_and_volume_use_one_bounded_history_query_and_no_provider_or_jobs(): void
+    {
+        DB::table('option_chain_data')->where('data_date', '2026-09-29')->where('option_type', 'put')->update(['open_interest' => 5]);
+        DB::table('option_chain_data')->where('data_date', '2026-09-30')->where('option_type', 'put')->update(['volume' => 100]);
+        DB::table('option_chain_data')->insert(['expiration_id' => 1, 'data_date' => '2026-09-23', 'strike' => 100, 'option_type' => 'put', 'gamma' => null, 'open_interest' => 20, 'underlying_price' => 100]);
+        DB::table('option_chain_data')->insert(['expiration_id' => 1, 'data_date' => '2026-09-23', 'strike' => 100, 'option_type' => 'call', 'gamma' => null, 'open_interest' => 5, 'underlying_price' => 100]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $r = app(WallIntelligenceService::class)->build($this->levels());
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        $flow = $r['walls']['put'][0]['wall_flow'];
+        $this->assertSame('building', $flow['wall_build_state']);
+        $this->assertSame(5.0, $flow['daily']['change']);
+        $this->assertSame(-10.0, $flow['five_session']['change']);
+        $this->assertSame(100.0, $flow['activity']['put_volume']);
+        $this->assertNull($flow['activity']['call_volume']);
+        $this->assertCount(5, $r['walls']['put'][0]['history']);
+        $chainQueries = array_filter($queries, fn ($q) => str_contains($q['query'], 'from "option_chain_data"'));
+        $this->assertCount(2, $chainQueries); // Current plus history, independent of number of walls.
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_side_oi_nulls_and_mixed_dates_cannot_produce_a_label(): void
+    {
+        DB::table('option_chain_data')->where('data_date', '2026-09-29')->where('option_type', 'put')->update(['open_interest' => null]);
+        $flow = app(WallIntelligenceService::class)->build($this->levels())['walls']['put'][0]['wall_flow'];
+        $this->assertNull($flow['wall_build_state']);
+        $this->assertNull($flow['daily']['change']);
+        $this->assertSame(10.0, $flow['open_interest']);
+        $levels = $this->levels();
+        $levels['data_date'] = '2026-10-01';
+        $flow = app(WallIntelligenceService::class)->build($levels)['walls']['put'][0]['wall_flow'];
+        $this->assertNull($flow['open_interest']);
+        $this->assertNull($flow['wall_build_state']);
     }
 }

@@ -674,7 +674,11 @@ final class WorkRunCoordinator
                 $query->whereNull('dispatched_at')
                     ->orWhere('lease_expires_at', '<=', $at);
             })
+            // Repeatedly deferred old work must not occupy every bounded scan.
+            // Its new retry deadline goes behind work that has been due longer.
+            ->orderBy('next_dispatch_at')
             ->orderBy('requested_at')
+            ->orderBy('id')
             ->limit(max(1, $limit))
             ->get();
     }

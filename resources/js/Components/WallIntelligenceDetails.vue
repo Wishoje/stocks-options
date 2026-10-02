@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { compact } from './UI/numbers'
+import WallFlowDetails from './WallFlowDetails.vue'
 const props = defineProps({ reading: Object, reference: Object })
 const fixed = (value, digits = 1) => value == null ? '—' : Number(value).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 const signed = value => value == null ? '—' : `${value > 0 ? '+' : ''}${fixed(value)}%`
@@ -28,6 +29,7 @@ const shortDate = value => value ? new Date(`${value}T12:00:00Z`).toLocaleDateSt
       <div><dt>GEX magnitude change</dt><dd :data-tone="tone(reading.gex_magnitude_change_1d_pct)">{{ signed(reading.gex_magnitude_change_1d_pct) }}</dd><span>{{ comparisonNote }}<template v-if="reading.gex_sign_changed"> · sign changed</template></span></div>
       <div><dt>Top-three streak</dt><dd>{{ reading.top_three_streak_sessions ?? '—' }}<small v-if="reading.top_three_streak_sessions">{{ reading.top_three_streak_sessions === 1 ? ' session' : ' sessions' }}</small></dd><span>Comparable sessions only · up to 5</span></div>
     </dl>
+    <WallFlowDetails :flow="reading.wall_flow" />
     <div class="expiry-head"><div><h4>What drives this wall</h4><p>{{ reading.distinct_expiry_count }} contributing {{ reading.distinct_expiry_count === 1 ? 'expiry' : 'expiries' }}</p></div><strong v-if="reading.dominant_expiry">{{ share(reading.dominant_expiry_share_pct) }}%<small>{{ shortDate(reading.dominant_expiry) }}</small></strong></div>
     <div class="expiry-bars" aria-label="Largest expiry contributions">
       <div v-for="row in reading.expiry_contributions.slice(0, 3)" :key="row.expiry" class="expiry-row">
@@ -50,7 +52,7 @@ const shortDate = value => value ? new Date(`${value}T12:00:00Z`).toLocaleDateSt
         </div>
         <p class="metric-note">Bar height shows exposure magnitude; color and sign show positive or negative net GEX. A dash means not compared, never zero exposure.</p>
         <p v-if="referenceOnly" class="metric-note">Current level matches the headline. It is shown for reference; daily change and streak require a like-for-like comparison.</p>
-        <p v-if="reading.oi_change_1d != null" class="oi-change">Open-interest change since {{ shortDate(reading.comparison_date) }} <strong>{{ exposure(reading.oi_change_1d) }}</strong> contracts</p>
+        <p v-if="reading.oi_change_1d != null" class="oi-change">Combined call + put open-interest change since {{ shortDate(reading.comparison_date) }} <strong>{{ exposure(reading.oi_change_1d) }}</strong> contracts</p>
         <p v-else class="oi-change">Open-interest change is shown when the two sessions can be compared like for like.</p>
         <div class="expiry-table-scroll" tabindex="0" aria-label="Expiry contribution table">
           <table><caption>All expiry contributions · USD per 1% move</caption><thead><tr><th scope="col">Expiry</th><th scope="col">Net GEX</th><th scope="col">Share</th></tr></thead><tbody><tr v-for="row in reading.expiry_contributions" :key="row.expiry"><th scope="row">{{ row.expiry }}</th><td :data-tone="tone(row.net_gex)">{{ exposure(row.net_gex) }}</td><td>{{ share(row.share_pct, 1) }}%</td></tr></tbody></table>

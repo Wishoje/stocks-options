@@ -92,13 +92,21 @@ class IntradayWallTracker
                 'data_timestamp' => $r->data_timestamp ?? null])->all();
             $model = new IntradayWallModel;
             $basis = $model->basis($symbol, $session['session_date'], $sourceDate, array_values($expiries), $contracts, $timeframe);
-            try {
-                $observation = $model->observe($basis, (float) $quote->last_price, $at, $quote->source);
-            } catch (DomainException) {
-                return ['status' => 'model_inputs_below_capture_threshold'];
+            $observation = $this->qualifiedObservation($basis, $quote, $at);
+            if ($observation === null) {
+                // A later chain repair must not erase a usable frozen basis
+                // already accepted for this exact session and expiration set.
+                $accepted = $this->acceptedSessionBasis($basis);
+                if ($accepted !== null) {
+                    $observation = $this->qualifiedObservation($accepted, $quote, $at);
+                    if ($observation !== null) {
+                        $observation['audit']['basis_selection'] = 'last_accepted_session_basis';
+                        $observation['audit']['rejected_candidate_basis_key'] = $basis['basis_key'];
+                        $basis = $accepted;
+                    }
+                }
             }
-            if ($observation['audit']['oi_input_coverage_pct'] < config('wall_tracking.minimum_oi_coverage_pct')
-                || 100 * $observation['audit']['excluded_rows'] / max(1, $observation['audit']['contract_rows']) > config('wall_tracking.maximum_excluded_row_pct')) {
+            if ($observation === null) {
                 return ['status' => 'model_inputs_below_capture_threshold'];
             }
             $observation['captured_at'] = $now->utc()->toIso8601String();
@@ -106,6 +114,51 @@ class IntradayWallTracker
 
             return ['status' => $record->wasRecentlyCreated ? 'recorded' : 'already_recorded', 'id' => $record->id];
         }) ?: ['status' => 'capture_in_progress'];
+    }
+
+    private function qualifiedObservation(array $basis, UnderlyingQuote $quote, CarbonImmutable $at): ?array
+    {
+        try {
+            $observation = (new IntradayWallModel)->observe($basis, (float) $quote->last_price, $at, $quote->source);
+        } catch (DomainException) {
+            return null;
+        }
+        if ($observation['audit']['oi_input_coverage_pct'] < config('wall_tracking.minimum_oi_coverage_pct')
+            || 100 * $observation['audit']['excluded_rows'] / max(1, $observation['audit']['contract_rows']) > config('wall_tracking.maximum_excluded_row_pct')) {
+            return null;
+        }
+
+        return $observation;
+    }
+
+    private function acceptedSessionBasis(array $candidate): ?array
+    {
+        $record = WallObservation::where('scope_key', $candidate['scope_key'])
+            ->where('symbol', $candidate['scope']['symbol'])->where('dataset', 'intraday_basis')
+            ->where('analysis_session', $candidate['scope']['session'])->where('source_date', $candidate['source_date'])
+            ->where('schema_version', IntradayWallModel::SCHEMA)->where('model_version', IntradayWallModel::MODEL)
+            ->where('observation_kind', 'model_inputs')->orderByDesc('id')->first();
+        if (! $record) {
+            return null;
+        }
+        $saved = json_decode($record->payload_json, true);
+        if (! is_array($saved) || ($saved['scope'] ?? null) !== $candidate['scope']
+            || ($saved['source_date'] ?? null) !== $candidate['source_date'] || ! is_array($saved['contracts'] ?? null)) {
+            return null;
+        }
+        foreach ($saved['contracts'] as $contract) {
+            if (! is_array($contract) || ! isset($contract['expiry'], $contract['type'], $contract['strike'])
+                || ($contract['data_date'] ?? null) !== $candidate['source_date']) {
+                return null;
+            }
+        }
+        $verified = (new IntradayWallModel)->basis($candidate['scope']['symbol'], $candidate['scope']['session'],
+            $candidate['source_date'], $candidate['scope']['expiries'], $saved['contracts'], $candidate['scope']['timeframe']);
+        if ($verified['basis_key'] !== $record->content_hash || $verified['basis_key'] !== ($saved['basis_key'] ?? null)) {
+            return null;
+        }
+
+        return $verified;
     }
 
     private function record(array $basis, array $observation): WallObservation

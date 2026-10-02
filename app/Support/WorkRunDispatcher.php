@@ -27,7 +27,7 @@ final class WorkRunDispatcher
             $candidate = $workRun instanceof WorkRun ? $workRun : WorkRun::query()->find($runId);
             if ($candidate?->kind === 'calculator_refresh'
                 && QueueLanes::providerPriority($candidate->queue) === QueueLanes::PRIORITY_BACKGROUND
-                && ($deferred = app(ScheduledFillBackpressure::class)->deferral())) {
+                && ($deferred = app(ScheduledFillBackpressure::class)->deferral(yieldToMarketData: true))) {
                 $this->runs->deferPendingProvider($runId, $deferred);
 
                 return false;

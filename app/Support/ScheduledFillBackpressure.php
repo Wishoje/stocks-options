@@ -12,13 +12,13 @@ use Throwable;
 /** Delay recoverable fill intent; never pause the interactive consumers. */
 class ScheduledFillBackpressure
 {
-    public function inspect(bool $admission = true): array
+    public function inspect(bool $admission = true, bool $yieldToMarketData = false): array
     {
         if (! config('provider_backpressure.enabled', false)) {
             return ['deferred' => false, 'reason' => null, 'queues' => []];
         }
         try {
-            $measurements = Cache::remember('provider-backpressure:queue-sample:v1', 2, fn (): array => $this->sample());
+            $measurements = Cache::remember('provider-backpressure:queue-sample:v2', 2, fn (): array => $this->sample());
         } catch (Throwable) {
             return ['deferred' => true, 'reason' => 'queue_telemetry_unavailable', 'queues' => []];
         }
@@ -26,18 +26,26 @@ class ScheduledFillBackpressure
         $fillDepth = 0;
         $oldestInteractive = 0;
         $oldestFill = 0;
+        $marketDataBusy = false;
         foreach ($measurements as $queue) {
-            if ($queue['interactive']) {
+            if ($queue['market_data'] ?? false) {
+                // Let quotes and intraday work drain before starting optional fills.
+                $marketDataBusy = $marketDataBusy || $queue['ready'] > 0 || ($queue['reserved'] ?? 0) > 0
+                    || ($queue['oldest_due_intent_age_seconds'] ?? null) !== null;
+            } elseif ($queue['interactive']) {
                 $interactiveDepth += $queue['ready'];
                 $oldestInteractive = max($oldestInteractive, $queue['ready_head_age_seconds'] ?? 0, $queue['oldest_due_intent_age_seconds'] ?? 0);
             } else {
                 $fillDepth += $queue['ready'];
-                $oldestFill = max($oldestFill, $queue['ready_head_age_seconds'] ?? 0, $queue['oldest_due_intent_age_seconds'] ?? 0);
+                // Pending fills must be admitted before workers can drain them.
+                // Their age alone cannot establish transport congestion.
+                $oldestFill = max($oldestFill, $queue['ready_head_age_seconds'] ?? 0);
             }
         }
         $reason = match (true) {
             $interactiveDepth >= max(1, (int) config('provider_backpressure.interactive_depth', 6)) => 'interactive_depth',
             $oldestInteractive >= max(1, (int) config('provider_backpressure.interactive_head_age_seconds', 30)) => 'interactive_wait',
+            $yieldToMarketData && $marketDataBusy => 'market_data_pending',
             $admission && $fillDepth >= max(1, (int) config('provider_backpressure.fill_depth', 50)) => 'fill_depth',
             $admission && $oldestFill >= max(1, (int) config('provider_backpressure.fill_head_age_seconds', 120)) => 'fill_wait',
             default => null,
@@ -46,9 +54,9 @@ class ScheduledFillBackpressure
         return ['deferred' => $reason !== null, 'reason' => $reason, 'queues' => $measurements];
     }
 
-    public function deferral(bool $admission = true): ?ProviderDeferred
+    public function deferral(bool $admission = true, bool $yieldToMarketData = false): ?ProviderDeferred
     {
-        return $this->inspect($admission)['deferred']
+        return $this->inspect($admission, $yieldToMarketData)['deferred']
             ? new ProviderDeferred(ProviderDeferred::BACKPRESSURE, CarbonImmutable::now('UTC')->addSeconds(15 + random_int(1, 5)))
             : null;
     }
@@ -63,6 +71,7 @@ class ScheduledFillBackpressure
         $redis = Redis::connection((string) config('queue.connections.'.$connection.'.connection'));
         $lanes = [
             'bootstrap_fast' => true, 'intraday_interactive' => true, 'calculator_interactive' => true,
+            'quotes' => false, 'intraday' => false, 'intraday_heavy' => false,
             'calculator_fill' => false, 'calculator_fill_heavy' => false,
         ];
         $result = [];
@@ -86,6 +95,7 @@ class ScheduledFillBackpressure
             $age = QueueTelemetry::headReadyAge($samples[$offset], time());
             $result[] = [
                 'queue' => $name, 'interactive' => $interactive,
+                'market_data' => in_array($lane, ['quotes', 'intraday', 'intraday_heavy'], true),
                 'ready' => (int) $samples[$offset + 1],
                 'reserved' => (int) $samples[$offset + 2],
                 'delayed' => (int) $samples[$offset + 3],

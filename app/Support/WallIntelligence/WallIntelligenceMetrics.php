@@ -48,7 +48,7 @@ final class WallIntelligenceMetrics
                 ], $contributions);
                 usort($contributions, fn ($a, $b) => abs($b['net_gex']) <=> abs($a['net_gex']) ?: strcmp($a['expiry'], $b['expiry']));
                 $series = [];
-                foreach ($days as $session => $day) {
+                foreach (array_slice($days, 0, 5, true) as $session => $day) {
                     $r = $day['strikes'][$key] ?? null;
                     // A newly listed expiry/strike is not a zero historical reading.
                     $sameStrikeExpiries = $r && $r['expiries'] === $reading['expiries'];
@@ -103,6 +103,7 @@ final class WallIntelligenceMetrics
                     'top_three_streak_sessions' => $streak ?: null, 'history' => $series,
                     'strength_score' => null, 'score_status' => 'rubric_pending',
                     'interaction_status' => 'unknown', 'actionable' => false,
+                    'wall_flow' => (new WallFlowMetrics)->calculate($strike, $side, $current, $history, $sessions, array_map(fn ($day) => $day['comparable'], $days)),
                 ];
             }
         }

@@ -70,6 +70,47 @@ class ScheduledFillBackpressureTest extends TestCase
         $this->assertNull($service->deferral());
     }
 
+    public function test_old_undispatched_fill_intents_do_not_block_their_own_admission(): void
+    {
+        $fill = $this->queue(false, 0, null);
+        $fill['oldest_due_intent_age_seconds'] = 86400;
+        $service = $this->service([$this->queue(true, 0, null), $fill]);
+        $this->assertFalse($service->inspect()['deferred']);
+        $this->assertNull($service->deferral());
+        $this->assertSame(86400, $service->inspect()['queues'][1]['oldest_due_intent_age_seconds']);
+    }
+
+    public function test_overdue_interactive_intents_still_pause_fill_before_queue_delivery(): void
+    {
+        $interactive = $this->queue(true, 0, null);
+        $interactive['oldest_due_intent_age_seconds'] = 30;
+        $service = $this->service([$interactive, $this->queue(false, 0, null)]);
+        $this->assertSame('interactive_wait', $service->inspect()['reason']);
+        $this->assertTrue($service->inspect(false)['deferred']);
+    }
+
+    public function test_live_market_work_takes_priority_at_admission_and_execution(): void
+    {
+        foreach ([[1, 0, null], [0, 1, null], [0, 0, 0]] as [$ready, $reserved, $dueAge]) {
+            Cache::flush();
+            $market = $this->queue(false, $ready, null) + [
+                'market_data' => true, 'reserved' => $reserved, 'oldest_due_intent_age_seconds' => $dueAge,
+            ];
+            $service = $this->service([$market]);
+            $this->assertSame('market_data_pending', $service->inspect(yieldToMarketData: true)['reason']);
+            $this->assertSame('market_data_pending', $service->inspect(admission: false, yieldToMarketData: true)['reason']);
+            $this->assertFalse($service->inspect()['deferred']);
+        }
+    }
+
+    public function test_future_market_retries_alone_do_not_block_idle_capacity(): void
+    {
+        $market = $this->queue(false, 0, null) + [
+            'market_data' => true, 'reserved' => 0, 'delayed' => 3, 'oldest_due_intent_age_seconds' => null,
+        ];
+        $this->assertFalse($this->service([$market])->inspect(yieldToMarketData: true)['deferred']);
+    }
+
     private function queue(bool $interactive, int $ready, ?int $age): array
     {
         return ['interactive' => $interactive, 'ready' => $ready, 'ready_head_age_seconds' => $age];

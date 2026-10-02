@@ -40,7 +40,8 @@ class WallIntelligenceService
         }
         $sessions = [$levels['data_date']];
         $date = CarbonImmutable::parse($levels['data_date'], 'America/New_York');
-        while (count($sessions) < 5) {
+        // Six dates give a true five-trading-session OI comparison.
+        while (count($sessions) < 6) {
             $date = $date->subDay();
             if (MarketSession::isTradingDay($date)) {
                 $sessions[] = $date->toDateString();
@@ -76,6 +77,14 @@ class WallIntelligenceService
             ->selectRaw("SUM(CASE WHEN o.option_type = 'call' THEN $gex ELSE 0 END) as call_gex")
             ->selectRaw("SUM(CASE WHEN o.option_type = 'put' THEN $gex ELSE 0 END) as put_gex")
             ->selectRaw('SUM(COALESCE(o.open_interest, 0)) as total_oi')
+            ->selectRaw("SUM(CASE WHEN o.option_type = 'call' THEN COALESCE(o.open_interest, 0) ELSE 0 END) as call_oi")
+            ->selectRaw("SUM(CASE WHEN o.option_type = 'put' THEN COALESCE(o.open_interest, 0) ELSE 0 END) as put_oi")
+            ->selectRaw("SUM(CASE WHEN o.option_type = 'call' THEN COALESCE(o.volume, 0) ELSE 0 END) as call_volume")
+            ->selectRaw("SUM(CASE WHEN o.option_type = 'put' THEN COALESCE(o.volume, 0) ELSE 0 END) as put_volume")
+            ->selectRaw("SUM(CASE WHEN o.option_type = 'call' AND (o.open_interest IS NULL OR o.open_interest < 0) THEN 1 ELSE 0 END) as call_oi_invalid")
+            ->selectRaw("SUM(CASE WHEN o.option_type = 'put' AND (o.open_interest IS NULL OR o.open_interest < 0) THEN 1 ELSE 0 END) as put_oi_invalid")
+            ->selectRaw("SUM(CASE WHEN o.option_type = 'call' AND (o.volume IS NULL OR o.volume < 0) THEN 1 ELSE 0 END) as call_volume_invalid")
+            ->selectRaw("SUM(CASE WHEN o.option_type = 'put' AND (o.volume IS NULL OR o.volume < 0) THEN 1 ELSE 0 END) as put_volume_invalid")
             ->selectRaw("SUM(CASE WHEN o.option_type = 'call' THEN 1 ELSE 0 END) as call_rows")
             ->selectRaw("SUM(CASE WHEN o.option_type = 'put' THEN 1 ELSE 0 END) as put_rows")
             ->selectRaw('SUM(CASE WHEN o.open_interest IS NULL OR o.open_interest < 0 OR (o.open_interest > 0 AND (o.gamma IS NULL OR o.gamma < 0 OR o.underlying_price IS NULL OR o.underlying_price <= 0)) THEN 1 ELSE 0 END) as invalid_rows')
@@ -84,6 +93,10 @@ class WallIntelligenceService
                 'expiry' => (string) $ids[$r->expiration_id], 'data_date' => (string) $r->data_date,
                 'strike' => (float) $r->strike, 'call_gex' => (float) $r->call_gex, 'put_gex' => (float) $r->put_gex,
                 'net_gex' => (float) $r->call_gex - (float) $r->put_gex, 'open_interest' => (float) $r->total_oi,
+                'call_oi' => (float) $r->call_oi, 'put_oi' => (float) $r->put_oi,
+                'call_volume' => (float) $r->call_volume, 'put_volume' => (float) $r->put_volume,
+                'call_oi_valid' => (int) $r->call_oi_invalid === 0, 'put_oi_valid' => (int) $r->put_oi_invalid === 0,
+                'call_volume_valid' => (int) $r->call_volume_invalid === 0, 'put_volume_valid' => (int) $r->put_volume_invalid === 0,
                 'call_rows' => (int) $r->call_rows, 'put_rows' => (int) $r->put_rows, 'inputs_valid' => (int) $r->invalid_rows === 0,
             ])->all();
     }

@@ -248,7 +248,7 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
         $publications = app(CalculatorPublicationRepository::class);
         if (config('provider_backpressure.enabled', false)
             && QueueLanes::providerPriority($this->queue) === QueueLanes::PRIORITY_BACKGROUND
-            && ($deferred = app(\App\Support\ScheduledFillBackpressure::class)->deferral(admission: false))) {
+            && ($deferred = app(\App\Support\ScheduledFillBackpressure::class)->deferral(admission: false, yieldToMarketData: true))) {
             throw $deferred;
         }
         $publicationRun = $this->publicationRun($publications);

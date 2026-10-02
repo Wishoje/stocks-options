@@ -96,7 +96,7 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertSame([], $tracker->history('SPY')['segments']);
     }
 
-    public function test_small_input_gaps_are_accepted_but_substantial_gaps_remain_blocked(): void
+    public function test_small_input_gaps_are_accepted_and_later_rejections_preserve_the_accepted_basis(): void
     {
         $rows = collect(range(1, 20))->map(fn ($i) => (object) ['expiration_id' => 1, 'option_type' => $i % 2 ? 'call' : 'put', 'strike' => 90 + $i, 'open_interest' => $i === 1 ? 10 : 100, 'iv' => $i === 1 ? null : .2, 'data_date' => '2026-09-29']);
         $selector = Mockery::mock(EodSnapshotSelector::class);
@@ -106,12 +106,56 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertSame('recorded', $tracker->capture('SPY', $this->now())['status']);
         $this->assertGreaterThan(99, $tracker->history('SPY')['segments'][0]['observations'][0]['audit']['oi_input_coverage_pct']);
         $rows[0]->open_interest = 50;
-        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now())['status']);
+        $this->assertSame('already_recorded', $tracker->capture('SPY', $this->now())['status']);
         $rows[0]->open_interest = 1;
         foreach ([1, 2] as $i) {
             $rows[$i]->iv = null;
             $rows[$i]->open_interest = 1;
         }
+        $this->assertSame('already_recorded', $tracker->capture('SPY', $this->now())['status']);
+        $this->assertSame(2, WallObservation::count());
+    }
+
+    public function test_a_later_low_quality_chain_reuses_only_the_accepted_same_session_basis_with_a_fresh_quote(): void
+    {
+        $tracker = app(IntradayWallTracker::class);
+        $first = $tracker->capture('SPY', $this->now());
+        $original = WallObservation::findOrFail($first['id'])->payload_json;
+        $this->rows(callIv: null);
+        DB::table('underlying_quotes')->update(['asof' => '2026-09-30 14:05:00', 'last_price' => 102]);
+        $next = $tracker->capture('SPY', $this->now()->addMinutes(5));
+        $this->assertSame('recorded', $next['status']);
+        $payload = json_decode(WallObservation::findOrFail($next['id'])->payload_json, true);
+        $this->assertSame('last_accepted_session_basis', $payload['audit']['basis_selection']);
+        $this->assertSame(json_decode($original, true)['basis_key'], $payload['basis_key']);
+        $this->assertNotSame($payload['basis_key'], $payload['audit']['rejected_candidate_basis_key']);
+        $this->assertEquals(100, $payload['audit']['oi_input_coverage_pct']);
+        $this->assertEquals(102, $payload['spot']);
+        $this->assertSame('2026-09-30T14:05:00+00:00', $payload['observed_at']);
+        $this->assertSame($original, WallObservation::findOrFail($first['id'])->payload_json);
+        $this->assertCount(2, $tracker->history('SPY')['segments'][0]['observations']);
+        $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', $this->now()->addMinutes(20))['status']);
+        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now()->addMinutes(5), '7d')['status']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_accepted_basis_cannot_cross_sessions_or_use_tampered_inputs_or_bypass_thresholds(): void
+    {
+        $tracker = app(IntradayWallTracker::class);
+        $tracker->capture('SPY', $this->now());
+        $record = WallObservation::where('dataset', 'intraday_basis')->firstOrFail();
+        $original = $record->payload_json;
+        $saved = json_decode($original, true);
+        $saved['contracts'][0]['oi'] = 99999;
+        // Bypass append-only model protection to exercise corrupted stored inputs.
+        DB::table('wall_observations')->where('id', $record->id)->update(['payload_json' => json_encode($saved)]);
+        $this->rows(callIv: null);
+        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now())['status']);
+        DB::table('wall_observations')->where('id', $record->id)->update(['payload_json' => $original, 'analysis_session' => '2026-09-29']);
+        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now())['status']);
+        DB::table('wall_observations')->where('id', $record->id)->update(['analysis_session' => '2026-09-30']);
+        config(['wall_tracking.minimum_oi_coverage_pct' => 101]);
         $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now())['status']);
         $this->assertSame(2, WallObservation::count());
     }
