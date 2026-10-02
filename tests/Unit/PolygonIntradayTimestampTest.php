@@ -208,6 +208,49 @@ class PolygonIntradayTimestampTest extends TestCase
             'day' => ['volume' => 3, 'vwap' => 2, 'last_updated' => $timestamp],
         ];
     }
+
+    public function test_intraday_retries_ignore_an_older_successful_page_in_the_same_execution(): void
+    {
+        config()->set('provider_backpressure.enabled', true);
+        $old = ['results' => [$this->contract(null)], 'complete' => true];
+        $body = json_encode($old, JSON_THROW_ON_ERROR);
+        $encoded = json_encode(['version' => 1, 'bytes' => strlen($body),
+            'hash' => hash('sha256', $body), 'body' => base64_encode(gzencode($body))], JSON_THROW_ON_ERROR);
+        $connection = \Mockery::mock();
+        $connection->shouldReceive('hstrlen')->andReturn(strlen($encoded));
+        $connection->shouldReceive('hget')->andReturn($encoded);
+        $connection->shouldReceive('hincrby')->andReturn(1);
+        $connection->shouldReceive('expire')->andReturn(1);
+        $factory = \Mockery::mock(\Illuminate\Contracts\Redis\Factory::class);
+        $factory->shouldReceive('connection')->andReturn($connection);
+        $replay = new \App\Support\ProviderRequestReplay(config(), $factory);
+        $this->app->instance(\App\Support\ProviderRequestReplay::class, $replay);
+        $probe = new class extends PolygonClient
+        {
+            public int $freshReads = 0;
+
+            protected function snapshotChainFromMassive(string $symbol, ?string $expiration = null): ?array
+            {
+                $cached = app(\App\Support\ProviderRequestReplay::class)->lookup(str_repeat('a', 64));
+                if ($cached) {
+                    return $cached->json();
+                }
+                $this->freshReads++;
+
+                return ['complete' => true, 'results' => [[
+                    'details' => ['contract_type' => 'call', 'strike_price' => 500, 'expiration_date' => '2026-09-11'],
+                    'day' => ['volume' => 10 * $this->freshReads, 'vwap' => 2],
+                ]]];
+            }
+        };
+        $replay->withExecution('same-durable-intraday-run', function () use ($probe, $replay): void {
+            $this->assertSame(3, $replay->lookup(str_repeat('a', 64))->json('results.0.day.volume'));
+            $this->assertSame(10, $probe->intradayOptionVolumes('SPY')['totals']['call_vol']);
+            $this->travelTo(now('UTC')->addMinute());
+            $this->assertSame(20, $probe->intradayOptionVolumes('SPY')['totals']['call_vol']);
+            $this->assertSame(2, $probe->freshReads);
+        });
+    }
 }
 
 class PolygonTimestampProbe extends PolygonClient

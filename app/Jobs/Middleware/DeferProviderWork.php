@@ -66,9 +66,9 @@ final class DeferProviderWork
                     );
                 } else {
                     // The original UUID/serialized chain remains reserved until release succeeds.
-                    // Count attempted-provider failures, not zero-HTTP admission waits.
+                    // Earlier successful pages do not turn a capacity wait into a failure.
                     $failures = 0;
-                    if (! $exception->isAdmissionDeferral() || $physical > 0) {
+                    if (! $exception->isAdmissionDeferral()) {
                         CoordinationCache::store()->add($this->failureKey($scope), 0, now()->addDay());
                         $failures = (int) CoordinationCache::store()->increment($this->failureKey($scope));
                     }

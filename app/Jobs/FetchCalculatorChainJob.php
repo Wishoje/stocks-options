@@ -196,10 +196,9 @@ class FetchCalculatorChainJob extends QueueJob implements ShouldQueue
             ]);
         }
 
-        $this->workRunCoordinator()?->markTerminalException(
+        $this->workRunCoordinator()?->markTerminalDeliveryException(
             (string) $this->workRunId,
             (string) $this->workRunDeliveryToken,
-            max(1, $this->attempts()),
             $exception
         );
 

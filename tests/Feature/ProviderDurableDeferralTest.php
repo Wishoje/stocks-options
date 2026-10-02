@@ -108,19 +108,19 @@ class ProviderDurableDeferralTest extends MySqlTestCase
         $this->assertNull($this->runs()->reserveDispatch($run->id));
     }
 
-    public function test_capacity_miss_after_an_earlier_page_and_a_zero_count_http_error_do_not_receive_admission_credit(): void
+    public function test_capacity_wait_after_successful_pages_preserves_the_budget_but_http_errors_do_not(): void
     {
         $run = $this->createRun();
         $token = $this->startRun($run);
         $this->assertTrue($this->runs()->deferProvider($run->id, $token, 1, $this->deferred(), 2));
         $run->refresh();
-        $this->assertSame(0, $run->provider_admission_deferrals);
-        $this->assertSame(1, $run->effectiveDispatchAttempts());
+        $this->assertSame(1, $run->provider_admission_deferrals);
+        $this->assertSame(0, $run->effectiveDispatchAttempts());
         $this->travelTo($run->next_dispatch_at);
         $token = $this->startRun($run);
         $this->assertTrue($this->runs()->deferProvider($run->id, $token, 1, $this->deferred(ProviderDeferred::RATE_LIMITED), 0));
-        $this->assertSame(0, $run->fresh()->provider_admission_deferrals);
-        $this->assertSame(2, $run->fresh()->effectiveDispatchAttempts());
+        $this->assertSame(1, $run->fresh()->provider_admission_deferrals);
+        $this->assertSame(1, $run->fresh()->effectiveDispatchAttempts());
     }
 
     public function test_four_admissions_do_not_hide_three_later_crashes_from_recovery_limits(): void
@@ -278,7 +278,7 @@ class ProviderDurableDeferralTest extends MySqlTestCase
         for ($i = 0; $i < 7; $i++) {
             $token = $this->startPhase($parent);
             $this->assertTrue($this->phases()->deferProvider($parent->id, 'fill', $token, 1,
-                $this->deferred(), 0, expectedParentFence: $fence));
+                $this->deferred(), 2, expectedParentFence: $fence));
             $this->assertSame(0, $this->phase($parent)->effectiveDispatchAttempts());
             $this->travelTo($this->phase($parent)->next_dispatch_at);
         }

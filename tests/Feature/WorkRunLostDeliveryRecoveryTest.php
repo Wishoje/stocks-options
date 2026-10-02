@@ -56,6 +56,44 @@ class WorkRunLostDeliveryRecoveryTest extends MySqlTestCase
     }
 
     #[DataProvider('refreshKinds')]
+    public function test_framework_failure_callback_without_transport_finishes_the_current_attempt(string $kind, string $jobClass): void
+    {
+        [$run, $token] = $this->startedRun($kind, now('UTC')->toImmutable(), 3);
+        $job = $kind === 'intraday_refresh'
+            ? new FetchPolygonIntradayOptionsJob(['AAPL'], tradeDate: '2026-09-04', workRunId: $run->id, workRunDeliveryToken: $token)
+            : new FetchCalculatorChainJob('AAPL', workRunId: $run->id, workRunDeliveryToken: $token);
+
+        // Laravel invokes failed() on the serialized command without setJob().
+        app(\Illuminate\Queue\CallQueuedHandler::class)->failed(
+            ['command' => serialize($job)], new \RuntimeException('fixture terminal failure'), 'fixture-uuid'
+        );
+
+        $failed = $run->fresh();
+        $this->assertSame(WorkRun::STATUS_FAILED, $failed->status);
+        $this->assertSame(3, $failed->attempt);
+        $this->assertNull($failed->lease_expires_at);
+        $this->assertSame('terminal_exception:RuntimeException', $failed->error_code);
+        $this->assertTrue($failed->retry_not_before->isAfter(now('UTC')));
+    }
+
+    public function test_terminal_callback_cannot_fail_a_replacement_delivery_or_completed_work(): void
+    {
+        [$run, $oldToken] = $this->startedRun('intraday_refresh', now('UTC')->toImmutable(), 3);
+        $this->travelTo(now('UTC')->addSeconds(1801));
+        $this->assertSame('recovered', $this->runs->recoverExpiredRunning($run->id));
+        $reservation = $this->runs->reserveDispatch($run->id);
+        $token = $reservation['delivery_token'];
+        $this->assertTrue($this->runs->markDispatched($run->id, $token));
+        $this->assertTrue($this->runs->markStarted($run->id, $token, 1));
+        $error = new \RuntimeException('late failure');
+        $this->assertFalse($this->runs->markTerminalDeliveryException($run->id, $oldToken, $error));
+        $this->assertSame(WorkRun::STATUS_RUNNING, $run->fresh()->status);
+        $this->assertTrue($this->runs->markCompleted($run->id, $token, 1));
+        $this->assertFalse($this->runs->markTerminalDeliveryException($run->id, $token, $error));
+        $this->assertSame(WorkRun::STATUS_COMPLETED, $run->fresh()->status);
+    }
+
+    #[DataProvider('refreshKinds')]
     public function test_a_lost_running_delivery_is_requeued_on_the_same_generation_with_a_new_token(string $kind, string $jobClass): void
     {
         $at = now('UTC')->toImmutable();

@@ -97,7 +97,11 @@ class PolygonClient
         $uSym = strtoupper($symbol);
         // Log::debug('PolygonClient.intraday.start', ['symbol' => $uSym]);
 
-        $snap = $this->snapshotChainFromMassive($uSym, $expiration);
+        // Session volume changes during a retry. Refetch every page instead of
+        // stamping an earlier delivery's cached response with a new receipt time.
+        $snap = app(ProviderRequestReplay::class)->withoutReplay(
+            fn () => $this->snapshotChainFromMassive($uSym, $expiration)
+        );
 
         if (!$snap || empty($snap['results']) || !($snap['complete'] ?? false)) {
             Log::warning('PolygonClient.noData', [

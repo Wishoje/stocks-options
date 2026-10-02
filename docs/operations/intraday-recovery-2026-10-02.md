@@ -15,7 +15,7 @@ The calculator backlog was self-blocking. The fill congestion check treated old,
 
 ## Changes
 
-Work-run retries sort by their next eligible dispatch time, followed by original request time and ID. A repeatedly deferred job moves behind older overdue retries. Provider concurrency limits, retry deadlines, reservation fencing, and scan limits remain enforced.
+With provider backpressure enabled, work-run retry scans put background calculator fills behind other eligible work before applying the scan limit. Interactive calculator requests retain normal priority. Within each group, retries sort by their next eligible dispatch time, followed by original request time and ID. A repeatedly deferred job moves behind older overdue retries. Provider concurrency limits, retry deadlines, reservation fencing, and scan limits remain enforced.
 
 Calculator fill admission now measures actual fill queue depth and ready-head age. Undispatched fill intent age remains in telemetry but cannot block its own admission. Waiting interactive work still takes priority.
 
@@ -24,6 +24,10 @@ Scheduled calculator fills also yield whenever quote or intraday queues have rea
 If refreshed model inputs fail validation, wall capture can use the last accepted basis for the exact symbol, session, source date, model, and expiration set. It verifies the stored hash, reconstructs the basis, and reruns the existing quality checks. Every new observation still requires a fresh provider-timestamped quote. A valid newer basis is used normally and starts a separate comparison segment.
 
 The repair does not change stored observations, fill historical gaps, or relax input thresholds. Long gaps remain separate comparison windows. A scope without an accepted basis still waits until it qualifies.
+
+Follow-up production checks found capacity waits consuming the failure budget after successful HTTP pages. Admission deferrals now retain their attempt credit even after successful pages. HTTP errors, timeouts, and crashed deliveries still consume the existing retry budget; fixed deferral deadlines still bound admission waits. Intraday volume requests bypass response replay so a later delivery cannot stamp an older cached page with a new receipt time.
+
+Laravel reconstructs a command for its terminal failure callback without its queue transport object. Reading attempts from that command returned one even after a third failed attempt, leaving the durable run active. Intraday and calculator callbacks now lock the current slot and run, verify the delivery token, and finish the persisted attempt. A stale token cannot fail a replacement delivery.
 
 ## Validation
 

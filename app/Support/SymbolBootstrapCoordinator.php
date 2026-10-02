@@ -674,7 +674,7 @@ final class SymbolBootstrapCoordinator
             throw new InvalidArgumentException('Physical HTTP request count cannot be negative.');
         }
         $at = $this->at($at);
-        $updated = DB::transaction(function () use ($workRunId, $phaseName, $token, $attempt, $exception, $physicalHttpRequests, $at, $expectedParentFence): bool {
+        $updated = DB::transaction(function () use ($workRunId, $phaseName, $token, $attempt, $exception, $at, $expectedParentFence): bool {
             $parent = $this->providerParentLocked($workRunId, $expectedParentFence);
             if (! $parent) {
                 return false;
@@ -686,8 +686,7 @@ final class SymbolBootstrapCoordinator
                 || $phase->attempt !== $attempt) {
                 return false;
             }
-            $this->applyPhaseProviderDeferral($parent, $phase, $exception, $at,
-                $physicalHttpRequests === 0 && $exception->isAdmissionDeferral());
+            $this->applyPhaseProviderDeferral($parent, $phase, $exception, $at, $exception->isAdmissionDeferral());
 
             return true;
         }, 3);

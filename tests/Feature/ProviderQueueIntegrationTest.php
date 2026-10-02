@@ -179,6 +179,19 @@ class ProviderQueueIntegrationTest extends MySqlTestCase
         $this->assertFalse($runs->markCompleted($run->id, $token, 1));
     }
 
+    public function test_bounded_scan_prioritizes_live_and_interactive_work_before_older_background_calculators(): void
+    {
+        $runs = app(WorkRunCoordinator::class);
+        $at = now('UTC')->toImmutable();
+        $fill = $runs->claim('calculator_refresh', 'SPY', [], 'calculator-fill', at: $at->subHour(), applyAdmissionLimits: false)['run'];
+        $quote = $runs->claim('quote_refresh', 'SPY', [], 'quotes', at: $at->subMinutes(3), applyAdmissionLimits: false)['run'];
+        $interactive = $runs->claim('calculator_refresh', 'QQQ', [], 'calculator-interactive', at: $at->subMinutes(2), applyAdmissionLimits: false)['run'];
+        $intraday = $runs->claim('intraday_refresh', 'SPY', [], 'intraday-heavy', at: $at->subMinute(), applyAdmissionLimits: false)['run'];
+
+        $this->assertSame([$quote->id, $interactive->id, $intraday->id], $runs->dispatchable(3, $at)->modelKeys());
+        $this->assertSame([$quote->id, $interactive->id, $intraday->id, $fill->id], $runs->dispatchable(4, $at)->modelKeys());
+    }
+
     public function test_legacy_capacity_waits_do_not_consume_provider_failure_budget(): void
     {
         $job = new FetchCalculatorChainJob('SPY');
@@ -191,6 +204,7 @@ class ProviderQueueIntegrationTest extends MySqlTestCase
         $this->assertNotNull($job->retryUntil());
         for ($i = 0; $i < 5; $i++) {
             (new DeferProviderWork)->handle($job, function (): void {
+                app(ProviderRequestReplay::class)->recordPhysicalRequest();
                 throw new ProviderDeferred(ProviderDeferred::COOLDOWN, now('UTC')->toImmutable()->addMinute());
             });
         }

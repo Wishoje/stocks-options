@@ -457,15 +457,16 @@ final class WorkRunCoordinator
         }
         $at = $this->at($at);
 
-        return DB::transaction(function () use ($runId, $deliveryToken, $attempt, $exception, $physicalHttpRequests, $at): bool {
+        return DB::transaction(function () use ($runId, $deliveryToken, $attempt, $exception, $at): bool {
             $run = $this->currentProviderRunLocked($runId);
             if (! $run || $run->status !== WorkRun::STATUS_RUNNING
                 || $deliveryToken === '' || ! hash_equals((string) $run->delivery_token, $deliveryToken)
                 || $run->attempt !== $attempt) {
                 return false;
             }
-            $this->applyProviderDeferral($run, $exception, $at,
-                $physicalHttpRequests === 0 && $exception->isAdmissionDeferral());
+            // Successful pages before a capacity wait are progress, not a failed
+            // provider attempt. HTTP errors still consume the failure budget.
+            $this->applyProviderDeferral($run, $exception, $at, $exception->isAdmissionDeferral());
 
             return true;
         }, 3);
@@ -650,6 +651,20 @@ final class WorkRunCoordinator
         );
     }
 
+    /** Laravel reconstructs failed commands without their queue attempt object. */
+    public function markTerminalDeliveryException(string $runId, string $deliveryToken, Throwable $exception): bool
+    {
+        return DB::transaction(function () use ($runId, $deliveryToken, $exception): bool {
+            $run = $this->currentProviderRunLocked($runId);
+            if (! $run || $run->status !== WorkRun::STATUS_RUNNING
+                || $deliveryToken === '' || ! hash_equals((string) $run->delivery_token, $deliveryToken)) {
+                return false;
+            }
+
+            return $this->markTerminalException($runId, $deliveryToken, (int) $run->attempt, $exception);
+        }, 3);
+    }
+
     public function active(string $kind, string $symbol, array $parameters = [], string $provider = 'massive'): ?WorkRun
     {
         $slotKey = $this->slotKey($kind, $symbol, $parameters, $provider);
@@ -674,6 +689,11 @@ final class WorkRunCoordinator
                 $query->whereNull('dispatched_at')
                     ->orWhere('lease_expires_at', '<=', $at);
             })
+            // Optional fills yield before the scan limit, not only after selection.
+            ->when(config('provider_backpressure.enabled', false), fn ($query) => $query->orderByRaw(
+                'CASE WHEN kind = ? AND queue <> ? THEN 1 ELSE 0 END',
+                ['calculator_refresh', (string) config('queue_lanes.queues.calculator_interactive', 'calculator-interactive')]
+            ))
             // Repeatedly deferred old work must not occupy every bounded scan.
             // Its new retry deadline goes behind work that has been due longer.
             ->orderBy('next_dispatch_at')

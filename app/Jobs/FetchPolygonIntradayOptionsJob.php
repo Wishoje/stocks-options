@@ -128,10 +128,9 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
 
     public function failed(Throwable $exception): void
     {
-        $this->workRunCoordinator()?->markTerminalException(
+        $this->workRunCoordinator()?->markTerminalDeliveryException(
             (string) $this->workRunId,
             (string) $this->workRunDeliveryToken,
-            max(1, $this->attempts()),
             $exception
         );
 
