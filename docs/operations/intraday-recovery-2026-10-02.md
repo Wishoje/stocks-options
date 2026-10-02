@@ -33,6 +33,8 @@ The intraday options schedule also applied its `between` filter before setting t
 
 Intraday snapshot pages allow up to two seconds to acquire their existing provider slot, polling every 50 milliseconds. This absorbs short scheduler bursts without sending most jobs back to minute-based reconciliation. Other requests retain immediate admission deferral. Occupied slots still produce a durable retry after the bounded wait; the three-per-class and six-total provider limits remain enforced.
 
+Wall capture uses a separate copy of the regular quote feed, published only after the quote delivery passes its session and ownership checks. Calculator snapshots can have newer timestamps than that delayed feed. Previously, they replaced the shared quote and prevented regular quotes from advancing the wall series until their timestamps caught up. The separate value retains the provider timestamp and actual receipt time, rejects out-of-order updates, and is scoped to one symbol and market date. The existing freshness checks still apply. On cache recovery, capture waits for the regular feed instead of switching to calculator prices. No additional provider requests are made, and stored observations are unchanged. Calculator scheduling frequency and worker counts remain unchanged.
+
 ## Validation
 
 - Wall capture, model, and coordinator suites: 47 tests, 325 assertions.

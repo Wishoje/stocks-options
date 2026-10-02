@@ -10,6 +10,7 @@ use App\Support\MarketSession;
 use App\Support\Symbols;
 use App\Support\WallIntelligence\IntradayWallModel;
 use App\Support\WallIntelligence\WallSnapshotContract;
+use App\Support\WallTrackingQuoteStore;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\Cache;
@@ -61,7 +62,7 @@ class IntradayWallTracker
         if (! $session['is_rth'] && ! $delayedClose) {
             return ['status' => 'outside_session'];
         }
-        $quote = UnderlyingQuote::where('symbol', $symbol)->first();
+        $quote = app(WallTrackingQuoteStore::class)->current($symbol, $now);
         $at = $quote?->asof ? CarbonImmutable::instance($quote->asof) : null;
         $received = $quote?->updated_at ? CarbonImmutable::instance($quote->updated_at) : null;
         if (! $at || ! $quote->source || str_contains($quote->source, ':ingested-at') || ! $quote->last_price

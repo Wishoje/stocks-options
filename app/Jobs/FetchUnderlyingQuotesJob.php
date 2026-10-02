@@ -15,6 +15,7 @@ use App\Support\ProviderRequestReplay;
 use App\Support\QueueLanes;
 use App\Support\QuoteRefreshPolicy;
 use App\Support\Symbols;
+use App\Support\WallTrackingQuoteStore;
 use App\Support\WorkRunCoordinator;
 use Carbon\CarbonImmutable;
 use Illuminate\Bus\Batchable;
@@ -248,7 +249,7 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
     ): bool {
         $asofUtc = $this->normalizeAsof($quote['asof'] ?? null);
 
-        return DB::transaction(function () use ($symbol, $date, $phase, $quote, $captured, $received, $delivery, $attempt, $window, $asofUtc): bool {
+        $published = DB::transaction(function () use ($symbol, $date, $phase, $quote, $captured, $received, $delivery, $attempt, $window, $asofUtc): bool {
             if ($delivery) {
                 $identity = WorkRun::query()->whereKey($delivery['run_id'])->first(['slot_key']);
                 if (! $identity) {
@@ -314,6 +315,12 @@ class FetchUnderlyingQuotesJob extends QueueJob implements ShouldQueue
 
             return true;
         }, 3);
+
+        if ($published && $asofUtc !== null) {
+            app(WallTrackingQuoteStore::class)->record($symbol, $quote, $asofUtc, $received);
+        }
+
+        return $published;
     }
 
     private function fetchAndPersist(): void

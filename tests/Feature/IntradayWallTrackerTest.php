@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\WallObservation;
 use App\Services\IntradayWallTracker;
 use App\Support\EodSnapshotSelector;
+use App\Support\WallTrackingQuoteStore;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Bus;
@@ -59,6 +60,46 @@ class IntradayWallTrackerTest extends TestCase
     private function now(): CarbonImmutable
     {
         return CarbonImmutable::parse('2026-09-30 14:01:00', 'UTC');
+    }
+
+    public function test_calculator_prices_cannot_interrupt_the_regular_delayed_wall_series(): void
+    {
+        $now = $this->now()->addMinutes(15);
+        $this->travelTo($now);
+        config(['wall_tracking.quote_delay_seconds' => 900, 'wall_tracking.quote_max_age_seconds' => 420]);
+        $store = app(WallTrackingQuoteStore::class);
+        $tracker = app(IntradayWallTracker::class);
+        foreach ([0, 5, 10] as $minutes) {
+            $received = $now->addMinutes($minutes);
+            $this->travelTo($received);
+            DB::table('underlying_quotes')->update([
+                'source' => 'massive-v3-snapshot', 'last_price' => 200 + $minutes,
+                'asof' => $received, 'updated_at' => $received,
+            ]);
+            $store->record('SPY', ['source' => 'massive-v2-snapshot', 'last_price' => 100 + $minutes], $received->subMinutes(15), $received);
+            $this->assertSame('recorded', $tracker->capture('SPY', $received)['status']);
+        }
+        $segments = $tracker->history('SPY')['segments'];
+        $this->assertCount(1, $segments);
+        $this->assertSame([100.0, 105.0, 110.0], array_column($segments[0]['observations'], 'spot'));
+        $this->assertSame(['massive-v2-snapshot'], array_values(array_unique(array_column(array_column($segments[0]['observations'], 'provenance'), 'quote_source'))));
+        $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', $now->addMinutes(18))['status']);
+        Http::assertNothingSent();
+        $this->travelBack();
+    }
+
+    public function test_quote_cache_cannot_move_backwards_or_borrow_a_calculator_price(): void
+    {
+        $now = $this->now()->addMinutes(15);
+        $this->travelTo($now);
+        $store = app(WallTrackingQuoteStore::class);
+        $store->record('SPY', ['source' => 'massive-v2-snapshot', 'last_price' => 101], $now->subMinutes(15), $now);
+        $store->record('SPY', ['source' => 'massive-v2-snapshot', 'last_price' => 90], $now->subMinutes(20), $now);
+        $this->assertSame(101.0, $store->current('SPY', $now)->last_price);
+        DB::table('underlying_quotes')->update(['source' => 'massive-v3-snapshot', 'last_price' => 200, 'asof' => $now, 'updated_at' => $now]);
+        Cache::flush();
+        $this->assertSame('waiting_for_current_quote', app(IntradayWallTracker::class)->capture('SPY', $now)['status']);
+        $this->travelBack();
     }
 
     public function test_refresh_window_uses_the_market_calendar_and_early_close(): void

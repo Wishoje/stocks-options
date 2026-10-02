@@ -8,6 +8,7 @@ use App\Jobs\FetchUnderlyingQuotesJob;
 use App\Models\WorkRun;
 use App\Support\PolygonClient;
 use App\Support\ProviderRequestReplay;
+use App\Support\WallTrackingQuoteStore;
 use App\Support\WorkRunCoordinator;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -70,6 +71,27 @@ class QuoteRefreshExecutionTest extends MySqlTestCase
         $this->assertDatabaseMissing('quote_refresh_states', ['symbol' => 'QQQ']);
     }
 
+    public function test_regular_feed_is_retained_for_walls_when_a_newer_calculator_quote_is_preserved(): void
+    {
+        DB::table('underlying_quotes')->insert([
+            'symbol' => 'SPY', 'source' => 'massive-v3-snapshot', 'last_price' => 103,
+            'asof' => now('UTC'), 'created_at' => now('UTC'), 'updated_at' => now('UTC'),
+        ]);
+        $map = $this->deliveries(['SPY']);
+        $client = Mockery::mock(PolygonClient::class);
+        $client->shouldReceive('underlyingQuotes')->once()->andReturn(['SPY' => $this->quote()]);
+        $this->app->instance(PolygonClient::class, $client);
+        $this->job(['SPY'], $map)->handle();
+
+        $this->assertDatabaseHas('underlying_quotes', ['symbol' => 'SPY', 'last_price' => 103, 'source' => 'massive-v3-snapshot']);
+        $wallQuote = app(WallTrackingQuoteStore::class)->current('SPY', CarbonImmutable::now('UTC'));
+        $this->assertSame(101.0, $wallQuote->last_price);
+        $this->assertSame('massive-v2-snapshot', $wallQuote->source);
+        $this->assertTrue($wallQuote->asof->equalTo(now('UTC')->subMinutes(15)));
+        $this->assertTrue($wallQuote->updated_at->equalTo(now('UTC')));
+        $this->assertSame('completed', WorkRun::findOrFail($map['SPY']['run_id'])->status);
+    }
+
     public function test_provider_deferral_preserves_every_unfinished_intent_with_physical_attempt_count(): void
     {
         $map = $this->deliveries(['QQQ', 'SPY']);
@@ -124,6 +146,7 @@ class QuoteRefreshExecutionTest extends MySqlTestCase
         $this->job(['SPY'], $map)->handle();
         $this->assertDatabaseMissing('underlying_quotes', ['symbol' => 'SPY']);
         $this->assertDatabaseMissing('quote_refresh_states', ['symbol' => 'SPY']);
+        $this->assertNull(app(WallTrackingQuoteStore::class)->current('SPY', CarbonImmutable::now('UTC')));
         $this->assertSame('running', WorkRun::findOrFail($map['SPY']['run_id'])->status);
     }
 
