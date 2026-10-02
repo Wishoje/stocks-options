@@ -32,8 +32,15 @@
             <option v-for="date in data.sessions" :key="date" :value="date">{{ date }}</option>
           </select>
         </label>
-        <span v-if="sessionLatest">As of {{ time(sessionLatest.observed_at) }} ET · {{ sessionReadingCount }} {{ sessionReadingCount === 1 ? 'reading' : 'readings' }} this session</span>
+        <span v-if="sessionLatest">{{ historicalSession ? `Recorded ${data.session} at` : 'As of' }} {{ time(sessionLatest.observed_at) }} ET · {{ sessionReadingCount }} {{ sessionReadingCount === 1 ? 'reading' : 'readings' }} this session</span>
         <button v-if="data.local_demo_available" type="button" @click="chooseDemo(!demo)">{{ demo ? 'Return to recorded sessions' : 'Preview local demonstration' }}</button>
+      </div>
+      <div v-if="historicalSession" class="wall-tracker__history" role="status">
+        <div>
+          <strong>Recorded session · {{ data.session }}</strong>
+          <p>The price and wall levels below belong to this date. They do not show today's market price.</p>
+        </div>
+        <button type="button" :disabled="refreshing" @click="chooseSession('')">Check latest session</button>
       </div>
       <div v-if="!data.segments.length" class="wall-tracker__empty" role="status">
         <template v-if="data.available_scopes?.length">
@@ -67,7 +74,7 @@
             <small>Net migration in this comparison window</small>
           </article>
           <article class="wall-tracker__metric">
-            <h3>Price at {{ time(selected?.observed_at) }} ET</h3>
+            <h3>{{ historicalSession ? 'Recorded price' : 'Price' }} at {{ time(selected?.observed_at) }} ET</h3>
             <strong>{{ number(selected?.spot, 2) }}</strong>
             <p>Net modeled GEX {{ compact(selected?.net_gex) }}</p>
             <small>USD per 1% price move</small>
@@ -168,6 +175,7 @@ const restoreScope = () => { scope.value = readScope() }
 window.addEventListener('popstate', restoreScope)
 onScopeDispose(() => window.removeEventListener('popstate', restoreScope))
 const { data, loading, refreshing, error, demo, load, chooseSession, chooseDemo } = useIntradayWalls(() => props.symbol, () => scope.value)
+const historicalSession = computed(() => !demo.value && data.value?.session && data.value?.market_session_date && data.value.session < data.value.market_session_date)
 function openRecordedScope(option) {
   // A different scope loads its latest recorded session. The same scope can
   // also offer a newer session when the user chose a date without readings.
@@ -323,6 +331,7 @@ function download() {
 </script>
 
 <style scoped>
+.wall-tracker__history{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;border:1px solid #526f93;border-radius:10px;background:#1b2b40;padding:14px 16px;margin:12px 0 18px}.wall-tracker__history strong{color:#b4d5ff;font-size:.9rem}.wall-tracker__history p{margin:4px 0 0}
 .wall-tracker__event{cursor:pointer}.wall-tracker__event:focus-visible{outline:2px solid #a2ceff;outline-offset:3px}.wall-tracker__event:hover circle,.wall-tracker__event[aria-expanded=true] circle{fill:#30445e;stroke-width:3}
 .wall-tracker__event-legend{display:flex;flex-wrap:wrap;gap:8px 18px;list-style:none;margin:6px 0 8px;padding:0;color:#d2deed;font-size:.76rem}.wall-tracker__event-legend li{display:flex;align-items:center;gap:6px}.wall-tracker__event-help{font-size:.78rem;margin-bottom:12px}
 .wall-event-summary{position:fixed;z-index:1000;width:320px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto;border:1px solid #657b98;border-radius:12px;background:#192434;color:#edf3fc;padding:14px;box-shadow:0 12px 36px #0008;outline:none}.wall-event-summary header{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.78rem}.wall-event-summary header button{font-size:1.2rem;line-height:1;padding:4px 8px}.wall-event-summary h3{display:flex;align-items:center;gap:8px;font-size:1rem;font-weight:700;margin:12px 0 8px}.wall-event-summary h3 svg{flex-shrink:0}.wall-event-summary p{font-size:.82rem;line-height:1.5}.wall-event-summary__close{display:flex;justify-content:space-between;gap:12px;margin:12px 0;color:#bfccde}.wall-event-summary__close strong{color:#edf3fc;font-variant-numeric:tabular-nums}.wall-event-summary__evidence{width:100%;text-align:left;display:flex;justify-content:space-between}

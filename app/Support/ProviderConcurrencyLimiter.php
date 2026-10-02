@@ -74,9 +74,11 @@ class ProviderConcurrencyLimiter
             $this->ensureCooldownElapsed($connection, $prefix);
 
             // Preserve the deployed GEX-004 keys and static reservation exactly.
-            // Admission does not sleep; a durable caller owns the retry.
+            // Intraday pages may briefly wait through a burst. Other callers
+            // still defer immediately; no wait can exceed two seconds.
             return $connection->funnel("{$prefix}:class:{$priority}:")
-                ->limit($classLimit)->releaseAfter($releaseAfter)->block(0)
+                ->limit($classLimit)->releaseAfter($releaseAfter)
+                ->block(max(0, min(2, $blockForSeconds ?? 0)))->sleep(50)
                 ->then(function () use (
                     $callback, $connection, $prefix, $priority, $metricsTtl,
                     $requestKey, $replay, &$callbackEntered

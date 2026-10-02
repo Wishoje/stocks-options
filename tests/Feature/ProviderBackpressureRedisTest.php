@@ -314,6 +314,33 @@ class ProviderBackpressureRedisTest extends TestCase
         $this->assertSame(0, (int) $observed['total']);
     }
 
+    public function test_bounded_intraday_wait_acquires_a_slot_after_a_short_burst_without_exceeding_the_cap(): void
+    {
+        for ($slot = 1; $slot <= 3; $slot++) {
+            $this->redis->psetex($this->prefix.':class:background:'.$slot, 200, 'busy-fixture');
+        }
+        $started = microtime(true);
+        $this->assertSame('fresh', $this->limiter->massive(fn () => 'fresh', blockForSeconds: 2));
+        $elapsed = microtime(true) - $started;
+        $this->assertGreaterThanOrEqual(0.15, $elapsed);
+        $this->assertLessThan(2.5, $elapsed);
+    }
+
+    public function test_intraday_wait_remains_bounded_when_every_slot_is_occupied(): void
+    {
+        for ($slot = 1; $slot <= 3; $slot++) {
+            $this->redis->setex($this->prefix.':class:background:'.$slot, 10, 'busy-fixture');
+        }
+        $started = microtime(true);
+        try {
+            $this->limiter->massive(fn () => throw new RuntimeException('Capacity must not be bypassed'), blockForSeconds: 60);
+            $this->fail('Occupied provider slots must still defer.');
+        } catch (ProviderDeferred $exception) {
+            $this->assertSame(ProviderDeferred::CAPACITY, $exception->reason);
+            $this->assertLessThan(2.5, microtime(true) - $started);
+        }
+    }
+
     public function test_killed_worker_slot_expires_and_another_worker_can_acquire_it(): void
     {
         config()->set('services.massive.concurrency.limit', 2);

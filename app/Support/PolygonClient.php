@@ -402,6 +402,7 @@ class PolygonClient
 
             $resp = app(ProviderConcurrencyLimiter::class)->massive(
                 fn () => $this->http()->get($url),
+                blockForSeconds: 2,
                 requestKey: ProviderRequestReplay::fingerprint($url, [])
             );
 

@@ -4,6 +4,20 @@ import axios from 'axios'
 import IntradayWallTracker from '@/Components/IntradayWallTracker.vue'
 vi.mock('axios', () => ({ default: { get: vi.fn() } }))
 
+it('labels a previous session and lets the user return to the latest session', async () => {
+  axios.get.mockResolvedValueOnce({ data: { ...payload('NKE'), market_session_date: '2026-10-02' } })
+    .mockResolvedValueOnce({ data: { ...payload('NKE'), session: '2026-10-02', sessions: ['2026-10-02', '2026-09-30'], market_session_date: '2026-10-02' } })
+  const wrapper = mount(IntradayWallTracker, { props: { symbol: 'NKE' } })
+  await flushPromises()
+  expect(wrapper.get('.wall-tracker__history').text()).toContain('Recorded session · 2026-09-30')
+  expect(wrapper.text()).toContain('Recorded price at')
+  await wrapper.get('.wall-tracker__history button').trigger('click')
+  await flushPromises()
+  expect(axios.get.mock.calls[1][1].params.session).toBeUndefined()
+  expect(wrapper.find('.wall-tracker__history').exists()).toBe(false)
+  wrapper.unmount()
+})
+
 const reading = (minute, put = 95, call = 105) => ({ observed_at: `2026-09-30T14:${minute}:00Z`, spot: 100,
   walls: { put: put == null ? [] : [{ strike: put, net_gex: -1000 }], call: [{ strike: call, net_gex: 1200 }] },
   net_gex: 200, provenance: { oi_date: '2026-09-29' } })

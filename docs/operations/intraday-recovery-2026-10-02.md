@@ -31,6 +31,8 @@ Laravel reconstructs a command for its terminal failure callback without its que
 
 The intraday options schedule also applied its `between` filter before setting the New York timezone. Laravel captures the timezone when that filter is built. On the UTC production server, the schedule stopped creating new intraday requests after 15:55 UTC (11:55 AM ET during daylight time). The timezone now precedes the window filter. Regression cases cover the first and final pulls, noon, afternoon, weekends, and both daylight and standard time. The existing 9:35 AM–3:55 PM ET five-minute schedule is preserved.
 
+Intraday snapshot pages allow up to two seconds to acquire their existing provider slot, polling every 50 milliseconds. This absorbs short scheduler bursts without sending most jobs back to minute-based reconciliation. Other requests retain immediate admission deferral. Occupied slots still produce a durable retry after the bounded wait; the three-per-class and six-total provider limits remain enforced.
+
 ## Validation
 
 - Wall capture, model, and coordinator suites: 47 tests, 325 assertions.
