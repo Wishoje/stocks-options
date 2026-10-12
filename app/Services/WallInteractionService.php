@@ -8,6 +8,7 @@ use App\Support\WallIntelligence\IntradayWallModel;
 use App\Support\WallIntelligence\WallInteractionDetector;
 use App\Support\WallIntelligence\WallInteractionRules;
 use App\Support\WallIntelligence\WallSetupEvaluator;
+use App\Support\WallIntelligence\WallSetupOutcomeEvaluator;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
 
@@ -32,6 +33,7 @@ final class WallInteractionService
         $result['price_recorded_at'] = $bundle?->recorded_at;
         $result['price_delay_seconds'] = 900;
         $result['setups'] = (new WallSetupEvaluator)->analyze($result, $observations);
+        $result['setup_reviews'] = app(WallSetupHistoryService::class)->read($result);
 
         return $result;
     }
@@ -97,6 +99,7 @@ final class WallInteractionService
                 $analysis = (new WallInteractionDetector)->analyze($symbol, $session, $scope, $observations, $bars, $cutoff);
                 $analysis['price_evidence_hash'] = $hash;
                 $analysis['setups'] = (new WallSetupEvaluator)->analyze($analysis, $observations);
+                $analysis['setups']['review_seeds'] = (new WallSetupOutcomeEvaluator)->seeds($analysis['setups']);
                 $this->record($symbol, $session, 'wall_interactions', $analysis, $now);
                 $events += count($analysis['events']);
             }

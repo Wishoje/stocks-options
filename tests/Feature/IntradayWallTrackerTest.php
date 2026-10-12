@@ -420,7 +420,10 @@ class IntradayWallTrackerTest extends TestCase
         $this->app->instance('env', 'local');
         $this->signIn();
         $this->getJson('/api/intraday/walls?symbol=SPY&demo=1')->assertOk()
-            ->assertJsonPath('dataset', 'synthetic_review')->assertJsonCount(19, 'segments.0.observations')
+            ->assertJsonPath('dataset', 'synthetic_review')->assertJsonCount(20, 'segments.0.observations')
+            ->assertJsonPath('wall_interaction.setup_reviews.summary.qualified', 2)
+            ->assertJsonPath('wall_interaction.setup_reviews.summary.qualified_outcomes.target_reached', 1)
+            ->assertJsonPath('wall_interaction.setup_reviews.demonstration', true)
             ->assertJsonPath('wall_interaction.rule_version', 'completed-5m.v1');
         $this->getJson('/api/intraday/walls?symbol=SPY')->assertOk()->assertJsonCount(0, 'segments');
         $this->assertSame(0, WallObservation::count());

@@ -21,7 +21,8 @@ class AiExportControllerTest extends TestCase
     {
         $payload = ['symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => '14d',
             'wall_interaction' => ['setups' => ['rule_version' => 'conditional-walls.v1',
-                'as_of' => '2026-09-30T15:00:00Z', 'current' => ['put' => ['status' => 'watch']]]]];
+                'as_of' => '2026-09-30T15:00:00Z', 'current' => ['put' => ['status' => 'watch']]],
+                'setup_reviews' => ['rule_version' => 'frozen-levels-60m-close.v1', 'summary' => ['qualified' => 2, 'target_reached' => 1]]]];
         $this->mock(\App\Services\IntradayWallTracker::class)
             ->shouldReceive('history')->once()->with('SPY', null, '14d')->andReturn($payload);
         $result = app(\App\Services\AiExportBuilder::class)->build(['SPY'], ['intraday_walls'], '14d');
@@ -30,6 +31,8 @@ class AiExportControllerTest extends TestCase
         $this->assertSame($payload, $item['intraday_walls']['data']);
         $this->assertSame('conditional-walls.v1', $item['summary']['intraday_setups']['rule_version']);
         $this->assertFalse($item['summary']['intraday_setups']['actionable']);
+        $this->assertSame(2, $item['summary']['intraday_setups']['recorded_reviews']['qualified']);
+        $this->assertSame('frozen-levels-60m-close.v1', $item['summary']['intraday_setups']['outcome_rule_version']);
     }
 
     public function test_builder_preserves_requests_for_controllers_with_a_different_parameter_name(): void

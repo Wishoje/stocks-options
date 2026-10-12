@@ -129,6 +129,8 @@ class AiExportBuilder
                 'as_of' => data_get($item, 'intraday_walls.data.wall_interaction.setups.as_of'),
                 'rule_version' => data_get($item, 'intraday_walls.data.wall_interaction.setups.rule_version'),
                 'current' => data_get($item, 'intraday_walls.data.wall_interaction.setups.current'),
+                'recorded_reviews' => data_get($item, 'intraday_walls.data.wall_interaction.setup_reviews.summary'),
+                'outcome_rule_version' => data_get($item, 'intraday_walls.data.wall_interaction.setup_reviews.rule_version'),
                 'actionable' => false,
             ] : null,
             'vrp' => $this->summarizeVrp($vrpData),

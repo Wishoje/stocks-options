@@ -32,6 +32,21 @@ beforeEach(() => { axios.get.mockReset(); window.history.replaceState({}, '', '/
 afterEach(() => { vi.useRealTimers() })
 
 describe('Intraday wall tracker', () => {
+  it('shows setup results below price behavior with no extra request and clears them on a symbol change', async () => {
+    axios.get.mockResolvedValueOnce({ data: { ...payload(), wall_interaction: {
+      state: 'session_review', current: {}, events: [], readings: [], bars: [],
+      setup_reviews: { symbol: 'SPY', session: '2026-09-30', timeframe: '14d', horizon_minutes: 60,
+        summary: { scenarios: 0, qualified: 0, qualified_outcomes: {} }, cases: [] },
+    } } }).mockResolvedValueOnce({ data: payload('QQQ') })
+    const wrapper = render(); await flushPromises()
+    expect(wrapper.text().indexOf('What price did at the walls')).toBeLessThan(wrapper.text().indexOf('What happened after the setups?'))
+    expect(wrapper.find('[aria-label="Recorded setup results"]').exists()).toBe(true)
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    await wrapper.setProps({ symbol: 'QQQ' }); await flushPromises()
+    expect(wrapper.find('[aria-label="Recorded setup results"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('previews an event without scrolling, then opens its evidence only on request', async () => {
     const event = { id: 'event', side: 'put', strike: 95, status: 'touch', observed_at: '2026-09-30T14:05:00Z',
       episode_started_at: '2026-09-30T14:00:00Z', wall_observed_at: '2026-09-30T14:00:00Z',

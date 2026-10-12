@@ -20,7 +20,7 @@ final class IntradayWallDemo
         $model = new IntradayWallModel;
         $basis = $model->basis($symbol, '2026-09-29', '2026-09-28', [$expiry], $contracts, $timeframe);
         $observations = [];
-        $offsets = [0, -4, -5, -3, -5.8, -6.2, -5.1, -5.5, -5.95, -4, -3, 3, 4.7, 6, 7, 5.1, 6.5, 7.3];
+        $offsets = [0, -4, -5, -3, -5.8, -6.2, -5.1, -5.5, -5.95, -4, -3, 3, 4.7, 6, 7, 5.1, 5.45, 5.95, 10.2];
         $bars = [];
         $previous = $center + 1;
         foreach ($offsets as $i => $offset) {
@@ -41,6 +41,9 @@ final class IntradayWallDemo
             $observations, $bars, $at->addMinutes(5));
         $result['wall_interaction']['state'] = 'demonstration';
         $result['wall_interaction']['setups'] = (new WallSetupEvaluator)->analyze($result['wall_interaction'], $observations);
+        $outcomes = new WallSetupOutcomeEvaluator;
+        $result['wall_interaction']['setup_reviews'] = $outcomes->analyze($result['wall_interaction'], $outcomes->seeds($result['wall_interaction']['setups']));
+        $result['wall_interaction']['setup_reviews']['demonstration'] = true;
 
         return $result;
     }
