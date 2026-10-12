@@ -107,9 +107,7 @@
           </label>
         </div>
         <p class="wall-tracker__interpretation">The leading wall strike can stay unchanged while price and exposure change. Price can trade above or below either wall. A stable wall is an area to monitor, not confirmation of support or resistance. Migration shows a change in the leading strike; it does not confirm a breakout.</p>
-        <WallInteractionPanel v-if="data.wall_interaction" ref="interactionPanel" :interaction="data.wall_interaction" :selected-event-id="selectedEventId" @inspect="inspectInteraction" />
-        <WallSetupPanel v-if="data.wall_interaction?.setups" :interaction="data.wall_interaction" :selected-event-id="selectedEventId" />
-        <WallSetupHistoryPanel v-if="data.wall_interaction?.setup_reviews" :reviews="data.wall_interaction.setup_reviews" />
+        <WallDecisionPanel v-if="data.wall_interaction" ref="interactionPanel" :interaction="data.wall_interaction" :latest-reading="sessionLatest" :selected-event-id="selectedEventId" @inspect="inspectInteraction" />
         <details>
           <summary>Session readings and model details</summary>
           <p>{{ data.model_description }}</p>
@@ -146,9 +144,7 @@
 <script setup>
 import { computed, ref, watch, onScopeDispose, nextTick } from 'vue'
 import { useIntradayWalls } from '@/composables/useIntradayWalls'
-import WallInteractionPanel from '@/Components/WallInteractionPanel.vue'
-import WallSetupPanel from '@/Components/WallSetupPanel.vue'
-import WallSetupHistoryPanel from '@/Components/WallSetupHistoryPanel.vue'
+import WallDecisionPanel from '@/Components/WallDecisionPanel.vue'
 import WallInteractionIcon from '@/Components/WallInteractionIcon.vue'
 import { wallInteractionTitle as interactionTitle } from '@/utils/wallInteraction'
 const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean })

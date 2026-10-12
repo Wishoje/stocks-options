@@ -31,14 +31,20 @@ beforeEach(() => { axios.get.mockReset(); window.history.replaceState({}, '', '/
 afterEach(() => { vi.useRealTimers() })
 
 describe('Intraday wall tracker', () => {
-  it('shows setup results below price behavior with no extra request and clears them on a symbol change', async () => {
+  it('shows one summary by default and opens results on demand without another request', async () => {
     axios.get.mockResolvedValueOnce({ data: { ...payload(), wall_interaction: {
       state: 'session_review', current: {}, events: [], readings: [], bars: [],
       setup_reviews: { symbol: 'SPY', session: '2026-09-30', timeframe: '7d', horizon_minutes: 60,
         summary: { scenarios: 0, qualified: 0, qualified_outcomes: {} }, cases: [] },
     } } }).mockResolvedValueOnce({ data: payload('QQQ') })
     const wrapper = render(); await flushPromises()
-    expect(wrapper.text().indexOf('What price did at the walls')).toBeLessThan(wrapper.text().indexOf('What happened after the setups?'))
+    expect(wrapper.text()).toContain('Session ended · No setup confirmed')
+    expect(wrapper.findAll('.decision-card')).toHaveLength(2)
+    expect(wrapper.text()).toContain('Price is 5 above this wall')
+    expect(wrapper.find('[aria-label="Recorded setup results"]').exists()).toBe(false)
+    const details = wrapper.get('.advanced-review')
+    details.element.open = true
+    await details.trigger('toggle')
     expect(wrapper.find('[aria-label="Recorded setup results"]').exists()).toBe(true)
     expect(axios.get).toHaveBeenCalledTimes(1)
     await wrapper.setProps({ symbol: 'QQQ' }); await flushPromises()
