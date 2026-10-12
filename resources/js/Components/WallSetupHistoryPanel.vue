@@ -50,7 +50,7 @@ watch(cases, () => {
     </div>
     <p class="sample-note">{{ counts.scenarios || 0 }} total scenarios in this session · {{ Math.max(0, (counts.scenarios || 0) - (counts.qualified || 0)) }} did not reach an eligible entry close.<template v-if="counts.overlapping_reviews"> {{ counts.overlapping_reviews }} reviews overlap another review.</template></p>
     <p v-if="reviews.capture_limit_reached" class="sample-note">This view contains the first 160 saved assessments for the session.</p>
-    <p v-if="!cases.length" class="empty">The review starts when a price sequence creates a setup. Choose another recorded session to explore earlier scenarios.</p>
+    <p v-if="!cases.length" class="empty">The review starts when today’s price sequence creates a setup.</p>
     <template v-else>
       <div class="review-filters">
         <label>Outcome<select v-model="outcome" aria-label="Filter setup outcomes"><option value="qualified">Conditions met setups</option><option value="all">All scenarios</option><option v-for="(label, key) in labels" :key="key" :value="key">{{ label }}</option></select></label>

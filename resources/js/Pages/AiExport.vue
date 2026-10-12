@@ -83,7 +83,7 @@ const indicatorOptions = [
   {
     key: 'intraday_walls',
     label: 'Intraday walls & setups',
-    description: 'Optional: latest recorded session in the selected expiry scope, price events, conditional setups and supporting evidence. Choose 0DTE through 3M; monthly scope is not supported.',
+    description: 'Optional: today’s near-term 1W wall timeline, price events, conditional setups and supporting evidence. Independent of the EOD expiry scope.',
   },
   {
     key: 'term_structure',

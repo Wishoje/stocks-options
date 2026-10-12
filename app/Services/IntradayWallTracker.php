@@ -9,6 +9,7 @@ use App\Support\GexExpirationUniverse;
 use App\Support\MarketSession;
 use App\Support\Symbols;
 use App\Support\WallIntelligence\IntradayWallModel;
+use App\Support\WallIntelligence\WallIvReference;
 use App\Support\WallIntelligence\WallSnapshotContract;
 use App\Support\WallTrackingQuoteStore;
 use Carbon\CarbonImmutable;
@@ -20,24 +21,27 @@ class IntradayWallTracker
 {
     public const TIMEFRAMES = ['0d', '1d', '7d', '14d', '30d', '90d'];
 
+    public const LIVE_TIMEFRAME = '7d';
+
     public function requestedTimeframes(string $symbol): array
     {
-        return array_values(array_filter(self::TIMEFRAMES, fn ($tf) => $tf === '14d' || Cache::has('walls:scope-demand:'.$symbol.':'.$tf)));
+        return [self::LIVE_TIMEFRAME];
     }
 
     public function symbols(CarbonImmutable $now): array
     {
         $date = $now->setTimezone('America/New_York')->toDateString();
 
-        return UnderlyingQuote::query()->where('asof', '>=', $now->setTimezone('America/New_York')->startOfDay()->utc())
-            ->where('asof', '<=', $now)->where('last_price', '>', 0)
+        // Discover the full known options universe even before today's first quote.
+        // capture() checks quote freshness independently for every symbol.
+        return UnderlyingQuote::query()
             ->whereExists(fn ($query) => $query->selectRaw('1')->from('option_expirations')
                 ->whereColumn('option_expirations.symbol', 'underlying_quotes.symbol')
                 ->whereBetween('expiration_date', [$date, $now->setTimezone('America/New_York')->addWeekdays(64)->toDateString()]))
             ->orderBy('symbol')->distinct()->pluck('symbol')->filter(fn ($symbol) => Symbols::isValid($symbol))->values()->all();
     }
 
-    public function capture(string $symbol, CarbonImmutable $now, string $timeframe = '14d'): array
+    public function capture(string $symbol, CarbonImmutable $now, string $timeframe = self::LIVE_TIMEFRAME): array
     {
         if (! Symbols::isValid($symbol) || $symbol !== Symbols::canon($symbol)) {
             throw new DomainException('Invalid tracking symbol.');
@@ -91,6 +95,7 @@ class IntradayWallTracker
                 'strike' => WallSnapshotContract::number($r->strike), 'oi' => WallSnapshotContract::number($r->open_interest),
                 'iv' => WallSnapshotContract::number($r->iv), 'data_date' => (string) $r->data_date,
                 'data_timestamp' => $r->data_timestamp ?? null])->all();
+            $contracts = app(WallIvReference::class)->resolve($contracts, array_keys($expiries), $sourceDate);
             $model = new IntradayWallModel;
             $basis = $model->basis($symbol, $session['session_date'], $sourceDate, array_values($expiries), $contracts, $timeframe);
             $observation = $this->qualifiedObservation($basis, $quote, $at);
@@ -125,7 +130,7 @@ class IntradayWallTracker
             return null;
         }
         if ($observation['audit']['oi_input_coverage_pct'] < config('wall_tracking.minimum_oi_coverage_pct')
-            || 100 * $observation['audit']['excluded_rows'] / max(1, $observation['audit']['contract_rows']) > config('wall_tracking.maximum_excluded_row_pct')) {
+            || 100 * $observation['audit']['unknown_oi_rows'] / max(1, $observation['audit']['contract_rows']) > config('wall_tracking.maximum_unknown_oi_row_pct')) {
             return null;
         }
 
@@ -204,17 +209,17 @@ class IntradayWallTracker
         ]);
     }
 
-    public function history(string $symbol, ?string $session = null, string $timeframe = '14d'): array
+    public function history(string $symbol, ?string $session = null, string $timeframe = self::LIVE_TIMEFRAME): array
     {
         if (! in_array($timeframe, self::TIMEFRAMES, true)) {
             throw new DomainException('Invalid expiry scope.');
         }
-        Cache::put('walls:scope-demand:'.$symbol.':'.$timeframe, true, now()->addDay());
         $base = WallObservation::where('symbol', $symbol)->where('dataset', 'intraday_capture')
             ->where('payload_json->scope->timeframe', $timeframe)
             ->where('schema_version', IntradayWallModel::SCHEMA)->where('observation_kind', 'model_observation');
         $dates = (clone $base)->select('analysis_session')->distinct()->orderByDesc('analysis_session')->limit(10)->pluck('analysis_session')->all();
-        $session ??= $dates[0] ?? null;
+        // The live panel must never silently substitute an earlier market session.
+        $session ??= MarketSession::describe()['session_date'];
         $records = $session ? (clone $base)->where('analysis_session', $session)->orderByDesc('observed_at')->orderByDesc('id')->limit(500)->get() : collect();
         $observations = $records->reverse()->map(function ($row) {
             $payload = json_decode($row->payload_json, true, 512, JSON_THROW_ON_ERROR);
@@ -230,33 +235,10 @@ class IntradayWallTracker
         $result['local_demo_available'] = app()->environment('local');
         $result['truncated'] = $records->count() === 500;
         $result['availability'] = $this->availability($symbol, $session, $observations !== [], $timeframe);
-        $result['available_scopes'] = $observations === [] ? $this->recordedScopes($symbol) : [];
+        $result['available_scopes'] = [];
         $result['wall_interaction'] = app(WallInteractionService::class)->read($symbol, $session, $timeframe, $observations);
 
         return $result;
-    }
-
-    private function recordedScopes(string $symbol): array
-    {
-        $base = WallObservation::where('symbol', $symbol)->where('dataset', 'intraday_capture')
-            ->where('schema_version', IntradayWallModel::SCHEMA)->where('observation_kind', 'model_observation');
-        // Bound the lookup to recent recorded sessions. Only aggregate metadata
-        // is loaded; the stored contracts and timeline payloads stay in the DB.
-        $dates = (clone $base)->select('analysis_session')->distinct()->orderByDesc('analysis_session')
-            ->limit(10)->pluck('analysis_session')->all();
-        if (! $dates) {
-            return [];
-        }
-        $scopes = $base->whereIn('analysis_session', $dates)
-            ->whereIn('payload_json->scope->timeframe', self::TIMEFRAMES)
-            ->select(['payload_json->scope->timeframe as timeframe', 'analysis_session'])
-            ->selectRaw('COUNT(*) as readings')->groupBy('payload_json->scope->timeframe', 'analysis_session')
-            ->orderByDesc('analysis_session')->get()->unique('timeframe')->keyBy('timeframe');
-
-        return collect(self::TIMEFRAMES)->filter(fn ($scope) => $scopes->has($scope))->map(fn ($scope) => [
-            'timeframe' => $scope, 'session' => (string) $scopes[$scope]->analysis_session,
-            'readings' => (int) $scopes[$scope]->readings,
-        ])->values()->all();
     }
 
     private function availability(string $symbol, ?string $session, bool $hasReadings, string $timeframe): array
@@ -264,17 +246,17 @@ class IntradayWallTracker
         if ($hasReadings) {
             return ['state' => 'ready', 'message' => null];
         }
-        if ($session) {
+        $market = MarketSession::describe();
+        if ($session && $session !== $market['session_date']) {
             return ['state' => 'no_session_readings', 'message' => 'No wall readings were recorded for this session. Choose another session.'];
         }
-        $market = MarketSession::describe();
         if (! $market['is_rth']) {
-            return ['state' => 'outside_session', 'message' => 'No wall history has been recorded yet for '.$symbol.'. Tracking builds during market sessions; EOD wall analysis is available now.'];
+            return ['state' => 'outside_session', 'message' => 'The market is closed. Today’s wall timeline builds during the regular session. Explore EOD wall analysis to prepare.'];
         }
         $status = Cache::get('walls:status:'.$symbol.':'.$timeframe);
         $code = ($status && CarbonImmutable::parse($status['checked_at'])->greaterThan(now()->subMinutes(10))) ? $status['status'] : null;
         if ($code === 'no_expirations') {
-            return ['state' => 'no_expirations', 'message' => 'There are no option expirations in this scope for '.$symbol.'. Choose a wider expiry scope.'];
+            return ['state' => 'no_expirations', 'message' => 'Near-term option expirations are not available for '.$symbol.'. Explore EOD wall analysis.'];
         }
         if (in_array($code, ['model_inputs_below_capture_threshold', 'waiting_for_previous_session_chain', 'waiting_for_chain'], true)) {
             return ['state' => 'model_not_ready', 'message' => 'Wall tracking is not ready for '.$symbol.'. You can explore its EOD wall analysis while the model is prepared.'];
@@ -286,7 +268,7 @@ class IntradayWallTracker
         return ['state' => 'awaiting_first_reading', 'message' => 'No wall readings have been recorded yet for '.$symbol.'. Eligible symbols are checked every five minutes during market sessions.'];
     }
 
-    public function response(string $symbol, ?string $session, array $observations, string $timeframe = '14d'): array
+    public function response(string $symbol, ?string $session, array $observations, string $timeframe = self::LIVE_TIMEFRAME): array
     {
         $market = MarketSession::describe();
 
@@ -295,9 +277,11 @@ class IntradayWallTracker
             'model_version' => IntradayWallModel::MODEL, 'generated_at' => now()->toIso8601String(),
             'quote_delay_seconds' => (int) config('wall_tracking.quote_delay_seconds', 0),
             'market_session_date' => $market['session_date'],
+            'next_refresh_at' => $market['next_open_at']
+                ? CarbonImmutable::parse($market['next_open_at'])->addSeconds((int) config('wall_tracking.quote_delay_seconds', 0))->toIso8601String() : null,
             'refresh_until' => $market['refresh_allowed']
                 ? CarbonImmutable::parse($market['closes_at'])->addMinutes(15)->toIso8601String() : null,
-            'model_description' => 'Modeled walls using changing price and time, with prior-session OI and IV held fixed. Zero interest and dividends; 100-share contracts; European gamma approximation.',
+            'model_description' => 'Modeled walls using changing price and time, with prior-session OI and recorded reference IV held fixed. Reference IV uses the exact contract from up to three completed sessions; dates are retained in the evidence. Zero interest and dividends; 100-share contracts; European gamma approximation.',
             'migration_basis' => 'last_strike_minus_first_comparable_strike',
             'segments' => (new IntradayWallModel)->timeline($observations),
             'interpretation' => 'A stable wall is not confirmation of support or resistance. A moving wall is not a break signal.',

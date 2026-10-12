@@ -10,7 +10,7 @@ final class IntradayWallModel
 {
     public const SCHEMA = 'intraday-walls.v1';
 
-    public const MODEL = 'frozen-eod-iv-bs.v1';
+    public const MODEL = 'frozen-reference-iv-bs.v2';
 
     public function basis(string $symbol, string $session, string $sourceDate, array $expiries, array $contracts, string $timeframe = '14d'): array
     {
@@ -37,9 +37,13 @@ final class IntradayWallModel
         $excluded = 0;
         $totalOi = 0;
         $usedOi = 0;
+        $unknownOi = 0;
         $expiryTimes = [];
         foreach ($basis['contracts'] as $contract) {
             $oi = WallSnapshotContract::number($contract['oi'] ?? null);
+            if ($oi === null || $oi < 0) {
+                $unknownOi++;
+            }
             $strike = WallSnapshotContract::number($contract['strike'] ?? null);
             $iv = WallSnapshotContract::number($contract['iv'] ?? null);
             $totalOi += max(0, $oi ?? 0);
@@ -87,15 +91,19 @@ final class IntradayWallModel
             return array_slice($walls, 0, 3);
         };
 
+        $ivDates = array_values(array_unique(array_filter(array_column($basis['contracts'], 'iv_data_date'))));
+        sort($ivDates);
+
         return ['schema_version' => self::SCHEMA, 'model_version' => self::MODEL, 'scope' => $basis['scope'],
             'scope_key' => $basis['scope_key'], 'basis_key' => $basis['basis_key'],
             'observed_at' => $at->utc()->toIso8601String(), 'spot' => $spot,
             'walls' => ['put' => $rank('put'), 'call' => $rank('call')], 'strike_data' => $rows,
             'net_gex' => array_sum(array_column($rows, 'net_gex')),
             'provenance' => ['quote_source' => $quoteSource, 'time_kind' => 'provider_quote_asof',
-                'oi_date' => $basis['source_date'], 'iv_date' => $basis['source_date'], 'greeks_source_at' => null,
+                'oi_date' => $basis['source_date'], 'iv_date' => count($ivDates) === 1 ? $ivDates[0] : ($ivDates ? null : $basis['source_date']),
+                'iv_reference_dates' => $ivDates ?: [$basis['source_date']], 'greeks_source_at' => null,
                 'greeks_evaluated_at' => $at->utc()->toIso8601String(), 'oi_observed_at' => null],
-            'audit' => ['excluded_rows' => $excluded, 'contract_rows' => count($basis['contracts']),
+            'audit' => ['excluded_rows' => $excluded, 'unknown_oi_rows' => $unknownOi, 'contract_rows' => count($basis['contracts']),
                 'oi_input_coverage_pct' => $totalOi > 0 ? 100 * $usedOi / $totalOi : null,
                 'historical_outcome_eligible' => false, 'interaction_status' => 'unknown']];
     }

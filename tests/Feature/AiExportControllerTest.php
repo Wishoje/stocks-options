@@ -19,12 +19,12 @@ class AiExportControllerTest extends TestCase
 
     public function test_builder_resolves_wall_controller_dependencies_and_keeps_setup_context(): void
     {
-        $payload = ['symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => '14d',
+        $payload = ['symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => '7d',
             'wall_interaction' => ['setups' => ['rule_version' => 'conditional-walls.v1',
                 'as_of' => '2026-09-30T15:00:00Z', 'current' => ['put' => ['status' => 'watch']]],
                 'setup_reviews' => ['rule_version' => 'frozen-levels-60m-close.v1', 'summary' => ['qualified' => 2, 'target_reached' => 1]]]];
         $this->mock(\App\Services\IntradayWallTracker::class)
-            ->shouldReceive('history')->once()->with('SPY', null, '14d')->andReturn($payload);
+            ->shouldReceive('history')->once()->with('SPY', null, '7d')->andReturn($payload);
         $result = app(\App\Services\AiExportBuilder::class)->build(['SPY'], ['intraday_walls'], '14d');
         $item = $result['items'][0];
         $this->assertTrue($item['intraday_walls']['ok']);
@@ -54,19 +54,19 @@ class AiExportControllerTest extends TestCase
         \Illuminate\Support\Facades\Bus::assertDispatched(\App\Jobs\BuildAiExportJob::class, 2);
     }
 
-    public function test_intraday_walls_are_opt_in_and_require_a_supported_scope_and_intraday_access(): void
+    public function test_intraday_walls_are_opt_in_and_independent_of_eod_scope_and_require_intraday_access(): void
     {
         \Illuminate\Support\Facades\Bus::fake();
         $user = $this->productUser();
         $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY'], 'indicators' => ['intraday_walls'], 'timeframe' => '14d'])->assertAccepted();
         $this->assertSame(['intraday_walls'], AiExport::query()->latest('id')->first()->indicators);
-        $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY'], 'indicators' => ['intraday_walls'], 'timeframe' => 'monthly'])->assertStatus(422);
+        $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY'], 'indicators' => ['intraday_walls'], 'timeframe' => 'monthly'])->assertAccepted();
         $guard = \Mockery::mock(\App\Http\Middleware\EnsureFeature::class)->makePartial();
         $guard->shouldReceive('handle')->withArgs(fn ($request, $next, $feature, $mode = null) => $feature === 'intraday.access' && $mode === 'strict')
             ->once()->andReturn(response()->json(['message' => 'Intraday access required'], 403));
         $this->app->instance(\App\Http\Middleware\EnsureFeature::class, $guard);
         $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY'], 'indicators' => ['intraday_walls'], 'timeframe' => '14d'])->assertForbidden();
-        \Illuminate\Support\Facades\Bus::assertDispatched(\App\Jobs\BuildAiExportJob::class, 1);
+        \Illuminate\Support\Facades\Bus::assertDispatched(\App\Jobs\BuildAiExportJob::class, 2);
     }
 
     public function test_index_returns_only_the_authenticated_users_export_metadata(): void

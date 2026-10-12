@@ -4,17 +4,16 @@ import axios from 'axios'
 import IntradayWallTracker from '@/Components/IntradayWallTracker.vue'
 vi.mock('axios', () => ({ default: { get: vi.fn() } }))
 
-it('labels a previous session and lets the user return to the latest session', async () => {
+it('rejects a previous-session response instead of rendering old prices as today', async () => {
   axios.get.mockResolvedValueOnce({ data: { ...payload('NKE'), market_session_date: '2026-10-02' } })
-    .mockResolvedValueOnce({ data: { ...payload('NKE'), session: '2026-10-02', sessions: ['2026-10-02', '2026-09-30'], market_session_date: '2026-10-02' } })
+    .mockResolvedValueOnce({ data: { ...payload('NKE'), session: '2026-10-02', market_session_date: '2026-10-02' } })
   const wrapper = mount(IntradayWallTracker, { props: { symbol: 'NKE' } })
   await flushPromises()
-  expect(wrapper.get('.wall-tracker__history').text()).toContain('Recorded session · 2026-09-30')
-  expect(wrapper.text()).toContain('Recorded price at')
-  await wrapper.get('.wall-tracker__history button').trigger('click')
-  await flushPromises()
+  expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(false)
+  expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+  await wrapper.get('.wall-tracker__actions button').trigger('click'); await flushPromises()
+  expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(true)
   expect(axios.get.mock.calls[1][1].params.session).toBeUndefined()
-  expect(wrapper.find('.wall-tracker__history').exists()).toBe(false)
   wrapper.unmount()
 })
 
@@ -22,7 +21,7 @@ const reading = (minute, put = 95, call = 105) => ({ observed_at: `2026-09-30T14
   walls: { put: put == null ? [] : [{ strike: put, net_gex: -1000 }], call: [{ strike: call, net_gex: 1200 }] },
   net_gex: 200, provenance: { oi_date: '2026-09-29' } })
 const payload = (symbol = 'SPY') => ({ symbol, schema_version: 'intraday-walls.v1', dataset: 'intraday_capture',
-  timeframe: '14d',
+  timeframe: '7d',
   session: '2026-09-30', sessions: ['2026-09-30', '2026-09-29'], local_demo_available: true,
   segments: [{ id: 1, start_reason: 'first_observation', observations: [reading('00'), reading('05', 95, 110)],
     migration: { put: { amount: 0 }, call: { amount: 5 } } }],
@@ -35,7 +34,7 @@ describe('Intraday wall tracker', () => {
   it('shows setup results below price behavior with no extra request and clears them on a symbol change', async () => {
     axios.get.mockResolvedValueOnce({ data: { ...payload(), wall_interaction: {
       state: 'session_review', current: {}, events: [], readings: [], bars: [],
-      setup_reviews: { symbol: 'SPY', session: '2026-09-30', timeframe: '14d', horizon_minutes: 60,
+      setup_reviews: { symbol: 'SPY', session: '2026-09-30', timeframe: '7d', horizon_minutes: 60,
         summary: { scenarios: 0, qualified: 0, qualified_outcomes: {} }, cases: [] },
     } } }).mockResolvedValueOnce({ data: payload('QQQ') })
     const wrapper = render(); await flushPromises()
@@ -88,54 +87,16 @@ describe('Intraday wall tracker', () => {
     scroll.mockRestore()
   })
 
-  it('offers real recorded scopes with dates and opens one without changing the EOD scope', async () => {
-    window.history.replaceState({}, '', '/dashboard?timeframe=7d&wall_timeframe=14d')
-    axios.get.mockResolvedValueOnce({ data: { ...payload('AAPL'), session: null, sessions: [], segments: [],
-      availability: { state: 'model_not_ready', message: 'Wall tracking is not ready for AAPL.' },
-      available_scopes: [{ timeframe: '30d', session: '2026-09-30', readings: 45 }, { timeframe: '90d', session: '2026-09-29', readings: 1 }] } })
-      .mockResolvedValueOnce({ data: { ...payload('AAPL'), timeframe: '30d' } })
-    const wrapper = mount(IntradayWallTracker, { props: { symbol: 'AAPL' } }); await flushPromises()
-    expect(wrapper.text()).toContain('No readings recorded for AAPL · 2W')
-    expect(wrapper.text()).not.toContain('Wall tracking is not ready for AAPL.')
-    const options = wrapper.findAll('.wall-tracker__recorded-scopes button')
-    expect(options.map(button => button.text())).toEqual(['Open 1M45 readings · 2026-09-30', 'Open 3M1 reading · 2026-09-29'])
-    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(false)
-    await options[0].trigger('click'); await flushPromises()
-    expect(axios.get).toHaveBeenCalledTimes(2)
-    expect(axios.get.mock.calls[1][1].params).toMatchObject({ symbol: 'AAPL', timeframe: '30d' })
-    expect(axios.get.mock.calls[1][1].params.session).toBeUndefined()
-    expect(window.location.search).toBe('?timeframe=7d&wall_timeframe=30d')
-    expect(wrapper.get('.wall-tracker__scope button[aria-pressed="true"]').text()).toBe('1M')
-    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(true)
+  it('uses one near-term scope, ignores old URL controls and offers no previous sessions', async () => {
+    window.history.replaceState({}, '', '/dashboard?timeframe=30d&wall_timeframe=90d')
+    axios.get.mockResolvedValue({ data: payload() })
+    const wrapper = render(); await flushPromises()
+    expect(axios.get.mock.calls[0][1].params).toEqual({ symbol: 'SPY', timeframe: '7d' })
+    expect(wrapper.text()).toContain('Near-term walls · 1W expiries')
+    expect(wrapper.find('[aria-label="Wall timeline session"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Wall tracking expiry scope"]').exists()).toBe(false)
     expect(wrapper.find('.wall-tracker__recorded-scopes').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('can open a recorded session in the same scope when the selected session is empty', async () => {
-    axios.get.mockResolvedValueOnce({ data: { ...payload(), segments: [], session: '2026-09-29',
-      available_scopes: [{ timeframe: '14d', session: '2026-09-30', readings: 2 }] } })
-      .mockResolvedValueOnce({ data: payload() })
-    const wrapper = render(); await flushPromises()
-    expect(wrapper.text()).toContain('No readings recorded for SPY · 2W · 2026-09-29')
-    await wrapper.get('.wall-tracker__recorded-scopes button').trigger('click'); await flushPromises()
-    expect(axios.get.mock.calls[1][1].params).toMatchObject({ timeframe: '14d', session: '2026-09-30' })
-    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('changes expiry scope without changing EOD scope and rejects a late scope response', async () => {
-    window.history.replaceState({}, '', '/dashboard?timeframe=7d&wall_timeframe=30d')
-    axios.get.mockResolvedValueOnce({ data: { ...payload(), timeframe: '30d' } })
-      .mockResolvedValueOnce({ data: payload() })
-    const wrapper = render(); await flushPromises()
-    expect(axios.get.mock.calls[0][1].params.timeframe).toBe('30d')
-    await wrapper.findAll('.wall-tracker__scope button').find(button => button.text() === '0DTE').trigger('click')
-    await flushPromises()
-    expect(axios.get.mock.calls[1][1].params.timeframe).toBe('0d')
-    expect(window.location.search).toContain('timeframe=7d')
-    expect(window.location.search).toContain('wall_timeframe=0d')
-    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(false)
-    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    expect(window.location.search).toBe('?timeframe=30d&wall_timeframe=90d')
     wrapper.unmount()
   })
 
@@ -222,7 +183,7 @@ describe('Intraday wall tracker', () => {
     axios.get.mockResolvedValueOnce({ data: { ...payload(), segments: [] } })
       .mockResolvedValueOnce({ data: { ...payload(), dataset: 'synthetic_review' } })
     const wrapper = render(); await flushPromises()
-    expect(wrapper.text()).toContain('No wall readings have been recorded yet for SPY')
+    expect(wrapper.text()).toContain('Waiting for today’s first wall reading for SPY')
     expect(wrapper.text()).not.toContain('Tracking starts with')
     await wrapper.get('.wall-tracker__context button').trigger('click'); await flushPromises()
     expect(axios.get.mock.calls[1][1].params).toMatchObject({ demo: 1 })
@@ -362,18 +323,25 @@ describe('Intraday wall tracker', () => {
     wrapper.unmount()
   })
 
-  it('does not automatically refresh a chosen historical session or local demonstration', async () => {
+  it('does not automatically refresh a local demonstration', async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:10:00Z'))
     const data = { ...payload(), market_session_date: '2026-09-30', refresh_until: '2026-09-30T20:15:00Z' }
-    axios.get.mockResolvedValueOnce({ data }).mockResolvedValueOnce({ data: { ...data, session: '2026-09-29' } })
-      .mockResolvedValueOnce({ data: { ...data, dataset: 'synthetic_review' } })
+    axios.get.mockResolvedValueOnce({ data }).mockResolvedValueOnce({ data: { ...data, dataset: 'synthetic_review' } })
     const wrapper = render(); await flushPromises()
-    await wrapper.get('[aria-label="Wall timeline session"]').setValue('2026-09-29'); await flushPromises()
-    await vi.advanceTimersByTimeAsync(120000)
-    expect(axios.get).toHaveBeenCalledTimes(2)
     await wrapper.get('.wall-tracker__context button').trigger('click'); await flushPromises()
     await vi.advanceTimersByTimeAsync(120000)
-    expect(axios.get).toHaveBeenCalledTimes(3)
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('automatically starts at the next collection window even when the page opened before the market', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T13:44:30Z'))
+    const empty = { ...payload(), segments: [], market_session_date: '2026-09-30', refresh_until: null, next_refresh_at: '2026-09-30T13:45:00Z' }
+    axios.get.mockResolvedValueOnce({ data: empty }).mockResolvedValue({ data: payload() })
+    const wrapper = render(); await flushPromises()
+    await vi.advanceTimersByTimeAsync(60000); await flushPromises()
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -386,12 +354,5 @@ describe('Intraday wall tracker', () => {
     wrapper.unmount()
   })
 
-  it('requests the selected session and hides earlier session readings while loading', async () => {
-    axios.get.mockResolvedValueOnce({ data: payload() }).mockImplementationOnce(() => new Promise(() => {}))
-    const wrapper = render(); await flushPromises()
-    await wrapper.get('[aria-label="Wall timeline session"]').setValue('2026-09-29')
-    expect(axios.get.mock.calls[1][1].params.session).toBe('2026-09-29')
-    expect(wrapper.find('.wall-tracker__metrics').exists()).toBe(false)
-    wrapper.unmount()
-  })
+
 })

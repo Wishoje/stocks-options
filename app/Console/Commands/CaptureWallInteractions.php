@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\WallObservation;
+use App\Services\IntradayWallTracker;
 use App\Services\WallInteractionService;
 use App\Support\MarketSession;
 use App\Support\Symbols;
@@ -82,6 +83,7 @@ class CaptureWallInteractions extends Command
         }
         $symbols = $explicit ? array_unique(array_map([Symbols::class, 'canon'], $explicit))
             : WallObservation::where('dataset', 'intraday_capture')->where('analysis_session', $session)
+                ->where('payload_json->scope->timeframe', IntradayWallTracker::LIVE_TIMEFRAME)
                 ->select('symbol')->distinct()->orderBy('symbol')->pluck('symbol')->all();
         $cursor = $explicit ? null : Cache::get('walls:interaction-cursor');
         if ($cursor) {
@@ -110,7 +112,15 @@ class CaptureWallInteractions extends Command
                     continue;
                 }
             }
-            $result = $service->collect($symbol, $session, CarbonImmutable::now('UTC'));
+            try {
+                $result = $service->collect($symbol, $session, CarbonImmutable::now('UTC'));
+            } catch (\Throwable $error) {
+                report($error);
+                $this->error($symbol.': price evidence collection failed; continuing with the next symbol.');
+                $last = $symbol;
+
+                continue;
+            }
             $this->line($symbol.': '.json_encode($result));
             $last = $symbol;
             if (in_array($result['status'], ['provider_backoff', 'rate_limited', 'access_not_available'], true)) {

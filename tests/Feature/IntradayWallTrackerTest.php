@@ -42,6 +42,16 @@ class IntradayWallTrackerTest extends TestCase
         });
         DB::table('option_expirations')->insert(['id' => 1, 'symbol' => 'SPY', 'expiration_date' => '2026-10-02']);
         DB::table('underlying_quotes')->insert(['symbol' => 'SPY', 'source' => 'massive-v2-snapshot', 'last_price' => 100, 'asof' => '2026-09-30 14:00:00']);
+        Schema::create('option_chain_data', function (Blueprint $t) {
+            $t->id();
+            $t->integer('expiration_id');
+            $t->string('option_type');
+            $t->double('strike');
+            $t->double('iv')->nullable();
+            $t->date('data_date');
+            $t->timestamp('data_timestamp');
+        });
+        $this->travelTo($this->now());
         $this->rows();
         Http::preventStrayRequests();
         Bus::fake();
@@ -146,15 +156,15 @@ class IntradayWallTrackerTest extends TestCase
         $tracker = app(IntradayWallTracker::class);
         $this->assertSame('recorded', $tracker->capture('SPY', $this->now())['status']);
         $this->assertGreaterThan(99, $tracker->history('SPY')['segments'][0]['observations'][0]['audit']['oi_input_coverage_pct']);
-        $rows[0]->open_interest = 50;
+        $rows[0]->open_interest = 1000;
         $this->assertSame('already_recorded', $tracker->capture('SPY', $this->now())['status']);
         $rows[0]->open_interest = 1;
         foreach ([1, 2] as $i) {
             $rows[$i]->iv = null;
             $rows[$i]->open_interest = 1;
         }
-        $this->assertSame('already_recorded', $tracker->capture('SPY', $this->now())['status']);
-        $this->assertSame(2, WallObservation::count());
+        $this->assertSame('recorded', $tracker->capture('SPY', $this->now())['status']);
+        $this->assertSame(4, WallObservation::count());
     }
 
     public function test_a_later_low_quality_chain_reuses_only_the_accepted_same_session_basis_with_a_fresh_quote(): void
@@ -176,7 +186,7 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertSame($original, WallObservation::findOrFail($first['id'])->payload_json);
         $this->assertCount(2, $tracker->history('SPY')['segments'][0]['observations']);
         $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', $this->now()->addMinutes(20))['status']);
-        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now()->addMinutes(5), '7d')['status']);
+        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now()->addMinutes(5), '14d')['status']);
         Http::assertNothingSent();
         Bus::assertNothingDispatched();
     }
@@ -212,8 +222,8 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertNotSame($a['id'], $b['id']);
         $this->assertSame('7d', $tracker->history('SPY', null, '7d')['segments'][0]['observations'][0]['scope']['timeframe']);
         $this->assertSame([], $tracker->history('SPY', null, '14d')['segments']);
-        $this->assertContains('7d', $tracker->requestedTimeframes('SPY'));
-        $this->assertNotContains('90d', $tracker->requestedTimeframes('SPY'));
+        $this->assertSame(['7d'], $tracker->requestedTimeframes('SPY'));
+        $this->assertFalse(Cache::has('walls:scope-demand:SPY:30d'));
         $this->signIn();
         $this->getJson('/api/intraday/walls?symbol=SPY&timeframe=30d')->assertOk()->assertJsonPath('timeframe', '30d')->assertJsonCount(1, 'segments');
         $this->getJson('/api/intraday/walls?symbol=SPY&timeframe=999d')->assertUnprocessable();
@@ -235,7 +245,7 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertSame('BBB', Cache::get('walls:capture-cursor'));
     }
 
-    public function test_empty_history_offers_the_latest_recorded_session_and_count_for_each_scope(): void
+    public function test_live_history_never_falls_back_to_an_older_session_or_requests_more_scopes(): void
     {
         $this->travelTo($this->now());
         $tracker = app(IntradayWallTracker::class);
@@ -255,23 +265,51 @@ class IntradayWallTrackerTest extends TestCase
             $copy = WallObservation::findOrFail($first['id'])->replicate();
             $copy->forceFill($attributes + ['content_hash' => hash('sha256', json_encode($attributes))])->save();
         }
-        $expected = [
-            ['timeframe' => '30d', 'session' => '2026-09-30', 'readings' => 2],
-            ['timeframe' => '90d', 'session' => '2026-09-29', 'readings' => 1],
-        ];
+        $expected = [];
         $empty = $tracker->history('SPY', null, '14d');
         $this->assertSame([], $empty['segments']);
         $this->assertSame('14d', $empty['timeframe']);
+        $this->assertSame('2026-09-30', $empty['session']);
         $this->assertSame($expected, $empty['available_scopes']);
         $this->assertSame($expected, $tracker->history('SPY', '2026-09-28', '30d')['available_scopes']);
         $this->assertSame([], $tracker->history('SPY', null, '30d')['available_scopes']);
         $this->assertSame([], $tracker->history('AAPL')['available_scopes']);
+        $this->assertSame('2026-09-30', $tracker->history('SPY', null, '90d')['session']);
+        $this->assertSame([], $tracker->history('SPY', null, '90d')['segments']);
+        $this->assertCount(1, $tracker->history('SPY', '2026-09-29', '90d')['segments']);
         $this->assertNotContains('90d', $tracker->requestedTimeframes('SPY'));
         $this->signIn();
         $this->getJson('/api/intraday/walls?symbol=SPY&timeframe=14d')->assertOk()
             ->assertJsonPath('available_scopes', $expected)->assertJsonCount(0, 'segments');
         Http::assertNothingSent();
         Bus::assertNothingDispatched();
+    }
+
+    public function test_ninety_five_percent_oi_is_accepted_but_lower_coverage_is_rejected(): void
+    {
+        $selector = Mockery::mock(EodSnapshotSelector::class);
+        $rows = collect([
+            (object) ['expiration_id' => 1, 'option_type' => 'call', 'strike' => 100, 'open_interest' => 5, 'iv' => null, 'data_date' => '2026-09-29'],
+            (object) ['expiration_id' => 1, 'option_type' => 'put', 'strike' => 95, 'open_interest' => 95, 'iv' => .2, 'data_date' => '2026-09-29'],
+        ]);
+        $selector->shouldReceive('selectedRows')->andReturn($rows);
+        $this->app->instance(EodSnapshotSelector::class, $selector);
+        $tracker = app(IntradayWallTracker::class);
+        $this->assertSame(95, config('wall_tracking.minimum_oi_coverage_pct'));
+        $this->assertSame('recorded', $tracker->capture('SPY', $this->now())['status']);
+        $rows[0]->open_interest = 6;
+        $rows[1]->open_interest = 94;
+        $this->assertSame('model_inputs_below_capture_threshold', $tracker->capture('SPY', $this->now(), '14d')['status']);
+        Http::assertNothingSent();
+    }
+
+    public function test_discovery_keeps_symbols_without_a_current_quote_and_capture_still_requires_freshness(): void
+    {
+        DB::table('underlying_quotes')->update(['asof' => '2026-09-29 14:00:00']);
+        $tracker = app(IntradayWallTracker::class);
+        $this->assertContains('SPY', $tracker->symbols($this->now()));
+        $this->assertSame(['7d'], $tracker->requestedTimeframes('SPY'));
+        $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', $this->now())['status']);
     }
 
     private function signIn(bool $entitled = true): void

@@ -54,6 +54,9 @@ final class WallInteractionService
             $base = WallObservation::where('symbol', $symbol)->where('dataset', 'intraday_capture')
                 ->where('analysis_session', $session)->where('schema_version', IntradayWallModel::SCHEMA)
                 ->where('observation_kind', 'model_observation');
+            if ($session === $now->setTimezone('America/New_York')->toDateString()) {
+                $base->where('payload_json->scope->timeframe', IntradayWallTracker::LIVE_TIMEFRAME);
+            }
             $scopes = (clone $base)->select('payload_json->scope->timeframe as timeframe')->distinct()->pluck('timeframe')->all();
             if (! $scopes) {
                 return ['status' => 'waiting_for_walls'];

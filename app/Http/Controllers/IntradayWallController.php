@@ -19,8 +19,8 @@ class IntradayWallController extends Controller
             'timeframe' => ['sometimes', Rule::in(IntradayWallTracker::TIMEFRAMES)],
         ]);
         $result = $request->boolean('demo')
-            ? app(IntradayWallDemo::class)->build($input['symbol'], $input['timeframe'] ?? '14d')
-            : $tracker->history($input['symbol'], $input['session'] ?? null, $input['timeframe'] ?? '14d');
+            ? app(IntradayWallDemo::class)->build($input['symbol'], $input['timeframe'] ?? IntradayWallTracker::LIVE_TIMEFRAME)
+            : $tracker->history($input['symbol'], $input['session'] ?? null, $input['timeframe'] ?? IntradayWallTracker::LIVE_TIMEFRAME);
 
         return response()->json($result)->header('Cache-Control', 'private, no-store');
     }

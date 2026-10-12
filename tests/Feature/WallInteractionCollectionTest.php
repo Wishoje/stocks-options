@@ -31,7 +31,7 @@ class WallInteractionCollectionTest extends TestCase
         return CarbonImmutable::now('UTC');
     }
 
-    private function observation(string $timeframe = '14d'): array
+    private function observation(string $timeframe = '7d'): array
     {
         $payload = ['scope' => ['symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => $timeframe],
             'observed_at' => '2026-09-30T14:00:00Z', 'scope_key' => $timeframe, 'basis_key' => 'basis',
@@ -57,23 +57,23 @@ class WallInteractionCollectionTest extends TestCase
         ]], $replace);
     }
 
-    public function test_one_request_serves_every_recorded_scope_and_keeps_only_completed_delayed_bars(): void
+    public function test_one_request_serves_the_live_scope_and_keeps_only_completed_delayed_bars(): void
     {
         $observation = $this->observation();
-        $this->observation('7d');
+        $this->observation('14d');
         Http::fake(['*' => Http::response($this->provider())]);
         $service = app(WallInteractionService::class);
         $result = $service->collect('SPY', '2026-09-30', $this->now());
         $this->assertSame('recorded', $result['status']);
         $this->assertSame(3, $result['bars']); // 10:15 bar closes after the delayed cutoff.
-        $this->assertSame(2, $result['scopes']);
+        $this->assertSame(1, $result['scopes']);
         Http::assertSentCount(1);
         Http::assertSent(fn ($request) => str_contains($request->url(), '/range/5/minute/2026-09-30/2026-09-30')
             && $request['adjusted'] === 'false' && $request['limit'] === 5000);
         $this->assertSame(1, WallObservation::where('dataset', 'intraday_price_bars')->count());
-        $this->assertSame(2, WallObservation::where('dataset', 'wall_interactions')->count());
+        $this->assertSame(1, WallObservation::where('dataset', 'wall_interactions')->count());
         $before = WallObservation::count();
-        $read = $service->read('SPY', '2026-09-30', '14d', [$observation]);
+        $read = $service->read('SPY', '2026-09-30', '7d', [$observation]);
         $this->assertSame('acceptance_below', $read['current']['put']['status']);
         $this->assertNotNull($read['price_evidence_hash']);
         $this->assertSame('wall-setups.v1', $read['setups']['schema_version']);
@@ -169,7 +169,7 @@ class WallInteractionCollectionTest extends TestCase
     {
         config(['wall_tracking.interactions_enabled' => true]);
         $this->observation();
-        $this->observation('7d');
+        $this->observation('14d');
         $this->travelTo(CarbonImmutable::parse('2026-10-01T06:00:00Z'));
         Http::fake(['*' => Http::response($this->provider())]);
         $wallRows = WallObservation::where('dataset', 'intraday_capture')->pluck('payload_json', 'id')->all();

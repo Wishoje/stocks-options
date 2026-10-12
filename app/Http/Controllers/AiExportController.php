@@ -108,10 +108,6 @@ class AiExportController extends Controller
         }
 
         $timeframe = strtolower((string) ($validated['timeframe'] ?? '30d'));
-        if (in_array('intraday_walls', $indicators, true) && ! in_array($timeframe, \App\Services\IntradayWallTracker::TIMEFRAMES, true)) {
-            return response()->json(['message' => 'For intraday walls, choose 0DTE, 1DTE, 1W, 2W, 1M or 3M.'], 422);
-        }
-
         $export = AiExport::query()->create([
             'user_id' => Auth::id(),
             'status' => 'queued',

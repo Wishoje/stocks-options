@@ -76,7 +76,7 @@ describe('Recorded setup results', () => {
 
   it('handles an empty session with no fabricated rates or outcomes', () => {
     const w = mount(WallSetupHistoryPanel, { props: { reviews: payload([], { summary: { scenarios: 0, qualified: 0 } }) } })
-    expect(w.text()).toContain('The review starts when a price sequence creates a setup')
+    expect(w.text()).toContain('The review starts when today’s price sequence creates a setup')
     expect(w.find('table').exists()).toBe(false)
     expect(w.text()).not.toMatch(/\d+%/)
   })

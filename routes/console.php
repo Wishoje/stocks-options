@@ -12,10 +12,10 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
 
 // Disabled by configuration during the initial social draft review.
-Schedule::command('walls:capture-intraday')->everyFiveMinutes()->withoutOverlapping(3)->onOneServer()
+Schedule::command('walls:capture-intraday')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer()->runInBackground()
     ->when(fn () => (bool) config('wall_tracking.enabled'));
 
-Schedule::command('walls:capture-interactions')->everyFiveMinutes()->withoutOverlapping(3)->onOneServer()
+Schedule::command('walls:capture-interactions')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer()->runInBackground()
     ->when(fn () => (bool) config('wall_tracking.interactions_enabled'));
 
 Schedule::command('social:tick')->everyMinute()->withoutOverlapping(5)->onOneServer();

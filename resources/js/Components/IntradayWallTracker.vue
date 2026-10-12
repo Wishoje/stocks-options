@@ -13,13 +13,7 @@
       </div>
     </header>
 
-    <fieldset class="wall-tracker__scope">
-      <legend>Expiry scope</legend>
-      <div class="wall-tracker__actions" aria-label="Wall tracking expiry scope">
-        <button v-for="option in scopeOptions" :key="option.value" type="button" :aria-pressed="scope === option.value" @click="chooseScope(option.value)">{{ option.label }}</button>
-      </div>
-      <p>Choose which option expirations shape the walls. The timeline follows their movement during the selected session.</p>
-    </fieldset>
+    <p class="wall-tracker__scope"><strong>Near-term walls · 1W expiries</strong><br>Today’s session. Updated every five minutes across tracked symbols.</p>
 
     <p v-if="demo" class="wall-tracker__demo" role="status">Local demonstration · Synthetic prices and contracts. These are example readings for reviewing the interface.</p>
     <p v-if="error" role="alert">{{ error }}</p>
@@ -27,36 +21,15 @@
     <template v-else-if="data">
       <div class="wall-tracker__context">
         <span v-if="!demo && data.quote_delay_seconds > 0">Quotes delayed {{ Math.round(data.quote_delay_seconds / 60) }} min · Times shown are market times</span>
-        <label v-if="data.sessions?.length">Session
-          <select aria-label="Wall timeline session" :value="data.session" @change="chooseSession($event.target.value)">
-            <option v-for="date in data.sessions" :key="date" :value="date">{{ date }}</option>
-          </select>
-        </label>
-        <span v-if="sessionLatest">{{ historicalSession ? `Recorded ${data.session} at` : 'As of' }} {{ time(sessionLatest.observed_at) }} ET · {{ sessionReadingCount }} {{ sessionReadingCount === 1 ? 'reading' : 'readings' }} this session</span>
-        <button v-if="data.local_demo_available" type="button" @click="chooseDemo(!demo)">{{ demo ? 'Return to recorded sessions' : 'Preview local demonstration' }}</button>
-      </div>
-      <div v-if="historicalSession" class="wall-tracker__history" role="status">
-        <div>
-          <strong>Recorded session · {{ data.session }}</strong>
-          <p>The price and wall levels below belong to this date. They do not show today's market price.</p>
-        </div>
-        <button type="button" :disabled="refreshing" @click="chooseSession('')">Check latest session</button>
+        <span>Session {{ data.session }}</span>
+        <span v-if="sessionLatest">As of {{ time(sessionLatest.observed_at) }} ET · {{ sessionReadingCount }} {{ sessionReadingCount === 1 ? 'reading' : 'readings' }} this session</span>
+        <button v-if="data.local_demo_available" type="button" @click="chooseDemo(!demo)">{{ demo ? 'Return to today’s timeline' : 'Preview local demonstration' }}</button>
       </div>
       <div v-if="!data.segments.length" class="wall-tracker__empty" role="status">
-        <template v-if="data.available_scopes?.length">
-          <h3>No readings recorded for {{ symbol }} · {{ scopeLabel(scope) }}{{ data.session ? ` · ${data.session}` : '' }}</h3>
-          <p>Open a recorded scope below. Each scope follows a different set of option expirations.</p>
-          <div class="wall-tracker__recorded-scopes" aria-label="Recorded wall scopes">
-            <button v-for="option in data.available_scopes" :key="option.timeframe" type="button" @click="openRecordedScope(option)">
-              <strong>Open {{ scopeLabel(option.timeframe) }}</strong>
-              <span>{{ option.readings }} {{ option.readings === 1 ? 'reading' : 'readings' }} · {{ option.session }}</span>
-            </button>
-          </div>
-        </template>
-        <p v-else>{{ data.availability?.message || `No wall readings have been recorded yet for ${symbol}. Eligible symbols are checked every five minutes during market sessions.` }}</p>
+        <p>{{ data.availability?.message || `Waiting for today’s first wall reading for ${symbol}. This timeline updates automatically during the session.` }}</p>
       </div>
       <template v-else>
-        <p class="wall-tracker__model">Modeled with changing price and time. Prior-session open interest and IV stay fixed.</p>
+        <p class="wall-tracker__model">Modeled with changing price and time. Prior-session open interest and reference IV stay fixed within each comparison window.</p>
         <p v-if="data.truncated">Showing the latest 500 readings for this session.</p>
         <div v-if="data.segments.length > 1" class="wall-tracker__context">
           <div class="wall-tracker__view" role="group" aria-label="Timeline view">
@@ -78,7 +51,7 @@
             <small>Net migration in this comparison window</small>
           </article>
           <article class="wall-tracker__metric">
-            <h3>{{ historicalSession ? 'Recorded price' : 'Price' }} at {{ time(selected?.observed_at) }} ET</h3>
+            <h3>Price at {{ time(selected?.observed_at) }} ET</h3>
             <strong>{{ number(selected?.spot, 2) }}</strong>
             <p>Net modeled GEX {{ compact(selected?.net_gex) }}</p>
             <small>USD per 1% price move</small>
@@ -140,7 +113,7 @@
         <details>
           <summary>Session readings and model details</summary>
           <p>{{ data.model_description }}</p>
-          <p>Open interest and IV date: {{ latest?.provenance.oi_date }}. Each expiry uses its own remaining time to the modeled regular-session close.</p>
+          <p>Open interest date: {{ latest?.provenance.oi_date }}. IV reference dates: {{ (latest?.provenance.iv_reference_dates || [latest?.provenance.iv_date || latest?.provenance.oi_date]).join(', ') }}. Each expiry uses its own remaining time to the modeled regular-session close.</p>
           <div class="wall-tracker__table"><table>
             <caption>{{ showFullSession ? 'Full session' : 'Selected comparison window' }} · {{ displayRows.length }} {{ displayRows.length === 1 ? 'reading' : 'readings' }} · Times in ET</caption>
             <thead><tr><th>Time</th><th>Price</th><th>Put wall</th><th>Call wall</th><th>Net GEX / 1%</th></tr></thead>
@@ -180,30 +153,7 @@ import WallInteractionIcon from '@/Components/WallInteractionIcon.vue'
 import { wallInteractionTitle as interactionTitle } from '@/utils/wallInteraction'
 const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean })
 defineEmits(['open-eod'])
-const scopeOptions = [{ value: '0d', label: '0DTE' }, { value: '1d', label: '1DTE' }, { value: '7d', label: '1W' }, { value: '14d', label: '2W' }, { value: '30d', label: '1M' }, { value: '90d', label: '3M' }]
-const scopeLabel = value => scopeOptions.find(option => option.value === value)?.label || value
-const readScope = () => {
-  const value = new URLSearchParams(window.location.search).get('wall_timeframe')
-  return scopeOptions.some(option => option.value === value) ? value : '14d'
-}
-const scope = ref(readScope())
-function chooseScope(value) {
-  scope.value = value
-  const url = new URL(window.location.href)
-  url.searchParams.set('wall_timeframe', value)
-  window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
-}
-const restoreScope = () => { scope.value = readScope() }
-window.addEventListener('popstate', restoreScope)
-onScopeDispose(() => window.removeEventListener('popstate', restoreScope))
-const { data, loading, refreshing, error, demo, load, chooseSession, chooseDemo } = useIntradayWalls(() => props.symbol, () => scope.value)
-const historicalSession = computed(() => !demo.value && data.value?.session && data.value?.market_session_date && data.value.session < data.value.market_session_date)
-function openRecordedScope(option) {
-  // A different scope loads its latest recorded session. The same scope can
-  // also offer a newer session when the user chose a date without readings.
-  if (scope.value === option.timeframe) chooseSession(option.session)
-  else chooseScope(option.timeframe)
-}
+const { data, loading, refreshing, error, demo, load, chooseDemo } = useIntradayWalls(() => props.symbol)
 const sides = ['put', 'call'], segmentIndex = ref(0), selectedIndex = ref(0)
 const showFullSession = ref(true)
 function chooseWindow(index) { segmentIndex.value = index; showFullSession.value = false }
@@ -287,7 +237,7 @@ async function openPreviewEvidence() {
   await inspectInteraction(event, true)
   interactionPanel.value?.$el.querySelector('.evidence')?.focus({ preventScroll: true })
 }
-watch([scope, segmentIndex, loading, showFullSession], () => closePreview())
+watch([segmentIndex, loading, showFullSession], () => closePreview())
 const eventLegend = computed(() => [...new Set(visibleEvents.value.map(event => event.status))])
 const visibleEvents = computed(() => {
   const candidates = (data.value?.wall_interaction?.events || []).filter(event =>

@@ -90,7 +90,7 @@
         </div>
         <div v-else-if="wallTrackingActive" class="gex-dashboard-freshness">
           <strong>Intraday wall tracking</strong>
-          <span>Choose an expiry scope and recorded session below</span>
+          <span>Today’s session · Near-term 1W expiries</span>
         </div>
         <div
           v-else
