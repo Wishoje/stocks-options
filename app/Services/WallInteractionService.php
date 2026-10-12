@@ -60,7 +60,9 @@ final class WallInteractionService
             return ['status' => 'busy'];
         }
         try {
-            if (Cache::has('walls:bars:checked:'.$symbol.':'.$session)) {
+            $checkedKey = 'walls:bars:checked:'.$symbol.':'.$session;
+            $bucket = intdiv($now->getTimestamp(), 300);
+            if (Cache::get($checkedKey) === $bucket) {
                 return ['status' => 'recently_checked'];
             }
             $base = WallObservation::where('symbol', $symbol)->where('dataset', 'intraday_capture')
@@ -74,7 +76,8 @@ final class WallInteractionService
                 return ['status' => 'waiting_for_walls'];
             }
             $response = app(PolygonClient::class)->wallPriceBars($symbol, $session);
-            Cache::put('walls:bars:checked:'.$symbol.':'.$session, true, $now->addMinutes(5));
+            // Scheduler jitter must not turn a five-minute cadence into ten minutes.
+            Cache::put($checkedKey, $bucket, $now->addMinutes(10));
             if ($response['status'] !== 'ready') {
                 if (in_array($response['status'], ['access_not_available', 'rate_limited'], true)) {
                     Cache::put('walls:bars:provider-backoff', true, $now->addMinutes(15));

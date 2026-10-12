@@ -108,6 +108,21 @@ class WallInteractionCollectionTest extends TestCase
         $this->assertSame(99.7, $latest['bars'][2]['c']); // A provider reverting a correction is also recorded.
     }
 
+    public function test_scheduler_jitter_does_not_skip_the_next_five_minute_collection_bucket(): void
+    {
+        $this->observation();
+        Http::fake(['*' => Http::response($this->provider())]);
+        $service = app(WallInteractionService::class);
+        $first = $this->now()->addSeconds(20);
+        $this->travelTo($first);
+        $this->assertSame('recorded', $service->collect('SPY', '2026-09-30', $first)['status']);
+        $this->assertSame('recently_checked', $service->collect('SPY', '2026-09-30', $first->addMinutes(1))['status']);
+        $next = $first->addMinutes(5)->subSeconds(10);
+        $this->travelTo($next);
+        $this->assertSame('recorded', $service->collect('SPY', '2026-09-30', $next)['status']);
+        Http::assertSentCount(2);
+    }
+
     public function test_rate_limit_and_permission_failures_stop_following_provider_requests(): void
     {
         $this->observation();

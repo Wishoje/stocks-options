@@ -12,6 +12,8 @@ Scheduled wall and price-evidence commands run in the background with overlap pr
 
 Price evidence starts one minute after the five-minute quote and wall cycle. The latest result is retained under `walls:bars:status:{symbol}:{session}` for operational checks. A throttled or overlapping call does not overwrite that result.
 
+Collection is deduplicated by five-minute clock bucket, rather than a rolling five-minute TTL. Small variations in command timing therefore do not skip an entire scheduled update.
+
 If a prior-session chain and stored expiry catalog disagree, collection can verify the near-term catalog with the existing Massive reference API. At most three exceptional checks occur per capture run, with a 30-minute per-symbol cache and failure backoff. Only a complete, uncapped listing can exclude a date that is no longer listed. Dates outside the verified window are preserved. Stored expirations and historical rows are not deleted. The regular intraday options job shares this verified selection to avoid fetching obsolete dates.
 
 Only the mounted, visible tracker polls its stored timeline once per minute. Opening the page does not fetch provider data or request collection for other scopes. A page opened before the market starts polling when the server's next collection window begins. Changing symbols cancels the prior request. JSON export and AI Export use the same current-session 1W scope independently of the EOD scope.
