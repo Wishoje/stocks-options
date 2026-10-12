@@ -6,6 +6,7 @@ return [
     'interactions_enabled' => (bool) env('WALL_INTERACTIONS_ENABLED', false),
     // Discover known options symbols independently of today's quote arrival.
     'capture_budget_seconds' => 90,
+    'interaction_budget_seconds' => 120,
     'quote_max_age_seconds' => 420,
     // Set only for a known delayed feed; source times remain unchanged.
     'quote_delay_seconds' => max(0, min(900, (int) env('WALL_TRACKING_QUOTE_DELAY_SECONDS', 0))),

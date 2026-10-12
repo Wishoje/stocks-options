@@ -93,7 +93,7 @@ class CaptureWallInteractions extends Command
         $started = microtime(true);
         $last = null;
         foreach ($symbols as $symbol) {
-            if ($last !== null && microtime(true) - $started >= 60) {
+            if ($last !== null && microtime(true) - $started >= config('wall_tracking.interaction_budget_seconds', 120)) {
                 if (! $explicit) {
                     Cache::put('walls:interaction-cursor', $last, $now->addDay());
                 }

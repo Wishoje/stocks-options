@@ -8,7 +8,7 @@ The short expiry basket includes daily options where available and weekly option
 
 `walls:capture-intraday` checks the known options universe every five minutes. Symbol discovery does not depend on a fresh quote or a user visiting a page. Each capture independently requires a recent regular-feed quote from the current market session. Calculator prices cannot replace that quote.
 
-Scheduled wall and price-evidence commands run in the background with overlap protection. Wall capture retains its 90-second round-robin budget. Price evidence retains its 60-second budget, provider backoff and one request per symbol per five minutes. Live evidence processing uses the 1W scope only. A symbol exception does not prevent the remaining symbols from being checked. These commands do not add calculator jobs or consume the intraday options worker queue.
+Scheduled wall and price-evidence commands run in the background with overlap protection. Wall capture retains its 90-second round-robin budget. Price evidence has a 120-second round-robin budget, provider backoff and one request per symbol per five minutes. Its budget accommodates brief waits for the full tracked universe within the five-minute cycle. Live evidence processing uses the 1W scope only. A symbol exception does not prevent the remaining symbols from being checked. These commands do not add calculator jobs or consume the intraday options worker queue.
 
 Price evidence starts one minute after the five-minute quote and wall cycle. The latest result is retained under `walls:bars:status:{symbol}:{session}` for operational checks. A throttled or overlapping call does not overwrite that result.
 
