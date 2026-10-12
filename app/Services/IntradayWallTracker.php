@@ -6,6 +6,7 @@ use App\Models\UnderlyingQuote;
 use App\Models\WallObservation;
 use App\Support\EodSnapshotSelector;
 use App\Support\GexExpirationUniverse;
+use App\Support\IntradayExpiryCatalog;
 use App\Support\MarketSession;
 use App\Support\Symbols;
 use App\Support\WallIntelligence\IntradayWallModel;
@@ -82,6 +83,7 @@ class IntradayWallTracker
             $universe = app(GexExpirationUniverse::class)->resolve($symbol, $timeframe, [$timeframe], $now);
             $expiries = DB::table('option_expirations')->whereIn('id', $universe['expiration_ids'])
                 ->orderBy('expiration_date')->pluck('expiration_date', 'id')->all();
+            $expiries = app(IntradayExpiryCatalog::class)->filter($symbol, $expiries, $now);
             if (! $expiries) {
                 return ['status' => 'no_expirations'];
             }
@@ -114,6 +116,9 @@ class IntradayWallTracker
             }
             if ($observation === null) {
                 return ['status' => 'model_inputs_below_capture_threshold'];
+            }
+            if ($reference = app(IntradayExpiryCatalog::class)->reference($symbol, $now)) {
+                $observation['provenance']['expiry_catalog_reference'] = $reference;
             }
             $observation['captured_at'] = $now->utc()->toIso8601String();
             $record = $this->record($basis, $observation);

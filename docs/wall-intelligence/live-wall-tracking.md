@@ -12,6 +12,8 @@ Scheduled wall and price-evidence commands run in the background with overlap pr
 
 Price evidence starts one minute after the five-minute quote and wall cycle. The latest result is retained under `walls:bars:status:{symbol}:{session}` for operational checks. A throttled or overlapping call does not overwrite that result.
 
+If a prior-session chain and stored expiry catalog disagree, collection can verify the near-term catalog with the existing Massive reference API. At most three exceptional checks occur per capture run, with a 30-minute per-symbol cache and failure backoff. Only a complete, uncapped listing can exclude a date that is no longer listed. Dates outside the verified window are preserved. Stored expirations and historical rows are not deleted. The regular intraday options job shares this verified selection to avoid fetching obsolete dates.
+
 Only the mounted, visible tracker polls its stored timeline once per minute. Opening the page does not fetch provider data or request collection for other scopes. A page opened before the market starts polling when the server's next collection window begins. Changing symbols cancels the prior request. JSON export and AI Export use the same current-session 1W scope independently of the EOD scope.
 
 ## Input policy
@@ -26,8 +28,9 @@ Input changes still start separate comparison windows. Existing model records ar
 
 ## Validation
 
-- 84 focused PHP tests passed with 445 assertions, covering exact-contract references, date bounds, 95% acceptance, stale quote rejection, current-session isolation, collection, events, setups and setup reviews.
+- 87 focused PHP tests passed with 463 assertions, covering exact-contract references, date bounds, verified catalog repair, 95% acceptance, stale quote rejection, current-session isolation, collection, events, setups and setup reviews.
 - 16 export tests passed with 115 assertions against a disposable local MySQL database. Monthly EOD exports can include the independent 1W intraday timeline.
+- 26 intraday scheduling and freshness regression tests passed with 337 assertions against a disposable local MySQL database.
 - 53 frontend tests passed across wall tracking, events, setups, setup history, dashboard navigation and exports. The production frontend build passed.
 - A read-only production calculation checked 105 symbols in about four seconds. 104 qualified against the new input policy. SPY covered over 99.99% of known OI. DRAM retained a stale September 22 expiry slice and correctly remained pending.
 

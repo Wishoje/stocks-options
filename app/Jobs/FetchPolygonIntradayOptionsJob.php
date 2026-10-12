@@ -201,6 +201,10 @@ class FetchPolygonIntradayOptionsJob extends QueueJob implements ShouldQueue
                     ->all();
             }
 
+            $expiries = array_values(app(\App\Support\IntradayExpiryCatalog::class)->filter(
+                $symbol, $expiries, \Carbon\CarbonImmutable::now('UTC')
+            ));
+
             if (empty($expiries)) {
                 Log::warning('FetchPolygonIntradayOptionsJob.noExpiries', [
                     'symbol' => $symbol,

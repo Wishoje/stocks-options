@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Services\IntradayWallTracker;
+use App\Support\IntradayExpiryCatalog;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
@@ -36,6 +37,7 @@ class CaptureIntradayWalls extends Command
         }
         $started = microtime(true);
         $last = null;
+        $catalogChecks = 0;
         foreach ($symbols as $symbol) {
             if ($last !== null && microtime(true) - $started >= config('wall_tracking.capture_budget_seconds', 90)) {
                 if (! $explicit) {
@@ -48,6 +50,14 @@ class CaptureIntradayWalls extends Command
             try {
                 foreach ($requestedScope ? [$requestedScope] : $tracker->requestedTimeframes($symbol) as $scope) {
                     $result = $tracker->capture($symbol, CarbonImmutable::now('UTC'), $scope);
+                    // Bound exceptional provider work; ordinary captures use stored inputs only.
+                    if ($scope === IntradayWallTracker::LIVE_TIMEFRAME && $result['status'] === 'waiting_for_previous_session_chain'
+                        && $catalogChecks < 3) {
+                        $catalogChecks++;
+                        if (app(IntradayExpiryCatalog::class)->refresh($symbol, CarbonImmutable::now('UTC'))) {
+                            $result = $tracker->capture($symbol, CarbonImmutable::now('UTC'), $scope);
+                        }
+                    }
                     $this->line($symbol.' '.$scope.': '.$result['status']);
                 }
             } catch (\Throwable $error) {

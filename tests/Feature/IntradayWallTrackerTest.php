@@ -312,6 +312,29 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertSame('waiting_for_current_quote', $tracker->capture('SPY', $this->now())['status']);
     }
 
+    public function test_collection_repairs_an_obsolete_catalog_date_but_keeps_all_stored_evidence(): void
+    {
+        config(['wall_tracking.enabled' => true]);
+        DB::table('option_expirations')->insert(['id' => 2, 'symbol' => 'SPY', 'expiration_date' => '2026-10-05']);
+        $selector = Mockery::mock(EodSnapshotSelector::class);
+        $selector->shouldReceive('selectedRows')->andReturnUsing(fn ($ids) => collect([
+            (object) ['expiration_id' => 1, 'option_type' => 'call', 'strike' => 100, 'open_interest' => 200, 'iv' => .2, 'data_date' => '2026-09-29'],
+            (object) ['expiration_id' => 1, 'option_type' => 'put', 'strike' => 95, 'open_interest' => 400, 'iv' => .2, 'data_date' => '2026-09-29'],
+            (object) ['expiration_id' => 2, 'option_type' => 'call', 'strike' => 100, 'open_interest' => 100, 'iv' => .2, 'data_date' => '2026-09-22'],
+        ])->filter(fn ($row) => in_array($row->expiration_id, $ids)));
+        $this->app->instance(EodSnapshotSelector::class, $selector);
+        $catalog = Mockery::mock(new \App\Support\MassiveExpirationCatalog);
+        $this->app->instance(\App\Support\MassiveExpirationCatalog::class, $catalog);
+        $catalog->shouldReceive('discover')->once()
+            ->with('SPY', '2026-09-30', 7)->andReturn(['expirations' => ['2026-10-02'], 'meta' => ['complete' => true, 'capped' => false, 'status' => 'ok']]);
+        $this->artisan('walls:capture-intraday')->assertSuccessful();
+        $history = app(IntradayWallTracker::class)->history('SPY');
+        $this->assertCount(1, $history['segments']);
+        $this->assertSame(['2026-10-02'], $history['segments'][0]['observations'][0]['scope']['expiries']);
+        $this->assertSame(2, DB::table('option_expirations')->count());
+        Http::assertNothingSent();
+    }
+
     private function signIn(bool $entitled = true): void
     {
         $user = (new User)->forceFill(['id' => 987, 'email' => 'review@example.test', 'trial_ends_at' => $entitled ? now()->addDays(2) : null]);
