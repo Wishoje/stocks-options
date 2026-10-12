@@ -60,11 +60,11 @@
 
           <div v-if="dataMode === 'eod' && activeTab === 'positioning'" class="gex-positioning-scope" role="note">
             <strong>Wall analysis follows the selected expiry scope.</strong>
-            DEX uses its reporting window · pressure covers {{ pinDays }} trading days · skew has its own selector
+            DEX uses its reporting window · pressure covers {{ pinDays }} trading days
           </div>
           <div v-else-if="dataMode === 'eod' && activeTab === 'volatility'" class="gex-positioning-scope" role="note">
             <strong>Volatility uses local scopes:</strong>
-            all returned term expiries · 1-month VRP proxy · next 5 sessions
+            skew has its own expiry selector · all returned term expiries · 1-month VRP proxy
           </div>
           <div v-else-if="dataMode === 'eod' && activeTab === 'ua'" class="gex-positioning-scope" role="note">
             <strong>Unusual activity uses its own scope:</strong>
@@ -163,7 +163,11 @@
             </button>
           </div>
         </nav>
-        <div class="gex-dashboard-scope gex-small gex-muted">
+        <nav v-if="dataMode === 'eod' && activeTab === 'strikes'" class="gex-strike-jumps" aria-label="Jump to strike chart">
+          <span>Jump to</span>
+          <a v-for="section in strikeSections" :key="section.id" :href="`#${section.id}`" @click.prevent="jumpToStrikeSection(section.id)">{{ section.label }}</a>
+        </nav>
+        <div v-else class="gex-dashboard-scope gex-small gex-muted">
           <span>{{ dataMode === 'eod' ? 'End-of-day analysis' : wallTrackingActive ? 'Modeled walls through the session' : 'Stored intraday updates' }}</span>
           <span aria-hidden="true">·</span>
           <span>{{ userSymbol }}</span>
@@ -343,6 +347,18 @@
               @reading-inspected="recordFirstUsefulReading"
             />
           </div>
+          <div class="gex-overview-seasonality">
+            <UiStatus v-if="seasonStatus.error" state="error" title="Five-session seasonality unavailable"
+              :message="seasonStatus.error" retry @retry="ensureSeasonality" />
+            <UiStatus v-else-if="['idle', 'loading', 'pending'].includes(seasonStatus.state)"
+              :state="seasonStatus.state === 'pending' ? 'preparing' : 'loading'" title="Loading five-session seasonality"
+              message="The historical tendency for the next five sessions is being prepared." />
+            <Seasonality5Tile v-else-if="season" :date="season.date"
+              :d1="season.d1" :d2="season.d2" :d3="season.d3" :d4="season.d4" :d5="season.d5"
+              :cum5="season.cum5" :z="season.z" :note="seasonNote" @reading-inspected="recordFirstUsefulReading" />
+            <UiStatus v-else state="sparse" title="Seasonality is unavailable"
+              :message="seasonNote || 'No five-session seasonality data was returned for this symbol.'" />
+          </div>
         </section>
 
         <!-- POSITIONING (EOD) -->
@@ -352,9 +368,8 @@
               <DexTile :symbol="userSymbol" :active="activeTab === 'positioning'" @reading-inspected="recordFirstUsefulReading" />
               <ExpiryPressureTile :symbol="userSymbol" :days="pinDays" :active="activeTab === 'positioning'" @reading-inspected="recordFirstUsefulReading" />
             </div>
-            <SkewTile :symbol="userSymbol" :active="activeTab === 'positioning'" @reading-inspected="recordFirstUsefulReading" />
           </section>
-          <template #fallback><UiLoading :title="`Loading ${userSymbol} positioning`" message="Loading dealer delta, expiry pressure, and put-versus-call pricing." /></template>
+          <template #fallback><UiLoading :title="`Loading ${userSymbol} positioning`" message="Loading dealer delta and expiry pressure." /></template>
         </Suspense>
         <section
           v-else-if="activeTab==='positioning' && dataMode==='eod'"
@@ -366,7 +381,7 @@
             v-if="['idle', 'pending'].includes(tabState('positioning'))"
             state="preparing"
             :title="`Preparing ${userSymbol} positioning`"
-            message="DEX, pressure, and skew will appear as their latest readings arrive."
+            message="DEX and expiry pressure will appear as their latest readings arrive."
           />
           <UiStatus
             v-else
@@ -380,12 +395,17 @@
 
         <!-- VOLATILITY -->
         <section
-          v-if="activeTab==='volatility' && dataMode==='eod' && tabState('volatility')==='ready'"
+          v-if="volatilityMounted && dataMode==='eod'"
+          v-show="activeTab==='volatility'"
           class="gex-ui gex-volatility-view"
           data-theme="dark"
           data-density="compact"
           aria-label="End-of-day volatility"
         >
+          <Suspense>
+            <SkewTile :symbol="userSymbol" :active="activeTab === 'volatility'" @reading-inspected="recordFirstUsefulReading" />
+            <template #fallback><UiLoading :title="`Loading ${userSymbol} put-versus-call pricing`" message="Loading skew and curvature for the selected expiry target." /></template>
+          </Suspense>
           <div class="gex-volatility-view__grid">
             <UiStatus
               v-if="volErrors.term"
@@ -396,7 +416,7 @@
               @retry="ensureVolatility"
             />
             <UiStatus
-              v-else-if="volState.term === 'loading' || volState.term === 'pending'"
+              v-else-if="['idle', 'loading', 'pending'].includes(volState.term)"
               :state="volState.term === 'pending' ? 'preparing' : 'loading'"
               title="Loading term structure"
               message="All returned forward expiries will appear when the data is ready."
@@ -412,7 +432,7 @@
               @retry="ensureVolatility"
             />
             <UiStatus
-              v-else-if="volState.vrp === 'loading' || volState.vrp === 'pending'"
+              v-else-if="['idle', 'loading', 'pending'].includes(volState.vrp)"
               :state="volState.vrp === 'pending' ? 'preparing' : 'loading'"
               layout="metrics"
               title="Loading variance risk premium"
@@ -428,34 +448,6 @@
               :source-meta="vrp.source_meta"
             />
           </div>
-
-          <UiStatus
-            v-if="volErrors.season"
-            state="error"
-            title="Five-session seasonality unavailable"
-            :message="volErrors.season"
-            retry
-            @retry="ensureVolatility"
-          />
-          <UiStatus
-            v-else-if="volState.season === 'loading' || volState.season === 'pending'"
-            :state="volState.season === 'pending' ? 'preparing' : 'loading'"
-            title="Loading five-session seasonality"
-            message="The historical tendency for the next five sessions is being prepared."
-          />
-          <Seasonality5Tile
-            v-else-if="season"
-            :date="season.date"
-            :d1="season.d1" :d2="season.d2" :d3="season.d3" :d4="season.d4" :d5="season.d5"
-            :cum5="season.cum5" :z="season.z" :note="seasonNote"
-            @reading-inspected="recordFirstUsefulReading"
-          />
-          <UiStatus
-            v-else
-            state="sparse"
-            title="Seasonality is unavailable"
-            :message="seasonNote || 'No five-session seasonality data was returned for this symbol.'"
-          />
 
           <UiStatus
             v-if="volErr"
@@ -474,7 +466,7 @@
             v-if="['idle', 'pending'].includes(tabState('volatility'))"
             state="preparing"
             :title="`Preparing ${userSymbol} volatility`"
-            message="Term structure, variance risk premium, and seasonality will appear independently as their readings arrive."
+            message="Skew, term structure, and variance risk premium will appear independently as their readings arrive."
           />
           <UiStatus
             v-else
@@ -639,7 +631,7 @@
         >
           <!-- EOD: OI + Net GEX + ΔVol (EOD) -->
           <template v-if="dataMode==='eod'">
-            <div ref="netGexSection" class="gex-strikes-view__primary">
+            <div id="strike-gex" tabindex="-1" role="region" aria-label="GEX strike chart" class="gex-strikes-view__primary gex-strike-section">
               <NetGexChart
                 eod
                 per-one-percent
@@ -651,12 +643,22 @@
                 @reading-inspected="recordFirstUsefulReading"
               />
             </div>
-            <GexExpiryStrike
+            <div id="strike-expirations" tabindex="-1" role="region" aria-label="Exposure by expiration" class="gex-strike-section">
+              <GexExpiryStrike
               v-if="levels?.symbol === userSymbol && levels?.timeframe === gexTf && levels?.view_context?.view === eodView"
               :levels="levels" :scope-label="selectedTimeframeLabel" :enabled="activeTab === 'strikes'"
               @reading-inspected="recordFirstUsefulReading"
             />
-            <StrikeDeltaChart
+            </div>
+            <div id="strike-dex" tabindex="-1" role="region" aria-label="DEX strike chart" class="gex-strike-section">
+              <DexByStrike
+              v-if="levels?.symbol === userSymbol && levels?.timeframe === gexTf && levels?.view_context?.view === eodView"
+              :levels="levels" :scope-label="selectedTimeframeLabel" :enabled="activeTab === 'strikes'"
+              @reading-inspected="recordFirstUsefulReading"
+            />
+            </div>
+            <div id="strike-oi-change" tabindex="-1" role="region" aria-label="Open-interest change chart" class="gex-strike-section">
+              <StrikeDeltaChart
               :strikeData="strikeSeriesForDelta"
               :symbol="userSymbol"
               :timeframe="selectedTimeframeLabel"
@@ -669,7 +671,9 @@
               :snapshot-name="`delta-oi-${userSymbol}-${gexTf}-${levels?.data_date || levels?.date || 'date-unavailable'}-${strikeComparisonBasis}-${strikeComparisonDate || 'no-comparison'}`"
               @reading-inspected="recordFirstUsefulReading"
             />
-            <VolumeDeltaChart
+            </div>
+            <div id="strike-volume-change" tabindex="-1" role="region" aria-label="Volume change chart" class="gex-strike-section">
+              <VolumeDeltaChart
               eod
               :strikeData="strikeSeriesForDelta"
               :symbol="userSymbol"
@@ -683,6 +687,7 @@
               :snapshot-name="`delta-vol-${userSymbol}-${gexTf}-${levels?.data_date || levels?.date || 'date-unavailable'}-${strikeComparisonBasis}-${strikeComparisonDate || 'no-comparison'}`"
               @reading-inspected="recordFirstUsefulReading"
             />
+            </div>
           </template>
 
           <!-- Intraday strike ratios and premium -->
@@ -779,6 +784,7 @@
             @retry="manualRefresh"
             @reading-inspected="recordFirstUsefulReading"
           />
+          <IntradayVolatility :symbol="userSymbol" @reading-inspected="recordFirstUsefulReading" />
         </section>
       </template>
     </div>
@@ -842,6 +848,7 @@ import OverviewMetrics from './OverviewMetrics.vue'
 import WallLevels from './WallLevels.vue'
 import GammaProfile from './GammaProfile.vue'
 import GexExpiryStrike from './GexExpiryStrike.vue'
+import DexByStrike from './DexByStrike.vue'
 import FirstUseGuide from './FirstUseGuide.vue'
 import { recordFirstUsefulReading as recordFirstUsefulReadingEvent } from '@/Support/first-use.js'
 
@@ -860,6 +867,7 @@ import IntradayWallTracker from './IntradayWallTracker.vue'
 import TermTile from './TermTile.vue'
 import VRPTile from './VRPTile.vue'
 const SkewTile = defineAsyncComponent(() => import('./SkewTile.vue'))
+const IntradayVolatility = defineAsyncComponent(() => import('./IntradayVolatility.vue'))
 const DexTile = defineAsyncComponent(() => import('./DexTile.vue'))
 import QScorePanel from './QScorePanel.vue'
 const ExpiryPressureTile = defineAsyncComponent(() => import('./ExpiryPressureTile.vue'))
@@ -965,6 +973,7 @@ const lastTabByMode = reactive({
   intraday: initialDashboardState.mode === 'intraday' ? initialDashboardState.tab : 'flow',
 })
 const positioningMounted = ref(initialDashboardState.mode === 'eod' && initialDashboardState.tab === 'positioning')
+const volatilityMounted = ref(initialDashboardState.mode === 'eod' && initialDashboardState.tab === 'volatility')
 const intradayFlowMounted = ref(initialDashboardState.mode === 'intraday' && initialDashboardState.tab === 'flow')
 const intradayUnavailableDetailsOpen = ref(false)
 const eodStrikesMounted = ref(initialDashboardState.mode === 'eod' && initialDashboardState.tab === 'strikes')
@@ -1078,6 +1087,7 @@ const term = ref({ date: null, items: [] })
 const vrp = ref({ date: null, iv1m: null, rv20: null, vrp: null, z: null })
 const season = ref(null)
 const seasonNote = ref('')
+const seasonStatus = reactive({ state: 'idle', error: '' })
 const loaded = ref({ volatility: false, ua: false })
 const uaRows = ref([])
 const uaDate = ref(null)
@@ -1138,7 +1148,13 @@ function applyUaPayload(data, requestedFilters) {
 }
 const showOnboarding = ref(false)
 const dashboardContext = ref(null)
-const netGexSection = ref(null)
+const strikeSections = [
+  { id: 'strike-gex', label: 'GEX' },
+  { id: 'strike-expirations', label: 'Expirations' },
+  { id: 'strike-dex', label: 'DEX' },
+  { id: 'strike-oi-change', label: 'OI change' },
+  { id: 'strike-volume-change', label: 'Volume change' },
+]
 const cache = new Map()
 const cacheTerm = new Map()
 const cacheVRP = new Map()
@@ -1146,14 +1162,16 @@ const cacheSeas = new Map()
 const cacheUA = new Map()
 const TTL_MS = 300_000
 const volErr = ref(null)
-const volErrors = reactive({ term: '', vrp: '', season: '' })
-const volState = reactive({ term: 'idle', vrp: 'idle', season: 'idle' })
+const volErrors = reactive({ term: '', vrp: '' })
+const volState = reactive({ term: 'idle', vrp: 'idle' })
 let disposed = false
 let pageGeneration = 0
 let tabGeneration = 0
 let uaLoadGeneration = 0
 let uaActiveKey = null
 let volatilityLoad = null
+let seasonalityLoad = null
+let seasonRetryTimer = null
 let preparedRefreshTimer = null
 let eodRateLimitUntil = 0
 let eodRateLimitTimer = null
@@ -1324,6 +1342,9 @@ function stopAuxiliaryWork() {
   uaLoadGeneration += 1
   uaActiveKey = null
   volatilityLoad = null
+  seasonalityLoad = null
+  if (seasonRetryTimer) clearTimeout(seasonRetryTimer)
+  seasonRetryTimer = null
   if (volRetryTimer) clearTimeout(volRetryTimer)
   volRetryTimer = null
   Object.keys(tabPollers).forEach(stopTabPoll)
@@ -1380,6 +1401,7 @@ watch(tabMeta, (tabs) => {
 watch(activeTab, tab => {
   lastTabByMode[dataMode.value] = tab
   if (dataMode.value === 'eod' && tab === 'positioning') positioningMounted.value = true
+  if (dataMode.value === 'eod' && tab === 'volatility') volatilityMounted.value = true
   if (dataMode.value === 'intraday' && tab === 'flow') intradayFlowMounted.value = true
   if (tab === 'strikes') strikesMounted.value = true
 })
@@ -1437,6 +1459,21 @@ function setMode(mode) {
   if (mode === 'intraday' && activeTab.value === 'flow') intradayFlowMounted.value = true
   if (activeTab.value === 'strikes') strikesMounted.value = true
   syncDashboardUrl('push')
+}
+
+function jumpToStrikeSection(id) {
+  if (dataMode.value !== 'eod' || activeTab.value !== 'strikes') return
+  const target = document.getElementById(id)
+  if (!target) return
+  const context = dashboardContext.value
+  const style = context ? window.getComputedStyle(context) : null
+  const offset = style?.position === 'sticky'
+    ? (parseFloat(style.top) || 0) + context.getBoundingClientRect().height
+    : 68
+  target.style.scrollMarginTop = `${offset + 16}px`
+  target.focus({ preventScroll: true })
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
 }
 
 function navigateWallView(mode, tab) {
@@ -1598,6 +1635,7 @@ async function ensureTabReady(key) {
 
 function ensureActiveTab() {
   if (disposed) return
+  if (activeTab.value === 'overview' && dataMode.value === 'eod') ensureSeasonality()
   if (activeTab.value === 'volatility' && dataMode.value === 'eod') ensureVolatility()
   if (activeTab.value === 'ua') ensureUA()
   if (activeTab.value === 'positioning') ensureTabReady('positioning')
@@ -1837,11 +1875,11 @@ async function loadSeasonality(sym, isCurrent) {
   const sKey = `seas|${sym}`
   const sHit = getCache(cacheSeas, sKey, 300_000)
   if (sHit && seasonalityState(sHit) !== 'pending') {
-    if (isCurrent()) { season.value = sHit.variant; seasonNote.value = sHit.note; volState.season = seasonalityState(sHit) }
+    if (isCurrent()) { season.value = sHit.variant; seasonNote.value = sHit.note; seasonStatus.state = seasonalityState(sHit) }
     return
   }
   cacheSeas.delete(sKey)
-  volState.season = 'loading'
+  seasonStatus.state = 'loading'
   try {
     const response = await withInflight(`season:${sym}`, () =>
       axios.get('/api/seasonality/5d', { params: { symbol: sym }, signal: ctl.signal })
@@ -1850,12 +1888,12 @@ async function loadSeasonality(sym, isCurrent) {
     const { data } = pendingResponse(response)
     season.value = data?.variant || null
     seasonNote.value = data?.note || ''
-    volState.season = seasonalityState(data)
-    if (volState.season !== 'pending') setCache(cacheSeas, sKey, data)
+    seasonStatus.state = seasonalityState(data)
+    if (seasonStatus.state !== 'pending') setCache(cacheSeas, sKey, data)
   } catch (e) {
     if (!isCurrent() || ctl.signal.aborted) return
-    volState.season = isPreparing(e) ? 'pending' : 'error'
-    if (!isPreparing(e)) volErrors.season = e?.response?.data?.error || e.message
+    seasonStatus.state = isPreparing(e) ? 'pending' : 'error'
+    if (!isPreparing(e)) seasonStatus.error = e?.response?.data?.error || e.message
   }
 }
 
@@ -1919,6 +1957,28 @@ async function loadUA(sym, exp = null) {
 }
 
 // Lazy triggers
+async function ensureSeasonality() {
+  if (disposed || activeTab.value !== 'overview' || dataMode.value !== 'eod') return
+  if (seasonalityLoad) return seasonalityLoad
+  const sym = userSymbol.value
+  const generation = tabGeneration
+  const isCurrent = () => ownsTab(sym, 'eod', 'overview', generation)
+  seasonStatus.error = ''
+  if (seasonRetryTimer) { clearTimeout(seasonRetryTimer); seasonRetryTimer = null }
+  const request = loadSeasonality(sym, isCurrent).then(() => {
+    if (isCurrent() && seasonStatus.state === 'pending') {
+      seasonRetryTimer = setTimeout(() => {
+        seasonRetryTimer = null
+        if (isCurrent()) ensureSeasonality()
+      }, 5000)
+    }
+  }).finally(() => {
+    if (seasonalityLoad === request) seasonalityLoad = null
+  })
+  seasonalityLoad = request
+  return request
+}
+
 async function ensureVolatility() {
   if (disposed || activeTab.value !== 'volatility' || dataMode.value !== 'eod') return
   if (volatilityLoad) return volatilityLoad
@@ -1931,7 +1991,7 @@ async function ensureVolatility() {
   loaded.value.volatility = false
   tabStatus.volatility.state = 'ready'
   if (volRetryTimer) { clearTimeout(volRetryTimer); volRetryTimer = null }
-  const request = Promise.all([loadTermAndVRP(sym, isCurrent), loadSeasonality(sym, isCurrent)]).then(() => {
+  const request = loadTermAndVRP(sym, isCurrent).then(() => {
     if (!isCurrent()) return
     const hasData = Object.values(volState).some(state => state === 'ready' || state === 'empty')
     const hasError = Object.values(volErrors).some(Boolean)
@@ -2594,6 +2654,8 @@ function resetAuxiliaryData() {
   vrp.value = { date: null, iv1m: null, rv20: null, vrp: null, z: null }
   season.value = null
   seasonNote.value = ''
+  seasonStatus.state = 'idle'
+  seasonStatus.error = ''
   uaRows.value = []
   uaDate.value = null
   uaExpirationDates.value = []

@@ -17,7 +17,7 @@ class UseLocalReviewClock
 
         // Recorded intraday sessions carry their own dates. The EOD fixture
         // clock must not hide newer imported bars or mark them unfinished.
-        if (! app()->environment('local') || $configured === '' || $request->is('api/intraday/walls')) {
+        if (! app()->environment('local') || $configured === '' || $request->is('api/intraday/walls', 'api/intraday/volatility')) {
             return $next($request);
         }
 

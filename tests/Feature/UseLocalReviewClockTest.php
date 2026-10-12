@@ -74,6 +74,20 @@ class UseLocalReviewClockTest extends TestCase
         $this->assertSame($previousClock->toIso8601String(), Carbon::getTestNow()?->toIso8601String());
     }
 
+    public function test_intraday_iv_keeps_the_real_session_clock_when_eod_review_time_is_enabled(): void
+    {
+        $this->app['env'] = 'local';
+        config()->set('ui_review.now', self::REVIEW_NOW);
+        $clock = Carbon::parse('2026-10-02T21:00:00+00:00');
+        Carbon::setTestNow($clock);
+        $request = \Illuminate\Http\Request::create('/api/intraday/volatility');
+        app(UseLocalReviewClock::class)->handle($request, function () use ($clock) {
+            $this->assertSame($clock->toIso8601String(), now()->utc()->toIso8601String());
+
+            return response()->noContent();
+        });
+    }
+
     public function test_non_local_environments_ignore_an_opt_in_value(): void
     {
         config()->set('ui_review.now', self::REVIEW_NOW);

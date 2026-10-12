@@ -88,7 +88,8 @@ class AiExportController extends Controller
             return response()->json(['message' => 'No watchlist symbols selected.'], 422);
         }
 
-        $indicators = collect($validated['indicators'] ?? AiExportBuilder::EXPORTABLE_INDICATORS)
+        // Intraday history is opt-in; normal EOD exports keep their existing scope and cost.
+        $indicators = collect($validated['indicators'] ?? array_values(array_diff(AiExportBuilder::EXPORTABLE_INDICATORS, ['intraday_volatility', 'intraday_walls'])))
             ->map(fn ($indicator) => strtolower(trim((string) $indicator)))
             ->filter(fn ($indicator) => in_array($indicator, AiExportBuilder::EXPORTABLE_INDICATORS, true))
             ->unique()
@@ -99,7 +100,17 @@ class AiExportController extends Controller
             return response()->json(['message' => 'Select at least one indicator.'], 422);
         }
 
+        if (array_intersect(['intraday_volatility', 'intraday_walls'], $indicators)) {
+            $denied = app(\App\Http\Middleware\EnsureFeature::class)->handle($request, fn () => null, 'intraday.access', 'strict');
+            if ($denied !== null) {
+                return $denied;
+            }
+        }
+
         $timeframe = strtolower((string) ($validated['timeframe'] ?? '30d'));
+        if (in_array('intraday_walls', $indicators, true) && ! in_array($timeframe, \App\Services\IntradayWallTracker::TIMEFRAMES, true)) {
+            return response()->json(['message' => 'For intraday walls, choose 0DTE, 1DTE, 1W, 2W, 1M or 3M.'], 422);
+        }
 
         $export = AiExport::query()->create([
             'user_id' => Auth::id(),

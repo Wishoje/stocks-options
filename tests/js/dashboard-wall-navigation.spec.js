@@ -9,7 +9,10 @@ const response = data => ({ status: 200, data, headers: {} })
 const calls = url => axios.get.mock.calls.filter(([path]) => path === url)
 async function render(search) {
   window.history.replaceState({}, '', '/dashboard?' + search)
-  const wrapper = shallowMount(Dashboard, { global: { renderStubDefaultSlot: true } })
+  const wrapper = shallowMount(Dashboard, { global: {
+    renderStubDefaultSlot: true,
+    stubs: { SkewTile: { name: 'SkewTile', props: ['symbol', 'active'], template: '<div />' } },
+  } })
   wrappers.push(wrapper)
   await flushPromises()
   return wrapper
@@ -83,11 +86,13 @@ describe('Wall navigation', () => {
     const wrapper = await render('symbol=SPY&mode=eod&tab=strikes')
     expect(wrapper.findComponent({ name: 'WallLevels' }).exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'GexExpiryStrike' }).props('enabled')).toBe(true)
+    expect(wrapper.findComponent({ name: 'DexByStrike' }).props('enabled')).toBe(true)
     expect(wrapper.findComponent({ name: 'NetGexChart' }).props('perOnePercent')).toBe(true)
     const button = wrapper.findAllComponents({ name: 'UiButton' }).find(item => item.text() === 'Explore wall analysis')
     button.vm.$emit('click'); await flushPromises()
     expect(wrapper.vm.activeTab).toBe('positioning')
     expect(wrapper.findComponent({ name: 'GexExpiryStrike' }).props('enabled')).toBe(false)
+    expect(wrapper.findComponent({ name: 'DexByStrike' }).props('enabled')).toBe(false)
     expect(wrapper.findComponent({ name: 'WallLevels' }).props('intelligenceEnabled')).toBe(true)
   })
 
@@ -105,5 +110,39 @@ describe('Wall navigation', () => {
     await vi.advanceTimersByTimeAsync(300); await flushPromises()
     expect(wrapper.findComponent({ name: 'IntradayWallTracker' }).props('symbol')).toBe('QQQ')
     expect(wrapper.vm.gexTf).toBe('30d')
+  })
+
+  it('groups skew under Volatility and retains its selector while away', async () => {
+    const wrapper = await render('symbol=SPY&mode=eod&tab=positioning')
+    expect(wrapper.findComponent({ name: 'SkewTile' }).exists()).toBe(false)
+    await tab(wrapper, 'Volatility')
+    const skew = wrapper.findComponent({ name: 'SkewTile' })
+    expect(skew.props('active')).toBe(true)
+    expect(skew.element.closest('.gex-volatility-view')).not.toBeNull()
+    await tab(wrapper, 'Positioning')
+    expect(wrapper.findComponent({ name: 'SkewTile' }).vm).toBe(skew.vm)
+    expect(skew.props('active')).toBe(false)
+    expect(wrapper.get('.gex-positioning-view').findComponent({ name: 'SkewTile' }).exists()).toBe(false)
+  })
+
+  it('jumps to all five EOD strike charts without reloading data or changing the selection', async () => {
+    const wrapper = await render('symbol=SPY&mode=eod&tab=strikes&timeframe=14d&view=next_session')
+    document.body.appendChild(wrapper.element)
+    const requestCount = axios.get.mock.calls.length
+    const url = window.location.search
+    const links = wrapper.get('nav[aria-label="Jump to strike chart"]').findAll('a')
+    expect(links.map(link => link.text())).toEqual(['GEX', 'Expirations', 'DEX', 'OI change', 'Volume change'])
+    for (const link of links) {
+      await link.trigger('click')
+      const target = wrapper.get(link.attributes('href')).element
+      expect(document.activeElement).toBe(target)
+      expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+      expect(target.style.scrollMarginTop).toBe('84px')
+    }
+    expect(axios.get.mock.calls).toHaveLength(requestCount)
+    expect(window.location.search).toBe(url)
+    await tab(wrapper, 'Positioning')
+    expect(wrapper.find('nav[aria-label="Jump to strike chart"]').exists()).toBe(false)
+    wrapper.element.remove()
   })
 })

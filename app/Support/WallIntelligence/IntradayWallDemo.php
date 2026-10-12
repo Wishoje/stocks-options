@@ -13,14 +13,14 @@ final class IntradayWallDemo
         $center = ['SPY' => 760, 'QQQ' => 720, 'TSLA' => 350][$symbol] ?? 100;
         $contracts = [];
         $expiry = $timeframe === '0d' ? '2026-09-29' : ($timeframe === '1d' ? '2026-09-30' : '2026-10-02');
-        foreach ([-5 => ['put', 20000], 5 => ['call', 28000]] as $offset => [$type, $oi]) {
+        foreach ([-10 => ['put', 1000], -5 => ['put', 20000], 5 => ['call', 28000], 10 => ['call', 1000]] as $offset => [$type, $oi]) {
             $contracts[] = ['expiry' => $expiry, 'type' => $type, 'strike' => $center + $offset,
                 'oi' => $oi, 'iv' => .12, 'data_date' => '2026-09-28', 'data_timestamp' => null];
         }
         $model = new IntradayWallModel;
         $basis = $model->basis($symbol, '2026-09-29', '2026-09-28', [$expiry], $contracts, $timeframe);
         $observations = [];
-        $offsets = [0, -4, -5, -3, -5.8, -6.2, -5.1, -6.4, -7.2, -4, -3, 3, 4.7, 6, 7, 5.1, 6.5, 7.3];
+        $offsets = [0, -4, -5, -3, -5.8, -6.2, -5.1, -5.5, -5.95, -4, -3, 3, 4.7, 6, 7, 5.1, 6.5, 7.3];
         $bars = [];
         $previous = $center + 1;
         foreach ($offsets as $i => $offset) {
@@ -40,6 +40,7 @@ final class IntradayWallDemo
         $result['wall_interaction'] = (new WallInteractionDetector)->analyze($symbol, '2026-09-29', $timeframe,
             $observations, $bars, $at->addMinutes(5));
         $result['wall_interaction']['state'] = 'demonstration';
+        $result['wall_interaction']['setups'] = (new WallSetupEvaluator)->analyze($result['wall_interaction'], $observations);
 
         return $result;
     }

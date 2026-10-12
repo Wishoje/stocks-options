@@ -17,6 +17,55 @@ class AiExportControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_builder_resolves_wall_controller_dependencies_and_keeps_setup_context(): void
+    {
+        $payload = ['symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => '14d',
+            'wall_interaction' => ['setups' => ['rule_version' => 'conditional-walls.v1',
+                'as_of' => '2026-09-30T15:00:00Z', 'current' => ['put' => ['status' => 'watch']]]]];
+        $this->mock(\App\Services\IntradayWallTracker::class)
+            ->shouldReceive('history')->once()->with('SPY', null, '14d')->andReturn($payload);
+        $result = app(\App\Services\AiExportBuilder::class)->build(['SPY'], ['intraday_walls'], '14d');
+        $item = $result['items'][0];
+        $this->assertTrue($item['intraday_walls']['ok']);
+        $this->assertSame($payload, $item['intraday_walls']['data']);
+        $this->assertSame('conditional-walls.v1', $item['summary']['intraday_setups']['rule_version']);
+        $this->assertFalse($item['summary']['intraday_setups']['actionable']);
+    }
+
+    public function test_builder_preserves_requests_for_controllers_with_a_different_parameter_name(): void
+    {
+        $result = app(\App\Services\AiExportBuilder::class)->build(['QQQ'], ['qscore'], '14d');
+        $this->assertTrue($result['items'][0]['qscore']['ok']);
+        $this->assertSame('QQQ', $result['items'][0]['qscore']['data']['symbol']);
+    }
+
+    public function test_intraday_volatility_is_opt_in_and_can_be_queued_explicitly(): void
+    {
+        \Illuminate\Support\Facades\Bus::fake();
+        $user = $this->productUser();
+        $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY']])->assertAccepted();
+        $this->assertNotContains('intraday_volatility', AiExport::query()->latest('id')->first()->indicators);
+        $this->assertNotContains('intraday_walls', AiExport::query()->latest('id')->first()->indicators);
+        $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY'], 'indicators' => ['intraday_volatility']])->assertAccepted();
+        $this->assertSame(['intraday_volatility'], AiExport::query()->latest('id')->first()->indicators);
+        \Illuminate\Support\Facades\Bus::assertDispatched(\App\Jobs\BuildAiExportJob::class, 2);
+    }
+
+    public function test_intraday_walls_are_opt_in_and_require_a_supported_scope_and_intraday_access(): void
+    {
+        \Illuminate\Support\Facades\Bus::fake();
+        $user = $this->productUser();
+        $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY'], 'indicators' => ['intraday_walls'], 'timeframe' => '14d'])->assertAccepted();
+        $this->assertSame(['intraday_walls'], AiExport::query()->latest('id')->first()->indicators);
+        $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY'], 'indicators' => ['intraday_walls'], 'timeframe' => 'monthly'])->assertStatus(422);
+        $guard = \Mockery::mock(\App\Http\Middleware\EnsureFeature::class)->makePartial();
+        $guard->shouldReceive('handle')->withArgs(fn ($request, $next, $feature, $mode = null) => $feature === 'intraday.access' && $mode === 'strict')
+            ->once()->andReturn(response()->json(['message' => 'Intraday access required'], 403));
+        $this->app->instance(\App\Http\Middleware\EnsureFeature::class, $guard);
+        $this->actingAs($user)->postJson('/api/watchlist/eod-export', ['symbols' => ['SPY'], 'indicators' => ['intraday_walls'], 'timeframe' => '14d'])->assertForbidden();
+        \Illuminate\Support\Facades\Bus::assertDispatched(\App\Jobs\BuildAiExportJob::class, 1);
+    }
+
     public function test_index_returns_only_the_authenticated_users_export_metadata(): void
     {
         $owner = $this->productUser();

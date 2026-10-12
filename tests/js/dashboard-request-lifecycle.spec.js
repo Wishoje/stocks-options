@@ -154,7 +154,8 @@ describe('Dashboard request lifecycle', () => {
 
   it.each([
     ['positioning', ['/api/gex-levels', '/api/dex']],
-    ['volatility', ['/api/gex-levels', '/api/iv/term', '/api/vrp', '/api/seasonality/5d']],
+    ['volatility', ['/api/gex-levels', '/api/iv/term', '/api/vrp']],
+    ['overview', ['/api/gex-levels', '/api/seasonality/5d']],
     ['ua', ['/api/gex-levels', '/api/ua']],
   ])('starts the %s loader from a shareable dashboard URL', async (tab, expectedRequests) => {
     const wrapper = await mountDashboardAt(`/dashboard?symbol=QQQ&mode=eod&tab=${tab}&timeframe=14d`)
@@ -163,25 +164,23 @@ describe('Dashboard request lifecycle', () => {
     expect(axios.get.mock.calls.map(([url]) => url).sort()).toEqual([...expectedRequests].sort())
   })
 
-  it('starts term, VRP and seasonality concurrently, with one request each for activation and repeated clicks', async () => {
-    const term = deferred(), vrp = deferred(), season = deferred()
+  it('starts term and VRP concurrently without loading Overview seasonality', async () => {
+    const term = deferred(), vrp = deferred()
     handlers.set('/api/iv/term', () => term.promise)
     handlers.set('/api/vrp', () => vrp.promise)
-    handlers.set('/api/seasonality/5d', () => season.promise)
     const wrapper = await mountDashboard()
     await activate(wrapper, 'Volatility')
     await activate(wrapper, 'Volatility')
     expect(calls('/api/iv/term')).toHaveLength(1)
     expect(calls('/api/vrp')).toHaveLength(1)
-    expect(calls('/api/seasonality/5d')).toHaveLength(1)
+    expect(calls('/api/seasonality/5d')).toHaveLength(0)
     term.resolve(response(termData('SPY')))
     vrp.resolve(response(vrpData('SPY')))
-    season.resolve(response(seasonData('SPY')))
     await flushPromises()
     expect(wrapper.vm.loaded.volatility).toBe(true)
     expect(wrapper.vm.term).toEqual(termData('SPY'))
     expect(wrapper.vm.vrp).toEqual(vrpData('SPY'))
-    expect(wrapper.vm.season).toEqual(seasonData('SPY').variant)
+    expect(wrapper.vm.season).toBeNull()
   })
 
   it('reuses each documented TTL independently when revisiting volatility', async () => {
@@ -200,13 +199,13 @@ describe('Dashboard request lifecycle', () => {
     expect(calls('/api/seasonality/5d')).toHaveLength(1)
   })
 
-  it('shows a successful VRP and seasonality when term fails, without retrying successful data', async () => {
+  it('shows successful VRP when term fails, without retrying successful data', async () => {
     handlers.set('/api/iv/term', () => Promise.reject({ message: 'Term unavailable', response: { status: 503, data: { error: 'Term unavailable' } } }))
     const wrapper = await mountDashboard()
     await activate(wrapper, 'Volatility')
-    expect(wrapper.vm.volErrors).toEqual({ term: 'Term unavailable', vrp: '', season: '' })
+    expect(wrapper.vm.volErrors).toEqual({ term: 'Term unavailable', vrp: '' })
     expect(wrapper.findComponent({ name: 'VRPTile' }).props('vrp')).toBe(0.05)
-    expect(wrapper.vm.season.date).toBe('SPY')
+    expect(wrapper.vm.season).toBeNull()
     await tick(10_000)
     expect(calls('/api/iv/term')).toHaveLength(1)
     expect(calls('/api/vrp')).toHaveLength(1)
@@ -220,7 +219,7 @@ describe('Dashboard request lifecycle', () => {
     await activate(wrapper, 'Volatility')
     expect(wrapper.vm.volState.term).toBe('loading')
     expect(wrapper.findComponent({ name: 'VRPTile' }).props('vrp')).toBe(0.05)
-    expect(wrapper.vm.volState.season).toBe('ready')
+    expect(wrapper.vm.seasonStatus.state).toBe('idle')
     pending.resolve(response({}, 202))
     await flushPromises()
     expect(wrapper.vm.tabStatus.volatility.state).toBe('ready')
@@ -232,7 +231,7 @@ describe('Dashboard request lifecycle', () => {
     expect(wrapper.findComponent({ name: 'TermTile' }).props('date')).toBe('SPY')
     expect(calls('/api/iv/term')).toHaveLength(2)
     expect(calls('/api/vrp')).toHaveLength(1)
-    expect(calls('/api/seasonality/5d')).toHaveLength(1)
+    expect(calls('/api/seasonality/5d')).toHaveLength(0)
     await tick(20_000)
     expect(calls('/api/iv/term')).toHaveLength(2)
     expect(vi.getTimerCount()).toBe(0)
@@ -257,7 +256,6 @@ describe('Dashboard request lifecycle', () => {
   it.each([
     ['term', '/api/iv/term', termData],
     ['vrp', '/api/vrp', vrpData],
-    ['season', '/api/seasonality/5d', seasonData],
   ])('does not cache an incomplete200 %s response across the next pending retry', async (tile, url, data) => {
     let ready = false
     handlers.set(url, () => Promise.resolve(response(ready ? data('SPY') : {})))
@@ -267,7 +265,7 @@ describe('Dashboard request lifecycle', () => {
     ready = true
     await tick(5_000)
     expect(wrapper.vm.volState[tile]).toBe('ready')
-    for (const endpoint of ['/api/iv/term', '/api/vrp', '/api/seasonality/5d']) {
+    for (const endpoint of ['/api/iv/term', '/api/vrp']) {
       expect(calls(endpoint)).toHaveLength(endpoint === url ? 2 : 1)
     }
     await tick(20_000)
@@ -278,16 +276,83 @@ describe('Dashboard request lifecycle', () => {
   it('treats the documented200 null seasonality variant as terminal empty with its note, not endless preparation', async () => {
     handlers.set('/api/seasonality/5d', () => Promise.resolve(response({ symbol: 'SPY', variant: null, note: 'No seasonality available yet.' })))
     const wrapper = await mountDashboard()
-    await activate(wrapper, 'Volatility')
-    expect(wrapper.vm.volState.season).toBe('empty')
-    expect(wrapper.findComponent({ name: 'UiStatus' }).props('message')).toBe('No seasonality available yet.')
+    await activate(wrapper, 'Overview')
+    expect(wrapper.vm.seasonStatus.state).toBe('empty')
+    expect(wrapper.get('.gex-overview-seasonality').findComponent({ name: 'UiStatus' }).props('message')).toBe('No seasonality available yet.')
     await tick(120_000)
     expect(calls('/api/seasonality/5d')).toHaveLength(1)
     expect(vi.getTimerCount()).toBe(0)
+    await activate(wrapper, 'Strikes')
     await activate(wrapper, 'Overview')
-    await activate(wrapper, 'Volatility')
     expect(calls('/api/seasonality/5d')).toHaveLength(1)
-    expect(wrapper.vm.volState.season).toBe('empty')
+    expect(wrapper.vm.seasonStatus.state).toBe('empty')
+  })
+
+  it('loads seasonality only in Overview, coalesces clicks and caches it across tabs', async () => {
+    const pending = deferred()
+    handlers.set('/api/seasonality/5d', () => pending.promise)
+    const wrapper = await mountDashboard()
+    await activate(wrapper, 'Overview')
+    await activate(wrapper, 'Overview')
+    expect(calls('/api/seasonality/5d')).toHaveLength(1)
+    expect(calls('/api/iv/term')).toHaveLength(0)
+    expect(calls('/api/vrp')).toHaveLength(0)
+    pending.resolve(response(seasonData('SPY')))
+    await flushPromises()
+    expect(wrapper.get('.gex-overview-seasonality').findComponent({ name: 'Seasonality5Tile' }).props('date')).toBe('SPY')
+    await activate(wrapper, 'Volatility')
+    expect(wrapper.find('.gex-volatility-view').findComponent({ name: 'Seasonality5Tile' }).exists()).toBe(false)
+    await activate(wrapper, 'Overview')
+    expect(calls('/api/seasonality/5d')).toHaveLength(1)
+  })
+
+  it.each([202, 200])('retries pending Overview seasonality (%s) only while visible', async status => {
+    let ready = false
+    handlers.set('/api/seasonality/5d', () => Promise.resolve(ready ? response(seasonData('SPY')) : response({}, status)))
+    const wrapper = await mountDashboard()
+    await activate(wrapper, 'Overview')
+    expect(wrapper.vm.seasonStatus.state).toBe('pending')
+    await tick(5_000)
+    expect(calls('/api/seasonality/5d')).toHaveLength(2)
+    await activate(wrapper, 'Strikes')
+    await tick(30_000)
+    expect(calls('/api/seasonality/5d')).toHaveLength(2)
+    ready = true
+    await activate(wrapper, 'Overview')
+    expect(wrapper.vm.seasonStatus.state).toBe('ready')
+    expect(wrapper.vm.season.date).toBe('SPY')
+    await tick(20_000)
+    expect(calls('/api/seasonality/5d')).toHaveLength(3)
+  })
+
+  it('keeps seasonality errors local to Overview and retries explicitly', async () => {
+    handlers.set('/api/seasonality/5d', () => Promise.reject(new Error('Season unavailable')))
+    const wrapper = await mountDashboard()
+    await activate(wrapper, 'Overview')
+    expect(wrapper.vm.seasonStatus.error).toBe('Season unavailable')
+    expect(wrapper.findComponent({ name: 'OverviewMetrics' }).exists()).toBe(true)
+    handlers.delete('/api/seasonality/5d')
+    wrapper.get('.gex-overview-seasonality').findComponent({ name: 'UiStatus' }).vm.$emit('retry')
+    await flushPromises()
+    expect(wrapper.vm.seasonStatus.error).toBe('')
+    expect(wrapper.vm.season.date).toBe('SPY')
+  })
+
+  it.each(['symbol', 'tab', 'unmount'])('ignores late seasonality after changing %s', async change => {
+    const old = deferred()
+    handlers.set('/api/seasonality/5d', options => options.params.symbol === 'SPY' ? old.promise : Promise.resolve(response(seasonData('QQQ'))))
+    const wrapper = await mountDashboard()
+    await activate(wrapper, 'Overview')
+    if (change === 'symbol') { wrapper.vm.userSymbol = 'QQQ'; await tick(300) }
+    else if (change === 'tab') await activate(wrapper, 'Strikes')
+    else wrapper.unmount()
+    expect(calls('/api/seasonality/5d')[0][1].signal.aborted).toBe(true)
+    old.resolve(response(seasonData('OLD')))
+    await flushPromises()
+    expect(wrapper.vm.season?.date).not.toBe('OLD')
+    if (change === 'symbol') expect(wrapper.vm.season.date).toBe('QQQ')
+    await tick(30_000)
+    expect(calls('/api/seasonality/5d')).toHaveLength(change === 'symbol' ? 2 : 1)
   })
 
   it('uses distinct EOD/intraday activity cache identities for the same symbol and filters', async () => {
@@ -367,7 +432,7 @@ describe('Dashboard request lifecycle', () => {
   })
 
   it('keeps resolved 202 volatility pending, retries only while active, then stops when ready', async () => {
-    for (const url of ['/api/iv/term', '/api/vrp', '/api/seasonality/5d']) handlers.set(url, () => Promise.resolve(response({ status: 'preparing' }, 202)))
+    for (const url of ['/api/iv/term', '/api/vrp']) handlers.set(url, () => Promise.resolve(response({ status: 'preparing' }, 202)))
     const wrapper = await mountDashboard()
     await activate(wrapper, 'Volatility')
     expect(wrapper.vm.activeTab).toBe('volatility')
@@ -384,7 +449,7 @@ describe('Dashboard request lifecycle', () => {
   })
 
   it('does not poll a pending volatility tab after navigating away', async () => {
-    for (const url of ['/api/iv/term', '/api/vrp', '/api/seasonality/5d']) handlers.set(url, () => Promise.resolve(response({}, 202)))
+    for (const url of ['/api/iv/term', '/api/vrp']) handlers.set(url, () => Promise.resolve(response({}, 202)))
     const wrapper = await mountDashboard()
     await activate(wrapper, 'Volatility')
     await activate(wrapper, 'Overview')
@@ -392,8 +457,8 @@ describe('Dashboard request lifecycle', () => {
     expect(calls('/api/iv/term')).toHaveLength(1)
   })
 
-  it('rejects late term, VRP and seasonality responses after a symbol switch', async () => {
-    const old = new Map(['/api/iv/term', '/api/vrp', '/api/seasonality/5d'].map(url => [url, deferred()]))
+  it('rejects late term and VRP responses after a symbol switch', async () => {
+    const old = new Map(['/api/iv/term', '/api/vrp'].map(url => [url, deferred()]))
     for (const [url, pending] of old) handlers.set(url, options => options.params.symbol === 'SPY' ? pending.promise : Promise.resolve(response(url.includes('term') ? termData('QQQ') : url.includes('vrp') ? vrpData('QQQ') : seasonData('QQQ'))))
     const wrapper = await mountDashboard()
     await activate(wrapper, 'Volatility')
@@ -406,7 +471,7 @@ describe('Dashboard request lifecycle', () => {
     await flushPromises()
     expect(wrapper.vm.term.date).toBe('QQQ')
     expect(wrapper.vm.vrp.date).toBe('QQQ')
-    expect(wrapper.vm.season.date).toBe('QQQ')
+    expect(wrapper.vm.season).toBeNull()
     expect(wrapper.vm.loaded.volatility).toBe(true)
   })
 
@@ -501,11 +566,11 @@ describe('Dashboard request lifecycle', () => {
 
   it('aborts every volatility fetch on unmount and ignores their late responses', async () => {
     const pending = deferred()
-    for (const url of ['/api/iv/term', '/api/vrp', '/api/seasonality/5d']) handlers.set(url, () => pending.promise)
+    for (const url of ['/api/iv/term', '/api/vrp']) handlers.set(url, () => pending.promise)
     const wrapper = await mountDashboard()
     await activate(wrapper, 'Volatility')
     wrapper.unmount()
-    for (const url of ['/api/iv/term', '/api/vrp', '/api/seasonality/5d']) expect(calls(url)[0][1].signal.aborted).toBe(true)
+    for (const url of ['/api/iv/term', '/api/vrp']) expect(calls(url)[0][1].signal.aborted).toBe(true)
     pending.resolve(response({ date: 'LATE', variant: { date: 'LATE' } }))
     await flushPromises()
     await tick(60_000)

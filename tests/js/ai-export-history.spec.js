@@ -39,6 +39,19 @@ function mountPage() {
 }
 
 describe('AI export history', () => {
+  it('keeps intraday IV optional by default while Select all includes it', async () => {
+    axios.get.mockResolvedValue({ data: [] })
+    const wrapper = mountPage()
+    await flushPromises()
+    const input = wrapper.findAll('label').find(label => label.text().includes('Intraday IV & skew')).get('input')
+    expect(input.element.checked).toBe(false)
+    const walls = wrapper.findAll('label').find(label => label.text().includes('Intraday walls & setups')).get('input')
+    expect(walls.element.checked).toBe(false)
+    await wrapper.findAll('button').filter(button => button.text() === 'Select all').at(-1).trigger('click')
+    expect(input.element.checked).toBe(true)
+    expect(walls.element.checked).toBe(true)
+    wrapper.unmount()
+  })
   beforeEach(() => {
     axios.get.mockReset()
   })

@@ -61,6 +61,11 @@ const indicatorOptions = [
     description: 'DEX by expiry and total dealer delta positioning.',
   },
   {
+    key: 'dex_by_strike',
+    label: 'DEX by strike',
+    description: 'Signed delta exposure by strike in share equivalents, with matching GEX and the selected EOD expiry scope.',
+  },
+  {
     key: 'expiry_pressure',
     label: 'Expiry pressure',
     description: 'Pin-risk and max-pain clusters for the next few expiries.',
@@ -69,6 +74,16 @@ const indicatorOptions = [
     key: 'iv_skew',
     label: 'IV skew',
     description: '25-delta skew and curvature across expiries.',
+  },
+  {
+    key: 'intraday_volatility',
+    label: 'Intraday IV & skew',
+    description: 'Optional: latest recorded intraday session, expiration nearest 7 days, IV/skew timeline and calculation inputs. Independent of the EOD view and scope.',
+  },
+  {
+    key: 'intraday_walls',
+    label: 'Intraday walls & setups',
+    description: 'Optional: latest recorded session in the selected expiry scope, price events, conditional setups and supporting evidence. Choose 0DTE through 3M; monthly scope is not supported.',
   },
   {
     key: 'term_structure',
@@ -92,7 +107,7 @@ const indicatorOptions = [
   },
 ]
 
-const defaultIndicatorKeys = indicatorOptions.map((option) => option.key)
+const defaultIndicatorKeys = indicatorOptions.filter(option => !['intraday_volatility', 'intraday_walls'].includes(option.key)).map((option) => option.key)
 selectedIndicators.value = [...defaultIndicatorKeys]
 
 const filteredWatchlist = computed(() => {
@@ -184,7 +199,7 @@ function clearSymbols() {
 }
 
 function selectAllIndicators() {
-  selectedIndicators.value = [...defaultIndicatorKeys]
+  selectedIndicators.value = indicatorOptions.map(option => option.key)
 }
 
 function clearIndicators() {
@@ -450,7 +465,7 @@ onUnmounted(() => {
                   <div>
                     <h3 class="text-lg font-semibold text-white">Indicator groups</h3>
                     <p class="text-sm text-gray-400">
-                      Everything is on by default. This controls how heavy the export is.
+                      EOD indicators are selected by default. Add intraday IV and skew when you want session pricing history.
                     </p>
                   </div>
 
@@ -498,7 +513,7 @@ onUnmounted(() => {
               <div class="rounded-2xl border border-gray-800 bg-gray-900/90 p-5">
                 <h3 class="text-lg font-semibold text-white">Export options</h3>
                 <p class="mt-1 text-sm text-gray-400">
-                  GEX levels and Wall intelligence use the selected timeframe and analysis view. Other indicators use their own EOD scopes.
+                  The selected timeframe and analysis view apply to GEX levels, wall intelligence, gamma regime, and the GEX/DEX strike maps. Other indicators keep their own dated scopes. Intraday IV and skew uses the latest recorded session and the expiration nearest seven days.
                 </p>
 
                 <div class="mt-4">
@@ -548,6 +563,7 @@ onUnmounted(() => {
                   items[].summary.qscore<br>
                   items[].summary.gex<br>
                   items[].summary.gex_expiry_strike<br>
+                  items[].summary.dex_by_strike<br>
                   items[].summary.dealer_positioning<br>
                   items[].summary.expiry_pressure<br>
                   items[].summary.iv_skew<br>
@@ -559,6 +575,7 @@ onUnmounted(() => {
                   items[].gex_levels<br>
                   items[].wall_intelligence<br>
                   items[].gex_expiry_strike<br>
+                  items[].dex_by_strike<br>
                   items[].qscore<br>
                   items[].dealer_positioning<br>
                   items[].expiry_pressure<br>

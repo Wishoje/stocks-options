@@ -200,5 +200,7 @@ class WallInteractionDetectorTest extends TestCase
         $this->assertContains('confirmed_breakdown', $statuses);
         $this->assertContains('reclaim', $statuses);
         $this->assertContains('confirmed_breakout', $statuses);
+        $this->assertContains('conditions_met', array_column($demo['wall_interaction']['setups']['readings'], 'status'));
+        $this->assertFalse($demo['wall_interaction']['setups']['actionable']);
     }
 }

@@ -76,6 +76,11 @@ class WallInteractionCollectionTest extends TestCase
         $read = $service->read('SPY', '2026-09-30', '14d', [$observation]);
         $this->assertSame('acceptance_below', $read['current']['put']['status']);
         $this->assertNotNull($read['price_evidence_hash']);
+        $this->assertSame('wall-setups.v1', $read['setups']['schema_version']);
+        $this->assertSame('conditional-walls.v1', $read['setups']['rule_version']);
+        $this->assertFalse($read['setups']['actionable']);
+        $stored = json_decode(WallObservation::where('dataset', 'wall_interactions')->first()->payload_json, true);
+        $this->assertSame('wall-setups.v1', $stored['setups']['schema_version']);
         $this->assertSame($before, WallObservation::count());
         $this->assertSame('recently_checked', $service->collect('SPY', '2026-09-30', $this->now())['status']);
         Http::assertSentCount(1);

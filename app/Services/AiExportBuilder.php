@@ -22,10 +22,13 @@ class AiExportBuilder
         'wall_intelligence',
         'gamma_profile',
         'gex_expiry_strike',
+        'dex_by_strike',
         'qscore',
         'dealer_positioning',
         'expiry_pressure',
         'iv_skew',
+        'intraday_volatility',
+        'intraday_walls',
         'term_structure',
         'vrp',
         'seasonality',
@@ -60,7 +63,7 @@ class AiExportBuilder
                 'gex_timeframe' => $timeframe,
                 'gex_view' => $context['gex_view'] ?? 'legacy',
                 'target_session' => $context['target_session'] ?? null,
-                'scope_note' => 'The view applies to gex_levels, wall_intelligence, gamma_profile and gex_expiry_strike. Other indicators retain their own source dates and scopes. Next-session preparation uses recorded EOD inputs, not live or forecast values.',
+                'scope_note' => 'The view applies to gex_levels, wall_intelligence, gamma_profile, gex_expiry_strike and dex_by_strike. Other indicators retain their own source dates and scopes. Next-session preparation uses recorded EOD inputs, not live or forecast values. Optional intraday_volatility uses the latest retained intraday session and the expiration nearest seven days, independent of the EOD view. Optional intraday_walls uses the latest recorded session for the selected expiry scope and includes price events, conditional setups and evidence. Setup readiness refers to recorded delayed prices, not a live entry.',
                 'format' => 'json',
                 'summary_version' => 1,
             ],
@@ -90,10 +93,13 @@ class AiExportBuilder
                 'wall_intelligence' => data_get($item, 'wall_intelligence.data.data_date'),
                 'gamma_profile' => data_get($item, 'gamma_profile.data.data_date'),
                 'gex_expiry_strike' => data_get($item, 'gex_expiry_strike.data.data_date'),
+                'dex_by_strike' => data_get($item, 'dex_by_strike.data.data_date'),
                 'qscore' => data_get($qscoreData, 'date'),
                 'dealer_positioning' => data_get($dexData, 'data_date'),
                 'expiry_pressure' => data_get($pressureData, 'data_date'),
                 'iv_skew' => data_get($skewData, 'date'),
+                'intraday_volatility' => data_get($item, 'intraday_volatility.data.session'),
+                'intraday_walls' => data_get($item, 'intraday_walls.data.session'),
                 'term_structure' => data_get($termData, 'date'),
                 'vrp' => data_get($vrpData, 'date'),
                 'seasonality' => data_get($seasonalityData, 'variant.date'),
@@ -103,13 +109,28 @@ class AiExportBuilder
             'qscore' => $this->summarizeQscore($qscoreData),
             'gex' => $this->summarizeGex($gexData),
             'gex_expiry_strike' => data_get($item, 'gex_expiry_strike.ok') ? data_get($item, 'gex_expiry_strike.data.summary') : null,
+            'dex_by_strike' => data_get($item, 'dex_by_strike.ok') ? data_get($item, 'dex_by_strike.data.summary') : null,
             'gamma_profile' => $this->payloadData($item['gamma_profile'] ?? null) ? collect($item['gamma_profile']['data'])->only([
                 'status', 'regime', 'gamma_flip', 'flip_status', 'net_gex_at_spot', 'reference_price', 'model_version', 'crossings',
             ])->all() : null,
             'dealer_positioning' => $this->summarizeDex($dexData),
             'expiry_pressure' => $this->summarizePressure($pressureData),
             'iv_skew' => $this->summarizeSkew($skewData),
+            'intraday_volatility' => data_get($item, 'intraday_volatility.ok') ? [
+                'session' => data_get($item, 'intraday_volatility.data.session'),
+                'expiry' => data_get($item, 'intraday_volatility.data.expiry'),
+                'timestamp_basis' => 'collection_time',
+                'latest' => data_get($item, 'intraday_volatility.data.summary'),
+            ] : null,
             'term_structure' => $this->summarizeTerm($termData),
+            'intraday_setups' => data_get($item, 'intraday_walls.ok') ? [
+                'session' => data_get($item, 'intraday_walls.data.session'),
+                'timeframe' => data_get($item, 'intraday_walls.data.timeframe'),
+                'as_of' => data_get($item, 'intraday_walls.data.wall_interaction.setups.as_of'),
+                'rule_version' => data_get($item, 'intraday_walls.data.wall_interaction.setups.rule_version'),
+                'current' => data_get($item, 'intraday_walls.data.wall_interaction.setups.current'),
+                'actionable' => false,
+            ] : null,
             'vrp' => $this->summarizeVrp($vrpData),
             'seasonality' => $this->summarizeSeasonality($seasonalityData),
             'unusual_activity' => $this->summarizeUa($uaData),
@@ -142,12 +163,19 @@ class AiExportBuilder
                 ...(isset($context['gex_view']) ? ['view' => $context['gex_view']] : []),
                 ...(isset($context['target_session']) ? ['session_date' => $context['target_session']] : []),
             ]),
+            'dex_by_strike' => $this->invokeController(\App\Http\Controllers\DexByStrikeController::class, 'show', [
+                'symbol' => $symbol, 'timeframe' => $timeframe,
+                ...(isset($context['gex_view']) ? ['view' => $context['gex_view']] : []),
+                ...(isset($context['target_session']) ? ['session_date' => $context['target_session']] : []),
+            ]),
             'dealer_positioning' => $this->invokeController(PositioningController::class, 'dex', ['symbol' => $symbol]),
             'expiry_pressure' => $this->invokeController(ExpiryController::class, 'pressure', [
                 'symbol' => $symbol,
                 'days' => 3,
             ]),
             'iv_skew' => $this->invokeController(VolController::class, 'skew', ['symbol' => $symbol]),
+            'intraday_volatility' => $this->invokeController(\App\Http\Controllers\IntradayVolatilityController::class, 'show', ['symbol' => $symbol]),
+            'intraday_walls' => $this->invokeController(\App\Http\Controllers\IntradayWallController::class, 'show', ['symbol' => $symbol, 'timeframe' => $timeframe]),
             'term_structure' => $this->invokeController(VolController::class, 'term', ['symbol' => $symbol]),
             'vrp' => $this->invokeController(VolController::class, 'vrp', ['symbol' => $symbol]),
             'seasonality' => $this->invokeController(SeasonalityController::class, 'fiveDay', ['symbol' => $symbol]),
@@ -223,7 +251,7 @@ class AiExportBuilder
     {
         try {
             $request = Request::create('/', 'GET', $params);
-            $response = app($controllerClass)->{$method}($request);
+            $response = app()->call([app($controllerClass), $method], [Request::class => $request]);
 
             return $this->normalizeResponse($response);
         } catch (\Throwable $e) {
