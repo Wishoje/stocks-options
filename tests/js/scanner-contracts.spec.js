@@ -12,6 +12,7 @@ import {
   scannerUrl,
   volumeDashboardUrl,
   wallDashboardUrl,
+  wallActivityDashboardUrl,
   wallTagsFor,
 } from '@/Pages/Scanner/scannerUtils.js'
 
@@ -150,6 +151,14 @@ afterEach(() => {
 })
 
 describe('scanner data helpers', () => {
+  it('restores wall activity and links to single-symbol wall tracking with optional local evidence', () => {
+    expect(scannerStateFromSearch('?scan=activity').mode).toBe('activity')
+    expect(scannerUrl('/scanner', { mode: 'activity' })).toContain('scan=activity')
+    expect(wallActivityDashboardUrl({ symbol: ' qqq ' })).toBe('/dashboard?symbol=QQQ&mode=intraday&tab=walls&timeframe=7d')
+    const id = 'b'.repeat(64)
+    expect(wallActivityDashboardUrl({ symbol: 'SPY', demonstration: true, event_id: id })).toContain(`wall_demo=1&wall_event=${id}`)
+    expect(wallActivityDashboardUrl({ symbol: 'SPY', demonstration: true, event_id: 'bad' })).not.toContain('wall_demo')
+  })
   it('keeps zero distinct from unavailable across wall fields and GEX matching', () => {
     expect(scannerNumber(0)).toBe(0)
     expect(scannerNumber(null)).toBeNull()
@@ -211,6 +220,53 @@ describe('scanner data helpers', () => {
 })
 
 describe('scanner page', () => {
+  it('shows wall activity in its own mode without loading the proximity or volume scans', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:31:00Z'))
+    window.history.replaceState({}, '', '/scanner?scan=activity')
+    axios.get.mockImplementation(url => {
+      if (url === '/api/intraday/wall-watchlist') return Promise.resolve({ data: {
+        schema_version: 'wall-watchlist.v1', session: '2026-09-30', timeframe: '7d', state: 'ready', quote_delay_seconds: 900,
+        watchlist_count: 1, assessed_count: 1, refresh_until: '2026-09-30T20:00:00Z', local_demo_available: false,
+        items: [{ symbol: 'QQQ', side: 'put', strike: 100, close: 100.1, observed_at: '2026-09-30T14:15:00Z', reaction: 'testing', status: 'testing', setup: null }],
+      } })
+      if (url === '/api/watchlist' || url === '/api/watchlist/universe') return Promise.resolve({ data: [{ id: 1, symbol: 'SPY' }] })
+      if (url === '/api/hot-options') return Promise.resolve({ data: volumePayload([]) })
+      return Promise.reject(new Error('Unexpected GET ' + url))
+    })
+    const wrapper = mountScanner(); await flushPromises()
+    expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['Wall activity', 'Near walls', 'Options volume'])
+    expect(wrapper.text()).toContain('All saved symbols')
+    expect(wrapper.get('[aria-label="Open QQQ wall chart"]').attributes('href')).toBe('/dashboard?symbol=QQQ&mode=intraday&tab=walls&timeframe=7d')
+    expect(axios.get.mock.calls.map(([url]) => url)).toEqual(['/api/intraday/wall-watchlist'])
+    expect(axios.post).not.toHaveBeenCalled()
+    const signal = axios.get.mock.calls[0][1].signal
+    await wrapper.get('#scanner-mode-gex').trigger('click'); await flushPromises()
+    expect(signal.aborted).toBe(true)
+    expect(wrapper.findComponent({ name: 'WallWatchlist' }).exists()).toBe(false)
+    expect(axios.post.mock.calls.filter(([url]) => url === '/api/scanner/walls')).toHaveLength(1)
+    const feedCalls = axios.get.mock.calls.filter(([url]) => url === '/api/intraday/wall-watchlist').length
+    await vi.advanceTimersByTimeAsync(120000); await flushPromises()
+    expect(axios.get.mock.calls.filter(([url]) => url === '/api/intraday/wall-watchlist')).toHaveLength(feedCalls)
+    await wrapper.get('#scanner-mode-volume').trigger('click'); await flushPromises()
+    expect(axios.get.mock.calls.filter(([url]) => url === '/api/hot-options')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('cancels a previous mode and ignores its late result after opening wall activity', async () => {
+    let finish, signal
+    axios.post.mockImplementationOnce((url, body, config) => { signal = config.signal; return new Promise(resolve => { finish = resolve }) })
+    const wrapper = mountScanner(); await flushPromises()
+    axios.get.mockImplementation(url => url === '/api/intraday/wall-watchlist'
+      ? Promise.resolve({ data: { schema_version: 'wall-watchlist.v1', session: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()), timeframe: '7d', state: 'outside_session', quote_delay_seconds: 900, watchlist_count: 0, assessed_count: 0, items: [] } })
+      : Promise.resolve({ data: [] }))
+    await wrapper.get('#scanner-mode-activity').trigger('click'); await flushPromises()
+    expect(signal.aborted).toBe(true)
+    finish({ data: wallPayload([wallItem('OLD')]) }); await flushPromises()
+    expect(wrapper.findComponent({ name: 'WallWatchlist' }).exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('OLD')
+    expect(wrapper.get('#scanner-mode-panel').attributes('aria-labelledby')).toBe('scanner-mode-activity')
+    wrapper.unmount()
+  })
   it('labels authoritative stored rankings truthfully and disables unsupported lookback changes', async () => {
     window.history.replaceState({}, '', '/scanner?scan=volume&limit=200&days=20')
     axios.get.mockImplementation((url) => {

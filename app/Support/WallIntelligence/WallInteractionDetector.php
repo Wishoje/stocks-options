@@ -120,7 +120,7 @@ final class WallInteractionDetector
             'reason' => 'Watching for completed price bars at this wall.', 'evidence_bar_ids' => []];
     }
 
-    private function identity(array $o, string $side): ?string
+    public function identity(array $o, string $side): ?string
     {
         $strike = $o['walls'][$side][0]['strike'] ?? null;
         if (! is_numeric($strike) || $strike <= 0 || empty($o['basis_key']) || empty($o['scope_key'])) {

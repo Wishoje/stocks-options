@@ -42,9 +42,18 @@ afterEach(() => {
 })
 
 describe('Wall navigation', () => {
+  it('accepts a local example handoff from Scanner and retains only single-symbol intraday tabs', async () => {
+    const id = 'a'.repeat(64)
+    const wrapper = await render(`symbol=SPY&mode=intraday&tab=walls&wall_demo=1&wall_event=${id}`)
+    expect(wrapper.findComponent({ name: 'IntradayWallTracker' }).props('initialDemoEventId')).toBe(id)
+    expect(wrapper.findComponent({ name: 'WallWatchlist' }).exists()).toBe(false)
+    expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['Live Flow', 'Wall tracking', 'Live Strikes'])
+    expect(axios.get).not.toHaveBeenCalled()
+  })
   it('opens Wall tracking independently, without requesting or polling flow data', async () => {
     const wrapper = await render('symbol=TSLA&mode=intraday&tab=walls&timeframe=7d')
     expect(wrapper.findComponent({ name: 'IntradayWallTracker' }).props('symbol')).toBe('TSLA')
+    expect(wrapper.findComponent({ name: 'WallWatchlist' }).exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'IntradayFlowPanel' }).exists()).toBe(false)
     expect(wrapper.text()).toContain('Intraday wall tracking')
     await vi.advanceTimersByTimeAsync(90_000); await flushPromises()

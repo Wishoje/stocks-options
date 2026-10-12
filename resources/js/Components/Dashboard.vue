@@ -27,7 +27,7 @@
             </svg>
           </button>
           <UiBadge
-            v-if="dataMode === 'intraday' && intradayTransition"
+            v-if="dataMode === 'intraday' && intradayTransition && !wallTrackingActive"
             tone="warning"
           >
             Updating selection
@@ -195,7 +195,7 @@
     >
       <!-- Loading / Error -->
       <div v-if="wallTrackingActive" class="gex-ui" data-theme="dark" data-density="compact">
-        <IntradayWallTracker :symbol="userSymbol" show-eod-link @open-eod="navigateWallView('eod', 'positioning')" />
+        <IntradayWallTracker :symbol="userSymbol" :initial-demo-event-id="initialWallDemoEventId" show-eod-link @open-eod="navigateWallView('eod', 'positioning')" />
       </div>
       <ui-error-block v-else-if="topError" :message="'Failed to load data'" :detail="topError"
                      :onRetry="() => dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : refreshIntraday()" />
@@ -965,6 +965,9 @@ const userSymbol = symbol
 const getDefaultTab = (mode) => mode === 'intraday' ? 'flow' : 'strikes'
 const activeTab = ref(initialDashboardState.tab)
 const wallTrackingActive = computed(() => dataMode.value === 'intraday' && activeTab.value === 'walls')
+const wallDemoQuery = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search)
+const initialWallDemoEventId = wallDemoQuery.get('wall_demo') === '1' && /^[a-f0-9]{64}$/.test(wallDemoQuery.get('wall_event') || '')
+  ? wallDemoQuery.get('wall_event') : ''
 const activeGuideTabLabel = computed(() =>
   dashboardTabItems.value.find(item => item.value === activeTab.value)?.label ?? activeTab.value
 )

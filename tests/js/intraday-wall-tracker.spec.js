@@ -31,6 +31,23 @@ beforeEach(() => { axios.get.mockReset(); window.history.replaceState({}, '', '/
 afterEach(() => { vi.useRealTimers() })
 
 describe('Intraday wall tracker', () => {
+  it.each([true, false])('opens a scanner example only when the server allows local demonstrations (%s)', async available => {
+    const event = { id: 'example', side: 'put', strike: 95, status: 'touch', observed_at: '2026-09-30T14:05:00Z', close: 95.01, reason: 'Price reached the wall.', evidence_bar_ids: [] }
+    axios.get.mockResolvedValueOnce({ data: { ...payload(), local_demo_available: available } })
+      .mockResolvedValueOnce({ data: { ...payload(), dataset: 'synthetic_review', wall_interaction: { state: 'demonstration', current: { put: event }, events: [event], bars: [] } } })
+    const wrapper = mount(IntradayWallTracker, { props: { symbol: 'SPY', initialDemoEventId: 'example' } }); await flushPromises()
+    expect(axios.get).toHaveBeenCalledTimes(available ? 2 : 1)
+    if (available) {
+      expect(wrapper.get('.wall-tracker__demo').text()).toContain('Synthetic')
+      expect(wrapper.get('.evidence').text()).toContain('Price reached the wall')
+      window.history.replaceState({}, '', '/dashboard?wall_demo=1&wall_event=example')
+      axios.get.mockResolvedValueOnce({ data: payload() })
+      await wrapper.get('.wall-tracker__context button').trigger('click'); await flushPromises()
+      expect(window.location.search).not.toContain('wall_demo')
+      expect(wrapper.find('.wall-tracker__demo').exists()).toBe(false)
+    }
+    wrapper.unmount()
+  })
   it('shows one summary by default and opens results on demand without another request', async () => {
     axios.get.mockResolvedValueOnce({ data: { ...payload(), wall_interaction: {
       state: 'session_review', current: {}, events: [], readings: [], bars: [],

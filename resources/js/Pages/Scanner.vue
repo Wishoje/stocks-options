@@ -10,6 +10,7 @@ import UiButton from '@/Components/UI/UiButton.vue'
 import UiMetric from '@/Components/UI/UiMetric.vue'
 import UiStatus from '@/Components/UI/UiStatus.vue'
 import UiTabs from '@/Components/UI/UiTabs.vue'
+import WallWatchlist from '@/Components/WallWatchlist.vue'
 import {
   SCANNER_TIMEFRAMES,
   closestStrikeGex,
@@ -24,6 +25,7 @@ import {
   validNearPoints,
   volumeDashboardUrl,
   wallDashboardUrl,
+  wallActivityDashboardUrl,
   wallHitCounts,
   wallTagsFor,
 } from '@/Pages/Scanner/scannerUtils.js'
@@ -80,8 +82,9 @@ let wallDetailTrigger = null
 let focusRestoreTimer = null
 
 const modeItems = [
-  { value: 'gex', label: 'GEX wall scanner' },
-  { value: 'volume', label: 'Volume scanner' },
+  { value: 'activity', label: 'Wall activity' },
+  { value: 'gex', label: 'Near walls' },
+  { value: 'volume', label: 'Options volume' },
 ]
 
 const wallLabelMeta = {
@@ -150,10 +153,12 @@ const sortedWallHitsByTimeframe = computed(() => Object.fromEntries(
 ))
 
 const wallTradeDates = computed(() => [...new Set(wallHits.value.map(hit => hit?.trade_date).filter(Boolean))].sort().reverse())
-const modeTitle = computed(() => scannerMode.value === 'volume' ? 'Most active options underlyings' : 'Symbols trading near major GEX walls')
+const modeTitle = computed(() => scannerMode.value === 'activity' ? 'Wall reactions across your watchlist'
+  : scannerMode.value === 'volume' ? 'Most active options underlyings' : 'Symbols trading near major GEX walls')
 const modeSubtitle = computed(() => scannerMode.value === 'volume'
   ? 'Compare activity, put/call balance, and watchlist membership to prioritize your next chart.'
-  : 'Scan the shared watchlist universe across four horizons, then inspect the wall profile or continue in the matching dashboard view.')
+  : scannerMode.value === 'activity' ? 'All saved symbols · Follow current price reactions and qualifying setups, then open a symbol’s wall chart.'
+    : 'Scan the shared watchlist universe across four horizons, then inspect the wall profile or continue in the matching dashboard view.')
 const wallStatusTitle = computed(() => {
   if (wallLoading.value) return 'Scanning the wall universe'
   if (wallRefreshing.value) return 'Refreshing wall matches'
@@ -477,10 +482,27 @@ watch([limit, days], ([nextLimit, nextDays], [previousLimit, previousDays]) => {
   if (nextDays !== previousDays && !lookbackSelectable.value) return
   if (nextLimit !== previousLimit || nextDays !== previousDays) loadHotOptions()
 })
-watch(scannerMode, mode => { if (mode === 'volume') loadHotOptions(); else loadWallHits() })
+watch(scannerMode, async mode => {
+  if (mode !== 'volume') {
+    hotSequence++; hotController?.abort(); hotController = null
+    loading.value = false; refreshing.value = false; pendingVolumeScope.value = null
+  }
+  if (mode !== 'gex') {
+    wallSequence++; wallController?.abort(); wallController = null
+    universeSequence++; universeController?.abort(); universeController = null
+    wallLoading.value = false; wallRefreshing.value = false; pendingWallScope.value = null
+    if (wallDetailOpen.value) closeWallDetail()
+  }
+  if (mode === 'activity') return
+  await Promise.all([loadWatchlist(), loadScannerUniverse()])
+  if (disposed || scannerMode.value !== mode) return
+  if (mode === 'volume') loadHotOptions()
+  else loadWallHits()
+})
 
 onMounted(async () => {
   syncScannerUrl()
+  if (scannerMode.value === 'activity') return
   await Promise.all([loadWatchlist(), loadScannerUniverse(), loadHotOptions()])
   if (!disposed && scannerMode.value === 'gex') await loadWallHits()
 })
@@ -511,7 +533,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="scanner-hero__controls">
               <UiTabs id="scanner-mode" v-model="scannerMode" label="Scanner mode" :items="modeItems" />
-              <fieldset class="scanner-density">
+              <fieldset v-if="scannerMode !== 'activity'" class="scanner-density">
                 <legend>Result density</legend>
                 <div class="gex-segmented">
                   <button type="button" :aria-pressed="resultDensity === 'comfortable'" @click="resultDensity = 'comfortable'">Comfortable</button>
@@ -521,7 +543,10 @@ onBeforeUnmount(() => {
             </div>
           </header>
 
-          <section v-if="scannerMode === 'volume'" id="scanner-mode-panel" role="tabpanel" aria-labelledby="scanner-mode-volume" class="scanner-mode-panel">
+          <section v-if="scannerMode === 'activity'" id="scanner-mode-panel" role="tabpanel" aria-labelledby="scanner-mode-activity" class="scanner-mode-panel">
+            <WallWatchlist :chart-href="wallActivityDashboardUrl" />
+          </section>
+          <section v-else-if="scannerMode === 'volume'" id="scanner-mode-panel" role="tabpanel" aria-labelledby="scanner-mode-volume" class="scanner-mode-panel">
             <div class="scanner-toolbar gex-panel" aria-label="Volume scanner filters">
               <fieldset>
                 <legend>Universe size</legend>

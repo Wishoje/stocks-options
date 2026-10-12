@@ -23,7 +23,7 @@
         <span v-if="!demo && data.quote_delay_seconds > 0">Quotes delayed {{ Math.round(data.quote_delay_seconds / 60) }} min · Times shown are market times</span>
         <span>Session {{ data.session }}</span>
         <span v-if="sessionLatest">As of {{ time(sessionLatest.observed_at) }} ET · {{ sessionReadingCount }} {{ sessionReadingCount === 1 ? 'reading' : 'readings' }} this session</span>
-        <button v-if="data.local_demo_available" type="button" @click="chooseDemo(!demo)">{{ demo ? 'Return to today’s timeline' : 'Preview local demonstration' }}</button>
+        <button v-if="data.local_demo_available" type="button" @click="toggleDemonstration">{{ demo ? 'Return to today’s timeline' : 'Preview local demonstration' }}</button>
       </div>
       <div v-if="!data.segments.length" class="wall-tracker__empty" role="status">
         <p>{{ data.availability?.message || `Waiting for today’s first wall reading for ${symbol}. This timeline updates automatically during the session.` }}</p>
@@ -147,7 +147,7 @@ import { useIntradayWalls } from '@/composables/useIntradayWalls'
 import WallDecisionPanel from '@/Components/WallDecisionPanel.vue'
 import WallInteractionIcon from '@/Components/WallInteractionIcon.vue'
 import { wallInteractionTitle as interactionTitle } from '@/utils/wallInteraction'
-const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean })
+const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean, initialDemoEventId: String })
 defineEmits(['open-eod'])
 const { data, loading, refreshing, error, demo, load, chooseDemo } = useIntradayWalls(() => props.symbol)
 const sides = ['put', 'call'], segmentIndex = ref(0), selectedIndex = ref(0)
@@ -258,6 +258,26 @@ async function inspectInteraction(event, scroll = false) {
     window.scrollTo({ top: Math.max(0, top), behavior: 'auto' })
   }
 }
+async function openDemonstration(eventId) {
+  await chooseDemo(true)
+  const event = data.value?.wall_interaction?.events?.find(event => event.id === eventId)
+  if (event) await inspectInteraction(event, false)
+}
+function toggleDemonstration() {
+  if (demo.value && typeof window !== 'undefined') {
+    const url = new URL(window.location.href)
+    url.searchParams.delete('wall_demo'); url.searchParams.delete('wall_event')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+  }
+  return chooseDemo(!demo.value)
+}
+let initialExampleOpened = false
+watch(() => data.value?.local_demo_available, available => {
+  if (available && props.initialDemoEventId && !initialExampleOpened) {
+    initialExampleOpened = true
+    openDemonstration(props.initialDemoEventId)
+  }
+})
 watch(segmentIndex, () => { selectedIndex.value = Math.max(0, observations.value.length - 1) }, { flush: 'sync' })
 watch(data, (value, previous) => {
   const oldWindow = previous?.segments[segmentIndex.value]

@@ -88,6 +88,20 @@ class UseLocalReviewClockTest extends TestCase
         });
     }
 
+    public function test_wall_watchlist_keeps_the_real_session_clock_when_eod_review_time_is_enabled(): void
+    {
+        $this->app['env'] = 'local';
+        config()->set('ui_review.now', self::REVIEW_NOW);
+        $clock = Carbon::parse('2026-10-12T18:30:00+00:00');
+        Carbon::setTestNow($clock);
+        $request = \Illuminate\Http\Request::create('/api/intraday/wall-watchlist');
+        app(UseLocalReviewClock::class)->handle($request, function () use ($clock) {
+            $this->assertSame($clock->toIso8601String(), now()->utc()->toIso8601String());
+
+            return response()->noContent();
+        });
+    }
+
     public function test_non_local_environments_ignore_an_opt_in_value(): void
     {
         config()->set('ui_review.now', self::REVIEW_NOW);

@@ -1,0 +1,198 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Watchlist;
+use App\Support\MarketSession;
+use App\Support\Symbols;
+use App\Support\WallIntelligence\IntradayWallDemo;
+use App\Support\WallIntelligence\IntradayWallModel;
+use App\Support\WallIntelligence\WallInteractionDetector;
+use App\Support\WallIntelligence\WallInteractionRules;
+use App\Support\WallIntelligence\WallSetupRules;
+use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+
+final class WallWatchlistService
+{
+    public function read(int $userId): array
+    {
+        $now = CarbonImmutable::now('UTC');
+        $market = MarketSession::describe($now);
+        $symbols = Watchlist::where('user_id', $userId)->orderBy('symbol')->distinct()->pluck('symbol')
+            ->filter(fn ($symbol) => Symbols::isValid($symbol) && $symbol === Symbols::canon($symbol))->values()->all();
+        $result = ['schema_version' => 'wall-watchlist.v1', 'session' => $market['session_date'],
+            'timeframe' => IntradayWallTracker::LIVE_TIMEFRAME, 'generated_at' => $now->toIso8601String(),
+            'quote_delay_seconds' => max(900, (int) config('wall_tracking.quote_delay_seconds')),
+            'watchlist_count' => count($symbols), 'assessed_count' => 0,
+            'state' => $market['is_rth'] ? 'ready' : 'outside_session', 'items' => [],
+            'refresh_until' => $market['is_rth'] ? $market['closes_at'] : null,
+            'next_refresh_at' => CarbonImmutable::parse($market['next_open_at'])->addMinutes(15)->toIso8601String(),
+            'local_demo_available' => app()->environment('local')];
+        if (! $symbols || ! $market['is_rth']) {
+            return $result;
+        }
+        $cutoff = app(WallInteractionService::class)->cutoff($now);
+        $key = 'wall-watchlist:projection:v1:'.hash('sha256', json_encode([$userId, $symbols, $result['session']]));
+        [$models, $assessments] = Cache::remember($key, 30, function () use ($userId, $symbols, $result, $now, $cutoff) {
+            $models = $this->latest($userId, $symbols, $result['session'], 'intraday_capture', IntradayWallModel::SCHEMA,
+                IntradayWallModel::MODEL, 'model_observation', 'scope->timeframe', $now)
+                ->select(['w.symbol', 'w.observed_at', 'w.payload_json->scope as scope', 'w.payload_json->scope_key as scope_key',
+                    'w.payload_json->basis_key as basis_key', 'w.payload_json->provenance->quote_source as quote_source',
+                    'w.payload_json->revision_of as revision_of', 'w.payload_json->walls as walls'])->get()->keyBy('symbol');
+            $assessments = $this->latest($userId, $symbols, $result['session'], 'wall_interactions', WallInteractionDetector::SCHEMA,
+                WallInteractionRules::VERSION, 'interaction_assessment', 'timeframe', $cutoff)
+                ->select(['w.symbol', 'w.observed_at', 'w.payload_json->current as current', 'w.payload_json->state as state',
+                    'w.payload_json->setups->current as setups', 'w.payload_json->setups->rule_version as setup_rules'])->get()->keyBy('symbol');
+
+            return [$models, $assessments];
+        });
+        $rules = WallInteractionRules::profile();
+        $detector = new WallInteractionDetector;
+        foreach ($symbols as $symbol) {
+            $model = $models->get($symbol);
+            $assessment = $assessments->get($symbol);
+            if (! $model || ! $assessment || $assessment->state !== 'ready'
+                || ! $this->recent($model->observed_at, $now, $result['quote_delay_seconds'] + (int) config('wall_tracking.quote_max_age_seconds'))
+                || ! $this->recent($assessment->observed_at, $cutoff, $rules['maximum_bar_age_seconds'])) {
+                continue;
+            }
+            $observation = ['scope' => $this->array($model->scope), 'scope_key' => $model->scope_key,
+                'basis_key' => $model->basis_key, 'walls' => $this->array($model->walls),
+                'revision_of' => is_numeric($model->revision_of) ? (int) $model->revision_of : null,
+                'provenance' => ['quote_source' => $model->quote_source]];
+            if (($observation['scope']['symbol'] ?? null) !== $symbol || ($observation['scope']['session'] ?? null) !== $result['session']
+                || ($observation['scope']['timeframe'] ?? null) !== IntradayWallTracker::LIVE_TIMEFRAME) {
+                continue;
+            }
+            $current = $this->array($assessment->current);
+            $setups = $assessment->setup_rules === WallSetupRules::VERSION ? $this->array($assessment->setups) : [];
+            $comparable = false;
+            foreach (['put', 'call'] as $side) {
+                $reaction = $current[$side] ?? [];
+                $identity = $detector->identity($observation, $side);
+                if (! $identity || ($reaction['wall_identity'] ?? null) !== $identity
+                    || ($reaction['strike'] ?? null) != ($observation['walls'][$side][0]['strike'] ?? null)
+                    || ! is_numeric($reaction['close'] ?? null) || $reaction['close'] <= 0
+                    || ! $this->recent($reaction['observed_at'] ?? null, $cutoff, $rules['maximum_bar_age_seconds'])) {
+                    continue;
+                }
+                $comparable = true;
+                $setup = $setups[$side] ?? [];
+                $qualified = $this->qualified($setup, $reaction, $cutoff);
+                $status = $reaction['status'] ?? 'unknown';
+                if (! $qualified && ! in_array($status, ['approaching', 'testing', 'touch', 'bounce', 'rejection', 'break',
+                    'acceptance_above', 'acceptance_below', 'reclaim', 'failed_reclaim', 'confirmed_breakout', 'confirmed_breakdown'], true)) {
+                    continue;
+                }
+                $result['items'][] = ['symbol' => $symbol, 'side' => $side, 'strike' => $reaction['strike'],
+                    'observed_at' => $reaction['observed_at'], 'close' => $reaction['close'], 'reaction' => $status,
+                    'status' => $qualified ? 'conditions_met' : $status,
+                    'setup' => $qualified ? array_intersect_key($setup, array_flip(['pattern', 'direction', 'entry_zone',
+                        'invalidation', 'target', 'expires_at', 'evidence_checks', 'evidence_grade'])) : null];
+            }
+            $result['assessed_count'] += (int) $comparable;
+        }
+        usort($result['items'], fn ($a, $b) => $this->priority($a['status']) <=> $this->priority($b['status'])
+            ?: strcmp($b['observed_at'], $a['observed_at']) ?: strcmp($a['symbol'], $b['symbol']) ?: strcmp($a['side'], $b['side']));
+
+        return $result;
+    }
+
+    /** Two bounded projection queries, independent of the number of symbols. */
+    private function latest(int $userId, array $symbols, string $session, string $dataset, string $schema, string $version,
+        string $kind, string $scopePath, CarbonImmutable $cutoff): Builder
+    {
+        $base = DB::table('wall_observations')->whereColumn('wall_observations.symbol', 'saved.symbol')->where('dataset', $dataset)
+            ->where('analysis_session', $session)->where('schema_version', $schema)->where('model_version', $version)
+            ->where('observation_kind', $kind)
+            ->where('observed_at', '<=', $cutoff->toDateTimeString());
+        if ($dataset === 'wall_interactions') {
+            // Match the indexed scope key written by WallInteractionService.
+            // Do not parse every historical price-bar bundle just to find its scope.
+            $base->whereIn('scope_key', array_map(fn ($symbol) => hash('sha256', json_encode([
+                $symbol, $session, $dataset, IntradayWallTracker::LIVE_TIMEFRAME, WallInteractionRules::VERSION,
+            ])), $symbols));
+        } else {
+            $base->where('payload_json->'.$scopePath, IntradayWallTracker::LIVE_TIMEFRAME);
+        }
+        // Seek the newest indexed record for each saved symbol. Aggregating
+        // every assessment in the session repeatedly parses large JSON bundles.
+        $newest = $base->select('wall_observations.id')->orderByDesc('observed_at')->orderByDesc('id')->limit(1);
+        $ids = DB::table('watchlists as saved')->where('saved.user_id', $userId)->whereIn('saved.symbol', $symbols)
+            ->selectSub($newest, 'latest_id')->distinct();
+
+        return DB::table('wall_observations as w')->whereIn('w.id', $ids);
+    }
+
+    private function qualified(array $setup, array $reaction, CarbonImmutable $cutoff): bool
+    {
+        if (($setup['status'] ?? null) !== 'conditions_met' || ($setup['wall_identity'] ?? null) !== $reaction['wall_identity']
+            || ! ($setup['entry_eligible_at_observation'] ?? false) || ! in_array($setup['direction'] ?? null, ['bullish', 'bearish'], true)
+            || empty($setup['confirmed_at']) || CarbonImmutable::parse($setup['confirmed_at'])->greaterThan(CarbonImmutable::parse($reaction['observed_at']))
+            || ($setup['observed_at'] ?? null) !== $reaction['observed_at']
+            || ! isset($setup['expires_at']) || CarbonImmutable::parse($setup['expires_at'])->lessThan($cutoff)) {
+            return false;
+        }
+        $levels = [$setup['entry_zone']['low'] ?? null, $setup['entry_zone']['high'] ?? null,
+            $setup['invalidation']['price'] ?? null, $setup['target']['strike'] ?? null, $reaction['close'] ?? null];
+        foreach ($levels as $value) {
+            if (! is_numeric($value) || ! is_finite((float) $value) || $value <= 0) {
+                return false;
+            }
+        }
+
+        return $levels[0] < $levels[1] && ($setup['direction'] === 'bullish'
+            ? $levels[4] > $levels[0] && $levels[4] <= $levels[1]
+            : $levels[4] >= $levels[0] && $levels[4] < $levels[1]);
+    }
+
+    private function recent(?string $at, CarbonImmutable $cutoff, int $seconds): bool
+    {
+        if (! $at) {
+            return false;
+        }
+        $time = CarbonImmutable::parse($at);
+
+        return $time->lessThanOrEqualTo($cutoff) && $cutoff->getTimestamp() - $time->getTimestamp() <= $seconds;
+    }
+
+    private function array(mixed $value): array
+    {
+        return is_array($value) ? $value : (json_decode($value ?? '[]', true) ?: []);
+    }
+
+    private function priority(string $status): int
+    {
+        return $status === 'conditions_met' ? 0 : ($status === 'approaching' ? 2 : 1);
+    }
+
+    public function demonstration(): array
+    {
+        abort_unless(app()->environment('local'), 404);
+        $items = [];
+        foreach (['SPY', 'QQQ', 'TSLA'] as $symbol) {
+            $data = app(IntradayWallDemo::class)->build($symbol, IntradayWallTracker::LIVE_TIMEFRAME);
+            $interaction = $data['wall_interaction'];
+            $events = collect($interaction['events']);
+            $setup = $symbol === 'SPY' ? collect($interaction['setups']['readings'])->first(fn ($setup) => $setup['status'] === 'conditions_met'
+                && $events->contains(fn ($event) => $event['side'] === $setup['side'] && $event['observed_at'] === $setup['observed_at'])) : null;
+            $event = $setup ? collect($interaction['events'])->first(fn ($event) => $event['side'] === $setup['side'] && $event['observed_at'] === $setup['observed_at'])
+                : ($events->firstWhere('status', $symbol === 'QQQ' ? 'touch' : 'testing') ?? $events->first());
+            if (! $event) {
+                continue;
+            }
+            $items[] = ['symbol' => $symbol, 'side' => $event['side'], 'strike' => $event['strike'],
+                'observed_at' => $event['observed_at'], 'close' => $event['close'], 'reaction' => $event['status'],
+                'status' => $setup ? 'conditions_met' : $event['status'], 'setup' => $setup,
+                'event_id' => $event['id']];
+        }
+
+        return ['schema_version' => 'wall-watchlist.v1', 'session' => '2026-09-29', 'timeframe' => IntradayWallTracker::LIVE_TIMEFRAME,
+            'generated_at' => now()->toIso8601String(), 'quote_delay_seconds' => 900, 'watchlist_count' => 3,
+            'assessed_count' => 3, 'state' => 'demonstration', 'items' => $items,
+            'refresh_until' => null, 'next_refresh_at' => null, 'local_demo_available' => true];
+    }
+}
