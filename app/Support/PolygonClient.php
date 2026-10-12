@@ -27,6 +27,7 @@ class PolygonClient
         try {
             $response = app(ProviderConcurrencyLimiter::class)->massive(
                 fn () => $this->http()->get($url, $params),
+                blockForSeconds: 2,
                 requestKey: ProviderRequestReplay::fingerprint($url, $params)
             );
         } catch (\Throwable) {
