@@ -15,6 +15,9 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AiExportController extends Controller
 {
+    // SUBSTR uses character offsets, so a UTF-8 chunk is at most 4 MiB.
+    private const PAYLOAD_CHUNK_CHARACTERS = 1024 * 1024;
+
     private const METADATA_COLUMNS = [
         'id',
         'user_id',
@@ -144,17 +147,23 @@ class AiExportController extends Controller
             return response()->json(['message' => 'Export is not ready yet.'], 409);
         }
 
-        $payloadJson = AiExport::query()
-            ->whereKey($item->id)
-            ->value('payload_json');
+        $firstChunk = $this->readPayloadChunk($item, 1);
 
-        if (is_string($payloadJson) && $payloadJson !== '') {
+        if (is_string($firstChunk) && $firstChunk !== '') {
             return response()->streamDownload(
-                function () use ($payloadJson) {
-                    echo $payloadJson;
+                function () use ($item, $firstChunk) {
+                    $offset = 1;
+                    $chunk = $firstChunk;
+
+                    do {
+                        echo $chunk;
+
+                        $offset += self::PAYLOAD_CHUNK_CHARACTERS;
+                        $chunk = $this->readPayloadChunk($item, $offset);
+                    } while (is_string($chunk) && $chunk !== '');
                 },
                 $item->file_name ?: "watchlist-eod-ai-export-{$item->id}.json",
-                ['Content-Type' => 'application/json']
+                ['Content-Type' => 'application/json', 'X-Accel-Buffering' => 'no']
             );
         }
 
@@ -173,6 +182,17 @@ class AiExportController extends Controller
             $item->file_name ?: basename($item->file_path),
             ['Content-Type' => 'application/json']
         );
+    }
+
+    private function readPayloadChunk(AiExport $export, int $offset): ?string
+    {
+        // Slice in SQL: streaming a string already loaded in PHP still exhausts
+        // the web process's memory for large exports.
+        return $export->newQuery()
+            ->whereKey($export->id)
+            ->toBase()
+            ->selectRaw('SUBSTR(payload_json, ?, ?) AS payload_chunk', [$offset, self::PAYLOAD_CHUNK_CHARACTERS])
+            ->value('payload_chunk');
     }
 
     private function authorizeExport(AiExport $export): void
