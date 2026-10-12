@@ -10,6 +10,8 @@ The short expiry basket includes daily options where available and weekly option
 
 Scheduled wall and price-evidence commands run in the background with overlap protection. Wall capture retains its 90-second round-robin budget. Price evidence retains its 60-second budget, provider backoff and one request per symbol per five minutes. Live evidence processing uses the 1W scope only. A symbol exception does not prevent the remaining symbols from being checked. These commands do not add calculator jobs or consume the intraday options worker queue.
 
+Price evidence starts one minute after the five-minute quote and wall cycle. The latest result is retained under `walls:bars:status:{symbol}:{session}` for operational checks. A throttled or overlapping call does not overwrite that result.
+
 Only the mounted, visible tracker polls its stored timeline once per minute. Opening the page does not fetch provider data or request collection for other scopes. A page opened before the market starts polling when the server's next collection window begins. Changing symbols cancels the prior request. JSON export and AI Export use the same current-session 1W scope independently of the EOD scope.
 
 ## Input policy

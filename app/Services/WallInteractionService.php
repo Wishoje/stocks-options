@@ -40,6 +40,18 @@ final class WallInteractionService
 
     public function collect(string $symbol, string $session, CarbonImmutable $now): array
     {
+        $result = $this->collectCurrent($symbol, $session, $now);
+        if (! in_array($result['status'], ['recently_checked', 'busy'], true)) {
+            Cache::put('walls:bars:status:'.$symbol.':'.$session, [
+                ...$result, 'checked_at' => $now->toIso8601String(),
+            ], $now->addDay());
+        }
+
+        return $result;
+    }
+
+    private function collectCurrent(string $symbol, string $session, CarbonImmutable $now): array
+    {
         if (Cache::has('walls:bars:provider-backoff')) {
             return ['status' => 'provider_backoff'];
         }

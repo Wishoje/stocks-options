@@ -15,7 +15,8 @@ use Illuminate\Support\Facades\Schedule;
 Schedule::command('walls:capture-intraday')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer()->runInBackground()
     ->when(fn () => (bool) config('wall_tracking.enabled'));
 
-Schedule::command('walls:capture-interactions')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer()->runInBackground()
+// Let regular quotes and wall capture run before requesting price evidence.
+Schedule::command('walls:capture-interactions')->cron('1-59/5 * * * *')->withoutOverlapping(5)->onOneServer()->runInBackground()
     ->when(fn () => (bool) config('wall_tracking.interactions_enabled'));
 
 Schedule::command('social:tick')->everyMinute()->withoutOverlapping(5)->onOneServer();
