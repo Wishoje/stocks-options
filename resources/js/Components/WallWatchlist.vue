@@ -2,6 +2,7 @@
 import { computed, ref, watch, onScopeDispose } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
 import { wallInteractionTitle } from '@/utils/wallInteraction'
+import WallAlertControls from '@/Components/WallAlertControls.vue'
 
 const props = defineProps({ selectedSymbol: String, chartHref: Function })
 const emit = defineEmits(['open'])
@@ -36,6 +37,7 @@ watch(() => data.value?.session, () => { setupsOnly.value = false; limit.value =
   <section class="wall-watchlist" aria-label="Watchlist wall activity" :aria-busy="loading || refreshing">
     <header><div><h3>Which symbols need attention?</h3><p>All saved symbols · 1W expiries · Prices delayed 15 min</p></div>
       <button type="button" :disabled="loading || refreshing" @click="load()">{{ refreshing ? 'Refreshing…' : 'Refresh watchlist' }}</button></header>
+    <WallAlertControls />
     <p v-if="loading" class="notice" role="status">Checking your watchlist’s wall assessments…</p>
     <p v-if="error" class="notice error" role="alert">{{ error }} <button type="button" @click="load()">Retry</button></p>
     <template v-if="data">

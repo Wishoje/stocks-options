@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, getCurrentInstance, nextTick, onMounted, onUnmounted, provide, ref } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import ApplicationMark from '@/Components/ApplicationMark.vue';
@@ -8,10 +8,19 @@ import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
 import NavLink from '@/Components/NavLink.vue';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink.vue';
+import WallAlertCenter from '@/Components/WallAlertCenter.vue';
+import { useWallAlerts } from '@/composables/useWallAlerts';
+import { WALL_ALERTS } from '@/Support/wallAlerts';
+import { WALL_WATCHLIST_OWNER } from '@/Support/wallWatchlistFeed';
 
 defineProps({
     title: String,
 });
+
+const layout = getCurrentInstance();
+const wallAlertOwner = computed(() => layout.proxy.$page?.props?.auth?.user?.id || null);
+provide(WALL_WATCHLIST_OWNER, wallAlertOwner);
+provide(WALL_ALERTS, useWallAlerts(wallAlertOwner));
 
 const showingNavigationDropdown = ref(false);
 const mobileNavigationButton = ref(null);
@@ -127,6 +136,7 @@ onUnmounted(() => document.removeEventListener('keydown', closeNavigationOnEscap
                         </div>
 
                         <div class="dashboard-topbar__account">
+                            <WallAlertCenter />
                             <div class="ms-3 relative">
                                 <!-- Teams Dropdown -->
                                 <Dropdown

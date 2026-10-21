@@ -90,6 +90,7 @@ final class WallWatchlistService
                 $result['items'][] = ['symbol' => $symbol, 'side' => $side, 'strike' => $reaction['strike'],
                     'observed_at' => $reaction['observed_at'], 'close' => $reaction['close'], 'reaction' => $status,
                     'status' => $qualified ? 'conditions_met' : $status,
+                    'alert_keys' => $this->alertKeys($symbol, $result['session'], $reaction, $qualified ? $setup : []),
                     'setup' => $qualified ? array_intersect_key($setup, array_flip(['pattern', 'direction', 'entry_zone',
                         'invalidation', 'target', 'expires_at', 'evidence_checks', 'evidence_grade'])) : null];
             }
@@ -147,6 +148,21 @@ final class WallWatchlistService
         return $levels[0] < $levels[1] && ($setup['direction'] === 'bullish'
             ? $levels[4] > $levels[0] && $levels[4] <= $levels[1]
             : $levels[4] >= $levels[0] && $levels[4] < $levels[1]);
+    }
+
+    /** Identities stay fixed across repeated completed-bar assessments. */
+    private function alertKeys(string $symbol, string $session, array $reaction, array $setup): array
+    {
+        $setupId = $setup['id'] ?? null;
+        $episode = $reaction['episode_started_at'] ?? null;
+        $identity = $reaction['wall_identity'] ?? null;
+
+        return [
+            'setup' => is_string($setupId) && preg_match('/^[a-f0-9]{64}$/', $setupId)
+                ? hash('sha256', json_encode([$symbol, $session, 'setup', $setupId])) : null,
+            'testing' => ($reaction['status'] ?? null) === 'testing' && $identity && $episode
+                ? hash('sha256', json_encode([$symbol, $session, 'testing', $identity, $episode, WallInteractionRules::VERSION])) : null,
+        ];
     }
 
     private function recent(?string $at, CarbonImmutable $cutoff, int $seconds): bool

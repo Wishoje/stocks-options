@@ -55,8 +55,8 @@ class WallWatchlistTest extends TestCase
     {
         $identity = (new WallInteractionDetector)->identity($model, 'put');
         $row = ['side' => 'put', 'strike' => 100, 'status' => $status, 'wall_identity' => $identity,
-            'observed_at' => '2026-09-30T14:15:00Z', 'close' => 100.1];
-        $setup = array_replace(['status' => 'conditions_met', 'direction' => 'bullish', 'pattern' => 'reversal',
+            'observed_at' => '2026-09-30T14:15:00Z', 'close' => 100.1, 'episode_started_at' => '2026-09-30T14:00:00Z'];
+        $setup = array_replace(['id' => hash('sha256', $identity.'setup'), 'status' => 'conditions_met', 'direction' => 'bullish', 'pattern' => 'reversal',
             'entry_eligible_at_observation' => true, 'observed_at' => $row['observed_at'], 'wall_identity' => $identity,
             'confirmed_at' => $row['observed_at'], 'expires_at' => '2026-09-30T14:30:00Z',
             'entry_zone' => ['low' => 100.05, 'high' => 100.15], 'invalidation' => ['price' => 99.95, 'close_side' => 'below'],
@@ -248,6 +248,46 @@ class WallWatchlistTest extends TestCase
         $this->getJson('/api/intraday/wall-watchlist?user_id=999&symbols[]=SPY&session=2026-09-29')
             ->assertOk()->assertJsonPath('watchlist_count', 0)->assertJsonPath('session', '2026-09-30')
             ->assertHeader('Cache-Control', 'no-store, private');
+    }
+
+    public function test_alert_identities_stay_fixed_across_repeated_readings_and_change_with_new_sequences(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $this->record($model, 'intraday_capture');
+        $assessment = $this->assessment($model);
+        $this->record($assessment, 'wall_interactions');
+        $first = app(WallWatchlistService::class)->read(987)['items'][0]['alert_keys'];
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $first['setup']);
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $first['testing']);
+
+        $assessment['as_of'] = $assessment['current']['put']['observed_at'] = $assessment['setups']['current']['put']['observed_at'] = '2026-09-30T14:20:00Z';
+        $this->record($assessment, 'wall_interactions');
+        $this->travelTo(CarbonImmutable::parse('2026-09-30T14:36:00Z'));
+        $again = app(WallWatchlistService::class)->read(987)['items'][0]['alert_keys'];
+        $this->assertSame($first, $again);
+
+        $assessment['current']['put']['episode_started_at'] = '2026-09-30T14:10:00Z';
+        $assessment['setups']['current']['put']['id'] = hash('sha256', 'second-sequence');
+        $this->record($assessment, 'wall_interactions');
+        $this->travelTo(CarbonImmutable::parse('2026-09-30T14:37:00Z'));
+        $changed = app(WallWatchlistService::class)->read(987)['items'][0]['alert_keys'];
+        $this->assertNotSame($first['setup'], $changed['setup']);
+        $this->assertNotSame($first['testing'], $changed['testing']);
+    }
+
+    public function test_alert_keys_never_promote_an_expired_setup_or_invent_an_unknown_event_identity(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $this->record($model, 'intraday_capture');
+        $assessment = $this->assessment($model, 'testing', ['status' => 'expired']);
+        unset($assessment['current']['put']['episode_started_at']);
+        $this->record($assessment, 'wall_interactions');
+        $row = app(WallWatchlistService::class)->read(987)['items'][0];
+        $this->assertSame('testing', $row['status']);
+        $this->assertSame(['setup' => null, 'testing' => null], $row['alert_keys']);
+        $this->assertNull($row['setup']);
     }
 
     public function test_demonstration_is_local_only_and_uses_the_existing_recorded_examples(): void

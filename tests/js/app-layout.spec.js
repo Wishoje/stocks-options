@@ -3,6 +3,7 @@ import axios from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AppLayout from '@/Layouts/AppLayout.vue'
+import WallWatchlist from '@/Components/WallWatchlist.vue'
 
 const router = {
   post: vi.fn(),
@@ -123,6 +124,26 @@ describe('AppLayout navigation shell', () => {
     expect(blocked.findAll('main')).toHaveLength(1)
     expect(blocked.get('#application-page-content').attributes('tabindex')).toBe('-1')
     blocked.unmount()
+  })
+
+  it('provides account-scoped alert controls to Scanner content without a second feed request', async () => {
+    const session = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    axios.get.mockResolvedValue({ data: { schema_version: 'wall-watchlist.v1', session, timeframe: '7d',
+      state: 'outside_session', items: [], watchlist_count: 0, assessed_count: 0, quote_delay_seconds: 900,
+      refresh_until: null, next_refresh_at: null } })
+    const wrapper = mount(AppLayout, {
+      attachTo: document.body, props: { title: 'Scanner' }, slots: { default: WallWatchlist },
+      global: { mocks: { $page: { props: pageProps(42) }, route: routeMock }, stubs: componentStubs },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Alert me to new setups')
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    await wrapper.get('.alert-switch input').setValue(true); await flushPromises()
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    await wrapper.get('.alert-options button').trigger('click'); await flushPromises()
+    expect(document.body.textContent).toContain('Example notification. No market event.')
+    wrapper.unmount()
+    expect(document.querySelector('.wall-alert-toast')).toBeNull()
   })
 
   it('opens the mobile menu with focus and restores focus when Escape closes it', async () => {
