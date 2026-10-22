@@ -57,6 +57,7 @@
             <small>USD per 1% price move</small>
           </article>
         </div>
+        <IntradayGammaContext :reading="selected" :readings="observations.slice(0, selectedIndex + 1)" />
         <div class="wall-tracker__chart">
           <div class="wall-tracker__chart-heading">
             <div><h3>Wall levels &amp; price</h3><p>{{ showFullSession ? `Showing all ${sessionReadingCount} session readings` : `Showing ${observations.length} of ${sessionReadingCount} session readings` }} · Times in ET</p></div>
@@ -146,6 +147,7 @@ import { computed, ref, watch, onScopeDispose, nextTick } from 'vue'
 import { useIntradayWalls } from '@/composables/useIntradayWalls'
 import WallDecisionPanel from '@/Components/WallDecisionPanel.vue'
 import WallInteractionIcon from '@/Components/WallInteractionIcon.vue'
+import IntradayGammaContext from '@/Components/IntradayGammaContext.vue'
 import { wallInteractionTitle as interactionTitle } from '@/utils/wallInteraction'
 const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean, initialDemoEventId: String })
 defineEmits(['open-eod'])

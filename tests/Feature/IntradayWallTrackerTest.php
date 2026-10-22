@@ -351,6 +351,11 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertSame('already_recorded', $again['status']);
         $this->assertSame($first['id'], $again['id']);
         $this->assertSame(2, WallObservation::count()); // One immutable input set, one reading.
+        $context = json_decode(WallObservation::findOrFail($first['id'])->payload_json, true)['gamma_context'];
+        $this->assertSame('ready', $context['status']);
+        $this->assertSame('intraday-fixed-reference-iv-gamma-profile.v1', $context['model_version']);
+        $this->assertArrayNotHasKey('curve', $context);
+        $this->assertEqualsWithDelta(100, $context['reference_price'], .000001);
         $this->rows(oi: 250);
         $tracker->capture('SPY', $this->now());
         $this->assertSame(4, WallObservation::count());
@@ -375,6 +380,11 @@ class IntradayWallTrackerTest extends TestCase
         $this->assertCount(2, $tracker->history('SPY')['segments'][0]['observations']);
         $this->assertArrayNotHasKey('strike_data', $tracker->history('SPY')['segments'][0]['observations'][0]);
         $this->assertArrayHasKey('strike_data', json_decode($json, true));
+        $history = $tracker->history('SPY');
+        $new = $history['segments'][0]['observations'][1];
+        $this->assertSame($new['gamma_context'], $history['gamma_context']);
+        $this->assertSame($new['observed_at'], $new['gamma_context']['observed_at']);
+        $this->assertEqualsWithDelta($new['net_gex'], $new['gamma_context']['net_gex_at_spot'], .000001);
     }
 
     public function test_a_revised_price_at_the_same_time_is_preserved_and_not_treated_as_migration(): void

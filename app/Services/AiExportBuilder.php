@@ -123,6 +123,7 @@ class AiExportBuilder
                 'latest' => data_get($item, 'intraday_volatility.data.summary'),
             ] : null,
             'term_structure' => $this->summarizeTerm($termData),
+            'intraday_gamma_context' => data_get($item, 'intraday_walls.ok') ? data_get($item, 'intraday_walls.data.gamma_context') : null,
             'intraday_setups' => data_get($item, 'intraday_walls.ok') ? [
                 'session' => data_get($item, 'intraday_walls.data.session'),
                 'timeframe' => data_get($item, 'intraday_walls.data.timeframe'),

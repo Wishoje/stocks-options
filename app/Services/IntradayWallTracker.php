@@ -9,6 +9,7 @@ use App\Support\GexExpirationUniverse;
 use App\Support\IntradayExpiryCatalog;
 use App\Support\MarketSession;
 use App\Support\Symbols;
+use App\Support\WallIntelligence\IntradayGammaContext;
 use App\Support\WallIntelligence\IntradayWallModel;
 use App\Support\WallIntelligence\WallIvReference;
 use App\Support\WallIntelligence\WallSnapshotContract;
@@ -188,8 +189,14 @@ class IntradayWallTracker
             if ($original['observed_at'] === $observation['observed_at'] && $original['spot'] !== $observation['spot']) {
                 $observation['revision_of'] = $existing->id;
                 $hash = WallSnapshotContract::hash(['quote_revision', $hash, $observation['spot']]);
+                $existing = WallObservation::where('content_hash', $hash)->first();
+            }
+            if ($existing) {
+                return $existing;
             }
         }
+
+        $observation['gamma_context'] = (new IntradayGammaContext)->build($basis, $observation);
 
         return DB::transaction(function () use ($basis, $observation, $hash) {
             $this->insert($basis, $observation, 'intraday_basis', $basis['basis_key'], $basis);
@@ -276,6 +283,9 @@ class IntradayWallTracker
     public function response(string $symbol, ?string $session, array $observations, string $timeframe = self::LIVE_TIMEFRAME): array
     {
         $market = MarketSession::describe();
+        $segments = (new IntradayWallModel)->timeline($observations);
+        $lastSegment = $segments[array_key_last($segments)] ?? null;
+        $latest = $lastSegment ? $lastSegment['observations'][array_key_last($lastSegment['observations'])] : null;
 
         return ['schema_version' => IntradayWallModel::SCHEMA, 'symbol' => $symbol, 'session' => $session,
             'dataset' => 'intraday_capture', 'timeframe' => $timeframe, 'units' => 'USD_per_1pct_move',
@@ -288,7 +298,7 @@ class IntradayWallTracker
                 ? CarbonImmutable::parse($market['closes_at'])->addMinutes(15)->toIso8601String() : null,
             'model_description' => 'Modeled walls using changing price and time, with prior-session OI and recorded reference IV held fixed. Reference IV uses the exact contract from up to three completed sessions; dates are retained in the evidence. Zero interest and dividends; 100-share contracts; European gamma approximation.',
             'migration_basis' => 'last_strike_minus_first_comparable_strike',
-            'segments' => (new IntradayWallModel)->timeline($observations),
+            'segments' => $segments, 'gamma_context' => $latest['gamma_context'] ?? null,
             'interpretation' => 'A stable wall is not confirmation of support or resistance. A moving wall is not a break signal.',
             'historical_outcome_eligible' => false];
     }

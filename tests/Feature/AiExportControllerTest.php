@@ -20,6 +20,8 @@ class AiExportControllerTest extends TestCase
     public function test_builder_resolves_wall_controller_dependencies_and_keeps_setup_context(): void
     {
         $payload = ['symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => '7d',
+            'gamma_context' => ['status' => 'ready', 'model_version' => 'intraday-fixed-reference-iv-gamma-profile.v1',
+                'regime' => 'positive_gamma', 'nearest_crossing' => ['price' => 99.5, 'below_sign' => -1, 'above_sign' => 1]],
             'wall_interaction' => ['setups' => ['rule_version' => 'conditional-walls.v1',
                 'as_of' => '2026-09-30T15:00:00Z', 'current' => ['put' => ['status' => 'watch']]],
                 'setup_reviews' => ['rule_version' => 'frozen-levels-60m-close.v1', 'summary' => ['qualified' => 2, 'target_reached' => 1]]]];
@@ -29,6 +31,7 @@ class AiExportControllerTest extends TestCase
         $item = $result['items'][0];
         $this->assertTrue($item['intraday_walls']['ok']);
         $this->assertSame($payload, $item['intraday_walls']['data']);
+        $this->assertSame($payload['gamma_context'], $item['summary']['intraday_gamma_context']);
         $this->assertSame('conditional-walls.v1', $item['summary']['intraday_setups']['rule_version']);
         $this->assertFalse($item['summary']['intraday_setups']['actionable']);
         $this->assertSame(2, $item['summary']['intraday_setups']['recorded_reviews']['qualified']);

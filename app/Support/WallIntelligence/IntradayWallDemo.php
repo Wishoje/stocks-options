@@ -32,6 +32,10 @@ final class IntradayWallDemo
             $previous = $close;
         }
         $observations[] = $model->observe($basis, $previous, $at->addMinutes(5), 'synthetic_review');
+        foreach ($observations as &$observation) {
+            $observation['gamma_context'] = (new IntradayGammaContext)->build($basis, $observation);
+        }
+        unset($observation);
         $result = app(IntradayWallTracker::class)->response($symbol, '2026-09-29', $observations, $timeframe);
         $result['dataset'] = 'synthetic_review';
         $result['sessions'] = ['2026-09-29'];
