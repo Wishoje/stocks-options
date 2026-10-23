@@ -4,11 +4,26 @@ namespace Tests\Unit;
 
 use App\Support\WallIntelligence\IntradayWallDemo;
 use App\Support\WallIntelligence\WallInteractionDetector;
+use App\Support\WallIntelligence\WallInteractionRules;
 use Carbon\CarbonImmutable;
 use Tests\TestCase;
 
 class WallInteractionDetectorTest extends TestCase
 {
+    public function test_repeated_assessments_have_evidence_ids_without_creating_duplicate_events(): void
+    {
+        $result = $this->analyze($this->bars([100.5, 99.7, 99.6, 99.5]));
+        $current = $result['current']['put'];
+        $this->assertSame('acceptance_below', $current['status']);
+        $this->assertNotContains($current['id'], array_column($result['events'], 'id'));
+        $this->assertContains($current['id'], array_column($result['readings'], 'id'));
+        $this->assertSame(WallInteractionDetector::assessmentId($current), $current['id']);
+        foreach ($result['events'] as $event) {
+            $this->assertSame(hash('sha256', json_encode([$event['wall_identity'], $event['evidence_bar_ids'][0],
+                $event['status'], WallInteractionRules::VERSION])), $event['id']);
+        }
+    }
+
     private function at(int $index): CarbonImmutable
     {
         return CarbonImmutable::parse('2026-09-30 10:00', 'America/New_York')->addMinutes(5 * $index);

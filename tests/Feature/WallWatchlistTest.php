@@ -56,7 +56,8 @@ class WallWatchlistTest extends TestCase
     {
         $identity = (new WallInteractionDetector)->identity($model, 'put');
         $row = ['side' => 'put', 'strike' => 100, 'status' => $status, 'wall_identity' => $identity,
-            'observed_at' => '2026-09-30T14:15:00Z', 'close' => 100.1, 'episode_started_at' => '2026-09-30T14:00:00Z'];
+            'observed_at' => '2026-09-30T14:15:00Z', 'close' => 100.1, 'episode_started_at' => '2026-09-30T14:00:00Z',
+            'evidence_bar_ids' => [hash('sha256', 'bar')]];
         $setup = array_replace(['id' => hash('sha256', $identity.'setup'), 'status' => 'conditions_met', 'direction' => 'bullish', 'pattern' => 'reversal',
             'entry_eligible_at_observation' => true, 'observed_at' => $row['observed_at'], 'wall_identity' => $identity,
             'confirmed_at' => $row['observed_at'], 'expires_at' => '2026-09-30T14:30:00Z',
@@ -321,5 +322,42 @@ class WallWatchlistTest extends TestCase
         $this->app->detectEnvironment(fn () => 'production');
         $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
         app(WallWatchlistService::class)->demonstration();
+    }
+
+    public function test_pending_next_condition_is_projected_only_for_the_matching_current_assessment(): void
+    {
+        foreach (['valid', 'identity', 'time', 'rules', 'expired', 'badstatus'] as $kind) {
+            $symbol = strtoupper($kind);
+            $this->watchlist($symbol);
+            $model = $this->model($symbol);
+            $this->record($model, 'intraday_capture');
+            $assessment = $this->assessment($model, 'bounce', ['status' => 'watch', 'next_condition' => [
+                'version' => 'wall-next-condition.v1', 'rule_version' => WallSetupRules::VERSION, 'setup_status' => 'watch',
+                'code' => 'reversal_close', 'text' => 'Wait for a second consecutive five-minute close above 100.05.',
+                'completed_closes' => 1, 'required_closes' => 2,
+            ]]);
+            if ($kind === 'identity') {
+                $assessment['setups']['current']['put']['wall_identity'] = 'other';
+            } elseif ($kind === 'time') {
+                $assessment['setups']['current']['put']['observed_at'] = '2026-09-30T14:10:00Z';
+            } elseif ($kind === 'rules') {
+                $assessment['setups']['rule_version'] = 'other';
+            } elseif ($kind === 'badstatus') {
+                $assessment['setups']['current']['put']['next_condition']['setup_status'] = 'conditions_met';
+            } elseif ($kind === 'expired') {
+                $assessment['setups']['current']['put']['expires_at'] = '2026-09-30T14:10:00Z';
+            }
+            $this->record($assessment, 'wall_interactions');
+        }
+        $rows = collect(app(WallWatchlistService::class)->read(987)['items'])->keyBy('symbol');
+        $this->assertSame(1, $rows['VALID']['next_condition']['completed_closes']);
+        $this->assertSame('expired', $rows['EXPIRED']['next_condition']['code']);
+        foreach (['IDENTITY', 'TIME', 'RULES', 'BADSTATUS'] as $symbol) {
+            $this->assertNull($rows[$symbol]['next_condition']);
+        }
+        $this->assertNull($rows['VALID']['setup']);
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $rows['VALID']['assessment_id']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
     }
 }

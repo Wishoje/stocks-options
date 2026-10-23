@@ -32,6 +32,7 @@ export function dashboardStateFromSearch(search = '', fallback = {}) {
 
 export function dashboardUrl(currentHref, state) {
   const url = new URL(currentHref, 'http://localhost')
+  const previousSymbol = symbol(url.searchParams.get('symbol'))
   url.searchParams.set('symbol', symbol(state.symbol))
   url.searchParams.set('mode', state.mode === 'intraday' ? 'intraday' : 'eod')
   const mode = url.searchParams.get('mode')
@@ -39,6 +40,9 @@ export function dashboardUrl(currentHref, state) {
     ? state.tab
     : (mode === 'intraday' ? 'flow' : 'strikes')
   url.searchParams.set('tab', tab)
+  if (previousSymbol !== symbol(state.symbol) || mode !== 'intraday' || tab !== 'walls') {
+    url.searchParams.delete('wall_assessment')
+  }
   url.searchParams.set('timeframe', dashboardTimeframes.includes(state.timeframe) ? state.timeframe : '14d')
   if (state.view) url.searchParams.set('view', state.view === 'next_session' ? 'next_session' : 'latest_eod')
   return `${url.pathname}${url.search}${url.hash}`

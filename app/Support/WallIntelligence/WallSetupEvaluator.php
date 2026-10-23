@@ -28,6 +28,7 @@ final class WallSetupEvaluator
             $previous = null;
             $candidate = null;
             $latest = null;
+            $latestRow = [];
             foreach ($interaction['readings'] as $row) {
                 if ($row['side'] !== $side) {
                     continue;
@@ -91,6 +92,7 @@ final class WallSetupEvaluator
                     }
                 }
                 $latest = $this->snapshot($row, $candidate, $anchor, $observations, $rules);
+                $latestRow = $row;
                 $history[] = $latest;
                 $previous = $row;
             }
@@ -111,6 +113,7 @@ final class WallSetupEvaluator
                 $latest['status'] = 'awaiting_update';
                 $latest['reason'] = 'Waiting for the next completed-bar assessment. The last recorded conditions are shown below.';
             }
+            $latest['next_condition'] = WallSetupNextCondition::describe($latest, $latestRow, $candidate);
             $current[$side] = $latest;
         }
         usort($history, fn ($a, $b) => strcmp($a['observed_at'], $b['observed_at']) ?: strcmp($a['side'], $b['side']));
@@ -281,7 +284,7 @@ final class WallSetupEvaluator
         $passed = count(array_filter($checks, fn ($check) => $check['passed']));
         $status = $candidate['status'] ?? 'watch';
 
-        return [...$this->watch($row['side'], $row['strike']),
+        $setup = [...$this->watch($row['side'], $row['strike']),
             'id' => $candidate['id'] ?? null, 'pattern' => $candidate['pattern'] ?? null,
             'direction' => isset($candidate['direction']) ? ($candidate['direction'] === 1 ? 'bullish' : 'bearish') : null,
             'status' => $status, 'status_at_observation' => $status, 'reason' => $candidate['reason'] ?? 'Watch for a touch, then a completed rejection, reclaim or break-and-retest sequence.',
@@ -298,6 +301,8 @@ final class WallSetupEvaluator
             'evidence_grade' => $passed === 3 ? 'strong' : ($passed === 2 ? 'moderate' : 'weak'),
             'evidence_checks' => $checks, 'persistence' => $persistence,
         ];
+
+        return [...$setup, 'next_condition' => WallSetupNextCondition::describe($setup, $row, $candidate)];
     }
 
     private function watch(string $side, int|float|null $strike): array

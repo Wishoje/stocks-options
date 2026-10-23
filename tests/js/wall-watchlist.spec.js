@@ -24,6 +24,19 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('Watchlist wall activity', () => {
+  it('shows the saved next condition and proven progress without promoting a pending entry', async () => {
+    const w = await render(payload([row('QQQ', { reaction: 'bounce', next_condition: {
+      text: 'Wait for a second consecutive five-minute close above 100.05.', completed_closes: 1, required_closes: 2,
+    } })]))
+    expect(w.text()).toContain('Price bounced higher')
+    expect(w.text()).toContain('1 of 2 confirming closes recorded')
+    expect(w.text()).toContain('Next: Wait for a second consecutive five-minute close above 100.05.')
+    expect(w.text()).not.toContain('Entry area')
+    expect(w.text()).not.toContain('Higher-price scenario')
+    expect(w.get('[aria-label="View QQQ wall assessment"]').text()).toContain('View assessment')
+    expect(axios.get).toHaveBeenCalledTimes(1)
+  })
+
   it('loads one aggregate request and shows qualified levels with the checks that actually passed', async () => {
     const w = await render(payload([row('SPY', { status: 'conditions_met', setup: setup() }), row('QQQ')]), { selectedSymbol: 'SPY' })
     expect(axios.get).toHaveBeenCalledTimes(1)
@@ -36,7 +49,7 @@ describe('Watchlist wall activity', () => {
     expect(w.text()).not.toContain('Wall stable')
     expect(w.text()).toContain('Prices delayed 15 min')
     expect(w.get('.selected .symbol').text()).toBe('SPY')
-    await w.get('[aria-label="Open QQQ wall chart"]').trigger('click')
+    await w.get('[aria-label="View QQQ wall assessment"]').trigger('click')
     expect(w.emitted('open')[0][0]).toMatchObject({ symbol: 'QQQ', demonstration: false })
     expect(axios.get).toHaveBeenCalledTimes(1)
     await w.setProps({ selectedSymbol: 'QQQ' })
@@ -117,7 +130,7 @@ describe('Watchlist wall activity', () => {
     await w.get('.preview').trigger('click'); await flushPromises()
     expect(axios.get.mock.calls[1][1].params).toEqual({ demo: 1 })
     expect(w.text()).toContain('Synthetic historical examples')
-    await w.get('[aria-label="Open SPY wall chart"]').trigger('click')
+    await w.get('[aria-label="View SPY wall assessment"]').trigger('click')
     expect(w.emitted('open')[0][0]).toMatchObject({ demonstration: true, event_id: 'demo-event' })
     await vi.advanceTimersByTimeAsync(120000)
     expect(axios.get).toHaveBeenCalledTimes(2)

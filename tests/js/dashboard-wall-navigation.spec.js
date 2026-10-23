@@ -42,6 +42,14 @@ afterEach(() => {
 })
 
 describe('Wall navigation', () => {
+  it('passes a valid live assessment handoff to the tracker without enabling demonstrations', async () => {
+    const id = 'b'.repeat(64)
+    const wrapper = await render(`symbol=QQQ&mode=intraday&tab=walls&wall_assessment=${id}`)
+    const tracker = wrapper.findComponent({ name: 'IntradayWallTracker' })
+    expect(tracker.props('initialAssessmentId')).toBe(id)
+    expect(tracker.props('initialDemoEventId')).toBe('')
+  })
+
   it('accepts a local example handoff from Scanner and retains only single-symbol intraday tabs', async () => {
     const id = 'a'.repeat(64)
     const wrapper = await render(`symbol=SPY&mode=intraday&tab=walls&wall_demo=1&wall_event=${id}`)

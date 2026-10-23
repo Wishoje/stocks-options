@@ -81,6 +81,8 @@ final class WallInteractionDetector
                     'accepted_above' => $state['accepted'] && ($state['break']['direction'] ?? 0) === 1,
                     'accepted_below' => $state['accepted'] && ($state['break']['direction'] ?? 0) === -1,
                     'retest_time' => $state['retest']['at'] ?? null,
+                    'continuation_confirmation_price' => isset($state['failed'])
+                        ? $state['failed']['close'] + $state['break']['direction'] * $tolerance : null,
                     'reclaim_high' => $state['retest']['high'] ?? null,
                     'reclaim_low' => $state['retest']['low'] ?? null,
                     'lowest_after_break' => $state['break']['low'] ?? null,
@@ -88,10 +90,11 @@ final class WallInteractionDetector
                     'evidence_bar_ids' => [$barId],
                     'evidence_window' => ['from' => $state['episode_started_at'], 'through' => gmdate('c', $end)],
                     'reason' => $state['reason'] ?? 'Watching for a price approach.'];
+                $reading['id'] = self::assessmentId($reading);
                 $readings[] = $reading;
                 $current[$side] = $reading;
                 if ($reading['status'] !== 'unknown' && $before !== $reading['status']) {
-                    $events[] = ['id' => hash('sha256', json_encode([$identity, $barId, $reading['status'], WallInteractionRules::VERSION])), ...$reading];
+                    $events[] = $reading;
                 }
             }
             $latest = $observations ? end($observations) : null;
@@ -112,6 +115,18 @@ final class WallInteractionDetector
             'bars' => array_map(fn ($bar) => ['id' => hash('sha256', json_encode([$symbol, $session, $bar], JSON_PRESERVE_ZERO_FRACTION)), ...$bar], $bars),
             'historical_outcome_eligible' => false, 'actionable' => false,
             'interpretation' => 'Labels describe completed price behavior at a modeled level. They do not predict the next move or define an entry.'];
+    }
+
+    public static function assessmentId(array $reading): ?string
+    {
+        $identity = $reading['wall_identity'] ?? null;
+        $bar = $reading['evidence_bar_ids'][0] ?? null;
+        if (! is_string($identity) || ! is_string($bar) || ! preg_match('/^[a-f0-9]{64}$/D', $bar)
+            || ! is_string($reading['status'] ?? null)) {
+            return null;
+        }
+
+        return hash('sha256', json_encode([$identity, $bar, $reading['status'], WallInteractionRules::VERSION]));
     }
 
     private function unknown(string $side, int|float|null $strike = null): array

@@ -157,7 +157,7 @@ const modeTitle = computed(() => scannerMode.value === 'activity' ? 'Wall reacti
   : scannerMode.value === 'volume' ? 'Most active options underlyings' : 'Symbols trading near major GEX walls')
 const modeSubtitle = computed(() => scannerMode.value === 'volume'
   ? 'Compare activity, put/call balance, and watchlist membership to prioritize your next chart.'
-  : scannerMode.value === 'activity' ? 'All saved symbols · Follow current price reactions and qualifying setups, then open a symbol’s wall chart.'
+  : scannerMode.value === 'activity' ? 'All saved symbols · See what price did, check the next condition, then open the matching assessment.'
     : 'Scan the shared watchlist universe across four horizons, then inspect the wall profile or continue in the matching dashboard view.')
 const wallStatusTitle = computed(() => {
   if (wallLoading.value) return 'Scanning the wall universe'

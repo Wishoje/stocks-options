@@ -25,6 +25,8 @@
         <span v-if="sessionLatest">As of {{ time(sessionLatest.observed_at) }} ET · {{ sessionReadingCount }} {{ sessionReadingCount === 1 ? 'reading' : 'readings' }} this session</span>
         <button v-if="data.local_demo_available" type="button" @click="toggleDemonstration">{{ demo ? 'Return to today’s timeline' : 'Preview local demonstration' }}</button>
       </div>
+      <p v-if="assessmentUnavailable" class="wall-tracker__history" role="status">That recorded assessment is not available in today’s timeline. Showing the latest view.
+        <button type="button" @click="inspectInteraction(null)">Continue with latest</button></p>
       <div v-if="!data.segments.length" class="wall-tracker__empty" role="status">
         <p>{{ data.availability?.message || `Waiting for today’s first wall reading for ${symbol}. This timeline updates automatically during the session.` }}</p>
       </div>
@@ -57,6 +59,7 @@
             <small>USD per 1% price move</small>
           </article>
         </div>
+        <WallNextStepSummary v-if="data.wall_interaction" ref="nextStepPanel" :interaction="data.wall_interaction" :latest-reading="sessionLatest" :selected-event-id="selectedEventId" @inspect="inspectInteraction" @evidence="showSupportingBars" />
         <IntradayGammaContext :reading="selected" :readings="observations.slice(0, selectedIndex + 1)" />
         <div class="wall-tracker__chart">
           <div class="wall-tracker__chart-heading">
@@ -108,7 +111,7 @@
           </label>
         </div>
         <p class="wall-tracker__interpretation">The leading wall strike can stay unchanged while price and exposure change. Price can trade above or below either wall. A stable wall is an area to monitor, not confirmation of support or resistance. Migration shows a change in the leading strike; it does not confirm a breakout.</p>
-        <WallDecisionPanel v-if="data.wall_interaction" ref="interactionPanel" :interaction="data.wall_interaction" :latest-reading="sessionLatest" :selected-event-id="selectedEventId" @inspect="inspectInteraction" />
+        <WallDecisionPanel v-if="data.wall_interaction" ref="interactionPanel" details-only :interaction="data.wall_interaction" :latest-reading="sessionLatest" :selected-event-id="selectedEventId" @inspect="inspectInteraction" />
         <details>
           <summary>Session readings and model details</summary>
           <p>{{ data.model_description }}</p>
@@ -136,7 +139,7 @@
         <h3 id="wall-event-summary-title"><WallInteractionIcon :status="previewEvent.status" width="22" height="22" />{{ interactionTitle(previewEvent.status) }}</h3>
         <p id="wall-event-summary-reason">{{ previewEvent.reason }}</p>
         <p class="wall-event-summary__close">Completed close <strong>{{ number(previewEvent.close, 2) }}</strong></p>
-        <button type="button" class="wall-event-summary__evidence" @click="openPreviewEvidence">View evidence below <span aria-hidden="true">↓</span></button>
+        <button type="button" class="wall-event-summary__evidence" @click="openPreviewEvidence">View assessment <span aria-hidden="true">→</span></button>
       </div>
     </Teleport>
   </section>
@@ -146,10 +149,12 @@
 import { computed, ref, watch, onScopeDispose, nextTick } from 'vue'
 import { useIntradayWalls } from '@/composables/useIntradayWalls'
 import WallDecisionPanel from '@/Components/WallDecisionPanel.vue'
+import WallNextStepSummary from '@/Components/WallNextStepSummary.vue'
 import WallInteractionIcon from '@/Components/WallInteractionIcon.vue'
 import IntradayGammaContext from '@/Components/IntradayGammaContext.vue'
 import { wallInteractionTitle as interactionTitle } from '@/utils/wallInteraction'
-const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean, initialDemoEventId: String })
+import { findWallAssessment } from '@/utils/wallDecision'
+const props = defineProps({ symbol: { type: String, required: true }, showEodLink: Boolean, initialDemoEventId: String, initialAssessmentId: String })
 defineEmits(['open-eod'])
 const { data, loading, refreshing, error, demo, load, chooseDemo } = useIntradayWalls(() => props.symbol)
 const sides = ['put', 'call'], segmentIndex = ref(0), selectedIndex = ref(0)
@@ -183,7 +188,9 @@ const displayIndex = computed({
   },
 })
 const selectedEventId = ref(null)
+const assessmentUnavailable = ref(false)
 const interactionPanel = ref(null)
+const nextStepPanel = ref(null)
 const previewId = ref(null), eventSummary = ref(null), summaryPosition = ref({ visibility: 'hidden' })
 const previewEvent = computed(() => data.value?.wall_interaction?.events?.find(event => event.id === previewId.value))
 let previewTrigger
@@ -233,7 +240,7 @@ async function openPreviewEvidence() {
   closePreview()
   if (!event) return
   await inspectInteraction(event, true)
-  interactionPanel.value?.$el.querySelector('.evidence')?.focus({ preventScroll: true })
+  nextStepPanel.value?.$el.focus({ preventScroll: true })
 }
 watch([segmentIndex, loading, showFullSession], () => closePreview())
 const eventLegend = computed(() => [...new Set(visibleEvents.value.map(event => event.status))])
@@ -253,12 +260,29 @@ const visibleEvents = computed(() => {
 const eventX = event => timeX(Date.parse(event.observed_at))
 async function inspectInteraction(event, scroll = false) {
   selectedEventId.value = event?.id || null
+  if (!event) {
+    assessmentUnavailable.value = false
+    clearAssessmentLink()
+  }
   await nextTick()
-  if (scroll && interactionPanel.value?.$el) {
+  if (scroll) scrollToPanel(nextStepPanel.value)
+}
+function clearAssessmentLink() {
+  const url = new URL(window.location.href)
+  url.searchParams.delete('wall_assessment')
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+}
+function scrollToPanel(panel) {
+  if (panel?.$el) {
     const contextBottom = document.querySelector('.gex-dashboard-context')?.getBoundingClientRect().bottom || 68
-    const top = window.scrollY + interactionPanel.value.$el.getBoundingClientRect().top - contextBottom - 16
+    const top = window.scrollY + panel.$el.getBoundingClientRect().top - contextBottom - 16
     window.scrollTo({ top: Math.max(0, top), behavior: 'auto' })
   }
+}
+async function showSupportingBars() {
+  await nextTick()
+  scrollToPanel(interactionPanel.value)
+  interactionPanel.value?.$el.querySelector('.evidence')?.focus({ preventScroll: true })
 }
 async function openDemonstration(eventId) {
   await chooseDemo(true)
@@ -286,7 +310,10 @@ watch(data, (value, previous) => {
   const oldReading = oldWindow?.observations[selectedIndex.value]
   const sameContext = previous && value && ['symbol', 'session', 'timeframe', 'dataset'].every(key => previous[key] === value[key])
   if (!sameContext) showFullSession.value = true
-  if (!sameContext || !value?.wall_interaction?.events?.some(event => event.id === selectedEventId.value)) selectedEventId.value = null
+  if (!sameContext || !findWallAssessment(value?.wall_interaction, selectedEventId.value)) {
+    if (sameContext && selectedEventId.value) assessmentUnavailable.value = true
+    selectedEventId.value = null
+  }
   if (!sameContext || !value?.wall_interaction?.events?.some(event => event.id === previewId.value)) closePreview()
   const followingLatest = segmentIndex.value === previous?.segments.length - 1 && selectedIndex.value === oldWindow?.observations.length - 1
   const preservedWindow = sameContext && !followingLatest
@@ -294,6 +321,21 @@ watch(data, (value, previous) => {
   segmentIndex.value = preservedWindow >= 0 ? preservedWindow : Math.max(0, (value?.segments.length || 1) - 1)
   const preservedReading = preservedWindow >= 0 ? observations.value.findIndex(item => item.observed_at === oldReading?.observed_at) : -1
   selectedIndex.value = preservedReading >= 0 ? preservedReading : Math.max(0, observations.value.length - 1)
+})
+let initialAssessmentOpened = false
+watch(data, value => {
+  if (!value || value.dataset !== 'intraday_capture' || initialAssessmentOpened
+    || !/^[a-f0-9]{64}$/.test(props.initialAssessmentId || '')) return
+  initialAssessmentOpened = true
+  const assessment = findWallAssessment(value.wall_interaction, props.initialAssessmentId)
+  if (assessment) {
+    inspectInteraction(assessment, true).then(() => nextStepPanel.value?.$el.focus({ preventScroll: true }))
+  } else assessmentUnavailable.value = true
+})
+watch(() => props.symbol, () => {
+  initialAssessmentOpened = true
+  assessmentUnavailable.value = false
+  clearAssessmentLink()
 })
 const number = (value, digits = 0) => Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: digits }) : '—'
 const compact = value => Number.isFinite(value) ? value.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 2, signDisplay: 'exceptZero' }) : '—'

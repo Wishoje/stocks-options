@@ -31,6 +31,54 @@ beforeEach(() => { axios.get.mockReset(); window.history.replaceState({}, '', '/
 afterEach(() => { vi.useRealTimers() })
 
 describe('Intraday wall tracker', () => {
+  it('opens the exact Scanner assessment even when its repeated status has no event icon', async () => {
+    const id = 'a'.repeat(64)
+    const assessment = { id, side: 'put', strike: 95, status: 'bounce', observed_at: '2026-09-30T14:05:00Z',
+      episode_started_at: '2026-09-30T14:00:00Z', wall_observed_at: '2026-09-30T14:00:00Z',
+      close: 95.1, tolerance: .0475, evidence_bar_ids: ['bar'], reason: 'Recorded bounce.' }
+    const setup = { side: 'put', strike: 95, status: 'watch', observed_at: assessment.observed_at, next_condition: {
+      version: 'wall-next-condition.v1', setup_status: 'watch', text: 'Wait for a second consecutive close above 95.0475.',
+      completed_closes: 1, required_closes: 2,
+    } }
+    const data = { ...payload(), wall_interaction: { symbol: 'SPY', session: '2026-09-30', state: 'ready',
+      current: { put: assessment }, events: [], readings: [assessment],
+      bars: [{ id: 'bar', t: Date.parse(assessment.episode_started_at), o: 95, h: 95.2, l: 95, c: 95.1 }],
+      setups: { current: { put: { ...setup, status: 'expired' } }, readings: [setup] } } }
+    axios.get.mockResolvedValueOnce({ data }).mockResolvedValueOnce({ data: payload('QQQ') })
+    const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    window.history.replaceState({}, '', `/dashboard?wall_assessment=${id}`)
+    const wrapper = mount(IntradayWallTracker, { props: { symbol: 'SPY', initialAssessmentId: id }, attachTo: document.body })
+    await flushPromises()
+    expect(wrapper.get('.wall-next-step').text()).toContain('At this recorded assessment')
+    expect(wrapper.get('.wall-next-step').text()).toContain('1 of 2 confirming closes recorded')
+    expect(wrapper.findAll('.next-step-card')).toHaveLength(1)
+    expect(wrapper.get('.evidence').text()).toContain('Recorded bounce')
+    expect(document.activeElement).toBe(wrapper.get('.wall-next-step').element)
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    await wrapper.get('.wall-next-step button').trigger('click'); await flushPromises()
+    expect(window.location.search).not.toContain('wall_assessment')
+    expect(wrapper.get('.wall-next-step').text()).toContain('What to watch now')
+    await wrapper.setProps({ symbol: 'QQQ' }); await flushPromises()
+    expect(wrapper.text()).not.toContain('1 of 2 confirming closes')
+    wrapper.unmount(); scroll.mockRestore()
+  })
+
+  it('explains an unavailable Scanner assessment and retains the latest current-session chart', async () => {
+    const id = 'f'.repeat(64)
+    window.history.replaceState({}, '', `/dashboard?wall_assessment=${id}&timeframe=14d`)
+    axios.get.mockResolvedValue({ data: payload() })
+    const wrapper = mount(IntradayWallTracker, { props: { symbol: 'SPY', initialAssessmentId: id } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('That recorded assessment is not available in today’s timeline')
+    expect(wrapper.find('.wall-tracker__chart').exists()).toBe(true)
+    expect(wrapper.find('.evidence').exists()).toBe(false)
+    await wrapper.get('.wall-tracker__history button').trigger('click'); await flushPromises()
+    expect(window.location.search).toBe('?timeframe=14d')
+    expect(wrapper.find('.wall-tracker__history').exists()).toBe(false)
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
   it.each([true, false])('opens a scanner example only when the server allows local demonstrations (%s)', async available => {
     const event = { id: 'example', side: 'put', strike: 95, status: 'touch', observed_at: '2026-09-30T14:05:00Z', close: 95.01, reason: 'Price reached the wall.', evidence_bar_ids: [] }
     axios.get.mockResolvedValueOnce({ data: { ...payload(), local_demo_available: available } })
@@ -55,9 +103,10 @@ describe('Intraday wall tracker', () => {
         summary: { scenarios: 0, qualified: 0, qualified_outcomes: {} }, cases: [] },
     } } }).mockResolvedValueOnce({ data: payload('QQQ') })
     const wrapper = render(); await flushPromises()
-    expect(wrapper.text()).toContain('Session ended · No setup confirmed')
-    expect(wrapper.findAll('.decision-card')).toHaveLength(2)
-    expect(wrapper.text()).toContain('Price is 5 above this wall')
+    expect(wrapper.get('.wall-next-step').text()).toContain('Session ended')
+    expect(wrapper.findAll('.next-step-card')).toHaveLength(2)
+    expect(wrapper.find('.decision-card').exists()).toBe(false)
+    expect(wrapper.get('.wall-next-step').element.compareDocumentPosition(wrapper.get('.wall-tracker__chart').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(wrapper.find('[aria-label="Recorded setup results"]').exists()).toBe(false)
     const details = wrapper.get('.advanced-review')
     details.element.open = true
@@ -97,7 +146,7 @@ describe('Intraday wall tracker', () => {
     expect(wrapper.get('.evidence').text()).toContain('Price reached the wall')
     expect(scroll).toHaveBeenCalled()
     expect(axios.get).toHaveBeenCalledTimes(1)
-    await wrapper.get('.review-context button').trigger('click'); await flushPromises()
+    await wrapper.get('.wall-next-step button').trigger('click'); await flushPromises()
     expect(wrapper.find('.evidence').exists()).toBe(false)
     await marker.trigger('click'); await flushPromises()
     document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })); await flushPromises()

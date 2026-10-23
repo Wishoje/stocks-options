@@ -9,6 +9,7 @@ use App\Support\WallIntelligence\IntradayWallDemo;
 use App\Support\WallIntelligence\IntradayWallModel;
 use App\Support\WallIntelligence\WallInteractionDetector;
 use App\Support\WallIntelligence\WallInteractionRules;
+use App\Support\WallIntelligence\WallSetupNextCondition;
 use App\Support\WallIntelligence\WallSetupRules;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder;
@@ -90,6 +91,8 @@ final class WallWatchlistService
                 $result['items'][] = ['symbol' => $symbol, 'side' => $side, 'strike' => $reaction['strike'],
                     'observed_at' => $reaction['observed_at'], 'close' => $reaction['close'], 'reaction' => $status,
                     'status' => $qualified ? 'conditions_met' : $status,
+                    'assessment_id' => WallInteractionDetector::assessmentId($reaction),
+                    'next_condition' => $this->nextCondition($setup, $reaction, $qualified, $cutoff),
                     'alert_keys' => $this->alertKeys($symbol, $result['session'], $reaction, $qualified ? $setup : []),
                     'setup' => $qualified ? array_intersect_key($setup, array_flip(['pattern', 'direction', 'entry_zone',
                         'invalidation', 'target', 'expires_at', 'evidence_checks', 'evidence_grade'])) : null];
@@ -150,6 +153,27 @@ final class WallWatchlistService
             : $levels[4] >= $levels[0] && $levels[4] < $levels[1]);
     }
 
+    private function nextCondition(array $setup, array $reaction, bool $qualified, CarbonImmutable $cutoff): ?array
+    {
+        $next = $setup['next_condition'] ?? null;
+        if (($setup['wall_identity'] ?? null) !== $reaction['wall_identity']
+            || ($setup['observed_at'] ?? null) !== $reaction['observed_at']
+            || ($next['version'] ?? null) !== 'wall-next-condition.v1'
+            || ($next['rule_version'] ?? null) !== WallSetupRules::VERSION
+            || ($next['setup_status'] ?? null) !== ($setup['status'] ?? null)
+            || ! is_string($next['text'] ?? null)
+            || (($setup['status'] ?? null) === 'conditions_met' && ! $qualified)) {
+            return null;
+        }
+        if (($setup['status'] ?? null) === 'watch' && ! empty($setup['expires_at'])
+            && CarbonImmutable::parse($setup['expires_at'])->lessThan($cutoff)) {
+            $next = WallSetupNextCondition::describe([...$setup, 'status' => 'expired']);
+        }
+
+        return array_intersect_key($next, array_flip(['version', 'rule_version', 'setup_status', 'code', 'text',
+            'completed_closes', 'required_closes']));
+    }
+
     /** Identities stay fixed across repeated completed-bar assessments. */
     private function alertKeys(string $symbol, string $session, array $reaction, array $setup): array
     {
@@ -200,10 +224,12 @@ final class WallWatchlistService
             if (! $event) {
                 continue;
             }
+            $assessment = collect($interaction['setups']['readings'])->first(fn ($row) => $row['side'] === $event['side']
+                && $row['observed_at'] === $event['observed_at']);
             $items[] = ['symbol' => $symbol, 'side' => $event['side'], 'strike' => $event['strike'],
                 'observed_at' => $event['observed_at'], 'close' => $event['close'], 'reaction' => $event['status'],
                 'status' => $setup ? 'conditions_met' : $event['status'], 'setup' => $setup,
-                'event_id' => $event['id']];
+                'event_id' => $event['id'], 'next_condition' => $assessment['next_condition'] ?? null];
         }
 
         return ['schema_version' => 'wall-watchlist.v1', 'session' => '2026-09-29', 'timeframe' => IntradayWallTracker::LIVE_TIMEFRAME,

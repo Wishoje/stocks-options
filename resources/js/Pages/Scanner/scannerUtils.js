@@ -28,7 +28,7 @@ export function scannerStateFromSearch(search = '') {
   const nearPts = scannerNumber(params.get('near_pts'))
 
   return {
-    mode: oneOf(params.get('scan'), ['activity', 'gex', 'volume'], 'gex'),
+    mode: oneOf(params.get('scan'), ['activity', 'gex', 'volume'], 'activity'),
     density: oneOf(params.get('density'), ['comfortable', 'compact'], 'comfortable'),
     limit: boundedInteger(params.get('limit'), [100, 200, 300, 400, 500], 200),
     days: boundedInteger(params.get('days'), [5, 10, 20], 10),
@@ -40,7 +40,7 @@ export function scannerStateFromSearch(search = '') {
 
 export function scannerUrl(currentHref, state) {
   const url = new URL(currentHref, 'http://localhost')
-  url.searchParams.set('scan', oneOf(state.mode, ['activity', 'gex', 'volume'], 'gex'))
+  url.searchParams.set('scan', oneOf(state.mode, ['activity', 'gex', 'volume'], 'activity'))
   url.searchParams.set('density', oneOf(state.density, ['comfortable', 'compact'], 'comfortable'))
   url.searchParams.set('limit', String(boundedInteger(state.limit, [100, 200, 300, 400, 500], 200)))
   const days = Number.parseInt(state.days, 10)
@@ -102,6 +102,8 @@ export function wallActivityDashboardUrl(row) {
   if (row.demonstration && /^[a-f0-9]{64}$/.test(row.event_id || '')) {
     url.searchParams.set('wall_demo', '1')
     url.searchParams.set('wall_event', row.event_id)
+  } else if (!row.demonstration && /^[a-f0-9]{64}$/.test(row.assessment_id || '')) {
+    url.searchParams.set('wall_assessment', row.assessment_id)
   }
   return `${url.pathname}${url.search}`
 }

@@ -195,7 +195,7 @@
     >
       <!-- Loading / Error -->
       <div v-if="wallTrackingActive" class="gex-ui" data-theme="dark" data-density="compact">
-        <IntradayWallTracker :symbol="userSymbol" :initial-demo-event-id="initialWallDemoEventId" show-eod-link @open-eod="navigateWallView('eod', 'positioning')" />
+        <IntradayWallTracker :symbol="userSymbol" :initial-demo-event-id="initialWallDemoEventId" :initial-assessment-id="initialWallAssessmentId" show-eod-link @open-eod="navigateWallView('eod', 'positioning')" />
       </div>
       <ui-error-block v-else-if="topError" :message="'Failed to load data'" :detail="topError"
                      :onRetry="() => dataMode === 'eod' ? fetchGexLevelsEOD(userSymbol, gexTf) : refreshIntraday()" />
@@ -968,6 +968,8 @@ const wallTrackingActive = computed(() => dataMode.value === 'intraday' && activ
 const wallDemoQuery = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search)
 const initialWallDemoEventId = wallDemoQuery.get('wall_demo') === '1' && /^[a-f0-9]{64}$/.test(wallDemoQuery.get('wall_event') || '')
   ? wallDemoQuery.get('wall_event') : ''
+const initialWallAssessmentId = !wallDemoQuery.has('wall_demo') && /^[a-f0-9]{64}$/.test(wallDemoQuery.get('wall_assessment') || '')
+  ? wallDemoQuery.get('wall_assessment') : ''
 const activeGuideTabLabel = computed(() =>
   dashboardTabItems.value.find(item => item.value === activeTab.value)?.label ?? activeTab.value
 )

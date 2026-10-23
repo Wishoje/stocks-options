@@ -129,7 +129,7 @@ function wallItem(symbol, side = 'call', distancePct = 0.5, distancePts = 2.5) {
 }
 
 beforeEach(() => {
-  window.history.replaceState({}, '', '/scanner')
+  window.history.replaceState({}, '', '/scanner?scan=gex')
   axios.get.mockImplementation((url) => {
     if (url === '/api/watchlist') return Promise.resolve({ data: [{ id: 1, symbol: 'SPY' }] })
     if (url === '/api/watchlist/universe') return Promise.resolve({ data: [{ symbol: 'SPY' }] })
@@ -152,10 +152,16 @@ afterEach(() => {
 
 describe('scanner data helpers', () => {
   it('restores wall activity and links to single-symbol wall tracking with optional local evidence', () => {
+    expect(scannerStateFromSearch('').mode).toBe('activity')
+    expect(scannerStateFromSearch('?scan=gex').mode).toBe('gex')
+    expect(scannerStateFromSearch('?scan=volume').mode).toBe('volume')
     expect(scannerStateFromSearch('?scan=activity').mode).toBe('activity')
     expect(scannerUrl('/scanner', { mode: 'activity' })).toContain('scan=activity')
     expect(wallActivityDashboardUrl({ symbol: ' qqq ' })).toBe('/dashboard?symbol=QQQ&mode=intraday&tab=walls&timeframe=7d')
     const id = 'b'.repeat(64)
+    expect(wallActivityDashboardUrl({ symbol: 'QQQ', assessment_id: id })).toContain(`wall_assessment=${id}`)
+    expect(wallActivityDashboardUrl({ symbol: 'QQQ', assessment_id: 'bad' })).not.toContain('wall_assessment')
+    expect(wallActivityDashboardUrl({ symbol: 'QQQ', assessment_id: id, demonstration: true })).not.toContain('wall_assessment')
     expect(wallActivityDashboardUrl({ symbol: 'SPY', demonstration: true, event_id: id })).toContain(`wall_demo=1&wall_event=${id}`)
     expect(wallActivityDashboardUrl({ symbol: 'SPY', demonstration: true, event_id: 'bad' })).not.toContain('wall_demo')
   })
@@ -220,9 +226,9 @@ describe('scanner data helpers', () => {
 })
 
 describe('scanner page', () => {
-  it('shows wall activity in its own mode without loading the proximity or volume scans', async () => {
+  it('defaults bare Scanner to wall activity without loading the proximity or volume scans', async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:31:00Z'))
-    window.history.replaceState({}, '', '/scanner?scan=activity')
+    window.history.replaceState({}, '', '/scanner')
     axios.get.mockImplementation(url => {
       if (url === '/api/intraday/wall-watchlist') return Promise.resolve({ data: {
         schema_version: 'wall-watchlist.v1', session: '2026-09-30', timeframe: '7d', state: 'ready', quote_delay_seconds: 900,
@@ -236,7 +242,7 @@ describe('scanner page', () => {
     const wrapper = mountScanner(); await flushPromises()
     expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['Wall activity', 'Near walls', 'Options volume'])
     expect(wrapper.text()).toContain('All saved symbols')
-    expect(wrapper.get('[aria-label="Open QQQ wall chart"]').attributes('href')).toBe('/dashboard?symbol=QQQ&mode=intraday&tab=walls&timeframe=7d')
+    expect(wrapper.get('[aria-label="View QQQ wall assessment"]').attributes('href')).toBe('/dashboard?symbol=QQQ&mode=intraday&tab=walls&timeframe=7d')
     expect(axios.get.mock.calls.map(([url]) => url)).toEqual(['/api/intraday/wall-watchlist'])
     expect(axios.post).not.toHaveBeenCalled()
     const signal = axios.get.mock.calls[0][1].signal

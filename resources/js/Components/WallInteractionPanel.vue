@@ -27,6 +27,7 @@
       <label>Inspect a price event
         <select aria-label="Inspect wall interaction" :value="selectedEvent?.id || ''" @change="selectEvent($event.target.value)">
           <option value="">Latest behavior</option>
+          <option v-if="selectedEvent && !reversedEvents.some(event => event.id === selectedEvent.id)" :value="selectedEvent.id">{{ time(selectedEvent.observed_at) }} ET · Selected assessment</option>
           <option v-for="event in reversedEvents" :key="event.id" :value="event.id">{{ time(event.observed_at) }} ET · {{ event.side }} {{ number(event.strike) }} · {{ title(event.status) }}</option>
         </select>
       </label>
@@ -69,9 +70,10 @@
 <script setup>
 import { computed } from 'vue'
 import { wallInteractionTitle as title } from '@/utils/wallInteraction'
+import { findWallAssessment } from '@/utils/wallDecision'
 const props = defineProps({ interaction: { type: Object, required: true }, selectedEventId: String })
 const emit = defineEmits(['inspect'])
-const selectedEvent = computed(() => props.interaction.events?.find(event => event.id === props.selectedEventId))
+const selectedEvent = computed(() => findWallAssessment(props.interaction, props.selectedEventId))
 const reversedEvents = computed(() => [...(props.interaction.events || [])].reverse())
 const contextLabel = computed(() => ({ session_review: 'Session review', awaiting_update: 'Last recorded behavior', demonstration: 'Local demonstration' }[props.interaction.state] || 'Completed five-minute bars'))
 const time = value => new Date(value).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
@@ -81,7 +83,7 @@ function card(side) {
   if (selectedEvent.value.side === side) return selectedEvent.value
   return props.interaction.readings?.filter(row => row.side === side && Date.parse(row.observed_at) <= Date.parse(selectedEvent.value.observed_at)).at(-1)
 }
-function selectEvent(id) { emit('inspect', props.interaction.events?.find(event => event.id === id) || null) }
+function selectEvent(id) { emit('inspect', findWallAssessment(props.interaction, id) || null) }
 const evidenceBars = computed(() => {
   const event = selectedEvent.value
   if (!event) return []

@@ -233,4 +233,61 @@ class WallSetupEvaluatorTest extends TestCase
         $this->assertSame('target_reached', $result['current']['put']['status']);
         $this->assertFalse($result['current']['put']['actionable']);
     }
+
+    public function test_next_condition_advances_one_step_at_a_time_through_the_actual_break_sequence(): void
+    {
+        $closes = [100.3, 99.93, 99.9, 100.0, 99.94, 99.88];
+        $steps = [];
+        foreach (range(2, 6) as $count) {
+            $steps[] = $this->analyze(array_slice($closes, 0, $count))['current']['put']['next_condition'];
+        }
+        $this->assertSame(['acceptance_close', 'retest', 'retest_failure', 'continuation_close', 'conditions_met'], array_column($steps, 'code'));
+        $this->assertSame(1, $steps[0]['completed_closes']);
+        $this->assertSame(2, $steps[0]['required_closes']);
+        $this->assertEqualsWithDelta(99.95, $steps[0]['threshold'], .000001);
+        $this->assertEqualsWithDelta(99.89, $steps[3]['threshold'], .000001);
+        $this->assertSame('below', $steps[3]['close_side']);
+        $this->assertTrue($steps[3]['threshold_inclusive']);
+        $this->assertStringContainsString('at or below 99.89', $steps[3]['text']);
+        $this->assertNull($steps[4]['completed_closes']);
+    }
+
+    public function test_reversal_progress_counts_only_consecutive_qualifying_closes_and_resets_inside_the_band(): void
+    {
+        $one = $this->analyze([100.3, 100.01, 100.09])['current']['put']['next_condition'];
+        $this->assertSame('reversal_close', $one['code']);
+        $this->assertSame(1, $one['completed_closes']);
+        $this->assertSame('above', $one['close_side']);
+        $this->assertStringContainsString('second consecutive five-minute close above 100.05', $one['text']);
+        $reset = $this->analyze([100.3, 100.01, 100.09, 100.01])['current']['put']['next_condition'];
+        $this->assertSame(0, $reset['completed_closes']);
+        $again = $this->analyze([100.3, 100.01, 100.09, 100.01, 100.09])['current']['put']['next_condition'];
+        $this->assertSame(1, $again['completed_closes']);
+        $bars = $this->bars([100.3, 100.01, 100.09, 100.12]);
+        unset($bars[2]);
+        $gap = $this->analyze([100.3, 100.01, 100.09, 100.12], bars: array_values($bars))['current']['put']['next_condition'];
+        $this->assertNull($gap['completed_closes']);
+    }
+
+    public function test_reclaim_next_condition_distinguishes_the_retest_from_the_later_close(): void
+    {
+        $closes = [100.3, 99.93, 99.9, 100.07, 100.1];
+        $this->assertSame('retest', $this->analyze($closes)['current']['put']['next_condition']['code']);
+        $next = $this->analyze([...$closes, 100.0])['current']['put']['next_condition'];
+        $this->assertSame('reclaim_close', $next['code']);
+        $this->assertStringContainsString('separate five-minute close above 100.05', $next['text']);
+        $this->assertSame('conditions_met', $this->analyze([...$closes, 100.0, 100.12])['current']['put']['next_condition']['code']);
+    }
+
+    public function test_next_condition_follows_terminal_and_stale_overrides_without_reusing_an_active_entry(): void
+    {
+        $closes = [100.3, 99.93, 99.9, 100.0, 99.94, 99.88];
+        $stale = $this->analyze($closes, cutoff: $this->at(9))['current']['put'];
+        $this->assertSame('awaiting_update', $stale['next_condition']['code']);
+        $closed = $this->analyze($closes, cutoff: CarbonImmutable::parse('2026-09-30 16:00', 'America/New_York'))['current']['put'];
+        $this->assertSame('expired', $closed['next_condition']['code']);
+        $this->assertSame('conditions_met', $closed['status_at_observation']);
+        $this->assertSame('invalidated', $this->analyze([...$closes, 100.06])['current']['put']['next_condition']['code']);
+        $this->assertSame('entry_missed', $this->analyze([...array_slice($closes, 0, -1), 99.8])['current']['put']['next_condition']['code']);
+    }
 }

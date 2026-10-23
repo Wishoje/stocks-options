@@ -3,11 +3,12 @@ import { computed, ref, watch } from 'vue'
 import WallInteractionPanel from '@/Components/WallInteractionPanel.vue'
 import WallSetupPanel from '@/Components/WallSetupPanel.vue'
 import WallSetupHistoryPanel from '@/Components/WallSetupHistoryPanel.vue'
+import { findWallAssessment, savedWallNextCondition, wallDecisionCards } from '@/utils/wallDecision'
 
-const props = defineProps({ interaction: { type: Object, required: true }, selectedEventId: String, latestReading: Object })
+const props = defineProps({ interaction: { type: Object, required: true }, selectedEventId: String, latestReading: Object, detailsOnly: Boolean })
 const emit = defineEmits(['inspect'])
 const advancedOpen = ref(false)
-const selectedEvent = computed(() => props.interaction.events?.find(event => event.id === props.selectedEventId))
+const selectedEvent = computed(() => findWallAssessment(props.interaction, props.selectedEventId))
 const closed = computed(() => props.interaction.state === 'session_review')
 const qualifiedCount = computed(() => props.interaction.setup_reviews?.summary?.qualified || 0)
 const hasReview = computed(() => Number.isFinite(props.interaction.setup_reviews?.summary?.qualified))
@@ -23,24 +24,7 @@ const reactionLabel = status => ({
   confirmed_breakout: 'Price moved higher after a retest', confirmed_breakdown: 'Price moved lower after a retest',
 }[status] || 'No price reaction recorded yet')
 
-const cards = computed(() => (selectedEvent.value ? [selectedEvent.value.side] : ['put', 'call']).map(side => {
-  const current = props.interaction.current?.[side]
-  const strike = selectedEvent.value?.strike ?? props.latestReading?.walls?.[side]?.[0]?.strike ?? current?.strike
-  const earlier = [...(props.interaction.events || [])].reverse().find(event => event.side === side && event.strike === strike)
-  const matchingCurrent = current?.strike === strike ? current : null
-  const reaction = selectedEvent.value || (matchingCurrent?.status && matchingCurrent.status !== 'unknown' ? matchingCurrent : earlier || matchingCurrent)
-  const isEarlier = !selectedEvent.value && reaction === earlier && reaction !== current
-  const setup = selectedEvent.value
-    ? [...(props.interaction.setups?.readings || [])].reverse().find(row => row.side === side && row.observed_at === selectedEvent.value.observed_at)
-    : props.interaction.setups?.current?.[side]
-  // Never carry a setup from a different leading strike into the summary.
-  const matchingSetup = setup?.strike === strike ? setup : null
-  const hasLevels = [matchingSetup?.entry_zone?.low, matchingSetup?.entry_zone?.high, matchingSetup?.invalidation?.price, matchingSetup?.target?.strike].every(Number.isFinite)
-  const ready = matchingSetup?.status === 'conditions_met' && hasLevels
-    && (!!selectedEvent.value || (!closed.value && props.interaction.state !== 'awaiting_update'))
-  const pending = matchingSetup?.pattern && matchingSetup.status === 'watch'
-  return { side, strike, reaction, isEarlier, setup: matchingSetup, ready, pending }
-}))
+const cards = computed(() => wallDecisionCards(props.interaction, props.latestReading, selectedEvent.value))
 const readyCards = computed(() => cards.value.filter(card => card.ready))
 const headline = computed(() => selectedEvent.value ? 'Reviewing a recorded price reaction'
   : closed.value ? (hasReview.value ? (qualifiedCount.value ? `Session ended · ${qualifiedCount.value} setup${qualifiedCount.value === 1 ? '' : 's'} met the conditions` : 'Session ended · No setup confirmed') : 'Session ended · No active setup')
@@ -52,6 +36,7 @@ const description = computed(() => selectedEvent.value ? `Inspecting ${time(sele
       : 'Use these levels as areas to watch. A touch alone does not confirm a hold or a break.')
 function nextWatch(card) {
   if (props.interaction.state === 'awaiting_update' && !selectedEvent.value) return 'Wait for the next completed five-minute assessment. The last setup is not active.'
+  if (savedWallNextCondition(card)) return savedWallNextCondition(card).text
   if (card.pending) {
     const zone = card.setup.entry_zone
     if (card.setup.confirmed_at && Number.isFinite(zone?.low) && Number.isFinite(zone?.high)) return `The price sequence passed. A completed five-minute close still needs to land in ${number(zone.low)}–${number(zone.high)}.`
@@ -82,6 +67,7 @@ watch(() => selectedEvent.value?.id, id => { if (id) advancedOpen.value = true }
 
 <template>
   <section class="wall-decision" aria-label="Wall reaction and next conditions">
+    <template v-if="!detailsOnly">
     <header><div><h3>What to watch at the walls</h3><p v-if="Number.isFinite(price)">{{ selectedEvent ? 'Recorded close' : 'Delayed price' }} <b>{{ number(price) }}</b> · {{ time(priceTime) }} ET</p></div>
       <span v-if="interaction.as_of" class="as-of">{{ closed ? 'Session ended' : 'Price assessed' }} · {{ time(interaction.as_of) }} ET</span>
     </header>
@@ -108,6 +94,7 @@ watch(() => selectedEvent.value?.id, id => { if (id) advancedOpen.value = true }
         <div v-else-if="!closed || selectedEvent" class="next-condition"><h4>{{ selectedEvent ? 'Condition being watched at this time' : 'What to watch next' }}</h4><p>{{ nextWatch(card) }}</p></div>
       </article>
     </div>
+    </template>
     <details class="simple-guide"><summary>What is this used for?</summary>
       <p><b>Find an area to monitor.</b> The chart shows where modeled option exposure is concentrated. A wall is not a guaranteed support or resistance level.</p>
       <p><b>See how price responds.</b> A touch only means price reached the area. Later five-minute closes show whether price moved away or crossed it.</p>

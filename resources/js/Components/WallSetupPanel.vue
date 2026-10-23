@@ -1,12 +1,13 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { findWallAssessment } from '@/utils/wallDecision'
 const props = defineProps({ interaction: { type: Object, required: true }, selectedEventId: String })
 const at = ref('')
 const data = computed(() => props.interaction.setups)
 const times = computed(() => [...new Set((data.value?.readings || []).map(row => row.observed_at))].reverse())
 watch(() => [data.value?.symbol, data.value?.session, data.value?.timeframe], () => { at.value = '' })
 watch(() => props.selectedEventId, id => {
-  at.value = props.interaction.events?.find(event => event.id === id)?.observed_at || ''
+  at.value = findWallAssessment(props.interaction, id)?.observed_at || ''
 }, { immediate: true })
 watch(times, values => { if (at.value && !values.includes(at.value)) at.value = '' })
 const cards = computed(() => ['put', 'call'].map(side => at.value

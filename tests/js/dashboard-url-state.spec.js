@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { dashboardStateFromSearch, dashboardUrl } from '@/Support/dashboard-url-state.js'
 
 describe('dashboard URL state', () => {
+  it('keeps an assessment link only within the same symbol wall-tracking view', () => {
+    const current = '/dashboard?symbol=QQQ&mode=intraday&tab=walls&wall_assessment=recorded&campaign=review'
+    expect(dashboardUrl(current, { symbol: 'QQQ', mode: 'intraday', tab: 'walls' })).toContain('wall_assessment=recorded')
+    for (const change of [{ symbol: 'SPY' }, { tab: 'flow' }, { mode: 'eod', tab: 'positioning' }]) {
+      const url = dashboardUrl(current, { symbol: 'QQQ', mode: 'intraday', tab: 'walls', ...change })
+      expect(url).not.toContain('wall_assessment')
+      expect(url).toContain('campaign=review')
+    }
+  })
   it('restores the dedicated tracker without changing the saved EOD timeframe', () => {
     const state = dashboardStateFromSearch('?symbol=QQQ&mode=intraday&tab=walls&timeframe=7d&view=next_session')
     expect(state).toEqual({ symbol: 'QQQ', mode: 'intraday', tab: 'walls', timeframe: '7d', view: 'next_session' })
