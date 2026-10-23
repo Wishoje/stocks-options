@@ -81,7 +81,7 @@ The dashboard and exports still build complete timelines from preserved source o
 
 A read-only benchmark of 30 late-session production assessments reduced their combined encoded size from 15,264,234 to 820,366 bytes, a 94.63% reduction. Current reactions, setup states, events and review seeds matched exactly. This sample describes assessment storage, not all database growth. Thirty-one focused tests passed with 194 assertions across checkpoint integrity, collection, timeline reconstruction, setup history and Scanner/alert projection.
 
-Headroom is improved but remains limited. The calculator rebuild still lacks its required workspace. The `walls:prune-snapshots` schedule covers `symbol_wall_snapshots`, not the append-only `wall_observations` evidence table; `wall_foundation.planned_retention_days` is a plan rather than an implemented evidence-deletion job. Retained evidence has not been removed to clear this incident. Sustained growth still requires an explicit archival/retention policy or added capacity.
+The `walls:prune-snapshots` schedule covers `symbol_wall_snapshots`, not the append-only `wall_observations` evidence table; `wall_foundation.planned_retention_days` is a plan rather than an implemented evidence-deletion job. Retained evidence has not been removed to clear this incident. Monitor its growth separately; the calculator recovery below does not introduce a wall-evidence retention policy.
 
 ## Daily calculator-version retention
 
@@ -108,3 +108,9 @@ A physical maintenance step rebuilt the fragmented calculator contract index by 
 The busy-query guard excludes idle MySQL daemon threads. It counts executing `Query` and `Execute` statements with SQL text rather than every non-sleeping process. Active transactions and pending metadata locks remain separate admission checks. An actual nightly retention delete still blocks compaction until it finishes.
 
 Intraday-volume pruning keeps its 24-hour window and 03:00 ET schedule, but caps each transaction at 10,000 rows. A primary-key cursor avoids rescanning earlier deleted pages for every batch. The command freezes its maximum ID at startup, leaves later inserts for the next run, and rechecks each row's capture time in the DELETE. Rows refreshed after candidate selection are preserved. This change does not interrupt an already-running older pruning process.
+
+## Verified production recovery
+
+At 03:21 ET on October 23, the existing intraday-volume pruning process finished. Two separate read-only checks confirmed no expired rows remained under that run's cutoff, no active transactions or long statements were present, and no metadata locks were pending. The normal guarded maintenance command then rebuilt only `calculator_expiry_publication_rows`. It reclaimed 25.086 GiB, reducing that table's physical file from 27,611,103,232 to 675,282,944 bytes. Available web-server space increased from 14.22 to 39.31 GiB; its pressure measurement fell from 80.99% to 47.45%. No workspace or cancellation guard was bypassed.
+
+The final audit retained all 1,597,623 remaining contract rows, identical current/previous head hashes, and zero orphan heads. Watchlist, expiry/strike GEX, DEX, GEX levels and intraday-wall endpoints returned HTTP 200. All 26 queue workers were running with no recent worker errors. The maintenance report was healthy and its recovery email was accepted. Both hosts' installed maintenance scripts matched the deployed source, and the worker's first scheduled calculator-version cleanup completed successfully. Thirteen focused retention/schedule tests passed with 113 assertions after the intraday batch change. No disk resize was required.
