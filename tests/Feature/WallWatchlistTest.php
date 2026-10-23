@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\WallObservation;
 use App\Services\WallWatchlistService;
 use App\Support\WallIntelligence\IntradayWallModel;
+use App\Support\WallIntelligence\WallInteractionCheckpoint;
 use App\Support\WallIntelligence\WallInteractionDetector;
 use App\Support\WallIntelligence\WallInteractionRules;
 use App\Support\WallIntelligence\WallSetupRules;
@@ -127,6 +128,25 @@ class WallWatchlistTest extends TestCase
         $result = app(WallWatchlistService::class)->read(987);
         $this->assertSame([], $result['items']);
         $this->assertSame(1, $result['assessed_count']);
+    }
+
+    public function test_compact_checkpoints_preserve_setup_projection_and_alert_identity(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $this->record($model, 'intraday_capture');
+        $analysis = [...$this->assessment($model), 'schema_version' => WallInteractionDetector::SCHEMA,
+            'price_evidence_hash' => str_repeat('a', 64), 'bars' => [['c' => 100.1]],
+            'readings' => [['status' => 'testing']]];
+        $checkpoint = (new WallInteractionCheckpoint)->build($analysis, [['evidence_hash' => str_repeat('b', 64)]]);
+        $this->assertArrayNotHasKey('readings', $checkpoint);
+        $this->record($checkpoint, 'wall_interactions');
+        $result = app(WallWatchlistService::class)->read(987);
+        $this->assertSame(1, $result['assessed_count']);
+        $this->assertSame('conditions_met', $result['items'][0]['status']);
+        $this->assertSame(101, $result['items'][0]['setup']['target']['strike']);
+        $this->assertNotNull($result['items'][0]['alert_keys']['setup']);
+        $this->assertNotNull($result['items'][0]['alert_keys']['testing']);
     }
 
     public function test_a_late_insert_of_older_data_does_not_replace_the_latest_assessment(): void

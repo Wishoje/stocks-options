@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\WallObservation;
 use App\Support\PolygonClient;
 use App\Support\WallIntelligence\IntradayWallModel;
+use App\Support\WallIntelligence\WallInteractionCheckpoint;
 use App\Support\WallIntelligence\WallInteractionDetector;
 use App\Support\WallIntelligence\WallInteractionRules;
 use App\Support\WallIntelligence\WallSetupEvaluator;
@@ -118,7 +119,8 @@ final class WallInteractionService
                 $analysis['price_evidence_hash'] = $hash;
                 $analysis['setups'] = (new WallSetupEvaluator)->analyze($analysis, $observations);
                 $analysis['setups']['review_seeds'] = (new WallSetupOutcomeEvaluator)->seeds($analysis['setups']);
-                $this->record($symbol, $session, 'wall_interactions', $analysis, $now);
+                $checkpoint = (new WallInteractionCheckpoint)->build($analysis, $observations);
+                $this->record($symbol, $session, 'wall_interactions', $checkpoint, $now);
                 $events += count($analysis['events']);
             }
 

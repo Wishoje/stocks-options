@@ -73,6 +73,7 @@ class WallInteractionCollectionTest extends TestCase
         $this->assertSame(1, WallObservation::where('dataset', 'intraday_price_bars')->count());
         $this->assertSame(1, WallObservation::where('dataset', 'wall_interactions')->count());
         $before = WallObservation::count();
+        $observation['evidence_hash'] = WallObservation::where('dataset', 'intraday_capture')->first()->content_hash;
         $read = $service->read('SPY', '2026-09-30', '7d', [$observation]);
         $this->assertSame('acceptance_below', $read['current']['put']['status']);
         $this->assertNotNull($read['price_evidence_hash']);
@@ -84,6 +85,16 @@ class WallInteractionCollectionTest extends TestCase
         $stored = json_decode(WallObservation::where('dataset', 'wall_interactions')->first()->payload_json, true);
         $this->assertSame('wall-setups.v1', $stored['setups']['schema_version']);
         $this->assertIsArray($stored['setups']['review_seeds']);
+        $this->assertSame('wall-interaction-checkpoint.v1', $stored['storage']['schema_version']);
+        $this->assertSame([WallObservation::where('dataset', 'intraday_capture')->first()->content_hash], $stored['storage']['source_observation_hashes']);
+        $this->assertArrayNotHasKey('bars', $stored);
+        $this->assertArrayNotHasKey('readings', $stored);
+        $this->assertArrayNotHasKey('readings', $stored['setups']);
+        $this->assertCount(3, $read['bars']);
+        $this->assertNotEmpty($read['readings']);
+        $this->assertNotEmpty($read['setups']['readings']);
+        $this->assertSame($read['current'], $stored['current']);
+        $this->assertSame($read['setups']['current'], $stored['setups']['current']);
         $this->assertSame($before, WallObservation::count());
         $this->assertSame('recently_checked', $service->collect('SPY', '2026-09-30', $this->now())['status']);
         Http::assertSentCount(1);
