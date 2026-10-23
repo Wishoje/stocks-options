@@ -12,7 +12,7 @@ const alerts = inject(WALL_ALERTS, null)
       <label><input type="checkbox" :checked="alerts.settings.value.sound" @change="alerts.update({ sound: $event.target.checked })"> Sound</label>
       <button type="button" @click="alerts.preview()">Test alert</button>
     </div>
-    <p v-if="alerts.settings.value.enabled">Alerts follow your saved symbols across pages. Existing events are skipped when you turn alerts on.</p>
+    <p v-if="alerts.settings.value.enabled">New setup alerts are on by default and follow your saved symbols across pages. You can turn them off anytime.</p>
     <p v-if="alerts.settings.value.enabled && alerts.settings.value.sound && !alerts.soundReady.value">Click Test alert to activate saved sound for this visit.</p>
     <p v-if="alerts.message.value" role="status">{{ alerts.message.value }}</p>
     <p v-if="alerts.settings.value.enabled && alerts.error.value" role="status">Alerts are paused until wall activity updates. {{ alerts.error.value }}</p>

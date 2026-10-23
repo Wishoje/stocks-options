@@ -84,7 +84,8 @@ function mountLayout(userId = 9) {
     props: { title: 'Dashboard' },
     slots: { default: '<div data-page-content>Page</div>' },
     global: {
-      mocks: { $page: { props: pageProps(userId) }, route: routeMock },
+      config: { globalProperties: { $page: { props: pageProps(userId) } } },
+      mocks: { route: routeMock },
       stubs: componentStubs,
     },
   })
@@ -95,6 +96,7 @@ describe('AppLayout navigation shell', () => {
     router.post.mockReset()
     router.put.mockReset()
     axios.get.mockReset()
+    localStorage.clear()
     routeMock = vi.fn((name) => name ? `/${name}` : {
       current: (candidate) => candidate === 'dashboard',
     })
@@ -133,10 +135,11 @@ describe('AppLayout navigation shell', () => {
       refresh_until: null, next_refresh_at: null } })
     const wrapper = mount(AppLayout, {
       attachTo: document.body, props: { title: 'Scanner' }, slots: { default: WallWatchlist },
-      global: { mocks: { $page: { props: pageProps(42) }, route: routeMock }, stubs: componentStubs },
+      global: { config: { globalProperties: { $page: { props: pageProps(42) } } }, mocks: { route: routeMock }, stubs: componentStubs },
     })
     await flushPromises()
     expect(wrapper.text()).toContain('Alert me to new setups')
+    expect(wrapper.get('.alert-switch input').element.checked).toBe(true)
     expect(axios.get).toHaveBeenCalledTimes(1)
     await wrapper.get('.alert-switch input').setValue(true); await flushPromises()
     expect(axios.get).toHaveBeenCalledTimes(1)
@@ -172,7 +175,7 @@ describe('AppLayout navigation shell', () => {
     await calculatorLink.trigger('click')
     await flushPromises()
 
-    expect(axios.get).not.toHaveBeenCalled()
+    expect(axios.get.mock.calls.filter(([url]) => url === '/api/watchlist')).toHaveLength(0)
     const event = dispatch.mock.calls.find(([item]) => item.type === 'select-symbol')?.[0]
     expect(event?.detail).toEqual({ symbol: 'NVDA' })
     wrapper.unmount()

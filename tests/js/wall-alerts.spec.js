@@ -16,11 +16,11 @@ const newRow = () => row({ observed_at: '2026-09-30T14:20:00Z', alert_keys: { se
 beforeEach(() => localStorage.clear())
 
 describe('wall alert eligibility and event identity', () => {
-  it('defaults to off and scopes preferences to the signed-in account', () => {
-    expect(wallAlertSettings(1)).toEqual({ enabled: false, testing: false, sound: false })
-    localStorage.setItem('gex:wall-alert-settings:v1:1', JSON.stringify(settings))
-    expect(wallAlertSettings(1).enabled).toBe(true)
-    expect(wallAlertSettings(2).enabled).toBe(false)
+  it('defaults to quiet setup alerts and preserves an account-specific opt-out', () => {
+    expect(wallAlertSettings(1)).toEqual({ enabled: true, testing: false, sound: false })
+    localStorage.setItem('gex:wall-alert-settings:v1:1', JSON.stringify({ ...settings, enabled: false }))
+    expect(wallAlertSettings(1).enabled).toBe(false)
+    expect(wallAlertSettings(2)).toEqual({ enabled: true, testing: false, sound: false })
   })
   it('primes existing events silently and only emits a later newly confirmed setup', () => {
     const engine = createWallAlertEngine(1)

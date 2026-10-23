@@ -1,5 +1,5 @@
 export const WALL_ALERTS = Symbol('wall-alerts')
-export const DEFAULT_WALL_ALERT_SETTINGS = Object.freeze({ enabled: false, testing: false, sound: false })
+export const DEFAULT_WALL_ALERT_SETTINGS = Object.freeze({ enabled: true, testing: false, sound: false })
 const validKey = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const today = now => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now))
 const validPrice = price => Number.isFinite(price) && price > 0

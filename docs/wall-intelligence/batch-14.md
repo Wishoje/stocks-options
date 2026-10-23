@@ -1,6 +1,6 @@
 # Watchlist wall alerts
 
-Scanner → Wall activity includes Alert me to new setups. Alerts are off initially. Enabling them starts notifications for newly confirmed setups in the signed-in account's saved symbols. Also alert when price tests a wall and Sound are optional. Preferences are saved for that account in the current browser. Existing events are skipped when alerts are enabled.
+Scanner → Wall activity includes Alert me to new setups. New setup alerts are on by default for signed-in accounts without a saved preference. A saved opt-out remains off, and users can turn alerts off at any time. Also alert when price tests a wall and Sound remain optional and off initially. Preferences are saved for that account in the current browser. Existing events are skipped when monitoring starts.
 
 A notification shows the symbol, wall strike and recorded time in ET. Open chart opens that symbol's Intraday → Wall tracking with the fixed 1W scope. The notification describes a completed delayed assessment. It asks users to check current price against the recorded entry area. Testing notifications describe an area to watch without implying entry confirmation.
 
@@ -26,7 +26,7 @@ Sound uses a short browser-generated tone. It is off initially and must be enabl
 
 ## Local review
 
-1. Open `/scanner?scan=activity` and turn on Alert me to new setups. Optional testing and sound controls appear. The account's saved preferences survive page changes and reloads.
+1. Open `/scanner?scan=activity`. Alert me to new setups starts checked unless that account previously turned it off in this browser. Testing and sound remain unchecked unless saved otherwise. Turn alerts off, reload, and confirm they remain off. Saved preferences survive page changes and reloads.
 2. Click Test alert. A labeled example appears at the lower right. Check dismissal, its Wall activity link and the narrow-screen layout. Toggle Sound and click Test alert to check the tone.
 3. Open another authenticated page. Wall alerts on remains visible and links back to the controls. Live notifications keep monitoring the saved symbols while that tab is visible. Turn alerts off to stop monitoring outside Wall activity.
 4. Preview local demonstration in the Scanner. Historical examples appear in its list without creating live notifications. Live alerts retain their separate current-session feed.

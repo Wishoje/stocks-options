@@ -7,10 +7,9 @@ export function useWallAlerts(owner) {
   const settings = ref({ ...DEFAULT_WALL_ALERT_SETTINGS }), notifications = ref([]), message = ref('')
   const engine = shallowRef(null), clock = ref(Date.now())
   const soundReady = ref(false)
-  const feed = useWallWatchlist({ owner, active: computed(() => !!toValue(owner) && settings.value.enabled) })
   const stopOwner = watch(() => toValue(owner), id => {
     notifications.value = []; message.value = ''
-    settings.value = id ? wallAlertSettings(id) : { ...DEFAULT_WALL_ALERT_SETTINGS }
+    settings.value = id ? wallAlertSettings(id) : { ...DEFAULT_WALL_ALERT_SETTINGS, enabled: false }
     if (String(id) !== retainedOwner) {
       retainedOwner = String(id)
       retainedEngine = id ? createWallAlertEngine(id) : null
@@ -19,6 +18,8 @@ export function useWallAlerts(owner) {
     if (audioOwner !== id) { audio?.close?.(); audio = null; audioOwner = id }
     soundReady.value = audio?.state === 'running'
   }, { immediate: true, flush: 'sync' })
+  // Resolve this account's saved choice before starting or switching its feed.
+  const feed = useWallWatchlist({ owner, active: computed(() => !!toValue(owner) && settings.value.enabled) })
   function persist() {
     try { localStorage.setItem(`gex:wall-alert-settings:v1:${toValue(owner)}`, JSON.stringify(settings.value)) }
     catch { message.value = 'Alerts are on for this visit. Your browser could not save this preference.' }
