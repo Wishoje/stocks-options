@@ -7,7 +7,6 @@ use App\Support\Market;
 use App\Support\QueueLanes;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
 
@@ -145,6 +144,14 @@ Schedule::command('calculator:prune-snapshots --hours=168')
     ->withoutOverlapping(30)
     ->onOneServer();
 
+Schedule::command('calculator:prune-publications --hours=168 --batch=25 --max-seconds=900')
+    ->timezone('America/New_York')
+    ->dailyAt('03:15')
+    ->withoutOverlapping(30)
+    ->onOneServer()
+    ->name('calculator:prune-publications')
+    ->when(fn () => (bool) config('maintenance.calculator_publications_enabled'));
+
 Schedule::command('walls:prune-snapshots --days=120')
     ->timezone('America/New_York')
     ->dailyAt('03:20')
@@ -159,7 +166,7 @@ Schedule::command('hot-options:prune --days=120')
 
 Schedule::command('options:prune-chain-data --days=180 --batch=50000 --sleep-ms=50')
     ->timezone('America/New_York')
-    ->weeklyOn(0, '03:35')
+    ->dailyAt('03:35')
     ->withoutOverlapping(120)
     ->onOneServer();
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Daily, host-local disk maintenance. Preview is the default."""
 import argparse
+import hashlib
 import datetime as dt
 import json
 import os
@@ -18,6 +19,7 @@ TABLES = ('option_snapshots', 'intraday_option_volumes', 'calculator_expiry_publ
 LOG_NAME = re.compile(r'(?:laravel|scheduler|queue-monitor|eod-repair)(?:-\d{4}-\d{2}-\d{2})?\.log(?:\.\d+)?(?:\.gz)?$')
 RELEASE_NAME = re.compile(r'(?:\d{6,12}|manual-\d{8}-[0-9a-f]{7,40})$')
 NODE_CACHE = Path('/tmp/node-compile-cache')
+PRUNE_ARCHIVE = re.compile(r'\d{8}-\d{6}-[0-9a-f-]{36}\.jsonl\.gz$')
 
 
 def pressured(disk):
@@ -116,6 +118,30 @@ def filesystem_candidates(site, now=None):
                 if stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1 \
                         and info.st_mtime < now - 7 * 86400:
                     candidates.append({'kind': 'node_compile_cache', 'path': str(path), 'bytes': info.st_size})
+    # Only verified, committed calculator-retention archives have a 30-day expiry.
+    archive_root = site / 'storage/app/private/maintenance/calculator-prune'
+    expected_root = (site / 'storage').resolve() / 'app/private/maintenance/calculator-prune'
+    if archive_root.is_dir() and not archive_root.is_symlink() and archive_root.resolve() == expected_root:
+        for manifest in archive_root.glob('*.jsonl.gz.manifest.json'):
+            if manifest.is_symlink() or not manifest.is_file():
+                continue
+            archive = manifest.with_name(manifest.name.removesuffix('.manifest.json'))
+            if not PRUNE_ARCHIVE.fullmatch(archive.name) or archive.is_symlink() or not archive.is_file():
+                continue
+            info, meta = archive.stat(), manifest.stat()
+            if any(s.st_uid != os.getuid() or s.st_nlink != 1 or s.st_mtime >= now - 30 * 86400 for s in (info, meta)):
+                continue
+            try:
+                value = json.loads(manifest.read_text())
+                committed = dt.datetime.fromisoformat(value['committed_at']).timestamp()
+                if value.get('status') != 'committed' or committed >= now - 30 * 86400 \
+                        or value.get('path') != str(archive.resolve()) or value.get('bytes') != info.st_size \
+                        or not re.fullmatch('[0-9a-f]{64}', value.get('sha256', '')):
+                    continue
+            except (ValueError, KeyError, TypeError):
+                continue
+            candidates.append({'kind': 'calculator_prune_archive', 'path': str(archive),
+                               'manifest': str(manifest), 'sha256': value['sha256'], 'bytes': info.st_size + meta.st_size})
     return sorted(candidates, key=lambda item: item['bytes'], reverse=True)
 
 
@@ -125,7 +151,12 @@ def delete_candidate(site, candidate):
     if matching is None:
         raise RuntimeError('Cleanup candidate changed; refusing deletion.')
     path = Path(candidate['path'])
-    if candidate['kind'] == 'old_release':
+    if candidate['kind'] == 'calculator_prune_archive':
+        if hashlib.sha256(path.read_bytes()).hexdigest() != candidate['sha256']:
+            raise RuntimeError('Calculator retention archive checksum changed; preserving it for review.')
+        path.unlink()
+        Path(candidate['manifest']).unlink()
+    elif candidate['kind'] == 'old_release':
         if path.parent != site / 'releases' or path in protected_releases(site) or path.is_symlink():
             raise RuntimeError('Refusing protected release deletion.')
         if not shutil.rmtree.avoids_symlink_attacks:
@@ -216,10 +247,10 @@ def perform(config, apply=False):
               'apply': apply, 'before': before, 'actions': [], 'warnings': [], 'compactions': []}
     candidates = filesystem_candidates(site)
     report['filesystem_candidates'] = candidates
-    if pressured(before) and apply:
+    if apply:
         for candidate in candidates:
-            if not pressured(disk_usage(site)):
-                break
+            if candidate['kind'] != 'calculator_prune_archive' and not pressured(disk_usage(site)):
+                continue
             delete_candidate(site, candidate)
             report['actions'].append(candidate)
     report['database'] = {'enabled': config.get('database', False)}
@@ -243,6 +274,18 @@ def perform(config, apply=False):
     report['after'] = disk_usage(site)
     report['reclaimed_bytes'] = max(0, report['after']['free_bytes'] - before['free_bytes'])
     report['status'] = 'attention' if pressured(report['after']) else 'healthy'
+    retention_path = config.get('calculator_retention_report')
+    if retention_path:
+        try:
+            retention = json.loads(Path(retention_path).read_text())
+            age = dt.datetime.now(dt.timezone.utc).timestamp() - dt.datetime.fromisoformat(retention['at']).timestamp()
+            report['calculator_retention'] = retention
+            if age < -300 or age > 26 * 3600 or retention['status'] != 'complete':
+                report['status'] = 'attention'
+                report['warnings'].append('Daily calculator retention is stale, incomplete or failed; inspect its private report.')
+        except (OSError, ValueError, KeyError, TypeError):
+            report['status'] = 'attention'
+            report['warnings'].append('Daily calculator retention report is unavailable; inspect the worker schedule.')
     return report
 
 
@@ -281,6 +324,11 @@ def main():
                       'error': str(error)[:300]}
         if args.scheduled:
             report['scheduled_date'] = local_time().date().isoformat()
+        elif previous.get('scheduled_date'):
+            report['scheduled_date'] = previous['scheduled_date']
+        if previous.get('after') and report.get('after'):
+            report['since_previous_check'] = {'at': previous.get('at'),
+                                            'free_change_bytes': report['after']['free_bytes'] - previous['after']['free_bytes']}
         if args.apply:
             needs_email = report['status'] != 'healthy' or previous.get('status') in ('attention', 'error')
             if needs_email:

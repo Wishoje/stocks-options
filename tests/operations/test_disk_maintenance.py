@@ -208,6 +208,74 @@ class DiskMaintenanceTest(unittest.TestCase):
             self.assertEqual(0, maintenance.main())
         perform.assert_not_called()
 
+    def archive(self, days=40, status='committed', digest=None):
+        root = self.site / 'storage/app/private/maintenance/calculator-prune'
+        root.mkdir(parents=True, exist_ok=True)
+        archive = root / '20260101-040000-12345678-1234-1234-1234-123456789abc.jsonl.gz'
+        archive.write_bytes(b'archived expired calculator data')
+        manifest = archive.with_name(archive.name + '.manifest.json')
+        stamp = time.time() - days * 86400
+        manifest.write_text(json.dumps({'status': status, 'committed_at': dt.datetime.fromtimestamp(stamp, dt.timezone.utc).isoformat(),
+                                       'path': str(archive.resolve()), 'bytes': archive.stat().st_size,
+                                       'sha256': digest or maintenance.hashlib.sha256(archive.read_bytes()).hexdigest()}))
+        for path in (archive, manifest):
+            os.utime(path, (stamp, stamp))
+        return archive, manifest
+
+    def test_archive_retention_only_removes_old_committed_checksum_verified_pairs(self):
+        archive, manifest = self.archive()
+        item = next(c for c in maintenance.filesystem_candidates(self.site) if c['kind'] == 'calculator_prune_archive')
+        maintenance.delete_candidate(self.site, item)
+        self.assertFalse(archive.exists())
+        self.assertFalse(manifest.exists())
+
+    def test_recent_and_uncommitted_archives_are_preserved(self):
+        for days, status in ((1, 'committed'), (40, 'prepared')):
+            archive, manifest = self.archive(days, status)
+            self.assertFalse(any(c['kind'] == 'calculator_prune_archive' for c in maintenance.filesystem_candidates(self.site)))
+            self.assertTrue(archive.exists())
+
+    def test_expired_prune_archives_are_cleaned_daily_without_disk_pressure(self):
+        archive, manifest = self.archive()
+        healthy = {'used_percent': 50, 'free_bytes': 20 * maintenance.GIB, 'total_bytes': 40 * maintenance.GIB}
+        with patch.object(maintenance, 'disk_usage', return_value=healthy):
+            result = maintenance.perform(self.config, apply=True)
+        self.assertFalse(archive.exists())
+        self.assertFalse(manifest.exists())
+        self.assertEqual(['calculator_prune_archive'], [a['kind'] for a in result['actions']])
+
+    def test_corrupt_archive_is_preserved_and_cleanup_stops(self):
+        archive, manifest = self.archive(digest='0' * 64)
+        item = next(c for c in maintenance.filesystem_candidates(self.site) if c['kind'] == 'calculator_prune_archive')
+        with self.assertRaises(RuntimeError):
+            maintenance.delete_candidate(self.site, item)
+        self.assertTrue(archive.exists())
+        self.assertTrue(manifest.exists())
+
+    def test_failed_or_missing_daily_retention_report_requires_attention_even_with_free_disk(self):
+        healthy = {'used_percent': 50, 'free_bytes': 20 * maintenance.GIB, 'total_bytes': 40 * maintenance.GIB}
+        report = self.site / 'retention.json'
+        for value in (None, {'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'status': 'error'}):
+            if value:
+                report.write_text(json.dumps(value))
+            with patch.object(maintenance, 'disk_usage', return_value=healthy):
+                result = maintenance.perform({**self.config, 'calculator_retention_report': str(report)})
+            self.assertEqual('attention', result['status'])
+            self.assertTrue(result['warnings'])
+
+    def test_manual_run_preserves_daily_gate_and_records_space_change(self):
+        state = self.site / '.disk-maintenance'
+        state.mkdir(mode=0o700)
+        config = state / 'config.json'
+        config.write_text(json.dumps(self.config))
+        (state / 'latest.json').write_text(json.dumps({'at': '2026-10-21T08:00:00+00:00', 'scheduled_date': '2026-10-21', 'after': {'free_bytes': 10}}))
+        with patch.object(maintenance.sys, 'argv', ['disk_maintenance.py', '--config', str(config), '--apply']), \
+                patch.object(maintenance, 'perform', return_value={'status': 'healthy', 'after': {'free_bytes': 20}}):
+            self.assertEqual(0, maintenance.main())
+        result = json.loads((state / 'latest.json').read_text())
+        self.assertEqual('2026-10-21', result['scheduled_date'])
+        self.assertEqual(10, result['since_previous_check']['free_change_bytes'])
+
     @staticmethod
     def table(**overrides):
         return {'table_name': 'option_snapshots', 'engine': 'InnoDB', 'space_type': 'Single',

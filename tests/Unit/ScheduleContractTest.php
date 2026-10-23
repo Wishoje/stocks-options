@@ -38,4 +38,16 @@ class ScheduleContractTest extends TestCase
         $this->assertSame('America/New_York', $events->first()->timezone);
         $this->assertStringContainsString('calculator:prime-watchlist', $events->first()->command);
     }
+
+    public function test_retention_runs_daily_without_shortening_the_existing_windows(): void
+    {
+        $events = collect(app(Schedule::class)->events());
+        $calculator = $events->firstWhere('description', 'calculator:prune-publications');
+        $this->assertSame('15 3 * * *', $calculator->expression);
+        $this->assertSame('America/New_York', $calculator->timezone);
+        $this->assertStringContainsString('--hours=168', $calculator->command);
+        $chain = $events->first(fn ($event) => str_contains($event->command ?? '', 'options:prune-chain-data'));
+        $this->assertSame('35 3 * * *', $chain->expression);
+        $this->assertStringContainsString('--days=180', $chain->command);
+    }
 }
