@@ -76,7 +76,7 @@ try {
             WHERE t.TABLE_SCHEMA=DATABASE() AND t.TABLE_NAME IN (?,?,?)", $tables);
         emit(['local_database' => true, 'datadir' => $server->datadir, 'tmpdir' => $server->tmpdir,
             'active_transactions' => (int) $db->selectOne('SELECT COUNT(*) AS n FROM information_schema.INNODB_TRX')->n,
-            'long_queries' => (int) $db->selectOne("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE ID<>CONNECTION_ID() AND COMMAND<>'Sleep' AND TIME>=5")->n,
+            'long_queries' => (int) $db->selectOne("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE ID<>CONNECTION_ID() AND COMMAND IN ('Query','Execute') AND INFO IS NOT NULL AND TIME>=5")->n,
             'pending_metadata_locks' => (int) $db->selectOne("SELECT COUNT(*) AS n FROM performance_schema.metadata_locks WHERE LOCK_STATUS='PENDING'")->n,
             'tables' => $rows]);
     } elseif ($operation === 'compact') {
