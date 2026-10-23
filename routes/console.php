@@ -132,7 +132,7 @@ Schedule::command('intraday:prune-counters --days=7')
     ->onOneServer()
     ->name('intraday:prune-counters');
 
-Schedule::command('intraday:prune-option-volumes --hours=24 --batch=100000 --sleep-ms=25')
+Schedule::command('intraday:prune-option-volumes --hours=24 --batch=10000 --sleep-ms=25')
     ->timezone('America/New_York')
     ->dailyAt('03:00')
     ->withoutOverlapping(20)

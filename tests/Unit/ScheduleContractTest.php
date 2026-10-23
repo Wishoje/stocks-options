@@ -42,6 +42,10 @@ class ScheduleContractTest extends TestCase
     public function test_retention_runs_daily_without_shortening_the_existing_windows(): void
     {
         $events = collect(app(Schedule::class)->events());
+        $volumes = $events->first(fn ($event) => str_contains($event->command ?? '', 'intraday:prune-option-volumes'));
+        $this->assertSame('0 3 * * *', $volumes->expression);
+        $this->assertSame('America/New_York', $volumes->timezone);
+        $this->assertStringContainsString('--hours=24 --batch=10000', $volumes->command);
         $calculator = $events->firstWhere('description', 'calculator:prune-publications');
         $this->assertSame('15 3 * * *', $calculator->expression);
         $this->assertSame('America/New_York', $calculator->timezone);
