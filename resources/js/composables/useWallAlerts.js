@@ -81,7 +81,11 @@ export function useWallAlerts(owner) {
   }
   async function preview() {
     if (settings.value.sound) await prepareSound()
-    notifications.value = [{ preview: true, alert_id: 'preview', symbol: 'SPY', received_at: Date.now() }]
+    notifications.value = [{ preview: true, alert_id: 'preview', symbol: 'SPY', side: 'put', strike: 765,
+      close: 765.8, status: 'conditions_met', received_at: Date.now(),
+      observed_at: new Date(Math.floor((Date.now() - 900000) / 300000) * 300000).toISOString(),
+      setup: { direction: 'bullish', pattern: 'reversal', entry_zone: { low: 765.3825, high: 766.1475 },
+        invalidation: { price: 764.6175, close_side: 'below' }, target: { strike: 770 } } }]
     playSound()
   }
   const dismiss = id => { notifications.value = id ? notifications.value.filter(item => item.alert_id !== id) : [] }

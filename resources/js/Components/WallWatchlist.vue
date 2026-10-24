@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch, onScopeDispose } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
-import { wallReactionTitle } from '@/utils/wallDecision'
+import { wallReactionTitle, wallSetupTitle } from '@/utils/wallDecision'
 import WallAlertControls from '@/Components/WallAlertControls.vue'
 
 const props = defineProps({ selectedSymbol: String, chartHref: Function })
@@ -24,7 +24,6 @@ const visible = computed(() => (setupsOnly.value ? items.value.filter(row => row
 const total = computed(() => setupsOnly.value ? qualifiedCount.value : items.value.length)
 const time = value => new Date(value).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 const number = value => Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 6 }) : '—'
-const scenario = row => `${row.setup.direction === 'bullish' ? 'Bullish' : 'Bearish'} ${({ reversal: row.setup.direction === 'bullish' ? 'bounce' : 'rejection', continuation: 'break and retest', reclaim: 'reclaim and retest' })[row.setup.pattern] || 'scenario'}`
 const progress = row => Number.isInteger(row.next_condition?.completed_closes) && row.next_condition.required_closes > 0
   ? `${row.next_condition.completed_closes} of ${row.next_condition.required_closes} confirming closes recorded` : ''
 const checks = row => (row.setup?.evidence_checks || []).filter(check => check.passed).map(check => ({
@@ -55,7 +54,7 @@ watch(() => data.value?.session, () => { setupsOnly.value = false; limit.value =
         <article v-for="row in visible" :key="`${row.symbol}:${row.side}`" :class="['activity-row', { selected: row.symbol === selectedSymbol, qualified: row.status === 'conditions_met' }]">
           <div class="activity-heading"><div><strong class="symbol">{{ row.symbol }}</strong><span :class="row.side">{{ row.side === 'put' ? 'Put' : 'Call' }} wall {{ number(row.strike) }}</span></div>
             <span class="observed-time">{{ time(row.observed_at) }} ET · Close {{ number(row.close) }}</span></div>
-          <div class="activity-body"><div><strong>{{ row.setup ? `${scenario(row)} · Conditions met` : wallReactionTitle(row.reaction) }}</strong>
+          <div class="activity-body"><div><strong>{{ row.setup ? `${wallSetupTitle(row.setup)} · Conditions met` : wallReactionTitle(row.reaction) }}</strong>
             <p v-if="row.setup">{{ checks(row).join(' · ') }}</p>
             <template v-else><p v-if="progress(row)" class="progress">{{ progress(row) }}</p>
               <p class="activity-next"><b>Next:</b> {{ row.next_condition?.text || 'Wait for a completed price sequence at this wall.' }}</p></template></div>

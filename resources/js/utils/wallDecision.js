@@ -11,6 +11,14 @@ export function findWallAssessment(interaction, id) {
   return interaction?.events?.find(row => row.id === id) || interaction?.readings?.find(row => row.id === id)
 }
 
+export function wallSetupTitle(setup) {
+  if (!['bullish', 'bearish'].includes(setup?.direction)) return 'Setup conditions met'
+  const bullish = setup.direction === 'bullish'
+  const pattern = ({ reversal: bullish ? 'bounce' : 'rejection', continuation: 'break and retest',
+    reclaim: 'reclaim and retest' })[setup.pattern] || 'setup'
+  return `${bullish ? 'Bullish' : 'Bearish'} ${pattern}`
+}
+
 export function wallDecisionCards(interaction, latestReading, selectedEvent) {
   return (selectedEvent ? [selectedEvent.side] : ['put', 'call']).map(side => {
     const current = interaction.current?.[side]

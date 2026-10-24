@@ -13,8 +13,8 @@ vi.mock('axios', () => ({ default: { get: vi.fn() } }))
 let id = 700, wrappers = []
 const key = value => value.repeat(64)
 const row = (id = 'a', at = '2026-09-30T14:15:00Z') => ({ symbol: 'QQQ', side: 'call', strike: 100, close: 100.1,
-  observed_at: at, status: 'conditions_met', reaction: 'reclaim', alert_keys: { setup: key(id) }, setup: {
-    direction: 'bullish', expires_at: '2026-09-30T14:40:00Z', entry_zone: { low: 100.05, high: 100.15 },
+  observed_at: at, assessment_id: key(id), status: 'conditions_met', reaction: 'reclaim', alert_keys: { setup: key(id) }, setup: {
+    direction: 'bullish', pattern: 'reclaim', expires_at: '2026-09-30T14:40:00Z', entry_zone: { low: 100.05, high: 100.15 },
     invalidation: { price: 99.95, close_side: 'below' }, target: { strike: 101 }, evidence_checks: [],
   } })
 const payload = (items = []) => ({ schema_version: 'wall-watchlist.v1', session: '2026-09-30', timeframe: '7d',
@@ -48,6 +48,13 @@ describe('wall alert controls and shared polling', () => {
     expect(axios.get).toHaveBeenCalledTimes(1)
     await wrapper.get('.alert-options button').trigger('click'); await flushPromises()
     expect(document.body.textContent).toContain('Example notification. No market event.')
+    const preview = document.querySelector('.wall-alert-toast')
+    expect(preview.textContent).toContain('SPY · Bullish bounce')
+    expect(preview.textContent).toContain('765.3825–766.1475')
+    expect(preview.textContent).toContain('below 764.6175')
+    expect(preview.textContent).toContain('Synthetic underlying prices for preview only')
+    expect(preview.querySelector('a').getAttribute('href')).toBe('/scanner?scan=activity')
+    expect(axios.get).toHaveBeenCalledTimes(1)
     document.querySelector('[aria-label="Dismiss test wall alert"]').click(); await flushPromises()
     expect(document.querySelector('.wall-alert-toast')).toBeNull()
     expect(document.querySelector('.wall-alert-notifications').getAttribute('aria-live')).toBe('polite')
@@ -86,9 +93,19 @@ describe('wall alert controls and shared polling', () => {
     vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))
     axios.get.mockResolvedValue({ data: payload([row('b', '2026-09-30T14:20:00Z')]) })
     await vi.advanceTimersByTimeAsync(60000)
-    expect(document.body.textContent).toContain('QQQ · Setup conditions met')
+    expect(document.body.textContent).toContain('QQQ · Bullish reclaim and retest')
+    const toast = document.querySelector('.wall-alert-toast')
+    expect(toast.textContent).toContain('Conditions met at recorded close 100.1')
+    expect(toast.textContent).toContain('Entry area100.05–100.15')
+    expect(toast.textContent).toContain('Invalid if 5m closebelow 99.95')
+    expect(toast.textContent).toContain('Reference target101')
+    expect(toast.querySelector('time').textContent).toBe('10:20 AM ET')
+    expect(toast.querySelector('time').getAttribute('datetime')).toBe('2026-09-30T14:20:00Z')
+    expect(toast.textContent).toContain('Check current price against the entry area')
     const href = document.querySelector('.wall-alert-toast a').getAttribute('href')
     expect(href).toContain('symbol=QQQ'); expect(href).toContain('timeframe=7d')
+    expect(href).toContain(`wall_assessment=${key('b')}`)
+    expect(toast.querySelector('a').textContent).toContain('View assessment')
     await wrapper.get('.alert-switch input').setValue(false)
     const count = axios.get.mock.calls.length
     await vi.advanceTimersByTimeAsync(60000)
@@ -105,6 +122,34 @@ describe('wall alert controls and shared polling', () => {
     expect(document.querySelectorAll('.wall-alert-toast')).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(100000)
     expect(document.querySelector('.wall-alert-toast')).toBeNull()
+  })
+  it('shows bearish rejection levels without changing their meaning or price precision', async () => {
+    render(); await flushPromises()
+    const bearish = row('b', '2026-09-30T14:20:00Z')
+    bearish.setup = { ...bearish.setup, direction: 'bearish', pattern: 'reversal',
+      invalidation: { price: 100.2345, close_side: 'above' }, target: { strike: 99 } }
+    axios.get.mockResolvedValue({ data: payload([bearish]) })
+    vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))
+    await vi.advanceTimersByTimeAsync(60000)
+    const toast = document.querySelector('.wall-alert-toast')
+    expect(toast.textContent).toContain('QQQ · Bearish rejection')
+    expect(toast.textContent).toContain('above 100.2345')
+    expect(toast.textContent).toContain('Reference target99')
+    expect(toast.textContent).not.toContain('below 100.2345')
+  })
+  it('keeps optional testing notifications separate from setup entries', async () => {
+    const { alerts } = render(); await flushPromises()
+    alerts.update({ testing: true })
+    const testing = { ...row('b', '2026-09-30T14:20:00Z'), status: 'testing', setup: null, alert_keys: { testing: key('b') } }
+    axios.get.mockResolvedValue({ data: payload([testing]) })
+    vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))
+    await vi.advanceTimersByTimeAsync(60000)
+    const toast = document.querySelector('.wall-alert-toast')
+    expect(toast.textContent).toContain('QQQ · Testing a wall')
+    expect(toast.textContent).toContain('Entry confirmation is pending')
+    expect(toast.querySelector('dl')).toBeNull()
+    expect(toast.textContent).not.toContain('Entry area')
+    expect(toast.querySelector('a').getAttribute('href')).toContain(`wall_assessment=${key('b')}`)
   })
   it('clears account and watchlist changes, cancels requests, and ignores late responses', async () => {
     const owner = ref(++id), { wrapper, alerts } = render({ owner }); await flushPromises()
