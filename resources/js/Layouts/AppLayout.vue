@@ -135,8 +135,9 @@ onUnmounted(() => document.removeEventListener('keydown', closeNavigationOnEscap
                             </div>
                         </div>
 
-                        <div class="dashboard-topbar__account">
-                            <WallAlertCenter />
+                        <div class="dashboard-topbar__actions">
+                          <WallAlertCenter />
+                          <div class="dashboard-topbar__account">
                             <div class="ms-3 relative">
                                 <!-- Teams Dropdown -->
                                 <Dropdown
@@ -275,6 +276,7 @@ onUnmounted(() => document.removeEventListener('keydown', closeNavigationOnEscap
                                     />
                                 </svg>
                             </button>
+                        </div>
                         </div>
                     </div>
                 </div>

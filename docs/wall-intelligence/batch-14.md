@@ -4,7 +4,7 @@ Scanner → Wall activity includes Alert me to new setups. New setup alerts are 
 
 A setup notification shows the symbol, bullish or bearish scenario, wall strike, recorded time in ET and completed close. Entry area, the five-minute invalidation boundary and reference target appear together as underlying prices. View assessment opens that symbol's matching recorded assessment in Intraday → Wall tracking with the fixed 1W scope. The notification describes a completed delayed assessment and asks users to check current price against the recorded entry area. Testing notifications describe an area to watch without showing setup-entry levels or implying entry confirmation.
 
-The application layout hosts notifications across authenticated pages. Wall alerts on links back to the controls. Up to three notifications appear at the lower right, with a scrollable stack on shorter screens. They can be dismissed with a labeled button and disappear after 90 seconds or when their event is no longer current. Keyboard focus stays in the current page. Notification announcements use a polite live region. Test alert shows clearly labeled synthetic levels without claiming a market event, and its link returns to Wall activity.
+The application layout hosts notifications across authenticated pages. The Alerts bell opens today's account-scoped browser inbox, with unread counts and original recorded assessments. Its behavior is documented in [Recent alerts inbox](recent-alerts-inbox.md). Up to three notifications appear at the lower right, with a scrollable stack on shorter screens. They can be dismissed with a labeled button and disappear after 90 seconds or when their event is no longer current. Dismissal does not remove the inbox entry. Keyboard focus stays in the current page until the user opens the inbox. Notification announcements use a polite live region. Test alert shows clearly labeled synthetic levels without claiming a market event, and its link returns to Wall activity.
 
 ## Event rules
 
@@ -28,7 +28,7 @@ Sound uses a short browser-generated tone. It is off initially and must be enabl
 
 1. Open `/scanner?scan=activity`. Alert me to new setups starts checked unless that account previously turned it off in this browser. Testing and sound remain unchecked unless saved otherwise. Turn alerts off, reload, and confirm they remain off. Saved preferences survive page changes and reloads.
 2. Click Test alert. A labeled example appears at the lower right. Check dismissal, its Wall activity link and the narrow-screen layout. Toggle Sound and click Test alert to check the tone.
-3. Open another authenticated page. Wall alerts on remains visible and links back to the controls. Live notifications keep monitoring the saved symbols while that tab is visible. Turn alerts off to stop monitoring outside Wall activity.
+3. Open another authenticated page. The Alerts bell remains visible and opens today's saved notifications. Live notifications keep monitoring the saved symbols while that tab is visible. Turn alerts off to stop monitoring outside Wall activity.
 4. Preview local demonstration in the Scanner. Historical examples appear in its list without creating live notifications. Live alerts retain their separate current-session feed.
 
 The local review database has no current-session wall captures. Test alert exercises the visible notification; focused tests exercise new confirmations, testing, expiry and polling with controlled time. Production configuration and data collection are unchanged.

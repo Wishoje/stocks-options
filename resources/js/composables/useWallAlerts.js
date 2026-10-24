@@ -1,14 +1,23 @@
 import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
 import { createWallAlertEngine, currentWallAlertRows, DEFAULT_WALL_ALERT_SETTINGS, wallAlertSettings } from '@/Support/wallAlerts'
+import { createWallAlertInbox } from '@/Support/wallAlertInbox'
 
 let retainedOwner, retainedEngine, audio, audioOwner
 export function useWallAlerts(owner) {
   const settings = ref({ ...DEFAULT_WALL_ALERT_SETTINGS }), notifications = ref([]), message = ref('')
+  const history = ref([]), inboxPersistent = ref(true)
+  let inbox = null
+  function readInbox() {
+    history.value = inbox?.read() || []
+    inboxPersistent.value = inbox?.persistent ?? true
+  }
   const engine = shallowRef(null), clock = ref(Date.now())
   const soundReady = ref(false)
   const stopOwner = watch(() => toValue(owner), id => {
     notifications.value = []; message.value = ''
+    inbox = id ? createWallAlertInbox(id) : null
+    readInbox()
     settings.value = id ? wallAlertSettings(id) : { ...DEFAULT_WALL_ALERT_SETTINGS, enabled: false }
     if (String(id) !== retainedOwner) {
       retainedOwner = String(id)
@@ -66,7 +75,10 @@ export function useWallAlerts(owner) {
     const current = new Set(currentWallAlertRows(data).map(row => row.alert_keys[row.status === 'conditions_met' ? 'setup' : 'testing']))
     notifications.value = notifications.value.filter(item => item.preview || current.has(item.alert_id))
     if (!candidates.length) return
-    notifications.value = [...candidates.map(row => ({ ...row, received_at: Date.now() })), ...notifications.value].slice(0, 3)
+    const received = candidates.map(row => ({ ...row, received_at: Date.now() }))
+    history.value = inbox?.add(received) || []
+    inboxPersistent.value = inbox?.persistent ?? true
+    notifications.value = [...received, ...notifications.value].slice(0, 3)
     playSound()
   }, { immediate: true })
   const stopRevision = watch(feed.revision, (value, before) => {
@@ -74,6 +86,10 @@ export function useWallAlerts(owner) {
   })
   const stopError = watch(feed.error, error => { if (error) notifications.value = [] })
   function storageChanged(event) {
+    if (event.key === inbox?.key || event.key === null) {
+      history.value = inbox?.sync() || []
+      inboxPersistent.value = inbox?.persistent ?? true
+    }
     if (event.key !== `gex:wall-alert-settings:v1:${toValue(owner)}`) return
     const next = wallAlertSettings(toValue(owner))
     if (next.enabled !== settings.value.enabled || next.testing !== settings.value.testing) engine.value?.reset()
@@ -89,8 +105,13 @@ export function useWallAlerts(owner) {
     playSound()
   }
   const dismiss = id => { notifications.value = id ? notifications.value.filter(item => item.alert_id !== id) : [] }
+  function markRead(id = null) {
+    history.value = inbox?.markRead(id) || []
+    inboxPersistent.value = inbox?.persistent ?? true
+  }
   const timer = setInterval(() => {
     clock.value = Date.now()
+    readInbox()
     const current = new Set(currentWallAlertRows(feed.data.value).map(row => row.alert_keys[row.status === 'conditions_met' ? 'setup' : 'testing']))
     notifications.value = notifications.value.filter(item => clock.value - item.received_at < 90000 && (item.preview || current.has(item.alert_id)))
   }, 10000)
@@ -99,5 +120,7 @@ export function useWallAlerts(owner) {
     stopOwner(); stopData(); stopRevision(); stopError(); clearInterval(timer)
     window.removeEventListener('storage', storageChanged)
   })
-  return { settings, notifications, message, soundReady, error: feed.error, loading: feed.loading, update, preview, dismiss }
+  return { owner: computed(() => toValue(owner)), settings, notifications, history, inboxPersistent,
+    unreadCount: computed(() => history.value.filter(item => !item.read_at).length), markRead,
+    message, soundReady, error: feed.error, loading: feed.loading, update, preview, dismiss }
 }

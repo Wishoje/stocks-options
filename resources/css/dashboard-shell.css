@@ -115,6 +115,13 @@
   color: #f2f4f7 !important;
 }
 
+.dashboard-topbar__actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
 .dashboard-topbar__account {
   flex: 0 0 auto;
   align-items: center;

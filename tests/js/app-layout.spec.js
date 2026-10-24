@@ -125,6 +125,9 @@ describe('AppLayout navigation shell', () => {
     expect(blocked.text()).not.toContain('EOD Health')
     expect(blocked.findAll('main')).toHaveLength(1)
     expect(blocked.get('#application-page-content').attributes('tabindex')).toBe('-1')
+    expect(blocked.findAll('.wall-inbox-trigger')).toHaveLength(1)
+    expect(blocked.get('.dashboard-topbar__actions').find('.wall-inbox-trigger').exists()).toBe(true)
+    expect(blocked.get('.dashboard-topbar__account').find('.wall-inbox-trigger').exists()).toBe(false)
     blocked.unmount()
   })
 

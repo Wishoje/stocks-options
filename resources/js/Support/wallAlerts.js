@@ -1,12 +1,13 @@
 export const WALL_ALERTS = Symbol('wall-alerts')
 export const DEFAULT_WALL_ALERT_SETTINGS = Object.freeze({ enabled: true, testing: false, sound: false })
 const validKey = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
-const today = now => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now))
+const sessionDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
+export const wallAlertSessionDate = now => sessionDateFormatter.format(new Date(now))
 const validPrice = price => Number.isFinite(price) && price > 0
 
 export function currentWallAlertRows(data, now = Date.now()) {
   if (data?.schema_version !== 'wall-watchlist.v1' || data.state !== 'ready' || data.timeframe !== '7d'
-    || data.session !== today(now) || Date.parse(data.refresh_until) <= now || !Number.isFinite(Date.parse(data.refresh_until))) return []
+    || data.session !== wallAlertSessionDate(now) || Date.parse(data.refresh_until) <= now || !Number.isFinite(Date.parse(data.refresh_until))) return []
   const delay = Math.max(900, Number(data.quote_delay_seconds) || 900) * 1000 + 30000
   const cutoff = now - delay
   return (Array.isArray(data.items) ? data.items : []).filter(row => {
@@ -39,7 +40,7 @@ export function createWallAlertEngine(owner, storage) {
   function reset() { primed = false; startedAfter = 0 }
   function consume(data, settings, now = Date.now()) {
     if (!settings.enabled || data?.state === 'demonstration') return []
-    if (data?.session !== today(now) || data.timeframe !== '7d') return []
+    if (data?.session !== wallAlertSessionDate(now) || data.timeframe !== '7d') return []
     if (session !== data.session) { session = data.session; primed = false; seen = new Set(); merge() }
     const rows = currentWallAlertRows(data, now)
     if (data.state !== 'ready') return []
