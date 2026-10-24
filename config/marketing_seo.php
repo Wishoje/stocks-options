@@ -10,13 +10,13 @@ return [
 
     'pages' => [
         'home' => [
-            'title' => 'GexOptions - Premarket Levels, Positioning, and Options Flow',
-            'description' => 'Map dated GEX levels and dealer positioning, inspect put-versus-call pricing and stored intraday flow, and scan optionable stocks with source scope visible.',
+            'title' => 'GexOptions - GEX Levels, Wall Tracking & Setup Alerts',
+            'description' => 'Find key options levels, follow price reactions at put and call walls, and review setup alerts with entry, invalidation and target levels. Explore the full GEX Options workspace.',
             'canonical' => 'https://gexoptions.com/',
         ],
         'features' => [
-            'title' => 'GexOptions Features - Flow, GEX Levels, DEX, Scanners, VRP & Term Structure',
-            'description' => 'Explore GEX Options EOD and intraday analytics, watchlist, scanners, options calculator, and structured export with timing and coverage explained.',
+            'title' => 'GexOptions Features - Wall Analysis, Alerts, Scanner & Options Tools',
+            'description' => 'Explore intraday wall tracking, setup alerts, watchlist Scanner, GEX and DEX analysis, gamma context, volatility tools, the options calculator and AI Export.',
             'canonical' => 'https://gexoptions.com/features',
         ],
         'pricing' => [

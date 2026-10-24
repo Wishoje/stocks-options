@@ -50,6 +50,14 @@ const expectedCaptureIds = Object.freeze([
   'calculator-spy',
   'calculator-outcomes-spy',
   'ai-export',
+  'intraday-wall-tracking',
+  'wall-setup-assessment',
+  'scanner-wall-activity',
+  'setup-alerts-inbox',
+  'intraday-gamma-context',
+  'eod-wall-analysis',
+  'strike-expiry-map',
+  'intraday-iv-skew',
 ])
 
 function webpDimensions(buffer) {

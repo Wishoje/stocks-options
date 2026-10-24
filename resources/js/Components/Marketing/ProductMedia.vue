@@ -1,7 +1,7 @@
 <template>
   <figure class="mk-card mk-media" :class="{ 'mk-media--chart-detail': chartDetail }" :data-media-id="media.id" :data-capture-status="media.status">
     <template v-if="isReady">
-      <picture class="mk-media__picture">
+      <picture class="mk-media__picture" :style="pictureStyle">
         <source v-if="media.mobile?.src && !chartDetail" media="(max-width: 640px)" :srcset="media.mobile.src" />
         <img
           class="mk-media__image"
@@ -82,6 +82,10 @@ let returnFocus = null
 let previousOverflow = ''
 
 const isReady = computed(() => props.media.status === 'ready' && Boolean(props.media.desktop?.src))
+const pictureStyle = computed(() => ({
+  '--mk-media-ratio': `${props.media.desktop?.width || 16} / ${props.media.desktop?.height || 10}`,
+  '--mk-mobile-media-ratio': `${props.media.mobile?.width || 16} / ${props.media.mobile?.height || 10}`,
+}))
 
 async function openDialog(event) {
   if (!isReady.value) return

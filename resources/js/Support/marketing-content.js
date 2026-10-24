@@ -62,7 +62,7 @@ export const productMedia = Object.freeze({
     alt: 'GEX Options dealer positioning panel showing negative net dealer delta, negative gamma, regime strength, and signed DEX by expiry.',
     caption: 'Recorded SPY dealer-positioning example with the dated DEX reading, fixed 2W gamma context, and signed exposure by expiry.',
     replaces: ['dex.png'],
-    placements: ['home-dealer-positioning', 'features-eod-positioning'],
+    placements: ['features-eod-positioning'],
     desktopWidth: 840,
     desktopHeight: 979,
     mobileHeight: 454,
@@ -92,7 +92,7 @@ export const productMedia = Object.freeze({
     alt: 'GEX Options put-versus-call pricing view showing 25-delta implied volatility, skew, daily skew change, and rolling history.',
     caption: 'Recorded SPY 1W pricing example with 25-delta put and call IV, 5.5 percentage-point skew, and 30-day history visible.',
     replaces: ['ivSkew.png'],
-    placements: ['features-hero', 'home-put-call-pricing', 'features-eod-positioning'],
+    placements: ['features-eod-positioning'],
     desktopWidth: 1502,
     desktopHeight: 1007,
     mobileHeight: 262,
@@ -170,14 +170,14 @@ export const productMedia = Object.freeze({
   }),
   eodStrikes: readyMedia({
     id: 'eod-strikes-spy-2w',
-    title: 'EOD Strikes',
+    title: 'Net GEX by strike',
     context: 'Recorded SPY example · EOD · 2W',
     description: 'Net GEX and comparison charts with selected strike, units, dates, and included expirations.',
     requiredContext: ['Symbol', '2W scope', 'Data date', 'Included expirations', 'Legend', 'Selected strike'],
     alt: 'GEX Options SPY EOD Strikes view with ten included 2W expirations, Net GEX summaries, and an interactive strike distribution.',
-    caption: 'Recorded SPY EOD Strikes view with the 2W scope, September 11 data set, included expirations, selected strike, and signed Net GEX chart.',
+    caption: 'Recorded SPY example · 2W expirations · EOD September 11, 2026.',
     replaces: ['gex.png', 'oiByStrike.png', 'volBYStrike.png'],
-    placements: ['home-hero', 'home-gex-levels', 'features-eod-strikes'],
+    placements: ['home-hero', 'features-eod-strikes'],
     desktopWidth: 1349,
     desktopHeight: 1171,
     mobileHeight: 338,
@@ -222,7 +222,7 @@ export const productMedia = Object.freeze({
     alt: 'GEX Options SPY Intraday Flow view with stored-response status, session volume, put-call mix, estimated premium, and strike inspection.',
     caption: 'Recorded SPY Intraday Flow data for September 11 with response age, session totals, put-call ratio, premium estimate, and selected-strike context visible.',
     replaces: ['liveFlow.png'],
-    placements: ['home-intraday-preview', 'features-intraday-flow'],
+    placements: ['features-intraday-flow'],
     desktopWidth: 1364,
     desktopHeight: 1052,
     mobileHeight: 300,
@@ -304,7 +304,7 @@ export const productMedia = Object.freeze({
     alt: 'GEX Options Wall Scanner with a one-percent nearest-wall filter, scan results, and call and put wall matches grouped by horizon.',
     caption: 'Recorded Wall Scanner example with the 1% nearest filter, date, 16 matches, distance units, and EOD wall details.',
     replaces: ['terminal_scanner.png'],
-    placements: ['home-scanners', 'features-scanner-walls'],
+    placements: ['features-scanner-walls'],
   }),
   calculator: readyMedia({
     id: 'calculator-spy',
@@ -325,7 +325,7 @@ export const productMedia = Object.freeze({
     requiredContext: ['Breakeven', 'Maximum risk', 'Selected scenario', 'P&L at expiration', 'P&L versus time'],
     alt: 'GEX Options calculator outcome view with breakeven, risk, profit potential, expiration payoff, time path, and scenario tables.',
     caption: 'Recorded SPY long-call outcome example with the selected price and day, expiration payoff, time path, and exact tables visible.',
-    placements: ['home-calculator-outcomes', 'features-calculator'],
+    placements: ['features-calculator'],
     desktopWidth: 1317,
     desktopHeight: 1151,
     mobileHeight: 340,
@@ -341,65 +341,138 @@ export const productMedia = Object.freeze({
     caption: 'Recorded AI Export setup with four generic watchlist symbols, ten selected indicator groups, 30D GEX scope, and queued JSON workflow.',
     placements: ['features-ai-export'],
   }),
+
+  wallTracking: readyMedia({
+    id: 'intraday-wall-tracking', title: 'Intraday wall tracking', context: 'SPY product walkthrough · 1W expiries',
+    description: 'Put and call wall levels, price and price-reaction events through a session.',
+    requiredContext: ['Symbol', '1W scope', 'Session', 'Price', 'Put and call walls', 'Demonstration label'],
+    alt: 'GEX Options wall-tracking interface showing SPY price, put and call walls, and selectable price-reaction events.',
+    caption: 'Recorded wall-tracking walkthrough with example prices and contracts.',
+    placements: ['home-intraday-example', 'features-hero', 'features-wall-tracking'], capturedOn: '2026-10-24',
+    desktopWidth: 1457, desktopHeight: 541, mobileWidth: 390, mobileHeight: 145,
+  }),
+  wallSetup: readyMedia({
+    id: 'wall-setup-assessment', title: 'A recorded setup assessment', context: 'SPY product walkthrough · Recorded assessment',
+    description: 'The recorded entry area, five-minute invalidation close and reference target.',
+    requiredContext: ['Symbol', 'Recorded time', 'Entry area', 'Invalidation', 'Reference target', 'Demonstration label'],
+    alt: 'GEX Options recorded bearish setup assessment with entry area, five-minute invalidation boundary and reference target together.',
+    caption: 'Recorded setup walkthrough with example entry, invalidation and target levels.',
+    placements: ['features-wall-setups'], capturedOn: '2026-10-24',
+    desktopWidth: 278, desktopHeight: 479, mobileWidth: 390, mobileHeight: 672,
+  }),
+  wallActivity: readyMedia({
+    id: 'scanner-wall-activity', title: 'Watchlist wall activity', context: 'SPY, QQQ and TSLA product walkthrough',
+    description: 'Symbols with a price reaction or setup, followed by the condition to watch next.',
+    requiredContext: ['Symbols', 'Wall', 'Price response', 'Next condition', 'Demonstration label'],
+    alt: 'GEX Options Scanner showing SPY, QQQ and TSLA wall activity, next conditions and a recorded setup with its levels.',
+    caption: 'Recorded Scanner walkthrough with example symbols and price responses.',
+    placements: ['home-scanner', 'features-wall-activity'], capturedOn: '2026-10-24',
+    desktopWidth: 1554, desktopHeight: 808, mobileWidth: 390, mobileHeight: 203,
+  }),
+  setupAlerts: readyMedia({
+    id: 'setup-alerts-inbox', title: 'Setup alerts and Recent alerts', context: 'Built-in test alert · Example levels',
+    description: 'The actual Recent alerts panel displaying its built-in test notification.',
+    requiredContext: ['Test alert label', 'Example label', 'Recorded time', 'Entry area', 'Invalidation', 'Reference target'],
+    alt: 'The GEX Options Recent alerts panel with its clearly labeled test alert, recorded setup levels and assessment link.',
+    caption: 'Recorded Recent alerts preview using the built-in Test alert and example levels.',
+    placements: ['home-alerts', 'features-setup-alerts'], capturedOn: '2026-10-24',
+    desktopWidth: 470, desktopHeight: 845, mobileWidth: 390, mobileHeight: 844,
+  }),
+  gammaContext: readyMedia({
+    id: 'intraday-gamma-context', title: 'Intraday gamma context', context: 'SPY product walkthrough · Same 1W expiries as the walls',
+    description: 'Modeled gamma regime, flip, price distance and flip movement.',
+    requiredContext: ['Recorded time', 'Gamma regime', 'Flip', 'Price distance', '1W scope'],
+    alt: 'GEX Options intraday gamma context with modeled regime, gamma flip, price distance and flip movement.',
+    caption: 'Recorded built-in walkthrough with example contracts. Gamma context describes the model at the selected reading.',
+    placements: ['features-gamma-context'], capturedOn: '2026-10-24',
+    desktopWidth: 1457, desktopHeight: 221, mobileWidth: 390, mobileHeight: 59,
+  }),
+  wallAnalysis: readyMedia({
+    id: 'eod-wall-analysis', title: 'Wall analysis', context: 'Recorded SPY EOD example',
+    description: 'Put and call wall ranks, nearby-strike comparison, persistence, open-interest changes and expiry contributions.',
+    requiredContext: ['Symbol', 'EOD date', 'Expiry scope', 'Put and call walls'],
+    alt: 'GEX Options EOD put and call wall analysis with ranked levels, concentration, open-interest change and expiry contribution.',
+    caption: 'Recorded SPY EOD wall analysis. Compare the concentration, history and expirations behind each level.',
+    placements: ['home-swing-example', 'features-wall-analysis'], capturedOn: '2026-10-24',
+    desktopWidth: 1510, desktopHeight: 678, mobileWidth: 390, mobileHeight: 175,
+  }),
+  expiryMap: readyMedia({
+    id: 'strike-expiry-map', title: 'Strike-by-expiry exposure map', context: 'Recorded SPY EOD example',
+    description: 'Exposure by strike and expiration with the contributions behind a selected cell.',
+    requiredContext: ['Symbol', 'Expiry scope', 'Strikes', 'Expirations', 'GEX units'],
+    alt: 'GEX Options strike-by-expiry heatmap showing where gamma exposure is concentrated and the expirations behind a selected strike.',
+    caption: 'Recorded strike-by-expiry view. A concentrated expiration can change the exposure picture as it rolls off.',
+    placements: ['features-expiry-map'], capturedOn: '2026-10-24',
+    desktopWidth: 1510, desktopHeight: 774, mobileWidth: 390, mobileHeight: 200,
+  }),
+  intradayPricing: readyMedia({
+    id: 'intraday-iv-skew', title: 'Intraday IV and skew', context: 'Recorded SPY intraday pricing example',
+    description: 'Near-money IV, 25-delta put and call pricing, and skew through the session.',
+    requiredContext: ['Symbol', 'Session', 'Expiration', 'IV units', 'Recorded times'],
+    alt: 'GEX Options intraday implied volatility and put-versus-call skew history for one selected expiration.',
+    caption: 'Recorded SPY pricing view. Follow one expiration through the session to compare changes in IV and skew.',
+    placements: ['home-options-pricing', 'features-intraday-pricing'], capturedOn: '2026-10-24',
+    desktopWidth: 1510, desktopHeight: 897, mobileWidth: 390, mobileHeight: 232,
+  }),
 })
 
-export const homePreviews = Object.freeze([
-  {
-    id: 'put-call-pricing',
-    label: 'Put vs. call pricing',
-    title: 'Compare downside and upside volatility pricing',
-    summary: 'Use 25-delta put and call IV, skew, daily change, and rolling history to see how protection is priced relative to calls.',
-    media: productMedia.skewPricing,
-  },
-  {
-    id: 'dealer-positioning',
-    label: 'Dealer positioning',
-    title: 'See how dealer exposure changes by expiry',
-    summary: 'Read signed DEX beside the gamma regime and its fixed scope, then inspect which expiries carry the largest positive or negative exposure.',
-    media: productMedia.positioning,
-  },
-  {
-    id: 'intraday-flow',
-    label: 'Intraday flow',
-    title: 'See where session activity is building',
-    summary: 'Compare call and put volume, premium estimates, and strike activity with the session timing shown in the same view.',
-    media: productMedia.intradayFlow,
-  },
-  {
-    id: 'scanner',
-    label: 'Wall scanner',
-    title: 'Turn the market into a focused list',
-    summary: 'Use explicit distance thresholds, timeframe groups, and dates to find nearby call and put walls and open the symbol in context.',
-    media: productMedia.scannerWalls,
-  },
-  {
-    id: 'calculator-outcomes',
-    label: 'Payoff outcomes',
-    title: 'Test the contract before acting',
-    summary: 'Inspect breakeven, maximum risk, expiration payoff, and the estimated time path while keeping the selected scenario visible.',
-    media: productMedia.calculatorOutcomes,
-  },
+
+export const tradingWorkflows = Object.freeze([
+  { id: 'intraday-example', label: 'Intraday trading', title: 'Follow price at the level.',
+    description: 'Trading SPY during the session? Find a nearby level, watch the reaction, then review the setup before deciding.',
+    steps: ['Find a symbol approaching or testing a wall in Scanner.', 'See whether price bounces, breaks or retests the level.', 'Review the entry area, target and the price that invalidates the setup.'],
+    note: 'Intraday prices are delayed at least 15 minutes. Alerts arrive while the site is open.',
+    href: '/features#intraday-wall-tracking', link: 'Explore the intraday tools', media: productMedia.wallTracking },
+  { id: 'swing-example', label: 'Swing trading', title: 'Plan beyond today’s session.',
+    description: 'Holding QQQ or TSLA for several days? Map the major price levels and compare contracts expiring during your planned hold.',
+    steps: ['Use after-close wall analysis to identify price areas worth monitoring.', 'See which expiration dates drive those levels and when those contracts expire.', 'Compare volatility and model a long call or put’s risk before entry.'],
+    note: 'Choose expirations that fit your holding period. Recheck the plan as price and positioning change.',
+    href: '/features#eod-analysis', link: 'Explore the swing-trading tools', media: productMedia.wallAnalysis },
 ])
 
-export const featureGroups = Object.freeze([
+export const homeStories = Object.freeze([
+  { id: 'watchlist-workflow', eyebrow: '01 · Find the symbols that need attention', title: 'Your watchlist, with a next step.',
+    description: 'See which saved symbols are approaching a wall, testing it or meeting setup conditions. Open the exact assessment behind a result.',
+    bullets: ['Price response and recorded time beside each symbol', 'The next condition to watch when a setup is still developing', 'Entry area, invalidation and target when conditions are met'],
+    href: '/features#wall-activity', link: 'Explore Scanner and wall activity', media: productMedia.wallActivity },
+  { id: 'options-pricing-workflow', eyebrow: '02 · Check the cost of the trade', title: 'See how options pricing is changing.',
+    description: 'See whether implied volatility—the volatility priced into an option—is rising or falling. Compare puts with calls before choosing a contract.',
+    bullets: ['Compare near-money, put and call implied volatility', 'Follow the same expiration throughout the session', 'Inspect the chart to see how pricing has changed since the first reading'],
+    href: '/features#intraday-iv-skew', link: 'Explore IV and put-versus-call pricing', media: productMedia.intradayPricing },
+  { id: 'alerts-workflow', eyebrow: '03 · Get the setup and its boundaries', title: 'Follow more symbols without watching every chart.',
+    description: 'While the site is open, on-screen alerts bring new qualifying setups to you. Read the scenario, its recorded entry area, invalidation and target in one place.',
+    bullets: ['Setup alerts on by default, with optional sound and wall-test alerts', 'A bell in the navigation keeps today’s received alerts after popups close', 'Each alert links to the matching recorded assessment'],
+    href: '/features#setup-alerts', link: 'Explore alerts and the inbox', media: productMedia.setupAlerts, portrait: true },
+])
+
+export const homeToolkit = Object.freeze([
+  { title: 'Understand the walls', description: 'Compare wall ranks, persistence, open-interest changes and the expirations driving a level.', href: '/features#wall-analysis', icon: 'M4 19V9m5 10V5m5 14v-7m5 7V3M2 21h20' },
+  { title: 'Read gamma and dealer exposure', description: 'Add the gamma regime, modeled flip and dealer delta to your view of the market.', href: '/features#gamma-context', icon: 'M3 17l5-5 4 3 9-11M3 21h18M3 3v18' },
+  { title: 'Compare volatility and skew', description: 'Follow IV and put-versus-call pricing, then compare expirations and realized volatility.', href: '/features#volatility-pricing', icon: 'M3 17c3 0 3-10 6-10s3 10 6 10 3-10 6-10M3 21h18' },
+  { title: 'See the expirations behind a strike', description: 'Use the exposure map to see which expirations dominate and what is expiring next.', href: '/features#strike-expiry-map', icon: 'M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18' },
+  { title: 'Model the contract risk', description: 'Compare a long call or put’s maximum loss, breakeven and payoff across price and time scenarios.', href: '/features#options-calculator', icon: 'M5 3h14v18H5zM8 7h8M8 12h1m3 0h1m3 0h1M8 16h1m3 0h1m3 0h1' },
+  { title: 'Take the analysis with you', description: 'Export selected analytics as structured JSON for your own research and AI-assisted review.', href: '/features#ai-export', icon: 'M12 3v12m-4-4 4 4 4-4M4 15v6h16v-6' },
+])
+const existingFeatureGroups = Object.freeze([
   {
     id: 'eod-analysis',
+    navLabel: 'GEX & positioning',
     eyebrow: 'After-close context',
-    title: 'Five EOD views, each with its real scope',
-    description: 'EOD data is prepared after the close. Dates and filters can differ by dataset, so each view keeps its own scope visible.',
+    title: 'Build your plan before the next session',
+    description: 'Map the major concentrations, compare dealer positioning and see what is changing across your selected expirations.',
     features: [
       {
         id: 'eod-overview',
-        title: 'Overview',
+        title: 'Q-Score and options overview',
         description: 'Read the Q Score components alongside options totals and call/put distributions for the selected EOD timeframe.',
         bullets: ['Four score components with explanations and dates', 'HVL, volume PCR, OI and volume totals and changes', 'Inspectable call/put distributions'],
         media: productMedia.overview,
       },
       {
         id: 'eod-positioning',
-        title: 'Positioning',
-        description: 'Compare dealer delta, expiry pressure, fixed-scope gamma context, and skew without implying that one filter controls every dataset.',
-        bullets: ['Signed DEX by expiry and rankings', 'Expiry clusters, max pain, and pin context', 'Skew, curvature, history, quality, and calculation detail'],
+        title: 'Dealer positioning and DEX',
+        description: 'Compare dealer delta by expiration and the gamma regime to add context around the levels you are watching.',
+        bullets: ['Signed DEX by expiry and rankings', 'Expiry clusters, max pain, and pin context', 'Put-versus-call pricing with recent skew history'],
         media: productMedia.positioning,
         previews: [
           {
@@ -427,8 +500,8 @@ export const featureGroups = Object.freeze([
       },
       {
         id: 'eod-volatility',
-        title: 'Volatility',
-        description: 'Keep distinct volatility horizons together while retaining each panel’s date and units.',
+        title: 'Term structure, volatility premium and seasonality',
+        description: 'Compare the volatility priced into options with recent realized volatility, and see how pricing differs across expirations.',
         bullets: ['All returned term-structure expiries', 'IV, realized volatility, VRP, and z-score', 'Five daily seasonality readings and cumulative result'],
         media: productMedia.volatility,
         previews: [
@@ -458,8 +531,8 @@ export const featureGroups = Object.freeze([
       {
         id: 'eod-unusual-activity',
         title: 'Unusual Activity',
-        description: 'Apply and review the actual signal filters, then inspect why a returned contract qualified.',
-        bullets: ['Applied scope stays separate from draft edits', 'Sortable results with call/put and premium context', 'Complete returned fields remain available'],
+        description: 'Find contracts with unusual activity and inspect the volume, premium and open-interest context behind each result.',
+        bullets: ['Choose the screening filters that fit your research', 'Sortable results with call/put and premium context', 'Inspect the contract details behind each result'],
         media: productMedia.unusualActivity,
         previews: [
           {
@@ -480,8 +553,8 @@ export const featureGroups = Object.freeze([
       },
       {
         id: 'eod-strikes',
-        title: 'Strikes',
-        description: 'Inspect Net GEX and dated OI/volume comparisons for the selected EOD expiry timeframe.',
+        title: 'Net GEX by strike',
+        description: 'Map where options exposure is concentrated at each price. Compare the largest positive and negative levels, then inspect the strikes near your plan.',
         bullets: ['Net and split call/put GEX views', 'Focus, grouping, zoom reset, and PNG export', 'Full raw strike tables retain every returned row'],
         media: productMedia.eodStrikes,
         previews: [
@@ -512,22 +585,23 @@ export const featureGroups = Object.freeze([
   },
   {
     id: 'intraday-analysis',
+    navLabel: 'Volatility & flow',
     eyebrow: 'During-session updates',
-    title: 'Two ways to explore intraday activity',
-    description: 'Follow session volume, put/call balance, and strike activity with periodic market-hours updates. Each view shows its update time so you can assess how current the readings are.',
+    title: 'See where options activity is building',
+    description: 'Compare session participation, put-versus-call volume and estimated premium across strikes with periodic market-hours updates.',
     features: [
       {
         id: 'intraday-live-flow',
-        title: 'Live Flow',
+        title: 'Intraday options volume',
         description: 'Review cumulative session volume across returned expiries and inspect call/put activity by strike.',
         bullets: ['Market state, trade date, update time', 'Session volume, put/call ratio, and estimated premium', 'Pointer, keyboard, and touch strike inspection'],
         media: productMedia.intradayFlow,
       },
       {
         id: 'intraday-live-strikes',
-        title: 'Live Strikes',
-        description: 'Compare three strike views without losing their units, derivation notes, or exact returned data.',
-        bullets: ['Volume/open-interest ratio in x', 'Put/call ratio with denominator handling', 'Estimated call and put premium in dollars'],
+        title: 'Intraday strike activity',
+        description: 'Find the strikes drawing attention, then compare their put/call activity and estimated premium.',
+        bullets: ['Volume/open-interest ratio in x', 'Put-versus-call volume at each strike', 'Estimated call and put premium in dollars'],
         media: productMedia.intradayStrikes,
         previews: [
           {
@@ -557,15 +631,16 @@ export const featureGroups = Object.freeze([
   },
   {
     id: 'scan-and-monitor',
+    navLabel: 'Scanners & watchlist',
     eyebrow: 'Find and move between symbols',
-    title: 'Watchlist and scanners that preserve context',
+    title: 'Find your next chart and keep your symbols close',
     description: 'Find active symbols and nearby walls, then open their charts for a closer look.',
     features: [
       {
         id: 'watchlist',
         title: 'Watchlist',
         description: 'Search, add, remove, refresh, and select symbols from a compact list with pin and unusual-activity context.',
-        bullets: ['Selected symbol and status remain clear', 'Separate search and add actions', 'Desktop panel and mobile drawer'],
+        bullets: ['Move quickly between your saved symbols', 'Search supported stocks and ETFs', 'Desktop panel and mobile drawer'],
         media: productMedia.watchlist,
       },
       {
@@ -586,14 +661,15 @@ export const featureGroups = Object.freeze([
   },
   {
     id: 'plan-and-export',
-    eyebrow: 'Define and carry the work forward',
+    navLabel: 'Calculator & export',
+    eyebrow: 'Plan the contract and continue your research',
     title: 'Calculator and structured export tools',
-    description: 'Model explicit assumptions and export the selected datasets without changing their calculation or scope contracts.',
+    description: 'Check the risk of a long call or put, then export the analytics you want to use in your own research.',
     features: [
       {
         id: 'options-calculator',
         title: 'Options Calculator',
-        description: 'Select a published contract, verify the pricing input, and inspect expiration and time scenarios.',
+        description: 'Choose a long call or put and compare its cost, maximum loss, breakeven and payoff across price and time scenarios.',
         bullets: ['Bid, ask, quote time, IV, and DTE', 'Long-call and long-put risk and payoff handling', 'Exact payoff and daily time tables'],
         media: productMedia.calculator,
         previews: [
@@ -617,63 +693,80 @@ export const featureGroups = Object.freeze([
         id: 'ai-export',
         title: 'AI Export',
         description: 'Create a JSON bundle from selected symbols and indicator groups, then keep working while it is prepared.',
-        bullets: ['Ten supported indicator groups', 'GEX timeframe applies only to GEX data', 'Queued, running, completed, failed, history, and download states'],
+        bullets: ['Choose symbols and the analytics you want to include', 'Include wall intelligence and intraday walls and setups', 'Download structured JSON for research or your own AI workflow'],
         media: productMedia.aiExport,
       },
     ],
   },
 ])
 
-export const buildHomeFaqs = trialDays => Object.freeze([
-  {
-    q: 'What is the difference between EOD and intraday views?',
-    a: 'EOD views use completed EOD data for planning and comparison. Intraday views use stored session updates and show the session time and market status in the terminal.',
-  },
-  {
-    q: 'Is intraday data a streaming tick feed?',
-    a: 'Intraday views update periodically rather than tick by tick. Track session activity and check the displayed update time for each update.',
-  },
-  {
-    q: 'Which symbols are supported?',
-    a: 'Explore supported US-listed optionable stocks and ETFs. Use symbol search and your watchlist to move between charts.',
-  },
-  {
-    q: 'Does one timeframe control every EOD panel?',
-    a: 'No. The selected EOD timeframe applies to Overview and Strikes. Positioning, Volatility, and Unusual Activity label their own dataset scopes and dates.',
-  },
-  {
-    q: 'Is GEX Options financial advice?',
-    a: 'No. GEX Options is analytics software. It does not recommend a trade or guarantee an outcome.',
-  },
-  {
-    q: 'When does the trial begin?',
-    a: `The current ${trialDays}-day trial begins after checkout is completed. The Pricing page shows the current billing choices and terms before you continue.`,
-  },
-  {
-    q: 'Can I cancel before the trial ends?',
-    a: 'Yes. Open the billing portal from your account to cancel before the trial ends and avoid a subscription charge. Otherwise, your selected monthly or yearly subscription starts and renews automatically.',
-  },
+
+const wallWorkflow = {
+  id: 'wall-workflow', eyebrow: 'Walls, reactions & alerts', navLabel: 'Walls & alerts', title: 'Follow a level all the way to a recorded setup.',
+  description: 'See the wall, understand the price response, and read the conditions and boundaries of the next scenario. Intraday prices are delayed at least 15 minutes.',
+  features: [
+    { id: 'intraday-wall-tracking', title: 'Intraday wall tracking', description: 'Follow put and call wall levels alongside price through today’s session. See where the leading walls move and how price behaves around them.',
+      bullets: ['One focused 1W expiry scope across tracked symbols', 'Chart events for approaches, tests, touches, bounces and breaks', 'Open the completed price bars behind an event'], media: productMedia.wallTracking },
+    { id: 'wall-setups', title: 'Setup conditions and clear price boundaries', description: 'Know what price still needs to do. When a qualifying sequence is recorded, review the entry area, invalidation boundary and reference target together.',
+      bullets: ['Bullish and bearish bounce, rejection, break-and-retest and reclaim scenarios', 'The next condition still needed, including confirming-close progress', 'Recorded assessments link to their supporting price observations'], media: productMedia.wallSetup },
+    { id: 'wall-activity', title: 'Scanner: which symbols need attention?', description: 'Monitor wall reactions across your saved symbols. See the next condition for developing setups and open the matching symbol and assessment in one step.',
+      bullets: ['All activity or conditions-met filtering', 'Price response, completed-close time and setup levels', 'Near walls and Options volume scanners remain available'], media: productMedia.wallActivity },
+    { id: 'setup-alerts', title: 'Setup alerts and your Recent alerts inbox', description: 'Keep the site open and receive on-screen alerts for new qualifying setups across your watchlist. The navigation bell keeps today’s received alerts available after the popup closes.',
+      bullets: ['Setup alerts on by default; sound and wall-test alerts are optional', 'Original recorded levels and assessment links stay with each alert', 'Unread count and mark-all-read, with today’s history saved in this browser'], media: productMedia.setupAlerts },
+    { id: 'gamma-context', title: 'Gamma context beside your wall chart', description: 'Compare the modeled gamma regime and flip with price using the same near-term expirations as your wall timeline.',
+      bullets: ['Modeled positive or negative gamma at the selected price', 'Gamma flip, price distance and flip movement', 'Changing price and time with prior-session OI and reference IV held fixed'], media: productMedia.gammaContext },
+  ],
+}
+const wallAnalysis = { id: 'wall-analysis', title: 'Wall analysis: what makes a level stand out?',
+  description: 'Go beyond the largest bar. See how a wall compares with nearby strikes, how often it stays among the leading levels and which expirations contribute most.',
+  bullets: ['Ranked put and call walls with distance from the close', 'Same-expiry history and open-interest build or unwind context', 'Expiry contribution and concentration behind each strike'], media: productMedia.wallAnalysis }
+const expiryMap = { id: 'strike-expiry-map', title: 'Strike-by-expiry exposure map',
+  description: 'See the expirations behind each strike. Select a cell to inspect its call, put and net GEX, then compare the expiration’s share of that strike.',
+  bullets: ['Gamma exposure across strike and expiration', 'Dominant expiration and the share expiring next', 'A detailed contribution breakdown for the selected strike'], media: productMedia.expiryMap }
+const pricing = { id: 'intraday-iv-skew', title: 'Intraday IV and put-versus-call skew',
+  description: 'Follow one expiration through the session to see how near-money IV and 25-delta put and call pricing change.',
+  bullets: ['Near-money IV, put IV, call IV and put-minus-call skew', 'Changes from the first comparable session reading', 'Inspect recorded times and export IV and skew history'], media: productMedia.intradayPricing }
+export const featureGroups = Object.freeze([
+  wallWorkflow,
+  ...existingFeatureGroups.map(group => {
+    if (group.id === 'eod-analysis') return { ...group, features: [group.features.find(feature => feature.id === 'eod-strikes'), wallAnalysis, expiryMap, ...group.features.filter(feature => feature.id !== 'eod-strikes')] }
+    if (group.id === 'intraday-analysis') return { ...group, id: 'volatility-pricing', eyebrow: 'Pricing & session activity', features: [pricing, ...group.features] }
+    return group
+  }),
 ])
 
-export const featureFaqs = Object.freeze([
-  {
-    q: 'Can I inspect exact values without relying on hover?',
-    a: 'Yes. Charts provide selected readings for pointer, keyboard, and touch users, and complete returned data remains available in tables or details.',
-  },
-  {
-    q: 'What does Live mean in Live Flow and Live Strikes?',
-    a: 'Live Flow and Live Strikes show current-session options activity through periodic updates. Update times and market status stay visible alongside the readings.',
-  },
-  {
-    q: 'What should I check when comparing readings?',
-    a: 'Match the symbol, expiry timeframe, date, and units. Use the chart controls to inspect a level and compare it with nearby strikes.',
-  },
-  {
-    q: 'Does the Scanner use my dashboard timeframe?',
-    a: 'The Scanner has its own filters and timeframes. Dashboard handoffs carry the relevant symbol and wall timeframe when that context exists.',
-  },
-  {
-    q: 'What does the Options Calculator model?',
-    a: 'It models long-call or long-put scenarios from the selected contract, pricing input, quantity, underlying scenario, implied volatility, and time assumptions shown in the view.',
-  },
+export const buildHomeFaqs = trialDays => Object.freeze([
+  { q: 'What can I use GEX Options for?', a: 'Use it to map important options levels, watch price reactions, identify the next condition at a wall, and review setup boundaries. Add volatility, dealer exposure and contract scenarios to your research in the same workspace.' },
+  { q: 'How do setup alerts work?', a: 'On-screen setup alerts follow your saved symbols while the site is open. New qualifying setups include their recorded entry area, five-minute invalidation boundary and reference target. The bell keeps today’s received alerts in this browser. Sound and wall-testing alerts are optional.' },
+  { q: 'How current is the intraday data?', a: 'Intraday prices are delayed at least 15 minutes and views update periodically during market hours. Wall tracking uses completed five-minute price observations and near-term 1W expirations. Recorded times are visible so you can compare the assessment with current conditions.' },
+  { q: 'Which symbols are supported?', a: 'Explore supported US-listed optionable stocks and ETFs, including SPY, QQQ and TSLA. Search for symbols and save the ones you follow in your watchlist.' },
+  { q: 'When does the trial begin?', a: `The current ${trialDays}-day trial begins after checkout is completed. The Pricing page shows the current billing choices and terms before you continue.` },
+  { q: 'Can I cancel before the trial ends?', a: 'Yes. Open the billing portal from your account to cancel before the trial ends and avoid a subscription charge. Otherwise, your selected monthly or yearly subscription starts and renews automatically.' },
+  { q: 'Are these guaranteed trade signals?', a: 'No. The platform provides analytics and modeled scenarios, not a guarantee that a level will hold or a target will be reached. A recorded setup describes conditions at its displayed time. Review current price and your own risk before making a decision.' },
 ])
+export const featureFaqs = Object.freeze([
+  { q: 'Where should I start?', a: 'Save the symbols you trade, then open Scanner’s Wall activity view. Choose a symbol to open its wall chart and matching assessment. Use EOD wall analysis to prepare your levels before the next session.' },
+  { q: 'What does a setup with conditions met mean?', a: 'The recorded price sequence, entry area and target room passed the platform’s rules at the displayed delayed close. It does not mean the same entry remains available now or that the outcome is guaranteed.' },
+  { q: 'Do alerts arrive when the site is closed?', a: 'No. These are in-app notifications while the site is open. Setup alerts are on by default and sound is optional. Today’s received alerts remain in the browser’s Recent alerts panel until midnight Eastern time.' },
+  { q: 'How are intraday walls modeled?', a: 'The model changes price and time while prior-session open interest and reference IV stay fixed within each comparison window. Walls use the near-term 1W expiry scope. Intraday prices are delayed at least 15 minutes.' },
+  { q: 'What is included in the subscription?', a: 'The full workspace: wall analysis, wall tracking, setup alerts, Scanner, gamma and dealer exposure, volatility and skew, strike and expiry views, unusual activity, the long-call and long-put calculator, and AI Export. Monthly and yearly billing include the same features.' },
+  { q: 'Can I export my analysis?', a: 'Yes. Download selected datasets as structured JSON through AI Export. Wall timelines and intraday IV and skew also have their own JSON exports, and supported strike charts can be downloaded as PNG images.' },
+])
+
+// Shared with the initial HTML through scripts/export-marketing-content.mjs.
+export const marketingIntros = Object.freeze({
+  home: { eyebrow: 'Options analytics for stocks & ETFs', heading: 'Find key price levels.', accent: 'Know what to watch next.', description: 'Find prices worth watching, see when price tests or breaks them, and get setup alerts with an entry area, target and the price that invalidates the setup.' },
+  features: { eyebrow: 'The complete trading workspace', heading: 'From key levels to a clearer next step.', description: 'Find key price levels, follow how price reacts, and review entry areas, targets and invalidation levels. Explore the tools for intraday decisions and plans that span several days.' },
+})
+
+export function buildPublicMarketingContent() {
+  const card = ({ id, label, title, description, steps, bullets, note, href, link }) => ({
+    ...(id ? { id } : {}), ...(label ? { label } : {}), title, description,
+    ...(steps ? { steps } : {}), ...(bullets ? { bullets } : {}),
+    ...(note ? { note } : {}), ...(href ? { href, link: link || title } : {}),
+  })
+  return {
+    home: { intro: marketingIntros.home, workflows: tradingWorkflows.map(card), stories: homeStories.map(card), tools: homeToolkit.map(card), faqs: buildHomeFaqs('{trial_days}') },
+    features: { intro: marketingIntros.features, groups: featureGroups.map(({ id, navLabel, title, description, features }) => ({ id, navLabel, title, description, features: features.map(card) })), faqs: featureFaqs },
+  }
+}

@@ -17,6 +17,7 @@
     <meta head-key="seo-twitter-description" name="twitter:description" :content="description" />
     <meta v-if="image" head-key="seo-twitter-image" name="twitter:image" :content="image" />
     <meta v-if="image && imageAlt" head-key="seo-twitter-image-alt" name="twitter:image:alt" :content="imageAlt" />
+    <component v-if="structuredDataJson" :is="'script'" type="application/ld+json" head-key="product-json-ld">{{ structuredDataJson }}</component>
     <component
       v-if="faqJsonLdJson"
       :is="'script'"
@@ -39,7 +40,10 @@ const props = defineProps({
   imageWidth: { type: Number, default: 0 },
   imageHeight: { type: Number, default: 0 },
   faqs: { type: Array, default: () => [] },
+  structuredData: { type: Object, default: null },
 })
+
+const structuredDataJson = computed(() => props.structuredData ? JSON.stringify(props.structuredData).replace(/</g, '\\u003c') : '')
 
 const faqJsonLdJson = computed(() => {
   if (!props.faqs.length) return ''

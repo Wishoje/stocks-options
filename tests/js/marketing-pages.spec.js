@@ -71,9 +71,9 @@ describe('public marketing pages', () => {
 
   it('renders Home from shared offer and FAQ content without hard-coded price amounts', () => {
     const wrapper = shallowMount(Home, { global: { renderStubDefaultSlot: true } })
-    expect(wrapper.text()).toContain('Plan your session with GEX levels and dealer positioning.')
-    expect(wrapper.text()).toContain('Why subscribe')
-    expect(wrapper.text()).toContain('Put the full workspace to work during your trial.')
+    expect(wrapper.text()).toContain('Find key price levels.Know what to watch next.')
+    expect(wrapper.text()).toContain('One subscription. The complete workspace.')
+    expect(wrapper.text()).toContain('Build your process around the symbols you trade.')
     expect(wrapper.text()).toContain('current 7-day trial')
     expect(wrapper.findAll('details')).toHaveLength(buildHomeFaqs(7).length)
     expect(wrapper.text()).toContain('$29.99/month')
@@ -111,8 +111,8 @@ describe('public marketing pages', () => {
   it('preserves the indexed Home metadata, one crawlable h1, and WebSite structured data', () => {
     const wrapper = mount(Home, { global: { stubs: publicPageStubs } })
 
-    const expectedTitle = 'GexOptions - Premarket Levels, Positioning, and Options Flow'
-    const expectedDescription = 'Map dated GEX levels and dealer positioning, inspect put-versus-call pricing and stored intraday flow, and scan optionable stocks to find your next chart to review.'
+    const expectedTitle = 'GexOptions - GEX Levels, Wall Tracking & Setup Alerts'
+    const expectedDescription = 'Find key options levels, follow price reactions at put and call walls, and review setup alerts with entry, invalidation and target levels. Explore the full GEX Options workspace.'
     expect(wrapper.get('title').text()).toBe(expectedTitle)
     expect(wrapper.get('link[rel="canonical"]').attributes('href')).toBe('https://gexoptions.com/')
     expect(wrapper.get('meta[name="description"]').attributes('content')).toBe(expectedDescription)
@@ -129,7 +129,7 @@ describe('public marketing pages', () => {
     expect(wrapper.get('meta[name="twitter:title"]').attributes('content')).toBe(expectedTitle)
     expect(wrapper.get('meta[name="twitter:description"]').attributes('content')).toBe(expectedDescription)
     expect(wrapper.findAll('h1')).toHaveLength(1)
-    expect(wrapper.get('h1').text()).toBe('Plan your session with GEX levels and dealer positioning.')
+    expect(wrapper.get('h1').text()).toBe('Find key price levels.Know what to watch next.')
 
     const structuredData = wrapper.findAll('script[type="application/ld+json"]')
       .map(script => JSON.parse(script.text()))
@@ -153,18 +153,32 @@ describe('public marketing pages', () => {
 
   it('renders every shared Features section and feature row', () => {
     const wrapper = shallowMount(Features, { global: { renderStubDefaultSlot: true } })
-    expect(wrapper.text()).toContain('Explore GEX, DEX, options flow, scanners, and volatility.')
+    expect(wrapper.text()).toContain('From key levels to a clearer next step.')
     expect(wrapper.findAllComponents({ name: 'FeatureRow' })).toHaveLength(
       featureGroups.reduce((count, group) => count + group.features.length, 0),
     )
     expect(wrapper.findAll('.mk-feature-group')).toHaveLength(featureGroups.length)
   })
 
+  it('makes every feature directly discoverable with a working in-page destination', () => {
+    const wrapper = mount(Features, { global: { stubs: publicPageStubs } })
+    const directory = wrapper.get('nav[aria-label="All product features"]')
+    const links = directory.findAll('a')
+    expect(links).toHaveLength(featureGroups.flatMap(group => group.features).length)
+    for (const link of links) {
+      const destination = wrapper.get(link.attributes('href'))
+      expect(destination.get('h3').text()).toBe(link.text().replace('↗', '').trim())
+    }
+    expect(directory.text()).toContain('Net GEX by strike')
+    expect(directory.text()).toContain('Dealer positioning and DEX')
+    expect(directory.text()).toContain('Setup alerts')
+  })
+
   it('preserves the indexed Features metadata, one h1, and FAQ parity', () => {
     const wrapper = mount(Features, { global: { stubs: publicPageStubs } })
 
-    const expectedTitle = 'GexOptions Features - Flow, GEX Levels, DEX, Scanners, VRP & Term Structure'
-    const expectedDescription = 'Explore GEX Options EOD and intraday analytics, watchlist, scanners, options calculator, and structured exports to compare market levels, positioning, and risk.'
+    const expectedTitle = 'GexOptions Features - Wall Analysis, Alerts, Scanner & Options Tools'
+    const expectedDescription = 'Explore intraday wall tracking, setup alerts, watchlist Scanner, GEX and DEX analysis, gamma context, volatility tools, the options calculator and AI Export.'
     expect(wrapper.get('title').text()).toBe(expectedTitle)
     expect(wrapper.get('link[rel="canonical"]').attributes('href')).toBe('https://gexoptions.com/features')
     expect(wrapper.get('meta[name="description"]').attributes('content')).toBe(expectedDescription)
@@ -181,7 +195,7 @@ describe('public marketing pages', () => {
     expect(wrapper.get('meta[name="twitter:title"]').attributes('content')).toBe(expectedTitle)
     expect(wrapper.get('meta[name="twitter:description"]').attributes('content')).toBe(expectedDescription)
     expect(wrapper.findAll('h1')).toHaveLength(1)
-    expect(wrapper.get('h1').text()).toBe('Explore GEX, DEX, options flow, scanners, and volatility.')
+    expect(wrapper.get('h1').text()).toBe('From key levels to a clearer next step.')
 
     const faq = wrapper.findAll('script[type="application/ld+json"]')
       .map(script => JSON.parse(script.text()))

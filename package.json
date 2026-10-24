@@ -14,7 +14,8 @@
         "ui:audit:release": "node scripts/ui-release-audit.mjs --release",
         "test": "vitest run",
         "test:watch": "vitest",
-        "test:ci": "vitest run --reporter=default"
+        "test:ci": "vitest run --reporter=default",
+        "prebuild": "node scripts/export-marketing-content.mjs"
     },
     "devDependencies": {
         "@inertiajs/vue3": "^1.0.14",

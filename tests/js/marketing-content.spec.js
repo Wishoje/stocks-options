@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildHomeFaqs, featureFaqs, featureGroups, homePreviews, productMedia } from '@/Support/marketing-content'
+import { buildHomeFaqs, featureFaqs, featureGroups, homeStories, productMedia, buildPublicMarketingContent } from '@/Support/marketing-content'
 
 describe('public marketing content registry', () => {
   it('covers all delivered product areas and the required EOD and intraday tabs', () => {
@@ -12,19 +12,12 @@ describe('public marketing content registry', () => {
       'options-calculator', 'ai-export',
     ]))
     expect(new Set(ids).size).toBe(ids.length)
-    expect(homePreviews.map(preview => preview.id)).toEqual([
-      'put-call-pricing',
-      'dealer-positioning',
-      'intraday-flow',
-      'scanner',
-      'calculator-outcomes',
-    ])
-    expect(homePreviews.map(preview => preview.media.id)).toEqual([
-      'eod-skew-pricing-spy',
-      'eod-positioning-spy',
-      'intraday-flow-spy',
-      'scanner-walls',
-      'calculator-outcomes-spy',
+    expect(ids).toEqual(expect.arrayContaining([
+      'intraday-wall-tracking', 'wall-setups', 'wall-activity', 'setup-alerts', 'gamma-context',
+      'wall-analysis', 'strike-expiry-map', 'intraday-iv-skew',
+    ]))
+    expect(homeStories.map(story => story.media.id)).toEqual([
+      'scanner-wall-activity', 'intraday-iv-skew', 'setup-alerts-inbox',
     ])
   })
 
@@ -65,6 +58,13 @@ describe('public marketing content registry', () => {
     expect(manifest.capture_policy.legacy_images_allowed_as_current).toBe(false)
   })
 
+  it('keeps initial HTML content aligned with the interactive product descriptions', () => {
+    const exported = JSON.parse(readFileSync(resolve(process.cwd(), 'resources/marketing/public-content.json'), 'utf8'))
+    expect(exported).toEqual(buildPublicMarketingContent())
+    expect(exported.home.faqs.some(faq => faq.a.includes('{trial_days}'))).toBe(true)
+    expect(exported.features.groups.flatMap(group => group.features)).toHaveLength(20)
+  })
+
   it('avoids false cadence, universal coverage, alert, and entitlement claims', () => {
     const publicCopy = JSON.stringify({ featureGroups, homeFaqs: buildHomeFaqs(7), featureFaqs }).toLowerCase()
     expect(publicCopy).not.toContain('once per minute')
@@ -74,5 +74,8 @@ describe('public marketing content registry', () => {
     expect(publicCopy).toContain('periodic')
     expect(publicCopy).toContain('supported us-listed optionable stocks and etfs')
     expect(publicCopy).not.toContain('eod health')
+    expect(publicCopy).toContain('delayed at least 15 minutes')
+    expect(publicCopy).toContain('while the site is open')
+    expect(publicCopy).not.toContain('guaranteed profit')
   })
 })

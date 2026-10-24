@@ -33,8 +33,8 @@ class PublicMarketingRoutesTest extends TestCase
     public function test_initial_html_contains_server_rendered_search_and_social_metadata(): void
     {
         $pages = [
-            '/' => ['GexOptions - Premarket Levels, Positioning, and Options Flow', 'https://gexoptions.com/'],
-            '/features' => ['GexOptions Features - Flow, GEX Levels, DEX, Scanners, VRP &amp; Term Structure', 'https://gexoptions.com/features'],
+            '/' => ['GexOptions - GEX Levels, Wall Tracking &amp; Setup Alerts', 'https://gexoptions.com/'],
+            '/features' => ['GexOptions Features - Wall Analysis, Alerts, Scanner &amp; Options Tools', 'https://gexoptions.com/features'],
             '/pricing' => ['GexOptions Pricing', 'https://gexoptions.com/pricing'],
             '/contact' => ['Contact GexOptions', 'https://gexoptions.com/contact'],
             '/terms-of-service' => ['GexOptions Terms of Service', 'https://gexoptions.com/terms-of-service'],
@@ -65,6 +65,49 @@ class PublicMarketingRoutesTest extends TestCase
                 ->where('seo.image_width', 1200)
                 ->where('seo.image_height', 630));
         }
+    }
+
+    public function test_product_explanations_are_available_without_executing_javascript(): void
+    {
+        foreach (['/' => ['Intraday or swing trading.', 'See how options pricing is changing.'], '/features' => ['Net GEX by strike', 'Dealer positioning and DEX', 'Setup alerts and your Recent alerts inbox', 'Options Calculator']] as $path => $phrases) {
+            $html = $this->get($path)->assertOk()->getContent();
+            $dom = new \DOMDocument;
+            @$dom->loadHTML($html);
+            $xpath = new \DOMXPath($dom);
+            $main = $xpath->query('//div[@id="app"]//main[@id="marketing-main"]')->item(0);
+            $this->assertNotNull($main, 'The initial response must contain visible product content.');
+            $this->assertSame(1, $xpath->query('//h1')->length);
+            foreach ($phrases as $phrase) {
+                $this->assertStringContainsString($phrase, $main->textContent);
+            }
+            if ($path === '/features') {
+                $this->assertSame(20, $xpath->query('//nav[@aria-label="All product features"]//a')->length);
+                $this->assertSame(1, $xpath->query('//section[@id="eod-strikes"]')->length);
+            }
+
+            $script = $xpath->query('//script[@inertia="product-json-ld"]')->item(0);
+            $schema = json_decode($script->textContent, true, flags: JSON_THROW_ON_ERROR);
+            $types = array_column($schema['@graph'], '@type');
+            $this->assertContains('Organization', $types);
+            $this->assertContains('WebApplication', $types);
+            $this->assertStringNotContainsString('aggregateRating', $script->textContent);
+            $this->assertStringNotContainsString('reviewCount', $script->textContent);
+        }
+    }
+
+    public function test_initial_faq_and_schema_follow_the_configured_trial_length(): void
+    {
+        config(['plans.plans.earlybird.trial_days' => 14]);
+        $html = $this->get('/')->assertOk()->getContent();
+        $this->assertStringContainsString('The current 14-day trial begins after checkout', $html);
+        $this->assertStringNotContainsString('{trial_days}', $html);
+        $this->assertStringNotContainsString('The current 7-day trial', $html);
+    }
+
+    public function test_other_pages_keep_the_existing_inertia_shell(): void
+    {
+        $this->assertStringNotContainsString('<main id="marketing-main"', $this->get('/pricing')->assertOk()->getContent());
+        $this->assertNull(\App\Support\PublicMarketingContent::forRoute('dashboard'));
     }
 
     public function test_dashboard_remains_protected_for_guests(): void

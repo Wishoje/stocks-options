@@ -9,7 +9,10 @@
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=figtree:400,500,600&display=swap" rel="stylesheet" />
 
-        @php($seo = data_get($page, 'props.seo'))
+        @php
+            $seo = data_get($page, 'props.seo');
+            $publicContent = \App\Support\PublicMarketingContent::forRoute(request()->route()?->getName(), (int) data_get($page, 'props.offer.trial_days', 7));
+        @endphp
         @if (is_array($seo))
             <title inertia>{{ $seo['title'] }}</title>
             <meta inertia="seo-description" name="description" content="{{ $seo['description'] }}">
@@ -28,6 +31,12 @@
             <meta inertia="seo-twitter-description" name="twitter:description" content="{{ $seo['description'] }}">
             <meta inertia="seo-twitter-image" name="twitter:image" content="{{ $seo['image'] }}">
             <meta inertia="seo-twitter-image-alt" name="twitter:image:alt" content="{{ $seo['image_alt'] }}">
+            @if (!empty($seo['structured_data']))
+                <script inertia="product-json-ld" type="application/ld+json">{!! json_encode($seo['structured_data'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) !!}</script>
+            @endif
+            @if ($publicContent)
+                <script inertia="faq-json-ld" type="application/ld+json">{!! json_encode(\App\Support\PublicMarketingContent::faqSchema($publicContent), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) !!}</script>
+            @endif
         @endif
 
         <!-- Scripts -->
@@ -36,6 +45,10 @@
         @inertiaHead
     </head>
     <body class="font-sans antialiased">
-        @inertia
+        @if ($publicContent && empty($__inertiaSsrResponse))
+            <div id="app" data-page="{{ json_encode($page) }}">@include('marketing.public-content', ['content' => $publicContent])</div>
+        @else
+            @inertia
+        @endif
     </body>
 </html>

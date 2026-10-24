@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Support\BillingIntent;
 use App\Support\ProductAccess;
+use App\Support\PublicMarketingContent;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -52,6 +53,13 @@ class HandleInertiaRequests extends Middleware
                 'image_height' => (int) ($socialImage['height'] ?? 0),
             ]
             : null;
+
+        if (is_array($seo)) {
+            $publicContent = PublicMarketingContent::forRoute($routeName, (int) ($offer['trial_days'] ?? 7));
+            if ($publicContent !== null) {
+                $seo['structured_data'] = PublicMarketingContent::structuredData($publicContent, $seo);
+            }
+        }
 
         return array_merge(parent::share($request), [
             'marketing' => [
