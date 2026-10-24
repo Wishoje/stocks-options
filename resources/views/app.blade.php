@@ -11,13 +11,13 @@
 
         @php
             $seo = data_get($page, 'props.seo');
-            $publicContent = \App\Support\PublicMarketingContent::forRoute(request()->route()?->getName(), (int) data_get($page, 'props.offer.trial_days', 7));
+            $publicContent = \App\Support\PublicMarketingContent::forRoute(request()->route()?->getName(), (int) data_get($page, 'props.offer.trial_days', 7), request()->route('slug'));
         @endphp
         @if (is_array($seo))
             <title inertia>{{ $seo['title'] }}</title>
             <meta inertia="seo-description" name="description" content="{{ $seo['description'] }}">
             <link inertia="seo-canonical" rel="canonical" href="{{ $seo['canonical'] }}">
-            <meta inertia="seo-og-type" property="og:type" content="website">
+            <meta inertia="seo-og-type" property="og:type" content="{{ $seo['type'] ?? 'website' }}">
             <meta inertia="seo-og-site-name" property="og:site_name" content="GEX Options">
             <meta inertia="seo-og-title" property="og:title" content="{{ $seo['title'] }}">
             <meta inertia="seo-og-description" property="og:description" content="{{ $seo['description'] }}">
@@ -34,7 +34,7 @@
             @if (!empty($seo['structured_data']))
                 <script inertia="product-json-ld" type="application/ld+json">{!! json_encode($seo['structured_data'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) !!}</script>
             @endif
-            @if ($publicContent)
+            @if (!empty($publicContent['faqs']))
                 <script inertia="faq-json-ld" type="application/ld+json">{!! json_encode(\App\Support\PublicMarketingContent::faqSchema($publicContent), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) !!}</script>
             @endif
         @endif

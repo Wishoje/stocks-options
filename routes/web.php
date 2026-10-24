@@ -27,6 +27,13 @@ Route::get('/', function () {
 
 Route::get('/pricing', fn () => Inertia::render('Marketing/Pricing'))->name('pricing');
 Route::get('/features', fn () => Inertia::render('Marketing/Features'))->name('features');
+Route::get('/guides', fn () => Inertia::render('Marketing/Guides', ['guides' => \App\Support\TradingGuides::all()]))->name('guides.index');
+Route::get('/guides/{slug}', function (string $slug) {
+    $guide = \App\Support\TradingGuides::find($slug);
+    abort_unless($guide, 404);
+
+    return Inertia::render('Marketing/Guide', ['guide' => $guide]);
+})->where('slug', '[a-z0-9-]+')->name('guides.show');
 Route::get('/contact', fn () => Inertia::render('Marketing/Contact'))->name('contact');
 Route::post('/contact', [ContactController::class, 'store'])
     ->middleware('throttle:10,1')

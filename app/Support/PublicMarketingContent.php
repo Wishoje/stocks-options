@@ -4,8 +4,16 @@ namespace App\Support;
 
 class PublicMarketingContent
 {
-    public static function forRoute(?string $routeName, int $trialDays = 7): ?array
+    public static function forRoute(?string $routeName, int $trialDays = 7, ?string $slug = null): ?array
     {
+        if ($routeName === 'guides.index') {
+            return ['kind' => 'guides', 'guides' => TradingGuides::all(), 'faqs' => []];
+        }
+        if ($routeName === 'guides.show') {
+            $guide = TradingGuides::find($slug ?? '');
+
+            return $guide ? ['kind' => 'guide', 'guide' => $guide, 'faqs' => []] : null;
+        }
         if (!in_array($routeName, ['home', 'features'], true)) {
             return null;
         }
@@ -19,6 +27,9 @@ class PublicMarketingContent
 
     public static function structuredData(array $content, array $seo): array
     {
+        if (isset($content['kind'])) {
+            return TradingGuides::structuredData($content, $seo);
+        }
         $site = 'https://gexoptions.com/';
         $features = self::forRoute('features');
         $featureNames = [];

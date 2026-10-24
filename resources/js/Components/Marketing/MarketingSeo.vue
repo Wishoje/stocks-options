@@ -3,7 +3,7 @@
     <title>{{ title }}</title>
     <meta head-key="seo-description" name="description" :content="description" />
     <link head-key="seo-canonical" rel="canonical" :href="canonical" />
-    <meta head-key="seo-og-type" property="og:type" content="website" />
+    <meta head-key="seo-og-type" property="og:type" :content="type" />
     <meta head-key="seo-og-site-name" property="og:site_name" content="GEX Options" />
     <meta head-key="seo-og-title" property="og:title" :content="title" />
     <meta head-key="seo-og-description" property="og:description" :content="description" />
@@ -33,6 +33,7 @@ import { Head } from '@inertiajs/vue3'
 
 const props = defineProps({
   title: { type: String, required: true },
+  type: { type: String, default: 'website' },
   description: { type: String, required: true },
   canonical: { type: String, required: true },
   image: { type: String, default: '' },

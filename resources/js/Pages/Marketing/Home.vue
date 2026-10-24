@@ -83,6 +83,8 @@
         </div>
       </section>
 
+      <GuideCards />
+
       <section class="mk-section" id="membership">
         <div class="mk-container mk-membership mk-card" data-reveal>
           <div class="mk-membership-copy"><p class="mk-eyebrow">One subscription. The complete workspace.</p><h2 class="mk-heading">Build your process around the symbols you trade.</h2><p class="mk-lede">Your trial includes wall analysis, intraday tracking, setup alerts, scanners, volatility tools, the options calculator and AI Export.</p><ul class="mk-feature-list"><li>Save your watchlist and follow it across the platform.</li><li>Review the chart and the evidence behind each assessment.</li><li>Use the same complete feature set on monthly or yearly billing.</li></ul></div>
@@ -106,6 +108,7 @@ import { computed } from 'vue'
 import { Head, Link, usePage } from '@inertiajs/vue3'
 import MarketingLayout from '@/Layouts/MarketingLayout.vue'
 import MarketingCta from '@/Components/Marketing/MarketingCta.vue'
+import GuideCards from '@/Components/Marketing/GuideCards.vue'
 import MarketingSeo from '@/Components/Marketing/MarketingSeo.vue'
 import ProductMedia from '@/Components/Marketing/ProductMedia.vue'
 import { buildHomeFaqs, homeStories, homeToolkit, productMedia, tradingWorkflows, marketingIntros } from '@/Support/marketing-content'

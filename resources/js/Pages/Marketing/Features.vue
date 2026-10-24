@@ -78,6 +78,8 @@
       </div>
     </section>
 
+    <GuideCards />
+
     <section class="mk-section">
       <div class="mk-container mk-grid-2 mk-page-split">
         <div class="mk-section-intro" data-reveal>
@@ -116,6 +118,7 @@ import { Link, usePage } from '@inertiajs/vue3'
 import { computed } from 'vue'
 import FeatureRow from '@/Components/Marketing/FeatureRow.vue'
 import MarketingCta from '@/Components/Marketing/MarketingCta.vue'
+import GuideCards from '@/Components/Marketing/GuideCards.vue'
 import MarketingSeo from '@/Components/Marketing/MarketingSeo.vue'
 import ProductMedia from '@/Components/Marketing/ProductMedia.vue'
 import MarketingLayout from '@/Layouts/MarketingLayout.vue'

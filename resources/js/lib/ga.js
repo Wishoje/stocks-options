@@ -20,8 +20,8 @@ const allowedEventNames = new Set([
   'subscription_activation_confirmed',
 ]);
 const allowedParameterValues = Object.freeze({
-  source: new Set(['features', 'home', 'marketing', 'marketing_nav', 'pricing_page', 'register_page']),
-  location: new Set(['features_final', 'features_hero', 'home_final', 'home_hero', 'home_offer', 'marketing_mobile_nav', 'marketing_nav']),
+  source: new Set(['features', 'guides', 'home', 'marketing', 'marketing_nav', 'pricing_page', 'register_page']),
+  location: new Set(['features_final', 'features_hero', 'guides_index', 'guide_final', 'home_final', 'home_hero', 'home_offer', 'marketing_mobile_nav', 'marketing_nav']),
   destination: new Set(['checkout', 'dashboard', 'register']),
   plan: new Set(['earlybird']),
   billing: new Set(['monthly', 'yearly']),

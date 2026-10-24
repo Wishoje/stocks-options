@@ -3,10 +3,13 @@
     <header class="mk-header">
         <nav class="mk-container mk-header-row" aria-label="Primary navigation">
             <a class="mk-brand" href="/">GEX Options</a>
-            <div class="mk-nav"><a class="mk-nav-link" href="/features">Features</a><a class="mk-nav-link" href="/pricing">Pricing</a><a class="mk-nav-link" href="/contact">Contact</a></div>
+            <div class="mk-nav"><a class="mk-nav-link" href="/features">Features</a><a class="mk-nav-link" href="/guides">Guides</a><a class="mk-nav-link" href="/pricing">Pricing</a><a class="mk-nav-link" href="/contact">Contact</a></div>
         </nav>
     </header>
     <main id="marketing-main" class="mk-container">
+        @if (isset($content['kind']))
+            @include('marketing.guides-content', ['content' => $content])
+        @else
         <article>
             <header class="mk-hero mk-stack">
                 <p class="mk-eyebrow">{{ $content['intro']['eyebrow'] }}</p>
@@ -63,11 +66,18 @@
             @endif
 
             <section class="mk-section mk-stack">
+                <h2 class="mk-heading">Learn how to use the tools</h2>
+                @foreach (\App\Support\TradingGuides::all() as $guide)
+                    <h3><a href="/guides/{{ $guide['slug'] }}">{{ $guide['title'] }}</a></h3><p>{{ $guide['description'] }}</p>
+                @endforeach
+            </section>
+            <section class="mk-section mk-stack">
                 <h2 class="mk-heading">Questions about GEX Options</h2>
                 @foreach ($content['faqs'] as $faq)<details class="mk-faq"><summary>{{ $faq['q'] }}</summary><p>{{ $faq['a'] }}</p></details>@endforeach
                 <a class="mk-button mk-button--primary" href="/pricing">View pricing and trial details</a>
             </section>
         </article>
+        @endif
     </main>
-    <footer class="mk-footer"><nav class="mk-container mk-footer-links" aria-label="Footer navigation"><a href="/features">Features</a><a href="/pricing">Pricing</a><a href="/terms-of-service">Terms</a><a href="/privacy-policy">Privacy</a></nav></footer>
+    <footer class="mk-footer"><nav class="mk-container mk-footer-links" aria-label="Footer navigation"><a href="/features">Features</a><a href="/guides">Guides</a><a href="/pricing">Pricing</a><a href="/terms-of-service">Terms</a><a href="/privacy-policy">Privacy</a></nav></footer>
 </div>

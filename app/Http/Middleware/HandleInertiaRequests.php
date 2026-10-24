@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Support\BillingIntent;
 use App\Support\ProductAccess;
 use App\Support\PublicMarketingContent;
+use App\Support\TradingGuides;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -54,8 +55,17 @@ class HandleInertiaRequests extends Middleware
             ]
             : null;
 
+        if ($routeName === 'guides.show' && ($guide = TradingGuides::find((string) $request->route('slug')))) {
+            $seo = [
+                'title' => $guide['title'].' | GEX Options', 'description' => $guide['description'],
+                'canonical' => 'https://gexoptions.com/guides/'.$guide['slug'],
+                'image' => (string) ($socialImage['url'] ?? ''), 'image_alt' => (string) ($socialImage['alt'] ?? ''),
+                'image_width' => (int) ($socialImage['width'] ?? 0), 'image_height' => (int) ($socialImage['height'] ?? 0),
+                'type' => 'article',
+            ];
+        }
         if (is_array($seo)) {
-            $publicContent = PublicMarketingContent::forRoute($routeName, (int) ($offer['trial_days'] ?? 7));
+            $publicContent = PublicMarketingContent::forRoute($routeName, (int) ($offer['trial_days'] ?? 7), $request->route('slug'));
             if ($publicContent !== null) {
                 $seo['structured_data'] = PublicMarketingContent::structuredData($publicContent, $seo);
             }

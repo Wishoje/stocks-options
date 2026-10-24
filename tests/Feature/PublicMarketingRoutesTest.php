@@ -124,6 +124,9 @@ class PublicMarketingRoutesTest extends TestCase
             'https://gexoptions.com/',
             'https://gexoptions.com/pricing',
             'https://gexoptions.com/features',
+            'https://gexoptions.com/guides',
+            'https://gexoptions.com/guides/how-to-read-spy-gex-levels',
+            'https://gexoptions.com/guides/how-to-use-intraday-wall-tracking',
             'https://gexoptions.com/contact',
         ], $matches[1]);
         $this->assertStringNotContainsString('/dashboard', $sitemap);
@@ -143,7 +146,7 @@ class PublicMarketingRoutesTest extends TestCase
         $this->assertContains('/billing/', $disallowed);
         $this->assertContains('/user/', $disallowed);
 
-        foreach (['/', '/features', '/pricing', '/contact'] as $publicPath) {
+        foreach (['/', '/features', '/pricing', '/contact', '/guides', '/guides/how-to-read-spy-gex-levels', '/guides/how-to-use-intraday-wall-tracking'] as $publicPath) {
             $blocked = array_filter(
                 $disallowed,
                 static fn (string $path): bool => $publicPath === $path || ($path !== '/' && str_starts_with($publicPath, $path))

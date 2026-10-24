@@ -1,0 +1,248 @@
+[
+  {
+    "slug": "how-to-read-spy-gex-levels",
+    "category": "Before the session",
+    "title": "How to read SPY GEX levels",
+    "description": "Learn what the green and coral bars mean, how to compare put and call walls, and how to turn a SPY gamma chart into a short list of price levels to watch.",
+    "published": "2026-10-24",
+    "updated": "2026-10-24",
+    "readTime": "6 min read",
+    "mediaKey": "eodStrikes",
+    "takeaway": "Use GEX to choose prices worth watching. Then use price behavior to decide whether a level matters for your plan.",
+    "sections": [
+      {
+        "id": "what-gex-shows",
+        "title": "What does a GEX chart show?",
+        "paragraphs": [
+          "Gamma describes how an option’s delta changes as the underlying price moves. Gamma exposure, or GEX, combines that sensitivity with open interest to show where options exposure is concentrated.",
+          "In Net GEX by strike, each bar represents an option strike. Green bars show positive net exposure and coral bars show negative net exposure under the platform’s call-minus-put convention. Taller bars show a larger absolute concentration.",
+          "Start with the largest concentrations near the market price. They give you a manageable list of areas to monitor instead of treating every strike as equally important."
+        ]
+      },
+      {
+        "id": "read-the-chart",
+        "title": "Read the chart in four steps",
+        "steps": [
+          "Check the symbol, data date and selected expirations. SPY with a 1W scope can have different leading levels from SPY with a 2W scope.",
+          "Find the largest positive and negative bars. Note their strikes and how far they are from price.",
+          "Compare each bar with nearby strikes. An isolated large concentration tells a different story from a broad cluster spread across several prices.",
+          "Read the units before comparing amounts across views. Wall analysis reports USD per 1% underlying move; the legacy Net GEX chart uses its displayed exposure scale. Match the date, scope and units for a fair comparison."
+        ]
+      },
+      {
+        "id": "put-and-call-walls",
+        "title": "What are put and call walls?",
+        "paragraphs": [
+          "GEX Options ranks put walls by the largest negative net GEX and call walls by the largest positive net GEX in the selected scope. These are leading exposure concentrations, not a list of guaranteed support and resistance prices.",
+          "In EOD wall analysis, look beyond the primary strike. Compare its exposure with nearby strikes, its distance from the close, its same-expiry history and the expirations driving it. Those details help explain why a level stands out."
+        ],
+        "rows": [
+          [
+            "Question",
+            "Where to look"
+          ],
+          [
+            "Does this level stand out locally?",
+            "Compare its GEX with nearby strikes."
+          ],
+          [
+            "Is the exposure persistent?",
+            "Read the same-expiry history and top-three streak."
+          ],
+          [
+            "Could the picture change as options expire?",
+            "Check the expiry contribution breakdown."
+          ],
+          [
+            "Has price reacted to it?",
+            "Open intraday wall tracking and inspect completed price bars."
+          ]
+        ]
+      },
+      {
+        "id": "positive-negative",
+        "title": "Does positive GEX mean price will rise?",
+        "paragraphs": [
+          "No. The sign describes exposure in the model; it is not a bullish or bearish price forecast. A large green bar is not a buy instruction, and a large coral bar is not a sell instruction.",
+          "The platform estimates exposure from options inputs and an inventory convention. It does not observe every dealer’s actual position or hedging trade. Use the gamma context alongside price, rather than assuming a bar tells you what market participants must do next."
+        ]
+      },
+      {
+        "id": "simple-example",
+        "title": "A simple example: turn two levels into a watch plan",
+        "paragraphs": [
+          "Hypothetical example: SPY is at 600, with a put wall at 595 and a call wall at 605. These are teaching numbers, not current SPY levels.",
+          "Your first job is to monitor whether price returns to either area. If price approaches 605, watch whether completed bars reject the area, stay near it, or move above and retest it. The wall alone does not choose the outcome.",
+          "If price stays around 600 and never approaches either wall, there may be no wall-based decision to make. Waiting is a valid result."
+        ]
+      },
+      {
+        "id": "daily-workflow",
+        "title": "Use EOD levels for preparation, then follow the session",
+        "steps": [
+          "Before the session, open SPY’s EOD wall analysis and select the expiry scope that matches your research horizon.",
+          "For next-session preparation, check the displayed analysis date and included expirations. Expired contracts can change the exposure picture.",
+          "Write down the nearby put and call walls and the main expiration behind each. Review the exposure map if one expiry dominates.",
+          "During the session, open intraday wall tracking. It uses a fixed near-term 1W scope, so its levels can differ from an EOD view with another scope.",
+          "If a setup is recorded, read its entry area, target and invalidation boundary at the displayed time. Compare with current price before making your own decision."
+        ]
+      },
+      {
+        "id": "common-questions",
+        "title": "Common questions",
+        "paragraphs": [
+          "Why does a wall change when I select another timeframe? You are changing the option expirations included in the calculation. More expirations can add or offset exposure at a strike.",
+          "Why is some wall history blank? Same-expiry history compares today’s selected expirations across prior dates. A dash means there is no comparable reading for that combination; it does not mean zero exposure.",
+          "Does a large expiry share mean the level will hold on that date? No. It means that expiry contributes much of the measured exposure. Its roll-off can change the level’s significance."
+        ]
+      }
+    ],
+    "checklist": [
+      "Match the date, expiry scope and units.",
+      "Pick a few nearby concentrations.",
+      "Check which expirations drive them.",
+      "Wait for an observed price response."
+    ],
+    "featureHref": "/features#eod-strikes",
+    "featureLabel": "Explore Net GEX and EOD wall analysis",
+    "sources": [
+      {
+        "label": "Options Industry Council: Gamma",
+        "url": "https://www.optionseducation.org/advancedconcepts/gamma"
+      }
+    ]
+  },
+  {
+    "slug": "how-to-use-intraday-wall-tracking",
+    "category": "During the session",
+    "title": "How to use wall tracking for intraday trading",
+    "description": "Follow put and call walls alongside price, understand touches and tests, and read setup entry, target and invalidation levels without losing the context.",
+    "published": "2026-10-24",
+    "updated": "2026-10-24",
+    "readTime": "6 min read",
+    "mediaKey": "wallTracking",
+    "takeaway": "Find a nearby wall, watch the price response, and review the next condition. If price is far away or no setup is confirmed, wait.",
+    "sections": [
+      {
+        "id": "what-it-is-for",
+        "title": "What is wall tracking used for?",
+        "paragraphs": [
+          "Wall tracking helps you answer three questions during the session: which exposure levels are nearby, what price did when it reached them, and what would need to happen before a setup qualifies.",
+          "Start in Scanner’s Wall activity view to see your saved symbols. Open a symbol to see its wall chart and the matching recorded assessment. On the dashboard, the same chart lives under Intraday → Wall tracking.",
+          "The view follows near-term 1W expirations throughout the current session. You do not need to choose among six expiry scopes to follow the live workflow."
+        ]
+      },
+      {
+        "id": "read-the-lines",
+        "title": "Read the three lines first",
+        "rows": [
+          [
+            "Line",
+            "Meaning",
+            "What to look for"
+          ],
+          [
+            "Coral: put wall",
+            "The leading negative net GEX strike.",
+            "How close price is, and whether the leading strike changes."
+          ],
+          [
+            "Green: call wall",
+            "The leading positive net GEX strike.",
+            "Whether price reaches the area and how it behaves there."
+          ],
+          [
+            "Purple: price",
+            "The recorded delayed underlying price.",
+            "Its path relative to both walls."
+          ]
+        ],
+        "paragraphs": [
+          "A wall can stay flat while price moves. It marks a leading strike, not a moving average of price. It moves when another strike becomes the leading concentration in the model.",
+          "Price can trade above or below either wall. A wall changing from 600 to 605 is a change in the leading exposure strike; it is not proof that price broke resistance.",
+          "The chart is an overview of recorded observations. Open the supporting completed bars when you need to inspect an event; do not treat a line drawn between observations as a record of every price traded."
+        ]
+      },
+      {
+        "id": "read-reactions",
+        "title": "What do the reaction labels mean?",
+        "rows": [
+          [
+            "Status",
+            "Plain meaning"
+          ],
+          [
+            "Approaching",
+            "Price has moved near the wall under the configured distance rules."
+          ],
+          [
+            "Touched the level",
+            "A completed bar reached the wall’s touch area."
+          ],
+          [
+            "Testing the level",
+            "The recorded sequence is examining the area; a completed setup has not necessarily formed."
+          ],
+          [
+            "No price reaction recorded yet",
+            "No qualifying reaction has been recorded for the assessed wall at that time."
+          ]
+        ],
+        "paragraphs": [
+          "Click a chart event marker to inspect its recorded assessment and supporting bars. A touch is evidence that price visited the area; it does not establish that the wall held.",
+          "A wall moving onto or across price is different from price touching a stable wall. The event rules use the recorded wall and bar sequence, so two lines appearing close on the overview do not by themselves prove a reaction."
+        ]
+      },
+      {
+        "id": "read-the-setup",
+        "title": "Read “What to watch at the walls” as a decision checklist",
+        "paragraphs": [
+          "Start with the current delayed price and the distance to each wall. If the card says to watch for a return to the level, the practical next step is to wait for that return rather than assume an entry exists now.",
+          "If setup conditions are met, read the recorded direction and time, then the entry area, reference target and five-minute close that invalidates the scenario. Open the evidence to see the price sequence used.",
+          "“Conditions met” describes the assessment at its displayed time. It does not mean an old entry is still available or a target will be reached. A setup may later expire or be invalidated."
+        ],
+        "steps": [
+          "Check that price reached the relevant wall.",
+          "Read the recorded response and the next condition.",
+          "If a setup qualifies, compare its entry, target and invalidation with current market price.",
+          "Skip a scenario when the required sequence or usable entry is no longer present."
+        ]
+      },
+      {
+        "id": "simple-example",
+        "title": "A simple example: a touch is the beginning of the review",
+        "paragraphs": [
+          "Hypothetical example: a call wall is at 605 and recorded price approaches from 603. The first touch tells you where to focus. It does not tell you to buy or sell.",
+          "Next, inspect whether completed bars move away from the area, remain near it, or cross and retest it. Read the next condition on the wall card. If no sequence qualifies, there is no confirmed setup to act on from this tool.",
+          "If a setup later appears, use its own recorded boundaries. Do not substitute the wall strike for the setup’s entry area or invalidation rule."
+        ]
+      },
+      {
+        "id": "alerts",
+        "title": "Use alerts to return to a setup, then check the chart",
+        "paragraphs": [
+          "Setup alerts follow your saved symbols while the site is open. The bell’s Recent alerts panel keeps today’s received alerts in this browser. Sound and wall-testing alerts are optional.",
+          "Open an alert to return to its symbol and recorded assessment. Read the timestamp and check whether the scenario is still relevant. These are in-app alerts; they do not arrive as push notifications after you close the site."
+        ]
+      },
+      {
+        "id": "timing-and-model",
+        "title": "Check the time and understand what changes",
+        "paragraphs": [
+          "Intraday prices are delayed at least 15 minutes. The platform works with completed five-minute price observations, and recorded times are shown in Eastern time. A new observation does not guarantee a new wall strike or event.",
+          "The wall model updates price and time while holding prior-session open interest and reference implied volatility fixed within each comparison window. It models changing exposure; it does not measure live dealer inventory or every intraday position change.",
+          "Use the displayed time before comparing the chart with your broker’s price. The tool provides context and a recorded scenario; your decision still needs current price and a risk plan."
+        ]
+      }
+    ],
+    "checklist": [
+      "Open a saved symbol with a nearby wall.",
+      "Check the delayed price and assessment time.",
+      "Inspect the response and next condition.",
+      "Review setup boundaries only when conditions qualify."
+    ],
+    "featureHref": "/features#intraday-wall-tracking",
+    "featureLabel": "Explore wall tracking and setup alerts",
+    "sources": []
+  }
+]
