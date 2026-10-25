@@ -19,6 +19,7 @@
               <p v-if="monthlyPrice && yearlyPrice" class="mk-home-offer__prices"><strong>{{ monthlyPrice }}/month</strong> or <strong>{{ yearlyPrice }}/year</strong> after your {{ trialDays }}-day trial.</p>
               <p class="mk-meta">Trial starts after checkout. Cancel before it ends to avoid a subscription charge. <Link href="/pricing">Billing details</Link>.</p>
             </div>
+            <Link href="/spy-gex-levels" class="mk-text-link">Explore the free SPY chart →</Link>
             <p class="mk-hero-note">Full workspace included · Browser-based · Intraday prices delayed 15 min</p>
           </div>
           <div class="mk-hero-visual mk-gex-banner" data-reveal data-reveal-order="1">

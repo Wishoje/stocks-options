@@ -11,7 +11,7 @@
 
         @php
             $seo = data_get($page, 'props.seo');
-            $publicContent = \App\Support\PublicMarketingContent::forRoute(request()->route()?->getName(), (int) data_get($page, 'props.offer.trial_days', 7), request()->route('slug'));
+            $publicContent = data_get($page, 'props.content.kind') === 'spy' ? data_get($page, 'props.content') : \App\Support\PublicMarketingContent::forRoute(request()->route()?->getName(), (int) data_get($page, 'props.offer.trial_days', 7), request()->route('slug'));
         @endphp
         @if (is_array($seo))
             <title inertia>{{ $seo['title'] }}</title>

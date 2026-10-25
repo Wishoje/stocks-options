@@ -1,0 +1,59 @@
+{
+  "kind": "spy",
+  "intro": {
+    "eyebrow": "Free SPY market preview",
+    "heading": "SPY GEX levels",
+    "description": "See where SPY options exposure is concentrated. Start with the main put and call walls, then watch how price behaves around them."
+  },
+  "chartTitle": "SPY Net GEX by strike",
+  "chartDescription": "Green bars show positive net gamma exposure. Coral bars show negative net gamma exposure. Taller bars mark larger concentrations.",
+  "readSteps": [
+    {
+      "title": "Find the nearby levels",
+      "description": "The put wall is the largest negative concentration. The call wall is the largest positive concentration in this expiry scope."
+    },
+    {
+      "title": "Watch the price response",
+      "description": "Use these strikes as areas to monitor. A large bar alone does not tell you whether price will hold, break or reverse."
+    },
+    {
+      "title": "Review the next condition",
+      "description": "In the full workspace, follow intraday walls and price reactions, then inspect an entry area, target and invalidation when a setup qualifies."
+    }
+  ],
+  "included": [
+    {
+      "title": "Track the levels during the session",
+      "description": "Follow put and call walls alongside delayed price and inspect recorded touches, tests and price reactions.",
+      "href": "/features#intraday-wall-tracking"
+    },
+    {
+      "title": "Get setup alerts for your watchlist",
+      "description": "See qualifying setups while the site is open, with their recorded entry area, reference target and invalidation boundary.",
+      "href": "/features#setup-alerts"
+    },
+    {
+      "title": "Prepare the symbols you trade",
+      "description": "Use Scanner, detailed wall analysis, expiry contributions and volatility tools across your saved symbols.",
+      "href": "/features#wall-activity"
+    }
+  ],
+  "faqs": [
+    {
+      "q": "What does this free SPY page include?",
+      "a": "One SPY end-of-day view with a fixed 2W expiry scope, the main positive and negative net GEX levels, and a strike chart. The displayed date identifies the actual EOD reading."
+    },
+    {
+      "q": "Are these live intraday levels?",
+      "a": "This page shows end-of-day exposure. Intraday wall tracking is part of the subscription and models changing price and time with a near-term 1W expiry scope. Intraday prices are delayed at least 15 minutes."
+    },
+    {
+      "q": "Do put and call walls predict where SPY will go?",
+      "a": "A wall identifies a concentration of modeled exposure. It does not guarantee support, resistance or a price target. Watch the observed price response before treating a level as relevant to a trade."
+    },
+    {
+      "q": "Why can the levels differ from another view?",
+      "a": "The included expirations, EOD date and view determine the calculation. This free view matches the dashboard with SPY, End of day, Latest EOD data and 2W selected. Next-session preparation excludes earlier expirations and may show different levels."
+    }
+  ]
+}

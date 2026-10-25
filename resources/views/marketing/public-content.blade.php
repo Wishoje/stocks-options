@@ -3,11 +3,13 @@
     <header class="mk-header">
         <nav class="mk-container mk-header-row" aria-label="Primary navigation">
             <a class="mk-brand" href="/">GEX Options</a>
-            <div class="mk-nav"><a class="mk-nav-link" href="/features">Features</a><a class="mk-nav-link" href="/guides">Guides</a><a class="mk-nav-link" href="/pricing">Pricing</a><a class="mk-nav-link" href="/contact">Contact</a></div>
+            <div class="mk-nav"><a class="mk-nav-link" href="/features">Features</a><a class="mk-nav-link" href="/spy-gex-levels">SPY levels</a><a class="mk-nav-link" href="/guides">Guides</a><a class="mk-nav-link" href="/pricing">Pricing</a><a class="mk-nav-link" href="/contact">Contact</a></div>
         </nav>
     </header>
     <main id="marketing-main" class="mk-container">
-        @if (isset($content['kind']))
+        @if (($content['kind'] ?? null) === 'spy')
+            @include('marketing.spy-content', ['preview' => data_get($page, 'props.preview')])
+        @elseif (isset($content['kind']))
             @include('marketing.guides-content', ['content' => $content])
         @else
         <article>

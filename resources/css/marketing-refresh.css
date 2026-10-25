@@ -408,3 +408,45 @@
   .mk-guide-contents { position: static; padding-bottom: 2rem; border-bottom: 1px solid var(--mk-line); }
   .mk-guide-prose { font-size: 1rem; }
 }
+
+/* A single public EOD sample, with the subscription workflow beside it. */
+.mk-spy-hero { display: flex; gap: 2rem; align-items: center; justify-content: space-between; padding-block: clamp(2.5rem, 5vw, 4.5rem); }
+.mk-spy-hero .mk-title { font-size: clamp(2.5rem, 5vw, 4rem); }
+.mk-spy-hero .mk-lede { max-width: 51ch; }
+.mk-spy-hero__action { display: grid; flex-shrink: 0; gap: 1rem; justify-items: start; }
+.mk-spy-reading { padding-bottom: 2.5rem; }
+.mk-spy-datebar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; color: var(--mk-muted); font-size: 0.9rem; }
+.mk-spy-datebar time { color: var(--mk-text); margin-left: 0.6rem; font-weight: 600; }
+.mk-spy-status { color: var(--mk-cyan); }
+.mk-spy-metric { border-top: 2px solid var(--mk-action); display: grid; gap: 0.55rem; }
+.mk-spy-metric h2 { font-size: 0.9rem; font-weight: 600; color: var(--mk-text); }
+.mk-spy-metric > p { margin: 0; color: var(--mk-muted); font-size: 0.875rem; }
+.mk-spy-metric > .mk-spy-metric__value { color: var(--mk-text); font-size: clamp(1.9rem, 3.5vw, 2.8rem); line-height: 1.2; font-weight: 650; margin-block: 0.25rem; }
+.mk-spy-metric--positive { border-top-color: #8dddab; }
+.mk-spy-metric--negative { border-top-color: #e59c89; }
+.mk-spy-metric--positive > .mk-spy-metric__value { color: #8dddab; }
+.mk-spy-metric--negative > .mk-spy-metric__value { color: #e59c89; }
+.mk-spy-plot__heading { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
+.mk-spy-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.8rem; color: var(--mk-muted); }
+.mk-spy-legend span { display: flex; align-items: center; gap: 0.4rem; }
+.mk-spy-legend i { width: 0.55rem; height: 0.55rem; border-radius: 2px; }
+.mk-spy-positive-dot { background: #8dddab; }
+.mk-spy-negative-dot { background: #e59c89; }
+.mk-spy-chart { min-width: 0; width: 100%; }
+.mk-spy-chart svg { display: block; width: 100%; height: auto; }
+.mk-spy-chart text { font-family: inherit; font-size: 12px; fill: var(--mk-muted); }
+.mk-spy-chart__grid { stroke: var(--mk-line); stroke-width: 1; }
+.mk-spy-chart__zero { stroke: var(--mk-muted); stroke-width: 1; }
+.mk-spy-chart__positive { fill: #8dddab; }
+.mk-spy-chart__negative { fill: #e59c89; }
+.mk-spy-expiries { margin-top: 1.5rem; border-top: 1px solid var(--mk-line); padding-top: 1rem; color: var(--mk-muted); font-size: 0.85rem; }
+.mk-spy-expiries summary { cursor: pointer; padding-block: 0.5rem; color: var(--mk-text); }
+.mk-spy-expiry-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-block: 1rem; }
+.mk-spy-expiry-list time { border: 1px solid var(--mk-line); padding: 0.4rem 0.6rem; border-radius: 0.5rem; }
+.mk-spy-upgrade { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2rem; }
+.mk-spy-upgrade .mk-heading { font-size: clamp(1.7rem, 3vw, 2.6rem); }
+.mk-spy-preparing { padding-block: 3rem; }
+@media (max-width: 55rem) {
+  .mk-spy-hero { flex-direction: column; align-items: flex-start; gap: 1.4rem; }
+  .mk-spy-upgrade { grid-template-columns: minmax(0, 1fr); }
+}

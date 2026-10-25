@@ -27,6 +27,7 @@ Route::get('/', function () {
 
 Route::get('/pricing', fn () => Inertia::render('Marketing/Pricing'))->name('pricing');
 Route::get('/features', fn () => Inertia::render('Marketing/Features'))->name('features');
+Route::get('/spy-gex-levels', \App\Http\Controllers\PublicSpyController::class)->middleware('throttle:60,1')->name('spy.preview');
 Route::get('/guides', fn () => Inertia::render('Marketing/Guides', ['guides' => \App\Support\TradingGuides::all()]))->name('guides.index');
 Route::get('/guides/{slug}', function (string $slug) {
     $guide = \App\Support\TradingGuides::find($slug);

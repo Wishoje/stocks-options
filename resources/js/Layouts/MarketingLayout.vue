@@ -124,6 +124,7 @@ const loginHref = computed(() => journeyUrl('login', selectionForPage(page.url |
 const publicLinks = Object.freeze([
   { label: 'Home', href: '/' },
   { label: 'Features', href: '/features' },
+  { label: 'SPY levels', href: '/spy-gex-levels' },
   { label: 'Guides', href: '/guides' },
   { label: 'Pricing', href: '/pricing' },
   { label: 'Contact', href: '/contact' },

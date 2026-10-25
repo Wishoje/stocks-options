@@ -19,6 +19,11 @@ return [
             'description' => 'Explore intraday wall tracking, setup alerts, watchlist Scanner, GEX and DEX analysis, gamma context, volatility tools, the options calculator and AI Export.',
             'canonical' => 'https://gexoptions.com/features',
         ],
+        'spy.preview' => [
+            'title' => 'SPY GEX Levels - Free Gamma Exposure Chart | GEX Options',
+            'description' => 'Explore a free SPY Net GEX chart with dated end-of-day put and call walls. Learn what the levels mean and how to follow price reactions with GEX Options.',
+            'canonical' => 'https://gexoptions.com/spy-gex-levels',
+        ],
         'guides.index' => [
             'title' => 'Trading Guides - GEX Levels & Intraday Walls | GEX Options',
             'description' => 'Practical guides to reading SPY gamma exposure, following intraday walls, and using price reactions and setup alerts in your trading research.',
