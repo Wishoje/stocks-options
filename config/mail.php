@@ -39,6 +39,9 @@ return [
 
         'smtp' => [
             'transport' => 'smtp',
+            // Explicit scheme avoids Laravel 11.35 treating encryption=tls as
+            // implicit SMTPS on STARTTLS ports such as Mailtrap's port 587.
+            'scheme' => env('MAIL_SCHEME', (int) env('MAIL_PORT', 2525) === 465 ? 'smtps' : 'smtp'),
             'url' => env('MAIL_URL'),
             'host' => env('MAIL_HOST', '127.0.0.1'),
             'port' => env('MAIL_PORT', 2525),
