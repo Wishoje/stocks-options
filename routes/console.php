@@ -278,6 +278,12 @@ Schedule::command('emails:lifecycle-run')
     ->withoutOverlapping(15)
     ->onOneServer();
 
+if (config('swing_ideas.automatic_refresh_enabled')) {
+    Schedule::command('swing:refresh --watchlist --limit=10')
+        ->timezone('America/New_York')->weekdays()->everyFifteenMinutes()->between('18:00', '22:00')
+        ->withoutOverlapping(10)->onOneServer()->name('swing:refresh-watchlist');
+}
+
 $monitorEnabled = (bool) config('queue.monitor.enabled');
 $monitorConnection = (string) config('queue.monitor.connection', config('queue.default'));
 $monitorQueues = config('queue.monitor.queues', []);

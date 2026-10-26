@@ -86,6 +86,37 @@ class WallWatchlistTest extends TestCase
             'payload_bytes' => strlen($json), 'payload_json' => $json]);
     }
 
+    public function test_compact_lifecycle_results_are_private_bounded_and_survive_session_close(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $this->record($model, 'intraday_capture');
+        $analysis = $this->assessment($model);
+        $analysis['setup_lifecycle'] = ['schema_version' => 'wall-lifecycle.v1', 'rule_version' => WallSetupRules::VERSION,
+            'review_rule_version' => \App\Support\WallIntelligence\WallSetupOutcomeEvaluator::VERSION,
+            'symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => '7d', 'items' => [[
+                'id' => hash('sha256', 'original'), 'symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => '7d',
+                'side' => 'put', 'strike' => 100., 'status_group' => 'finished', 'outcome' => 'target_reached',
+                'observed_at' => '2026-09-30T14:00:00Z', 'evaluated_through' => '2026-09-30T14:15:00Z',
+                'reason' => 'A later close reached the reference target.', 'bars' => ['DO-NOT-EXPOSE'],
+            ]]];
+        $this->record($analysis, 'wall_interactions');
+        DB::enableQueryLog();
+        $data = app(WallWatchlistService::class)->read(987);
+        $this->assertCount(3, DB::getQueryLog());
+        DB::disableQueryLog();
+        $this->assertSame('target_reached', $data['lifecycle_items'][0]['outcome']);
+        $this->assertStringNotContainsString('DO-NOT-EXPOSE', json_encode($data));
+        $this->travelTo(CarbonImmutable::parse('2026-09-30T20:20:00Z'));
+        $data = app(WallWatchlistService::class)->read(987);
+        $this->assertSame('outside_session', $data['state']);
+        $this->assertSame([], $data['items']);
+        $this->assertSame('finished', $data['lifecycle_items'][0]['status_group']);
+        $this->assertSame([], app(WallWatchlistService::class)->read(999)['lifecycle_items']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
     public function test_personal_watchlist_projects_only_latest_current_data_with_bounded_queries_and_no_work(): void
     {
         foreach (['SPY', 'QQQ', 'NVDA'] as $symbol) {

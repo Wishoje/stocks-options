@@ -285,7 +285,7 @@ final class WallSetupEvaluator
         $status = $candidate['status'] ?? 'watch';
 
         $setup = [...$this->watch($row['side'], $row['strike']),
-            'id' => $candidate['id'] ?? null, 'pattern' => $candidate['pattern'] ?? null,
+            'id' => $candidate['id'] ?? null, 'assessment_id' => WallInteractionDetector::assessmentId($row), 'pattern' => $candidate['pattern'] ?? null,
             'direction' => isset($candidate['direction']) ? ($candidate['direction'] === 1 ? 'bullish' : 'bearish') : null,
             'status' => $status, 'status_at_observation' => $status, 'reason' => $candidate['reason'] ?? 'Watch for a touch, then a completed rejection, reclaim or break-and-retest sequence.',
             'observed_at' => $row['observed_at'], 'close' => $row['close'], 'wall_identity' => $row['wall_identity'],

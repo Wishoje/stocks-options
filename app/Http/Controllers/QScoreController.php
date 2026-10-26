@@ -47,7 +47,7 @@ class QScoreController extends Controller
                     ->on('o.expiration_id', '=', 'ld.expiration_id')
                     ->on('o.data_date', '=', 'ld.max_date'))
                 ->whereIn('o.expiration_id', $expirationIds)
-                ->selectRaw("\n                    SUM(COALESCE(o.gamma,0) * COALESCE(o.open_interest,0)) as net_gex,\n                    SUM(CASE WHEN o.option_type='call' THEN COALESCE(o.open_interest,0) ELSE 0 END) as call_oi,\n                    SUM(CASE WHEN o.option_type='put'  THEN COALESCE(o.open_interest,0) ELSE 0 END)  as put_oi,\n                    MIN(o.data_date) as source_date_earliest,\n                    MAX(o.data_date) as source_date_latest\n                ")
+                ->selectRaw("\n                    SUM((CASE WHEN o.option_type = 'call' THEN 1 ELSE -1 END) * COALESCE(o.gamma,0) * COALESCE(o.open_interest,0) * CASE WHEN o.underlying_price > 0 THEN o.underlying_price * o.underlying_price ELSE 1 END) as net_gex,\n                    SUM(CASE WHEN o.option_type='call' THEN COALESCE(o.open_interest,0) ELSE 0 END) as call_oi,\n                    SUM(CASE WHEN o.option_type='put'  THEN COALESCE(o.open_interest,0) ELSE 0 END)  as put_oi,\n                    MIN(o.data_date) as source_date_earliest,\n                    MAX(o.data_date) as source_date_latest\n                ")
                 ->first();
 
         [$optScore, $optExpl] = $this->scoreOption($opt);

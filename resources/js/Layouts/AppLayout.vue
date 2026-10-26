@@ -118,6 +118,7 @@ onUnmounted(() => document.removeEventListener('keydown', closeNavigationOnEscap
                                 >
                                     Scanner
                                 </NavLink>
+                                <NavLink :href="route('options.swing-ideas')" :active="route().current('options.swing-ideas')">Swing ideas</NavLink>
                                 <NavLink
                                     :href="route('options.ai-export')"
                                     :active="route().current('options.ai-export')"
@@ -309,6 +310,7 @@ onUnmounted(() => document.removeEventListener('keydown', closeNavigationOnEscap
                         >
                             Scanner
                         </ResponsiveNavLink>
+                        <ResponsiveNavLink :href="route('options.swing-ideas')" :active="route().current('options.swing-ideas')" @click="closeNavigation()">Swing ideas</ResponsiveNavLink>
                         <ResponsiveNavLink
                             :href="route('options.ai-export')"
                             :active="route().current('options.ai-export')"

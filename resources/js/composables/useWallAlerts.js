@@ -120,7 +120,7 @@ export function useWallAlerts(owner) {
     stopOwner(); stopData(); stopRevision(); stopError(); clearInterval(timer)
     window.removeEventListener('storage', storageChanged)
   })
-  return { owner: computed(() => toValue(owner)), settings, notifications, history, inboxPersistent,
+  return { owner: computed(() => toValue(owner)), settings, notifications, history, inboxPersistent, activity: feed.data, clock,
     unreadCount: computed(() => history.value.filter(item => !item.read_at).length), markRead,
     message, soundReady, error: feed.error, loading: feed.loading, update, preview, dismiss }
 }

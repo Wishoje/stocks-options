@@ -119,6 +119,8 @@ final class WallInteractionService
                 $analysis['price_evidence_hash'] = $hash;
                 $analysis['setups'] = (new WallSetupEvaluator)->analyze($analysis, $observations);
                 $analysis['setups']['review_seeds'] = (new WallSetupOutcomeEvaluator)->seeds($analysis['setups']);
+                $reviews = app(WallSetupHistoryService::class)->read($analysis);
+                $analysis['setup_lifecycle'] = (new \App\Support\WallIntelligence\WallSetupLifecycle)->build($analysis, $reviews);
                 $checkpoint = (new WallInteractionCheckpoint)->build($analysis, $observations);
                 $this->record($symbol, $session, 'wall_interactions', $checkpoint, $now);
                 $events += count($analysis['events']);

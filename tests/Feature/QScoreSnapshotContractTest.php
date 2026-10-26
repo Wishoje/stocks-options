@@ -122,6 +122,15 @@ class QScoreSnapshotContractTest extends TestCase
             ->assertJsonPath('source_dates.seasonality', null);
     }
 
+    public function test_put_heavy_positive_gamma_uses_call_minus_put_inventory_sign(): void
+    {
+        $expiry = $this->createExpiration('SPY', '2026-10-16');
+        $this->insertOptionPair($expiry, '2026-09-11', callOpenInterest: 10, putOpenInterest: 100, gamma: .01);
+        DB::table('option_chain_data')->update(['underlying_price' => 100]);
+        $this->getJson('/api/qscore?symbol=SPY&date=2026-09-11')->assertOk()
+            ->assertJsonPath('scores.option.score', .8);
+    }
+
     private function createExpiration(string $symbol, string $expirationDate): int
     {
         return DB::table('option_expirations')->insertGetId([
@@ -187,6 +196,7 @@ class QScoreSnapshotContractTest extends TestCase
             $table->decimal('strike', 10, 2);
             $table->bigInteger('open_interest')->nullable();
             $table->decimal('gamma', 12, 8)->nullable();
+            $table->decimal('underlying_price', 12, 4)->nullable();
         });
         Schema::create('vrp_daily', function (Blueprint $table): void {
             $table->id();

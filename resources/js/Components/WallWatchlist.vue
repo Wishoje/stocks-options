@@ -2,42 +2,38 @@
 import { computed, ref, watch, onScopeDispose } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
 import { wallReactionTitle, wallSetupTitle } from '@/utils/wallDecision'
+import { filterWallRows, wallLifecycleRows, wallStatusLabel } from '@/Support/wallLifecycle'
 import WallAlertControls from '@/Components/WallAlertControls.vue'
+import WallStatusFilters from '@/Components/WallStatusFilters.vue'
+import WallStatusBadge from '@/Components/WallStatusBadge.vue'
 
 const props = defineProps({ selectedSymbol: String, chartHref: Function })
 const emit = defineEmits(['open'])
 const { data, loading, refreshing, error, demo, load, chooseDemo } = useWallWatchlist()
-const setupsOnly = ref(false), limit = ref(6)
-// A retained response cannot keep an expired assessment on screen between polls.
+const selectedStatus = ref('conditions_met'), symbol = ref(''), direction = ref('all'), limit = ref(6)
 const clock = ref(Date.now())
 const timer = setInterval(() => { clock.value = Date.now() }, 10000)
 onScopeDispose(() => clearInterval(timer))
-const items = computed(() => (data.value?.items || []).filter(row => {
-  if (demo.value) return true
-  const cutoff = clock.value - (data.value.quote_delay_seconds * 1000 + 30000)
-  const at = Date.parse(row.observed_at)
-  return Date.parse(data.value.refresh_until) > clock.value && at <= cutoff && cutoff - at <= 600000
-    && (row.status !== 'conditions_met' || Date.parse(row.setup?.expires_at) >= cutoff)
-}))
-const qualifiedCount = computed(() => items.value.filter(row => row.status === 'conditions_met').length)
-const visible = computed(() => (setupsOnly.value ? items.value.filter(row => row.status === 'conditions_met') : items.value).slice(0, limit.value))
-const total = computed(() => setupsOnly.value ? qualifiedCount.value : items.value.length)
+const items = computed(() => wallLifecycleRows(data.value, clock.value, !!error.value))
+const qualifiedCount = computed(() => items.value.filter(row => row.status_group === 'conditions_met').length)
+const filtered = computed(() => filterWallRows(items.value, { status: selectedStatus.value, symbol: symbol.value, direction: direction.value }))
+const visible = computed(() => filtered.value.slice(0, limit.value))
 const time = value => new Date(value).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 const number = value => Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 6 }) : '—'
-const progress = row => Number.isInteger(row.next_condition?.completed_closes) && row.next_condition.required_closes > 0
-  ? `${row.next_condition.completed_closes} of ${row.next_condition.required_closes} confirming closes recorded` : ''
+const hasLevels = row => row.qualified && row.setup?.entry_zone && row.setup?.invalidation && row.setup?.target
 const checks = row => (row.setup?.evidence_checks || []).filter(check => check.passed).map(check => ({
   ordered_price_confirmation: 'Price confirmed', wall_persistence: 'Wall stable', supported_geometry: 'Target room checked',
 }[check.key])).filter(Boolean)
+const progress = row => Number.isInteger(row.next_condition?.completed_closes) && row.next_condition.required_closes > 0
+  ? `${row.next_condition.completed_closes} of ${row.next_condition.required_closes} confirming closes recorded` : ''
 const closed = computed(() => data.value?.state === 'outside_session' || (!demo.value && data.value?.refresh_until && Date.parse(data.value.refresh_until) <= clock.value))
-watch(setupsOnly, () => { limit.value = 6 })
-watch(qualifiedCount, count => { if (!count) setupsOnly.value = false })
-watch(() => data.value?.session, () => { setupsOnly.value = false; limit.value = 6 })
+watch([selectedStatus, symbol, direction], () => { limit.value = 6 })
+watch(() => data.value?.session, () => { limit.value = 6 })
 </script>
 
 <template>
   <section class="wall-watchlist" aria-label="Watchlist wall activity" :aria-busy="loading || refreshing">
-    <header><div><h3>Which symbols need attention?</h3><p>All saved symbols · 1W expiries · Prices delayed 15 min</p></div>
+    <header><div><h3>Which symbols need attention?</h3><p>Intraday setups · All saved symbols · 1W expiries · Prices delayed 15 min</p></div>
       <button type="button" :disabled="loading || refreshing" @click="load()">{{ refreshing ? 'Refreshing…' : 'Refresh watchlist' }}</button></header>
     <WallAlertControls />
     <p v-if="loading" class="notice" role="status">Checking your watchlist’s wall assessments…</p>
@@ -46,29 +42,30 @@ watch(() => data.value?.session, () => { setupsOnly.value = false; limit.value =
       <div v-if="demo" class="demo" role="status">Local demonstration · Synthetic historical examples <button type="button" @click="chooseDemo(false)">Back to my watchlist</button></div>
       <div v-else class="watchlist-summary"><strong>{{ qualifiedCount ? `${qualifiedCount} setup${qualifiedCount === 1 ? '' : 's'} with conditions met` : data.assessed_count ? 'No confirmed setups in your watchlist' : 'Waiting for current wall assessments' }}</strong>
         <span>{{ data.assessed_count }} of {{ data.watchlist_count }} symbols assessed · {{ data.session }}</span></div>
-      <div v-if="qualifiedCount" class="filters" aria-label="Wall activity filter">
-        <button type="button" :aria-pressed="!setupsOnly" @click="setupsOnly = false">All activity</button>
-        <button type="button" :aria-pressed="setupsOnly" @click="setupsOnly = true">Conditions met · {{ qualifiedCount }}</button>
-      </div>
+      <WallStatusFilters v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" :rows="items" />
       <div v-if="visible.length" class="activity-list">
-        <article v-for="row in visible" :key="`${row.symbol}:${row.side}`" :class="['activity-row', { selected: row.symbol === selectedSymbol, qualified: row.status === 'conditions_met' }]">
-          <div class="activity-heading"><div><strong class="symbol">{{ row.symbol }}</strong><span :class="row.side">{{ row.side === 'put' ? 'Put' : 'Call' }} wall {{ number(row.strike) }}</span></div>
-            <span class="observed-time">{{ time(row.observed_at) }} ET · Close {{ number(row.close) }}</span></div>
-          <div class="activity-body"><div><strong>{{ row.setup ? `${wallSetupTitle(row.setup)} · Conditions met` : wallReactionTitle(row.reaction) }}</strong>
-            <p v-if="row.setup">{{ checks(row).join(' · ') }}</p>
-            <template v-else><p v-if="progress(row)" class="progress">{{ progress(row) }}</p>
-              <p class="activity-next"><b>Next:</b> {{ row.next_condition?.text || 'Wait for a completed price sequence at this wall.' }}</p></template></div>
-            <dl v-if="row.setup"><div><dt>Entry area</dt><dd>{{ number(row.setup.entry_zone.low) }}–{{ number(row.setup.entry_zone.high) }}</dd></div>
+        <article v-for="row in visible" :key="row.id || `${row.symbol}:${row.side}`" :class="['activity-row', { selected: row.symbol === selectedSymbol, qualified: row.status_group === 'conditions_met' }]">
+          <div class="activity-heading"><div><strong class="symbol">{{ row.symbol }}</strong><span :class="row.side">{{ row.side === 'put' ? 'Put' : 'Call' }} wall {{ number(row.strike) }}</span></div><WallStatusBadge :status="row.status_group" :outcome="row.outcome" /></div>
+          <p class="observed-time"><template v-if="row.qualified_at">Qualified {{ time(row.qualified_at) }} ET · </template>Recorded close {{ number(row.close) }} · {{ time(row.observed_at) }} ET</p>
+          <div class="activity-body"><div><strong>{{ row.setup?.direction ? wallSetupTitle(row.setup) : row.reaction ? wallReactionTitle(row.reaction) : 'Watch for price confirmation' }}</strong>
+            <p v-if="checks(row).length">{{ checks(row).join(' · ') }}</p>
+            <p v-if="progress(row)">{{ progress(row) }}</p>
+            <p class="activity-next"><b>{{ row.status_group === 'finished' ? 'Result:' : row.status_group === 'needs_update' ? 'Last assessment:' : 'Next:' }}</b> {{ row.reason || row.next_condition?.text || 'Wait for a completed price sequence at this wall.' }}</p>
+            <p v-if="row.status_group === 'in_progress'">Following the recorded scenario. No entered position is assumed.</p>
+            <p v-if="row.evaluated_through" class="observed-time">Assessed through {{ time(row.evaluated_through) }} ET</p></div>
+            <dl v-if="hasLevels(row)"><div><dt>Entry area (recorded)</dt><dd>{{ number(row.setup.entry_zone.low) }}–{{ number(row.setup.entry_zone.high) }}</dd></div>
               <div><dt>Invalid if 5m close</dt><dd>{{ row.setup.invalidation.close_side }} {{ number(row.setup.invalidation.price) }}</dd></div>
               <div><dt>Reference target</dt><dd>{{ number(row.setup.target.strike) }}</dd></div></dl>
-            <a v-if="chartHref" :href="chartHref({ ...row, demonstration: demo })" :aria-label="`View ${row.symbol} wall assessment`" class="chart-link">View assessment <span aria-hidden="true">→</span></a>
+            <a v-if="chartHref" :href="chartHref({ ...row, demonstration: demo })" :aria-label="`View ${row.symbol} wall assessment`" class="chart-link">{{ row.assessment_id ? 'View assessment' : 'Open wall tracking' }} <span aria-hidden="true">→</span></a>
             <button v-else type="button" :aria-label="`View ${row.symbol} wall assessment`" @click="emit('open', { ...row, demonstration: demo })">View assessment <span aria-hidden="true">→</span></button>
           </div>
         </article>
       </div>
-      <p v-else-if="!error" class="notice" role="status">{{ closed ? 'The market is closed. Current wall activity will appear during the next session.' : !data.watchlist_count ? 'Add symbols to your watchlist to follow their wall activity here.' : !data.assessed_count ? 'Waiting for today’s completed wall assessments. Your list updates automatically.' : 'No current wall reactions to highlight. Your watchlist updates automatically.' }}</p>
-      <button v-if="total > limit" class="show-more" type="button" @click="limit += 6">Show more · {{ total - limit }} remaining</button>
-      <p v-if="qualifiedCount" class="footnote">Conditions met refers to the recorded close. Check current price against the entry area before using a setup.</p>
+      <p v-else-if="!error" class="notice" role="status">{{ !data.watchlist_count ? 'Add symbols to your watchlist to follow their wall activity here.' : `No ${selectedStatus === 'all' ? 'setups' : wallStatusLabel(selectedStatus).toLowerCase() + ' setups'} match these filters. Your selection stays in place as updates arrive.` }}</p>
+      <p v-if="closed" class="footnote">The market is closed. These are the latest recorded states for this session.</p>
+      <button v-if="filtered.length > limit" class="show-more" type="button" @click="limit += 6">Show more · {{ filtered.length - limit }} remaining</button>
+      <details class="footnote"><summary>What do these statuses mean?</summary><p>Watching: conditions have not passed. Conditions met: the rules passed at the recorded close. In progress: following a qualified scenario. Finished: its target, invalidation or time limit ended the comparison. Needs update: its latest state is not established.</p></details>
+      <p class="footnote">Conditions met refers to the recorded close. Check current price against the entry area before using a setup.</p>
       <button v-if="data.local_demo_available && !demo" class="preview" type="button" @click="chooseDemo(true)">Preview local demonstration</button>
     </template>
   </section>

@@ -28,15 +28,15 @@ final class WallWatchlistService
             'timeframe' => IntradayWallTracker::LIVE_TIMEFRAME, 'generated_at' => $now->toIso8601String(),
             'quote_delay_seconds' => max(900, (int) config('wall_tracking.quote_delay_seconds')),
             'watchlist_count' => count($symbols), 'assessed_count' => 0,
-            'state' => $market['is_rth'] ? 'ready' : 'outside_session', 'items' => [],
+            'state' => $market['is_rth'] ? 'ready' : 'outside_session', 'items' => [], 'lifecycle_items' => [], 'lifecycle_truncated' => false,
             'refresh_until' => $market['is_rth'] ? $market['closes_at'] : null,
             'next_refresh_at' => CarbonImmutable::parse($market['next_open_at'])->addMinutes(15)->toIso8601String(),
             'local_demo_available' => app()->environment('local')];
-        if (! $symbols || ! $market['is_rth']) {
+        if (! $symbols || ! $market['is_trading_day'] || $now->lessThan(CarbonImmutable::parse($market['opens_at']))) {
             return $result;
         }
         $cutoff = app(WallInteractionService::class)->cutoff($now);
-        $key = 'wall-watchlist:projection:v1:'.hash('sha256', json_encode([$userId, $symbols, $result['session']]));
+        $key = 'wall-watchlist:projection:v2:'.hash('sha256', json_encode([$userId, $symbols, $result['session']]));
         [$models, $assessments] = Cache::remember($key, 30, function () use ($userId, $symbols, $result, $now, $cutoff) {
             $models = $this->latest($userId, $symbols, $result['session'], 'intraday_capture', IntradayWallModel::SCHEMA,
                 IntradayWallModel::MODEL, 'model_observation', 'scope->timeframe', $now)
@@ -46,7 +46,8 @@ final class WallWatchlistService
             $assessments = $this->latest($userId, $symbols, $result['session'], 'wall_interactions', WallInteractionDetector::SCHEMA,
                 WallInteractionRules::VERSION, 'interaction_assessment', 'timeframe', $cutoff)
                 ->select(['w.symbol', 'w.observed_at', 'w.payload_json->current as current', 'w.payload_json->state as state',
-                    'w.payload_json->setups->current as setups', 'w.payload_json->setups->rule_version as setup_rules'])->get()->keyBy('symbol');
+                    'w.payload_json->setups->current as setups', 'w.payload_json->setups->rule_version as setup_rules',
+                    'w.payload_json->setup_lifecycle as lifecycle'])->get()->keyBy('symbol');
 
             return [$models, $assessments];
         });
@@ -55,6 +56,31 @@ final class WallWatchlistService
         foreach ($symbols as $symbol) {
             $model = $models->get($symbol);
             $assessment = $assessments->get($symbol);
+            $lifecycle = $this->array($assessment?->lifecycle);
+            if (($lifecycle['schema_version'] ?? null) === \App\Support\WallIntelligence\WallSetupLifecycle::VERSION
+                && ($lifecycle['rule_version'] ?? null) === WallSetupRules::VERSION
+                && ($lifecycle['review_rule_version'] ?? null) === \App\Support\WallIntelligence\WallSetupOutcomeEvaluator::VERSION
+                && ($lifecycle['symbol'] ?? null) === $symbol && ($lifecycle['session'] ?? null) === $result['session']
+                && ($lifecycle['timeframe'] ?? null) === IntradayWallTracker::LIVE_TIMEFRAME) {
+                $result['lifecycle_truncated'] = $result['lifecycle_truncated'] || ($lifecycle['truncated'] ?? false);
+                foreach (array_slice($lifecycle['items'] ?? [], 0, 100) as $row) {
+                    if (($row['symbol'] ?? null) === $symbol && ($row['session'] ?? null) === $result['session']
+                        && preg_match('/^[a-f0-9]{64}$/', $row['id'] ?? '')
+                        && (($row['alert_id'] ?? null) === null || $row['alert_id'] === hash('sha256', json_encode([$symbol, $result['session'], 'setup', $row['id']])))
+                        && in_array($row['side'] ?? null, ['put', 'call'], true)
+                        && in_array($row['status_group'] ?? null, ['watching', 'conditions_met', 'in_progress', 'finished', 'needs_update'], true)
+                        && $this->recent($row['evaluated_through'] ?? null, $cutoff, 86400)
+                        && $this->recent($row['observed_at'] ?? null, $cutoff, 86400)
+                        && is_numeric($row['strike'] ?? null) && is_finite((float) $row['strike']) && $row['strike'] > 0) {
+                        $result['lifecycle_items'][] = array_intersect_key($row, array_flip(['id', 'symbol', 'side', 'strike',
+                            'alert_id', 'assessment_id', 'session', 'timeframe', 'status_group', 'outcome', 'qualified',
+                            'observed_at', 'qualified_at', 'entry_expires_at', 'evaluated_through', 'outcome_at', 'close', 'reason', 'setup']));
+                    }
+                }
+            }
+            if (! $market['is_rth']) {
+                continue;
+            }
             if (! $model || ! $assessment || $assessment->state !== 'ready'
                 || ! $this->recent($model->observed_at, $now, $result['quote_delay_seconds'] + (int) config('wall_tracking.quote_max_age_seconds'))
                 || ! $this->recent($assessment->observed_at, $cutoff, $rules['maximum_bar_age_seconds'])) {
@@ -96,11 +122,24 @@ final class WallWatchlistService
                     'alert_keys' => $this->alertKeys($symbol, $result['session'], $reaction, $qualified ? $setup : []),
                     'setup' => $qualified ? array_intersect_key($setup, array_flip(['pattern', 'direction', 'entry_zone',
                         'invalidation', 'target', 'expires_at', 'evidence_checks', 'evidence_grade'])) : null];
+                if (! $lifecycle) {
+                    $last = $result['items'][array_key_last($result['items'])];
+                    $result['lifecycle_items'][] = [...$last, 'id' => $last['assessment_id'],
+                        'alert_id' => $last['alert_keys']['setup'] ?? $last['alert_keys']['testing'] ?? null,
+                        'session' => $result['session'], 'timeframe' => IntradayWallTracker::LIVE_TIMEFRAME,
+                        'status_group' => $qualified ? 'conditions_met' : 'watching', 'qualified' => $qualified,
+                        'qualified_at' => $qualified ? $setup['confirmed_at'] : null,
+                        'evaluated_through' => $reaction['observed_at'], 'outcome' => $qualified ? 'in_progress' : 'watching',
+                        'reason' => $last['next_condition']['text'] ?? 'Wait for a completed price sequence.'];
+                }
             }
             $result['assessed_count'] += (int) $comparable;
         }
         usort($result['items'], fn ($a, $b) => $this->priority($a['status']) <=> $this->priority($b['status'])
             ?: strcmp($b['observed_at'], $a['observed_at']) ?: strcmp($a['symbol'], $b['symbol']) ?: strcmp($a['side'], $b['side']));
+        usort($result['lifecycle_items'], fn ($a, $b) => strcmp($b['observed_at'], $a['observed_at']) ?: strcmp($a['id'], $b['id']));
+        $result['lifecycle_truncated'] = $result['lifecycle_truncated'] || count($result['lifecycle_items']) > 1000;
+        $result['lifecycle_items'] = array_slice($result['lifecycle_items'], 0, 1000);
 
         return $result;
     }
@@ -194,7 +233,11 @@ final class WallWatchlistService
         if (! $at) {
             return false;
         }
-        $time = CarbonImmutable::parse($at);
+        try {
+            $time = CarbonImmutable::parse($at);
+        } catch (\Throwable) {
+            return false;
+        }
 
         return $time->lessThanOrEqualTo($cutoff) && $cutoff->getTimestamp() - $time->getTimestamp() <= $seconds;
     }

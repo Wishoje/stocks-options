@@ -1,6 +1,7 @@
 <script setup>
 import { wallActivityDashboardUrl } from '@/Pages/Scanner/scannerUtils'
 import { wallSetupTitle } from '@/utils/wallDecision'
+import WallStatusBadge from '@/Components/WallStatusBadge.vue'
 
 defineProps({ item: { type: Object, required: true }, archived: Boolean })
 defineEmits(['open'])
@@ -14,7 +15,10 @@ const hasLevels = item => item.status === 'conditions_met'
 </script>
 
 <template>
+  <WallStatusBadge v-if="item.status_group" :status="item.status_group" :outcome="item.lifecycle?.outcome" />
   <strong>{{ item.preview ? 'Test alert · ' : '' }}{{ item.symbol }} · {{ item.status === 'conditions_met' ? wallSetupTitle(item.setup) : 'Testing a wall' }}</strong>
+  <p v-if="item.lifecycle?.reason" class="context">{{ item.lifecycle.reason }}</p>
+  <p v-if="item.status_group === 'needs_update'" class="context">Open the assessment to check its latest state. The original alert remains below.</p>
   <p v-if="item.preview" class="example">Example notification. No market event.</p>
   <p class="wall-alert-meta">{{ item.side === 'put' ? 'Put' : 'Call' }} wall {{ number(item.strike) }} · <time :datetime="item.observed_at">{{ time(item.observed_at) }} ET</time></p>
   <template v-if="hasLevels(item)">

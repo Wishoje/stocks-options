@@ -57,11 +57,12 @@ final class WallSetupOutcomeEvaluator
             if ($qualified && (! $this->validLevels($seed) || strtotime($seed['confirmed_at']) < $open)) {
                 continue;
             }
-            $case = ['id' => $seed['id'], 'side' => $seed['side'], 'strike' => $seed['strike'],
+            $case = ['id' => $seed['id'], 'assessment_id' => $seed['assessment_id'] ?? null, 'side' => $seed['side'], 'strike' => $seed['strike'],
                 'pattern' => $seed['pattern'], 'direction' => $seed['direction'],
                 'evidence_grade' => $seed['evidence_grade'] ?? null, 'observed_at' => $seed['observed_at'],
                 'qualified' => $qualified, 'qualified_at' => $qualified ? $seed['observed_at'] : null,
                 'reference_close' => $seed['close'], 'entry_zone' => $seed['entry_zone'],
+                'entry_expires_at' => $seed['expires_at'] ?? null,
                 'invalidation' => $seed['invalidation'], 'target' => $seed['target'],
                 'confirmation_scope' => $seed['confirmation_scope'] ?? $seed['scope'],
                 'confirmation_wall_hash' => $seed['confirmation_wall_hash'] ?? null,

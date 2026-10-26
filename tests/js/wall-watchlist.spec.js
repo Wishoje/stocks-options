@@ -18,12 +18,21 @@ const payload = (items = [row()], changes = {}) => ({ schema_version: 'wall-watc
 async function render(data = payload(), props = {}) {
   axios.get.mockResolvedValueOnce({ data })
   const w = mount(WallWatchlist, { props }); wrappers.push(w)
-  await flushPromises(); return w
+  await flushPromises()
+  // These behavior cases inspect All; the default qualification filter is checked separately.
+  if (w.find('.filters button').exists()) await w.get('.filters button').trigger('click')
+  return w
 }
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:31:00Z')); axios.get.mockReset() })
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('Watchlist wall activity', () => {
+  it('defaults to conditions met and keeps that zero-count selection during updates', async () => {
+    axios.get.mockResolvedValueOnce({ data: payload([]) })
+    const w = mount(WallWatchlist); wrappers.push(w); await flushPromises()
+    expect(w.get('.filters button[aria-pressed="true"]').text()).toBe('Conditions met · 0')
+    expect(w.text()).toContain('Your selection stays in place')
+  })
   it('shows the saved next condition and proven progress without promoting a pending entry', async () => {
     const w = await render(payload([row('QQQ', { reaction: 'bounce', next_condition: {
       text: 'Wait for a second consecutive five-minute close above 100.05.', completed_closes: 1, required_closes: 2,
@@ -73,7 +82,8 @@ describe('Watchlist wall activity', () => {
     expect(w.text()).toContain('Entry area')
     await w.get('.filters button[aria-pressed="false"]').trigger('click')
     await vi.advanceTimersByTimeAsync(20000)
-    expect(w.get('.activity-row .symbol').text()).toBe('QQQ')
+    expect(w.findAll('.activity-row')).toHaveLength(0)
+    expect(w.get('.filters button[aria-pressed="true"]').text()).toBe('Conditions met · 0')
     expect(w.text()).not.toContain('Entry area')
   })
 
