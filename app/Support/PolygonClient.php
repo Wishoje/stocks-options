@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Exceptions\ProviderDeferred;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -30,8 +31,14 @@ class PolygonClient
                 blockForSeconds: 2,
                 requestKey: ProviderRequestReplay::fingerprint($url, $params)
             );
-        } catch (\Throwable) {
+        } catch (ProviderDeferred $error) {
+            return ['status' => 'provider_deferred', 'bars' => [], 'reason' => $error->reason,
+                'retry_not_before' => $error->notBefore->toIso8601String(),
+                'request_attempted' => ! $error->isAdmissionDeferral(), 'http_status' => $error->httpStatus];
+        } catch (\Throwable $error) {
             // Exceptions can contain query authentication; never propagate those URLs.
+            Log::warning('PolygonClient.wallPriceBars.unavailable', ['symbol' => Symbols::canon($symbol),
+                'session' => $session, 'exception_class' => $error::class]);
             return ['status' => 'provider_unavailable', 'bars' => []];
         }
         if (! $response->ok()) {

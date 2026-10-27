@@ -77,6 +77,12 @@ final class WallInteractionService
                 return ['status' => 'waiting_for_walls'];
             }
             $response = app(PolygonClient::class)->wallPriceBars($symbol, $session);
+            if ($response['status'] === 'provider_deferred') {
+                // Keep the provider deadline, and do not mark a whole five-minute
+                // bucket checked when no completed response was available.
+                return array_intersect_key($response, array_flip(['status', 'reason', 'retry_not_before',
+                    'request_attempted', 'http_status']));
+            }
             // Scheduler jitter must not turn a five-minute cadence into ten minutes.
             Cache::put($checkedKey, $bucket, $now->addMinutes(10));
             if ($response['status'] !== 'ready') {

@@ -81,6 +81,12 @@ class CaptureWallInteractions extends Command
                 return self::FAILURE;
             }
         }
+        $retryAt = Cache::get('walls:interactions:retry-not-before');
+        if (! $recover && $retryAt && CarbonImmutable::parse($retryAt)->isAfter($now)) {
+            $this->info('Wall price collection is waiting for the provider retry time.');
+
+            return self::SUCCESS;
+        }
         $symbols = $explicit ? array_unique(array_map([Symbols::class, 'canon'], $explicit))
             : WallObservation::where('dataset', 'intraday_capture')->where('analysis_session', $session)
                 ->where('payload_json->scope->timeframe', IntradayWallTracker::LIVE_TIMEFRAME)
@@ -122,9 +128,24 @@ class CaptureWallInteractions extends Command
                 continue;
             }
             $this->line($symbol.': '.json_encode($result));
+            $previous = $last ?? $cursor ?? end($symbols);
             $last = $symbol;
-            if (in_array($result['status'], ['provider_backoff', 'rate_limited', 'access_not_available'], true)) {
-                break;
+            if (in_array($result['status'], ['provider_deferred', 'provider_backoff', 'rate_limited', 'access_not_available'], true)) {
+                if (! $explicit) {
+                    // After an actual failed request, rotate past that symbol.
+                    // Admission deferrals made no request, so resume at it.
+                    $attempted = $result['status'] === 'provider_deferred' ? ($result['request_attempted'] ?? false)
+                        : $result['status'] !== 'provider_backoff';
+                    Cache::put('walls:interaction-cursor', $attempted ? $symbol : $previous, $now->addDay());
+                }
+                if ($result['status'] === 'provider_deferred') {
+                    $deadline = CarbonImmutable::parse($result['retry_not_before']);
+                    if ($deadline->isAfter(CarbonImmutable::now('UTC'))) {
+                        Cache::put('walls:interactions:retry-not-before', $deadline->toIso8601String(), $deadline->addMinute());
+                    }
+                }
+
+                return self::SUCCESS;
             }
         }
         if (! $explicit && $last === end($symbols)) {

@@ -2,11 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Exceptions\ProviderDeferred;
 use App\Models\WallObservation;
 use App\Services\WallInteractionService;
 use App\Support\PolygonClient;
+use App\Support\ProviderConcurrencyLimiter;
 use App\Support\WallIntelligence\IntradayWallModel;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -31,14 +34,14 @@ class WallInteractionCollectionTest extends TestCase
         return CarbonImmutable::now('UTC');
     }
 
-    private function observation(string $timeframe = '7d'): array
+    private function observation(string $timeframe = '7d', string $symbol = 'SPY'): array
     {
-        $payload = ['scope' => ['symbol' => 'SPY', 'session' => '2026-09-30', 'timeframe' => $timeframe],
+        $payload = ['scope' => ['symbol' => $symbol, 'session' => '2026-09-30', 'timeframe' => $timeframe],
             'observed_at' => '2026-09-30T14:00:00Z', 'scope_key' => $timeframe, 'basis_key' => 'basis',
             'provenance' => ['quote_source' => 'test'], 'walls' => ['put' => [['strike' => 100]], 'call' => [['strike' => 110]]]];
         $json = json_encode($payload);
         WallObservation::insert(['content_hash' => hash('sha256', $json), 'scope_key' => hash('sha256', $timeframe),
-            'symbol' => 'SPY', 'dataset' => 'intraday_capture', 'schema_version' => IntradayWallModel::SCHEMA,
+            'symbol' => $symbol, 'dataset' => 'intraday_capture', 'schema_version' => IntradayWallModel::SCHEMA,
             'model_version' => IntradayWallModel::MODEL, 'observation_kind' => 'model_observation',
             'analysis_session' => '2026-09-30', 'source_date' => '2026-09-29', 'observed_at' => '2026-09-30 14:00:00',
             'captured_at' => $this->now(), 'recorded_at' => $this->now(), 'quality_state' => 'modeled',
@@ -144,6 +147,92 @@ class WallInteractionCollectionTest extends TestCase
         $this->assertSame('provider_backoff', $service->collect('QQQ', '2026-09-30', $this->now())['status']);
         Http::assertSentCount(1);
         $this->assertSame(0, WallObservation::where('dataset', 'intraday_price_bars')->count());
+    }
+
+    public function test_price_client_preserves_safe_provider_retry_metadata(): void
+    {
+        $deadline = $this->now()->addSeconds(20);
+        $limiter = \Mockery::mock(ProviderConcurrencyLimiter::class);
+        $limiter->shouldReceive('massive')->once()->andThrow(new ProviderDeferred(ProviderDeferred::TIMEOUT, $deadline));
+        $this->app->instance(ProviderConcurrencyLimiter::class, $limiter);
+        $result = app(PolygonClient::class)->wallPriceBars('SPY', '2026-09-30');
+        $this->assertSame('provider_deferred', $result['status']);
+        $this->assertSame(ProviderDeferred::TIMEOUT, $result['reason']);
+        $this->assertSame($deadline->toIso8601String(), $result['retry_not_before']);
+        $this->assertTrue($result['request_attempted']);
+        $this->assertStringNotContainsString('test-key', json_encode($result));
+        Http::assertNothingSent();
+    }
+
+    public function test_a_deferred_request_can_resume_after_its_deadline_inside_the_same_bucket(): void
+    {
+        $this->observation();
+        $client = \Mockery::mock(PolygonClient::class);
+        $client->shouldReceive('wallPriceBars')->twice()->with('SPY', '2026-09-30')->andReturn(
+            ['status' => 'provider_deferred', 'bars' => [], 'reason' => ProviderDeferred::CAPACITY,
+                'retry_not_before' => $this->now()->addSeconds(20)->toIso8601String(), 'request_attempted' => false, 'http_status' => null],
+            ['status' => 'ready', 'bars' => $this->provider()['results']]
+        );
+        $this->app->instance(PolygonClient::class, $client);
+        $service = app(WallInteractionService::class);
+        $this->assertSame('provider_deferred', $service->collect('SPY', '2026-09-30', $this->now())['status']);
+        $this->assertSame(0, WallObservation::where('dataset', 'intraday_price_bars')->count());
+        $this->travel(21)->seconds();
+        $this->assertSame('recorded', $service->collect('SPY', '2026-09-30', $this->now())['status']);
+        $this->assertSame(1, WallObservation::where('dataset', 'intraday_price_bars')->count());
+    }
+
+    public function test_a_repeated_timeout_cannot_starve_later_symbols_in_the_scheduled_batch(): void
+    {
+        $this->assertBatchResumesAfterDeferral(true);
+    }
+
+    public function test_admission_deferral_resumes_the_unrequested_symbol_before_advancing(): void
+    {
+        $this->assertBatchResumesAfterDeferral(false);
+    }
+
+    private function assertBatchResumesAfterDeferral(bool $attempted): void
+    {
+        config(['wall_tracking.interactions_enabled' => true]);
+        foreach (['AAPL', 'CRWV', 'SPY'] as $symbol) {
+            $this->observation('7d', $symbol);
+        }
+        $deadline = $this->now()->addSeconds(20);
+        $deferred = ['status' => 'provider_deferred', 'bars' => [],
+            'reason' => $attempted ? ProviderDeferred::TIMEOUT : ProviderDeferred::CAPACITY,
+            'retry_not_before' => $deadline->toIso8601String(), 'request_attempted' => $attempted, 'http_status' => null];
+        $ready = ['status' => 'ready', 'bars' => $this->provider()['results']];
+        $order = [];
+        $client = \Mockery::mock(PolygonClient::class);
+        $client->shouldReceive('wallPriceBars')->with('AAPL', '2026-09-30')->once()->andReturnUsing(function () use (&$order, $ready) {
+            $order[] = 'AAPL';
+
+            return $ready;
+        });
+        $client->shouldReceive('wallPriceBars')->with('SPY', '2026-09-30')->once()->andReturnUsing(function () use (&$order, $ready) {
+            $order[] = 'SPY';
+
+            return $ready;
+        });
+        $client->shouldReceive('wallPriceBars')->with('CRWV', '2026-09-30')->twice()->andReturnUsing(function () use (&$order, $deferred, $ready, $attempted) {
+            $order[] = 'CRWV';
+
+            return $attempted || count(array_filter($order, fn ($s) => $s === 'CRWV')) === 1 ? $deferred : $ready;
+        });
+        $this->app->instance(PolygonClient::class, $client);
+        $this->artisan('walls:capture-interactions')->assertSuccessful();
+        $this->assertSame(['AAPL', 'CRWV'], $order);
+        $this->assertSame($attempted ? 'CRWV' : 'AAPL', Cache::get('walls:interaction-cursor'));
+        $this->artisan('walls:capture-interactions')
+            ->expectsOutput('Wall price collection is waiting for the provider retry time.')->assertSuccessful();
+        $this->assertSame(['AAPL', 'CRWV'], $order);
+        $this->travelTo($deadline->addSecond());
+        $this->artisan('walls:capture-interactions')->assertSuccessful();
+        $this->assertSame($attempted ? ['AAPL', 'CRWV', 'SPY', 'CRWV'] : ['AAPL', 'CRWV', 'CRWV', 'SPY'], $order);
+        $this->assertSame(1, WallObservation::where('symbol', 'SPY')->where('dataset', 'intraday_price_bars')->count());
+        $this->assertSame($attempted ? 'CRWV' : null, Cache::get('walls:interaction-cursor'));
+        Http::assertNothingSent();
     }
 
     public function test_wrong_symbol_split_adjusted_or_paginated_responses_are_rejected(): void
