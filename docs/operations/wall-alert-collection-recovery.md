@@ -12,7 +12,9 @@ The price client preserves the safe reason, retry deadline, HTTP status and whet
 
 The collector stops on a provider deferral and keeps its continuation position. After an actual failed request, the next batch starts after that symbol. An admission deferral made no request, so collection resumes at that symbol. The provider retry deadline is observed before another batch starts. A deferred request does not mark the entire five-minute bucket successfully checked.
 
-The five-minute schedule, concurrency caps, model thresholds, setup confirmation rules and alert eligibility remain unchanged. No worker process, migration or environment flag is added. Existing completed-price and wall records are retained. The repair restores collection; it does not create a trading signal or replay expired notifications.
+The scheduler checks for resumable work every minute under its existing non-overlap lock. A successful symbol is still checked only once per five-minute bucket; deferred work observes the shared retry deadline. This prevents each provider timeout from adding another five-minute pause before later symbols can be reached. The command retains its 120-second admission budget.
+
+Concurrency caps, model thresholds, setup confirmation rules and alert eligibility remain unchanged. No worker process, migration or environment flag is added. Existing completed-price and wall records are retained. The repair restores collection; it does not create a trading signal or replay expired notifications.
 
 ## Verification
 

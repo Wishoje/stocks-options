@@ -138,6 +138,24 @@ class WallInteractionCollectionTest extends TestCase
         Http::assertSentCount(2);
     }
 
+    public function test_minute_reconciliation_does_not_refetch_a_successful_five_minute_bucket(): void
+    {
+        config(['wall_tracking.interactions_enabled' => true]);
+        $this->observation();
+        Http::fake(['*' => Http::response($this->provider())]);
+        $start = $this->now();
+        foreach ([0, 1, 2, 3] as $minutes) {
+            $this->travelTo($start->addMinutes($minutes));
+            $this->artisan('walls:capture-interactions')->assertSuccessful();
+        }
+        Http::assertSentCount(1);
+        $this->assertSame(1, WallObservation::where('dataset', 'intraday_price_bars')->count());
+        $this->travelTo($start->addMinutes(4)); // 14:35 begins the next five-minute bucket.
+        $this->artisan('walls:capture-interactions')->assertSuccessful();
+        Http::assertSentCount(2);
+        $this->assertSame(2, WallObservation::where('dataset', 'intraday_price_bars')->count());
+    }
+
     public function test_rate_limit_and_permission_failures_stop_following_provider_requests(): void
     {
         $this->observation();
