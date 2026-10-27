@@ -450,3 +450,14 @@
   .mk-spy-hero { flex-direction: column; align-items: flex-start; gap: 1.4rem; }
   .mk-spy-upgrade { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Focused public workflows share the readable guide layout. */
+.mk-workflow-hero { display: grid; gap: 3rem; padding-block: clamp(3rem, 7vw, 6rem); }
+.mk-workflow-hero--visual { grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); align-items: center; }
+.mk-workflow-hero .mk-title { font-size: clamp(2.3rem, 4.5vw, 4rem); }
+.mk-workflow-visual { min-width: 0; }
+.mk-workflow-visual .mk-media { max-width: 20rem; margin-inline: auto; }
+.mk-workflow-visual .mk-media__picture { aspect-ratio: auto; }
+.mk-workflow-visual .mk-media__image { max-height: 36rem; object-fit: contain; }
+.mk-workflow-visual .mk-swing-preview { border: 1px solid var(--mk-line); border-radius: 1rem; }
+@media (max-width: 55rem) { .mk-workflow-hero--visual { grid-template-columns: minmax(0, 1fr); } }

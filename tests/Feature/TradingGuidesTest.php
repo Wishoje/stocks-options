@@ -10,7 +10,7 @@ class TradingGuidesTest extends TestCase
 {
     public function test_guides_are_public_and_linked_from_initial_marketing_html(): void
     {
-        $this->get('/guides')->assertOk()->assertInertia(fn (Assert $page) => $page->component('Marketing/Guides')->has('guides', 2));
+        $this->get('/guides')->assertOk()->assertInertia(fn (Assert $page) => $page->component('Marketing/Guides')->has('guides', 4));
         foreach (['/', '/features', '/guides'] as $path) {
             $html = $this->get($path)->assertOk()->getContent();
             $xpath = $this->xpath($html);
@@ -44,6 +44,7 @@ class TradingGuidesTest extends TestCase
             $this->assertSame('https://gexoptions.com'.$url, $article['mainEntityOfPage']);
             $this->assertSame($guide['published'].'T00:00:00-05:00', $article['datePublished']);
             $this->assertSame('GEX Options', $article['author']['name']);
+            $this->assertSame('https://gexoptions.com/about', $article['author']['url']);
             $this->assertSame(1, $xpath->query('//meta[@property="og:type" and @content="article"]')->length);
             $this->assertSame(0, $xpath->query('//script[@inertia="faq-json-ld"]')->length);
         }
@@ -63,7 +64,7 @@ class TradingGuidesTest extends TestCase
         $expected = array_map(fn ($guide) => 'https://gexoptions.com/guides/'.$guide['slug'], TradingGuides::all());
         $this->assertSame($expected, array_column($collection['mainEntity']['itemListElement'], 'url'));
         foreach ($expected as $url) {
-            $this->assertStringContainsString('<loc>'.$url.'</loc>', file_get_contents(public_path('sitemap.xml')));
+            $this->assertStringContainsString('<loc>'.$url.'</loc>', $this->get('/sitemap.xml')->assertOk()->getContent());
         }
     }
 

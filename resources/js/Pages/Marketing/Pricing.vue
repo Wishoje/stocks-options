@@ -14,11 +14,8 @@
     <div class="pricing-page">
       <section class="pricing-page__hero">
         <p class="pricing-page__eyebrow">Simple pricing</p>
-        <h1>Choose how you want to be billed.</h1>
-        <p>
-          One GexOptions plan gives you the dashboard, positioning views, intraday analysis, scanner,
-          calculator, watchlist, and export tools.
-        </p>
+        <h1>{{ pricingContent.heading }}</h1>
+        <p>{{ pricingContent.description }}</p>
       </section>
 
       <section
@@ -139,6 +136,7 @@
 
 <script setup>
 import axios from 'axios'
+import pricingContent from '../../../marketing/pricing-content.json'
 import { usePage } from '@inertiajs/vue3'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import MarketingLayout from '@/Layouts/MarketingLayout.vue'
@@ -177,33 +175,8 @@ const ctaLabel = computed(() => {
   return hasUser.value ? `Continue with ${selectedBilling.value} billing` : `Create account for ${selectedBilling.value} billing`
 })
 
-const includedFeatures = [
-  'End-of-day and intraday dashboards',
-  'Dealer positioning and volatility views',
-  'Strike charts and options activity',
-  'Scanner and options calculator',
-  'Watchlist and AI export workflows',
-  'Account billing controls',
-]
-
-const faqItems = [
-  {
-    question: 'What happens after the trial?',
-    answer: 'The billing interval you selected begins after the trial unless you cancel before it ends.',
-  },
-  {
-    question: 'Can I cancel?',
-    answer: 'Yes. You can open the Stripe billing portal from your account and cancel the subscription.',
-  },
-  {
-    question: 'Do monthly and yearly include the same product?',
-    answer: 'Yes. They provide the same product access and differ only in billing interval and price.',
-  },
-  {
-    question: 'Is GexOptions financial advice?',
-    answer: 'No. GexOptions provides analytics and research tools. Trading decisions and risk remain yours.',
-  },
-]
+const includedFeatures = pricingContent.features
+const faqItems = pricingContent.faqs.map(({ q, a }) => ({ question: q, answer: a }))
 
 const pricingFaqs = computed(() => faqItems.map(item => ({
   q: item.question,

@@ -25,6 +25,7 @@
           <p>Use the form or email address for product, access, billing, and data questions.</p>
 
           <div class="contact-card__help">
+            <a href="/about">About GEX Options and our methodology</a>
             <h3>Helpful details</h3>
             <ul>
               <li>Your account email</li>

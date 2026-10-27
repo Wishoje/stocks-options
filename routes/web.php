@@ -25,6 +25,13 @@ Route::get('/', function () {
     return Inertia::render('Marketing/Home');
 })->name('home');
 
+Route::get('/sitemap.xml', \App\Http\Controllers\PublicSitemapController::class)->name('sitemap');
+foreach (['swing-trading-ideas' => 'workflows.swing', 'intraday-alerts' => 'workflows.alerts', 'about' => 'about'] as $path => $name) {
+    Route::get('/'.$path, fn () => Inertia::render('Marketing/Workflow', [
+        'content' => \App\Support\PublicMarketingContent::forRoute(request()->route()->getName()),
+    ]))->name($name);
+}
+
 Route::get('/pricing', fn () => Inertia::render('Marketing/Pricing'))->name('pricing');
 Route::get('/features', fn () => Inertia::render('Marketing/Features'))->name('features');
 Route::get('/spy-gex-levels', \App\Http\Controllers\PublicSpyController::class)->middleware('throttle:60,1')->name('spy.preview');

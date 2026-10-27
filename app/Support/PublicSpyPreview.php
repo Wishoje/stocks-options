@@ -46,10 +46,16 @@ final class PublicSpyPreview
                 if ($version !== app(EodCacheVersion::class)->current(EodCacheVersion::DOMAIN_GEX, 'SPY')) {
                     return $this->present($fallback);
                 }
-                Cache::put($key, ['data' => $data], now()->addSeconds($data ? 300 : 60));
                 if ($data !== null) {
+                    $priorContent = is_array($fallback) ? $fallback : [];
+                    unset($priorContent['content_updated_date']);
+                    $data['content_updated_date'] = $priorContent === $data
+                        ? ($fallback['content_updated_date'] ?? now('America/New_York')->toDateString())
+                        : now('America/New_York')->toDateString();
                     Cache::put(self::LAST_GOOD, $data, now()->addDays(14));
                 }
+
+                Cache::put($key, ['data' => $data], now()->addSeconds($data ? 300 : 60));
 
                 return $this->present($data ?? $fallback);
             } finally {
@@ -58,6 +64,23 @@ final class PublicSpyPreview
         } catch (\Throwable) {
             // A marketing page stays useful during a cache/database outage.
             // Do not turn each public request into an uncached chain rebuild.
+            return null;
+        }
+    }
+
+    public function cachedDataDate(): ?string
+    {
+        try {
+            $data = Cache::get(self::LAST_GOOD);
+            $date = is_array($data) ? ($data['data_date'] ?? null) : null;
+
+            if (! is_string($date) || ! self::validDate($date) || $date > self::completedSession()) {
+                return null;
+            }
+            $updated = $data['content_updated_date'] ?? $date;
+
+            return is_string($updated) && self::validDate($updated) && $updated >= $date && $updated <= now('America/New_York')->toDateString() ? $updated : $date;
+        } catch (\Throwable) {
             return null;
         }
     }

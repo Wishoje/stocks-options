@@ -25,9 +25,24 @@ return [
             'canonical' => 'https://gexoptions.com/spy-gex-levels',
         ],
         'guides.index' => [
-            'title' => 'Trading Guides - GEX Levels & Intraday Walls | GEX Options',
+            'title' => 'Trading Guides - GEX, Alerts & Swing Ideas | GEX Options',
             'description' => 'Practical guides to reading SPY gamma exposure, following intraday walls, and using price reactions and setup alerts in your trading research.',
             'canonical' => 'https://gexoptions.com/guides',
+        ],
+        'workflows.swing' => [
+            'title' => 'Swing Trading Ideas for Stocks & ETFs | GEX Options',
+            'description' => 'Research 2–5 day and 1–3 week swing plans with daily-close conditions, entry areas, targets and invalidation. See how GEX Options builds and reviews each plan.',
+            'canonical' => 'https://gexoptions.com/swing-trading-ideas',
+        ],
+        'workflows.alerts' => [
+            'title' => 'Intraday Setup Alerts for Your Watchlist | GEX Options',
+            'description' => 'Follow wall-based intraday setups across your watchlist. Review Conditions met, entry areas, targets and invalidation with in-app GEX Options alerts.',
+            'canonical' => 'https://gexoptions.com/intraday-alerts',
+        ],
+        'about' => [
+            'title' => 'About GEX Options & Our Trading Research Methodology',
+            'description' => 'Learn who publishes GEX Options guides and how GEX, DEX, intraday walls and swing research rules are calculated and interpreted.',
+            'canonical' => 'https://gexoptions.com/about',
         ],
         'pricing' => [
             'title' => 'GexOptions Pricing',

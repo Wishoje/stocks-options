@@ -118,7 +118,7 @@
     "title": "How to use wall tracking for intraday trading",
     "description": "Follow put and call walls alongside price, understand touches and tests, and read setup entry, target and invalidation levels without losing the context.",
     "published": "2026-10-24",
-    "updated": "2026-10-24",
+    "updated": "2026-10-27",
     "readTime": "6 min read",
     "mediaKey": "wallTracking",
     "takeaway": "Find a nearby wall, watch the price response, and review the next condition. If price is far away or no setup is confirmed, wait.",
@@ -221,7 +221,7 @@
         "id": "alerts",
         "title": "Use alerts to return to a setup, then check the chart",
         "paragraphs": [
-          "Setup alerts follow your saved symbols while the site is open. The bell’s Recent alerts panel keeps today’s received alerts in this browser. Sound and wall-testing alerts are optional.",
+          "Setup alerts follow your saved symbols while the site is open. The bell’s Recent alerts panel keeps today’s received alerts in this browser and includes fresh active setups from your watchlist. Sound and wall-testing alerts are optional.",
           "Open an alert to return to its symbol and recorded assessment. Read the timestamp and check whether the scenario is still relevant. These are in-app alerts; they do not arrive as push notifications after you close the site."
         ]
       },
@@ -243,6 +243,177 @@
     ],
     "featureHref": "/features#intraday-wall-tracking",
     "featureLabel": "Explore wall tracking and setup alerts",
+    "sources": []
+  },
+  {
+    "slug": "how-to-use-intraday-setup-alerts",
+    "category": "During the session",
+    "title": "How to use intraday setup alerts",
+    "description": "Find the alerts that qualified, understand Conditions met and In progress, and check the recorded entry, target and invalidation before using an assessment.",
+    "published": "2026-10-27",
+    "updated": "2026-10-27",
+    "readTime": "5 min read",
+    "mediaKey": "setupAlerts",
+    "takeaway": "Use an alert to return to a recorded setup. Check its time and current price before deciding whether its entry area is still relevant.",
+    "sections": [
+      {
+        "id": "start-with-watchlist",
+        "title": "Start with the symbols you follow.",
+        "paragraphs": [
+          "Save your stocks and ETFs in the watchlist. Setup alerts are on by default while the site is open. You can choose sound or optional wall-testing alerts in the alert controls.",
+          "Scanner’s Wall activity view helps you compare the saved symbols. A Watching row points to a level and the next condition. It is not a qualified entry."
+        ]
+      },
+      {
+        "id": "find-qualified",
+        "title": "Find the setups whose conditions passed.",
+        "paragraphs": [
+          "Open Recent alerts from the bell and use Conditions met to focus on qualified assessments. Use In progress to follow scenarios after qualification. These groups describe recorded price behavior, not your account positions.",
+          "The inbox includes today’s received notifications in this browser and fresh active setups from the watchlist comparison. From your watchlist identifies an active setup you can inspect even if you did not receive its original popup."
+        ],
+        "rows": [
+          [
+            "Status",
+            "Your next check"
+          ],
+          [
+            "Watching in Scanner",
+            "Wait for the required price sequence at the level."
+          ],
+          [
+            "Conditions met",
+            "Check the recorded entry area against current market price."
+          ],
+          [
+            "In progress",
+            "Review the original target and invalidation as later bars arrive."
+          ],
+          [
+            "Needs update",
+            "Check the time and wait for an updated comparison."
+          ]
+        ]
+      },
+      {
+        "id": "read-four-things",
+        "title": "Read the time and three price boundaries.",
+        "paragraphs": [],
+        "steps": [
+          "Check the symbol, direction and assessment time. Intraday prices are delayed at least 15 minutes.",
+          "Read the entry area. The wall strike itself is not automatically the entry.",
+          "Read the reference target and the five-minute close that invalidates the scenario.",
+          "Open the supporting completed bars. Check current price before deciding whether the scenario is usable."
+        ]
+      },
+      {
+        "id": "example",
+        "title": "An example: qualified does not mean available now.",
+        "paragraphs": [
+          "Teaching example only: a recorded bullish setup has an entry area of 100.20–100.50, a reference target at 102 and invalidation if a five-minute bar closes below 99.80. These are illustrative numbers, not current market levels or a claim of a generated trade.",
+          "If your broker now shows 101.30, the original entry area is behind current price. Conditions met tells you what qualified at the recorded time; it does not move the entry to your new price. Review the assessment rather than assuming you should chase it.",
+          "If price later reaches the target, the product records a price outcome. That does not prove a trade was executed or establish a profit after spreads, fees or slippage."
+        ]
+      },
+      {
+        "id": "why-no-alert",
+        "title": "Why might there be no alert?",
+        "paragraphs": [
+          "A price touch can be recorded without a qualifying setup. The completed price sequence, entry boundaries or target room may not meet the rules. A wall moving across price also does not prove a stable-wall touch.",
+          "An old scenario may leave the active inbox after its comparison ends. The list updates as the feed state arrives. A quiet list can mean no current qualifying setup; it is not a reason to treat a Watching level as an entry."
+        ]
+      },
+      {
+        "id": "delivery",
+        "title": "What delivery does the product support?",
+        "paragraphs": [
+          "Keep GEX Options open for in-app alerts. Sound is optional. Today’s received alert history is kept in this browser and resets at midnight Eastern time.",
+          "The product does not deliver these alerts by SMS, email or closed-browser push. Swing ideas is a separate daily-close workflow without swing notifications in this version."
+        ]
+      }
+    ],
+    "checklist": [
+      "Filter for Conditions met or In progress.",
+      "Check the recorded time and current price.",
+      "Read entry, target and invalidation together.",
+      "Inspect the supporting bars before using the assessment."
+    ],
+    "featureHref": "/intraday-alerts",
+    "featureLabel": "Explore intraday alerts",
+    "sources": []
+  },
+  {
+    "slug": "how-to-use-swing-trading-ideas",
+    "category": "Planning several days ahead",
+    "title": "How to use swing trading ideas",
+    "description": "Choose a 2–5 day or 1–3 week research horizon, read the daily-close condition and follow a plan with fixed entry, target and invalidation levels.",
+    "published": "2026-10-27",
+    "updated": "2026-10-27",
+    "readTime": "6 min read",
+    "visual": "swing-ideas",
+    "mediaKey": "wallAnalysis",
+    "takeaway": "A Watching plan tells you what must happen. A qualifying daily close changes its state; it does not guarantee the next move.",
+    "sections": [
+      {
+        "id": "choose-horizon",
+        "title": "Choose the holding period before the setup.",
+        "paragraphs": [
+          "Open Swing ideas for your saved symbols and choose 2–5 trading days or 1–3 weeks. These are separate research horizons. The shorter view uses a 1M options-expiry scope and reviews qualified scenarios for up to five trading sessions. The longer view uses 3M expirations and up to fifteen sessions.",
+          "The options scope is not the time you must hold a trade. It determines which option expirations contribute to the exposure levels."
+        ]
+      },
+      {
+        "id": "why-a-plan",
+        "title": "Understand why the plan appears.",
+        "paragraphs": [
+          "The current rules compare price with its 20-day and 50-day averages, check recent price movement, then look for a nearby ranked gamma wall and an opposing exposure target. Average daily range helps define the test area, entry and invalidation.",
+          "Price, positioning and volatility exposes the evidence, including GEX, DEX, volatility and expiry details. These fields do not all act as qualification filters. The direction is not chosen by treating positive GEX as bullish or negative GEX as bearish."
+        ]
+      },
+      {
+        "id": "read-the-card",
+        "title": "Read the price condition before the target.",
+        "paragraphs": [],
+        "steps": [
+          "Start with a Watching plan and read the wall’s test area.",
+          "Read the daily close required inside the entry area after the test. A five-minute intraday alert does not satisfy this daily rule.",
+          "Note the reference target, daily-close invalidation and entry deadline.",
+          "Review the next completed daily reading to see whether the scenario qualified or remains Watching."
+        ]
+      },
+      {
+        "id": "numbers",
+        "title": "A numerical example of the current research rules.",
+        "paragraphs": [
+          "Teaching example only: suppose the watched put wall is 100 and the average daily range used by the rules is 2. The bullish trigger would be 100.20, the entry area 100.20–100.90 and invalidation a daily close below 98.50. Suppose an eligible opposing wall supplies a reference target at 105.",
+          "A qualifying sequence needs the required wall test and a daily close inside that entry area. A daily close of 101.80 would not qualify as an entry inside 100.20–100.90. These numbers illustrate the boundaries; they are not live levels or a generated recommendation.",
+          "From the far edge of that illustrative entry area, the distance to 105 is 4.10 and the distance to 98.50 is 2.40. The ratio is about 1.71. It describes price room, not the probability of a target or the return on an option contract."
+        ]
+      },
+      {
+        "id": "follow-lifecycle",
+        "title": "Follow the original levels after qualification.",
+        "paragraphs": [
+          "Conditions met records the qualifying daily close. In progress follows later completed daily closes with the original levels fixed. Read the reviewed-through date so you know which completed session the card includes.",
+          "The review can end at a reference target, invalidation, time limit or interrupted comparison. Past setups retains the named result. An outcome is a record of price behavior and does not assume you entered a trade."
+        ]
+      },
+      {
+        "id": "risk-review",
+        "title": "Check the things a research card cannot decide for you.",
+        "paragraphs": [
+          "Before holding a stock or ETF overnight, check earnings, major events, liquidity and current price. Gaps can move through a level. Targets and invalidation are underlying prices; the card does not select an option expiration, strike, position size or option profit.",
+          "Use intraday tracking to inspect session behavior when useful, while keeping the swing plan’s daily confirmation rule separate. The current swing rules are research rules, not a validated win rate, and this version does not send swing notifications."
+        ]
+      }
+    ],
+    "checklist": [
+      "Choose one research horizon.",
+      "Read the test and daily-close condition.",
+      "Compare entry, target and invalidation.",
+      "Check the reviewed-through date and upcoming events."
+    ],
+    "featureHref": "/swing-trading-ideas",
+    "featureLabel": "Explore Swing ideas",
     "sources": []
   }
 ]

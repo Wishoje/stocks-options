@@ -32,7 +32,7 @@ final class TradingGuides
                 ...$page, '@type' => 'Article', 'headline' => $guide['title'],
                 'mainEntityOfPage' => $seo['canonical'], 'image' => $seo['image'],
                 'datePublished' => $guide['published'].'T00:00:00-05:00', 'dateModified' => $guide['updated'].'T00:00:00-05:00',
-                'author' => ['@type' => 'Organization', 'name' => 'GEX Options', 'url' => $site.'contact'],
+                'author' => ['@type' => 'Organization', 'name' => 'GEX Options', 'url' => $site.'about'],
                 'publisher' => ['@id' => $site.'#organization'],
             ];
             $crumbs[] = ['@type' => 'ListItem', 'position' => 3, 'name' => $guide['title'], 'item' => $seo['canonical']];

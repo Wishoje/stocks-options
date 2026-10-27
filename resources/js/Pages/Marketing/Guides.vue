@@ -3,7 +3,7 @@
   <MarketingLayout>
     <header class="mk-container mk-guide-hero mk-stack">
       <p class="mk-eyebrow">Trading guides</p><h1 class="mk-title">Learn what to look for.<br><span class="mk-accent">Build a clearer plan.</span></h1>
-      <p class="mk-lede">Practical walkthroughs of GEX levels, intraday walls and the price evidence behind a setup.</p>
+      <p class="mk-lede">Practical walkthroughs of GEX levels, intraday alerts and multi-day swing plans.</p>
     </header>
     <section class="mk-container mk-grid-2 mk-guide-list" aria-label="Trading guides">
       <article v-for="(guide, index) in guides" :key="guide.slug" class="mk-card mk-card-pad mk-stack mk-guide-card">

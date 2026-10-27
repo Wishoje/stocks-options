@@ -6,6 +6,20 @@ class PublicMarketingContent
 {
     public static function forRoute(?string $routeName, int $trialDays = 7, ?string $slug = null): ?array
     {
+        if (in_array($routeName, ['workflows.swing', 'workflows.alerts', 'about'], true)) {
+            $workflows = json_decode(file_get_contents(resource_path('marketing/public-workflows.json')), true, flags: JSON_THROW_ON_ERROR);
+
+            return ['kind' => 'workflow', ...$workflows[$routeName]];
+        }
+        if ($routeName === 'pricing') {
+            return ['kind' => 'pricing', ...json_decode(file_get_contents(resource_path('marketing/pricing-content.json')), true, flags: JSON_THROW_ON_ERROR)];
+        }
+        if ($routeName === 'contact') {
+            return ['kind' => 'contact', 'faqs' => []];
+        }
+        if (in_array($routeName, ['terms.show', 'policy.show'], true)) {
+            return ['kind' => 'legal', 'faqs' => []];
+        }
         if ($routeName === 'guides.index') {
             return ['kind' => 'guides', 'guides' => TradingGuides::all(), 'faqs' => []];
         }
@@ -14,7 +28,7 @@ class PublicMarketingContent
 
             return $guide ? ['kind' => 'guide', 'guide' => $guide, 'faqs' => []] : null;
         }
-        if (!in_array($routeName, ['home', 'features'], true)) {
+        if (! in_array($routeName, ['home', 'features'], true)) {
             return null;
         }
 
@@ -27,7 +41,7 @@ class PublicMarketingContent
 
     public static function structuredData(array $content, array $seo): array
     {
-        if (isset($content['kind'])) {
+        if (in_array($content['kind'] ?? null, ['guides', 'guide'], true)) {
             return TradingGuides::structuredData($content, $seo);
         }
         $site = 'https://gexoptions.com/';
@@ -40,7 +54,7 @@ class PublicMarketingContent
         }
 
         $page = [
-            '@type' => isset($content['groups']) ? 'CollectionPage' : 'WebPage',
+            '@type' => request()->routeIs('about') ? 'AboutPage' : (isset($content['groups']) ? 'CollectionPage' : 'WebPage'),
             '@id' => $seo['canonical'].'#webpage',
             'url' => $seo['canonical'],
             'name' => $seo['title'],

@@ -1,0 +1,30 @@
+{
+  "heading": "Choose how you want to be billed.",
+  "description": "One GexOptions plan gives you Swing ideas, intraday setup alerts, the dashboard, Scanner, options calculator, watchlist and export tools.",
+  "features": [
+    "Swing ideas for 2–5 days and 1–3 weeks",
+    "Intraday wall tracking and in-app setup alerts",
+    "End-of-day and intraday dashboards",
+    "Dealer positioning and volatility views",
+    "Strike charts and options activity",
+    "Scanner, options calculator and AI Export"
+  ],
+  "faqs": [
+    {
+      "q": "What happens after the trial?",
+      "a": "The billing interval you selected begins after the trial unless you cancel before it ends."
+    },
+    {
+      "q": "Can I cancel?",
+      "a": "Yes. You can open the Stripe billing portal from your account and cancel the subscription."
+    },
+    {
+      "q": "Do monthly and yearly include the same product?",
+      "a": "Yes. They provide the same product access and differ only in billing interval and price."
+    },
+    {
+      "q": "Is GexOptions financial advice?",
+      "a": "No. GexOptions provides analytics and research tools. Trading decisions and risk remain yours."
+    }
+  ]
+}

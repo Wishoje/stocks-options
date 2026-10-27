@@ -11,7 +11,7 @@ import Guide from '@/Pages/Marketing/Guide.vue'
 import Guides from '@/Pages/Marketing/Guides.vue'
 import { productMedia } from '@/Support/marketing-content'
 import { sanitizeEventParams } from '@/lib/ga'
-const stubs = { MarketingLayout: { template: '<main><slot /></main>' }, ProductMedia: true, MarketingCta: true }
+const stubs = { MarketingLayout: { template: '<main><slot /></main>' }, ProductMedia: true, SwingIdeasPreview: true, MarketingCta: true }
 
 describe('public trading guide navigation', () => {
   it('links the collection to each published article', () => {
@@ -28,7 +28,8 @@ describe('public trading guide navigation', () => {
       expect(wrapper.get(`nav[aria-label="In this guide"] a[href="#${section.id}"]`).text()).toBe(section.title)
       expect(wrapper.get(`#${section.id} h2`).text()).toBe(section.title)
     }
-    expect(wrapper.getComponent({ name: 'ProductMedia' }).props('media')).toBe(productMedia[guide.mediaKey])
+    if (guide.visual === 'swing-ideas') expect(wrapper.findComponent({ name: 'SwingIdeasPreview' }).exists()).toBe(true)
+    else expect(wrapper.getComponent({ name: 'ProductMedia' }).props('media')).toBe(productMedia[guide.mediaKey])
     const other = guides.find(item => item.slug !== guide.slug)
     expect(wrapper.find(`a[href="/guides/${other.slug}"]`).exists()).toBe(true)
     for (const item of guide.checklist) expect(wrapper.get('.mk-guide-checklist').text()).toContain(item)

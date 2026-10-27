@@ -11,11 +11,5 @@ Disallow: /checkout
 Disallow: /billing/
 Disallow: /registration/
 Disallow: /user/
-Disallow: /login
-Disallow: /register
-Disallow: /forgot-password
-Disallow: /reset-password/
-Disallow: /two-factor-challenge
-Disallow: /email/
 
 Sitemap: https://gexoptions.com/sitemap.xml

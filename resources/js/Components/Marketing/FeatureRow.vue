@@ -8,6 +8,7 @@
         <ul class="mk-feature-list">
           <li v-for="bullet in feature.bullets" :key="bullet">{{ bullet }}</li>
         </ul>
+        <a v-if="feature.learnHref" :href="feature.learnHref" class="mk-text-link">See how this workflow works →</a>
       </div>
       <div class="mk-feature-row__media">
         <SwingIdeasPreview v-if="feature.visual === 'swing-ideas'" />

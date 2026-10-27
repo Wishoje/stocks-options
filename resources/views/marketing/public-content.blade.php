@@ -9,6 +9,10 @@
     <main id="marketing-main" class="mk-container">
         @if (($content['kind'] ?? null) === 'spy')
             @include('marketing.spy-content', ['preview' => data_get($page, 'props.preview')])
+        @elseif (($content['kind'] ?? null) === 'workflow')
+            @include('marketing.workflow-content', ['content' => $content])
+        @elseif (in_array($content['kind'] ?? null, ['pricing', 'contact', 'legal'], true))
+            @include('marketing.support-content', ['content' => $content])
         @elseif (isset($content['kind']))
             @include('marketing.guides-content', ['content' => $content])
         @else
@@ -60,7 +64,7 @@
                         @foreach ($group['features'] as $feature)
                             <section id="{{ $feature['id'] }}" class="mk-card mk-card-pad">
                                 <h3 class="mk-subheading">{{ $feature['title'] }}</h3><p class="mk-copy">{{ $feature['description'] }}</p>
-                                <ul>@foreach ($feature['bullets'] as $bullet)<li>{{ $bullet }}</li>@endforeach</ul>
+                                <ul>@foreach ($feature['bullets'] as $bullet)<li>{{ $bullet }}</li>@endforeach</ul>@if (isset($feature['learnHref']))<a href="{{ $feature['learnHref'] }}">See how this workflow works</a>@endif
                             </section>
                         @endforeach
                     </section>
@@ -81,5 +85,5 @@
         </article>
         @endif
     </main>
-    <footer class="mk-footer"><nav class="mk-container mk-footer-links" aria-label="Footer navigation"><a href="/features">Features</a><a href="/guides">Guides</a><a href="/pricing">Pricing</a><a href="/terms-of-service">Terms</a><a href="/privacy-policy">Privacy</a></nav></footer>
+    <footer class="mk-footer"><nav class="mk-container mk-footer-links" aria-label="Footer navigation"><a href="/features">Features</a><a href="/guides">Guides</a><a href="/pricing">Pricing</a><a href="/swing-trading-ideas">Swing ideas</a><a href="/intraday-alerts">Intraday alerts</a><a href="/about">About and methodology</a><a href="/terms-of-service">Terms</a><a href="/privacy-policy">Privacy</a></nav></footer>
 </div>

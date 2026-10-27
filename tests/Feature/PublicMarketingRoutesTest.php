@@ -104,9 +104,18 @@ class PublicMarketingRoutesTest extends TestCase
         $this->assertStringNotContainsString('The current 7-day trial', $html);
     }
 
-    public function test_other_pages_keep_the_existing_inertia_shell(): void
+    public function test_public_support_pages_have_visible_initial_content(): void
     {
-        $this->assertStringNotContainsString('<main id="marketing-main"', $this->get('/pricing')->assertOk()->getContent());
+        foreach (['/pricing' => 'Swing ideas', '/contact' => 'support@gexoptions.com', '/terms-of-service' => 'Terms of Service', '/privacy-policy' => 'Privacy Policy'] as $path => $text) {
+            $html = $this->get($path)->assertOk()->getContent();
+            $dom = new \DOMDocument;
+            @$dom->loadHTML('<?xml encoding="utf-8" ?>'.$html);
+            $xpath = new \DOMXPath($dom);
+            $this->assertSame(1, $xpath->query('//h1')->length);
+            $main = $xpath->query('//main[@id="marketing-main"]')->item(0);
+            $this->assertNotNull($main);
+            $this->assertStringContainsString($text, $main->textContent);
+        }
         $this->assertNull(\App\Support\PublicMarketingContent::forRoute('dashboard'));
     }
 
@@ -117,19 +126,15 @@ class PublicMarketingRoutesTest extends TestCase
 
     public function test_sitemap_lists_the_stable_public_marketing_pages(): void
     {
-        $sitemap = file_get_contents(public_path('sitemap.xml'));
+        $sitemap = $this->get('/sitemap.xml')->assertOk()->assertHeader('Content-Type', 'application/xml; charset=UTF-8')->getContent();
         preg_match_all('/<loc>([^<]+)<\/loc>/', $sitemap, $matches);
 
-        $this->assertSame([
-            'https://gexoptions.com/',
-            'https://gexoptions.com/pricing',
-            'https://gexoptions.com/features',
-            'https://gexoptions.com/guides',
-            'https://gexoptions.com/guides/how-to-read-spy-gex-levels',
-            'https://gexoptions.com/guides/how-to-use-intraday-wall-tracking',
-            'https://gexoptions.com/spy-gex-levels',
-            'https://gexoptions.com/contact',
-        ], $matches[1]);
+        $expectedPaths = ['/', '/pricing', '/features', '/swing-trading-ideas', '/intraday-alerts', '/about', '/guides',
+            '/guides/how-to-read-spy-gex-levels', '/guides/how-to-use-intraday-wall-tracking',
+            '/guides/how-to-use-intraday-setup-alerts', '/guides/how-to-use-swing-trading-ideas',
+            '/spy-gex-levels', '/contact', '/terms-of-service', '/privacy-policy'];
+        $this->assertSame(array_map(fn ($path) => 'https://gexoptions.com'.$path, $expectedPaths), $matches[1]);
+        $this->assertNotFalse(simplexml_load_string($sitemap));
         $this->assertStringNotContainsString('/dashboard', $sitemap);
         $this->assertStringNotContainsString('/checkout', $sitemap);
     }

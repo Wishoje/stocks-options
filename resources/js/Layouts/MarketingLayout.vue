@@ -97,6 +97,9 @@
         </div>
         <nav class="mk-footer-links" aria-label="Footer navigation">
           <Link v-for="item in publicLinks" :key="item.href" :href="item.href">{{ item.label }}</Link>
+          <Link href="/swing-trading-ideas">Swing ideas</Link>
+          <Link href="/intraday-alerts">Intraday alerts</Link>
+          <Link href="/about">About and methodology</Link>
           <Link v-for="item in legalLinks" :key="item.href" :href="item.href">{{ item.label }}</Link>
           <a href="mailto:support@gexoptions.com">support@gexoptions.com</a>
         </nav>

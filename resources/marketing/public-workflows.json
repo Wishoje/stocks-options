@@ -1,0 +1,242 @@
+{
+  "workflows.swing": {
+    "eyebrow": "Swing trading research",
+    "heading": "Swing trading ideas with a plan to check.",
+    "description": "Find a price level to watch, the daily close needed before entry, and the target and invalidation for a multi-day plan. Choose 2–5 trading days or 1–3 weeks.",
+    "visual": "swing-ideas",
+    "note": "Reviewed from completed end-of-day data. Levels refer to the underlying stock or ETF.",
+    "sections": [
+      {
+        "id": "choose-your-horizon",
+        "title": "Choose the time you want to give the idea.",
+        "paragraphs": [
+          "Swing ideas reviews your saved stocks and ETFs in two separate views. The 2–5 day view uses a 1M options-expiry scope; the 1–3 week view uses 3M expirations. Holding period and options scope are different: one describes the plan’s review window, the other describes which contracts shape its levels."
+        ],
+        "rows": [
+          [
+            "Holding period",
+            "Options context",
+            "Review after qualification"
+          ],
+          [
+            "2–5 trading days",
+            "1M expirations",
+            "Up to five trading sessions"
+          ],
+          [
+            "1–3 weeks",
+            "3M expirations",
+            "Up to fifteen trading sessions"
+          ]
+        ]
+      },
+      {
+        "id": "from-watch-to-plan",
+        "title": "Know what has to happen before entry.",
+        "paragraphs": [
+          "A Watching card is a conditional plan. It shows the wall’s test area and the daily-close condition needed inside the entry area. Conditions met appears only after the recorded price sequence qualifies."
+        ],
+        "steps": [
+          "Save the symbols you trade and open Swing ideas.",
+          "Choose your holding period. Read the price condition, entry area, reference target and daily-close invalidation.",
+          "After the next completed session, check whether the plan is still watching, has qualified or is in progress.",
+          "Compare the recorded levels with current price and review upcoming earnings or major events before deciding."
+        ]
+      },
+      {
+        "id": "why-it-appears",
+        "title": "See why a symbol made the list.",
+        "paragraphs": [
+          "The current rules look for an aligned daily trend, recent price movement and a nearby ranked gamma wall with room toward an opposing exposure level. Average daily range helps set the price boundaries.",
+          "Open Price, positioning and volatility for the evidence: trend averages, recent returns, GEX, DEX, volatility and expiry context. These inputs explain the research. They are not all independent votes for a trade."
+        ]
+      },
+      {
+        "id": "read-the-example",
+        "title": "What a useful card tells you.",
+        "paragraphs": [
+          "The interface preview summarizes the workflow. A qualifying product card provides its own dated numbers: what price must do, where the entry area starts and ends, the reference target, the daily close that invalidates the scenario and the entry deadline.",
+          "Read the swing guide below for a numerical teaching example. If no plan qualifies for a symbol, the product shows the reason instead of manufacturing an idea."
+        ]
+      },
+      {
+        "id": "swing-and-intraday",
+        "title": "Use daily confirmation for the swing plan.",
+        "paragraphs": [
+          "Intraday wall tracking can help you inspect the price response during the session. A five-minute intraday alert does not qualify a swing plan. Swing ideas waits for its own daily-close rule.",
+          "Targets are reference underlying prices, not promised profits or option returns. Overnight gaps can pass a level. The current version does not send swing notifications."
+        ]
+      }
+    ],
+    "guides": [
+      "how-to-use-swing-trading-ideas",
+      "how-to-read-spy-gex-levels"
+    ],
+    "faqs": [
+      {
+        "q": "Does Swing ideas choose an option contract for me?",
+        "a": "No. Its entry, target and invalidation are prices of the underlying stock or ETF. It does not select a strike, expiration or position size."
+      },
+      {
+        "q": "Are the plans reviewed during the trading day?",
+        "a": "Swing plans are reviewed from completed end-of-day data. Intraday wall tracking is a separate workflow with delayed prices and five-minute observations."
+      },
+      {
+        "q": "Are these backtested return forecasts?",
+        "a": "No. These are conditional research plans under the current rules. The platform does not claim a validated win rate or estimate your trade profit."
+      }
+    ]
+  },
+  "workflows.alerts": {
+    "eyebrow": "Intraday alerts for your watchlist",
+    "heading": "See a setup. Open the chart. Check the levels.",
+    "description": "Follow your saved stocks and ETFs while GEX Options is open. Get an in-app alert when a wall-based setup qualifies, then review its entry area, target and invalidation together.",
+    "mediaKey": "setupAlerts",
+    "note": "In-app notifications. Intraday prices are delayed at least 15 minutes. The preview uses the built-in test alert and example levels.",
+    "sections": [
+      {
+        "id": "your-alert-workflow",
+        "title": "Go from a saved symbol to a clear next check.",
+        "paragraphs": [],
+        "steps": [
+          "Save the stocks and ETFs you follow. Setup alerts are on by default; sound and wall-testing alerts are optional.",
+          "Keep the site open during the session. Use Scanner’s Wall activity view to compare your symbols.",
+          "Open the bell for Recent alerts. Filter for Conditions met when you want setups that qualified, or In progress when you want to follow their development.",
+          "Open an assessment to see the matching symbol, recorded time, entry area, reference target and five-minute invalidation boundary. Compare with current market price."
+        ]
+      },
+      {
+        "id": "what-qualifies",
+        "title": "A touch is a reason to watch. A setup needs a sequence.",
+        "paragraphs": [
+          "Wall tracking follows nearby put and call walls, delayed price and completed five-minute price bars. A touch or test by itself is not an entry signal.",
+          "A setup needs the required completed price sequence, a usable entry area and room toward its recorded target under the platform’s rules. The chart and supporting bars let you inspect what qualified at that time."
+        ]
+      },
+      {
+        "id": "read-the-status",
+        "title": "Find the setups you want to review.",
+        "paragraphs": [],
+        "rows": [
+          [
+            "View or status",
+            "What to use it for"
+          ],
+          [
+            "Watching in Scanner",
+            "Monitor a level before the setup conditions qualify."
+          ],
+          [
+            "Conditions met",
+            "Review the recorded entry, target and invalidation after the price rules pass."
+          ],
+          [
+            "In progress",
+            "Follow a qualified scenario as later completed bars arrive."
+          ],
+          [
+            "Needs update",
+            "Check the assessment time and wait for an updated comparison before treating it as current."
+          ]
+        ]
+      },
+      {
+        "id": "what-the-inbox-keeps",
+        "title": "Return to the evidence without losing the symbol.",
+        "paragraphs": [
+          "Recent alerts keeps today’s received notifications in this browser. It also includes fresh active setups found for your saved symbols, so opening the site after a setup qualified does not require an earlier popup to review it.",
+          "An inbox entry can say From your watchlist when it came from that active comparison. This does not replay an old popup. Ended intraday scenarios are removed from the active list as their state updates."
+        ]
+      },
+      {
+        "id": "timing",
+        "title": "Check the timestamp before the entry area.",
+        "paragraphs": [
+          "Intraday prices are delayed at least 15 minutes and the assessments use completed five-minute bars. Conditions met describes the recorded assessment, not a guarantee that the same entry is available now.",
+          "These are browser-based notifications while the site is open. They are not SMS, email or closed-browser push notifications. Swing ideas uses a separate daily workflow and does not send these alerts."
+        ]
+      }
+    ],
+    "guides": [
+      "how-to-use-intraday-setup-alerts",
+      "how-to-use-intraday-wall-tracking"
+    ],
+    "faqs": [
+      {
+        "q": "Do I receive alerts after I close the site?",
+        "a": "No. Keep GEX Options open for in-app notifications. Sound is optional; email, SMS and closed-browser push delivery are not included."
+      },
+      {
+        "q": "Can I review a setup if I did not see its popup?",
+        "a": "Yes. The inbox also includes fresh active setups from your saved symbols. Open the recorded assessment to check its time, levels and current state."
+      },
+      {
+        "q": "Does a bullish alert mean I should buy immediately?",
+        "a": "No. It means the recorded price sequence passed the rules at the displayed delayed time. Review current price, entry boundaries and your own risk before deciding."
+      }
+    ]
+  },
+  "about": {
+    "eyebrow": "About GEX Options",
+    "heading": "Understand the levels and the rules behind them.",
+    "description": "GEX Options is a web workspace for researching options exposure and price behavior in US-listed stocks and ETFs. We publish the product guides and maintain the tools described on this site.",
+    "note": "Product methodology and editorial information. Contact support@gexoptions.com with questions or corrections.",
+    "sections": [
+      {
+        "id": "who-publishes",
+        "title": "Who publishes these guides?",
+        "paragraphs": [
+          "GEX Options publishes and maintains the trading guides on this site. Each article identifies GEX Options as its organizational author, shows its publication date and shows an update date when the explanation changes.",
+          "Guides explain how to read the product and its current rules. Recorded screenshots retain their context; built-in demonstrations and teaching examples are labelled. We do not present an example as a live trade recommendation."
+        ]
+      },
+      {
+        "id": "exposure-method",
+        "title": "What GEX and DEX describe.",
+        "paragraphs": [
+          "Gamma exposure combines option sensitivity with open interest at each strike. Net GEX uses the platform’s call-minus-put convention. A put wall is a leading negative net GEX concentration; a call wall is a leading positive concentration in the selected expiration scope.",
+          "Wall analysis expresses exposure in USD per 1% underlying move. Read the displayed units before comparing it with the legacy Net GEX chart. DEX expresses modeled delta exposure in share equivalents. Neither measure observes every dealer’s actual inventory or identifies who bought or sold."
+        ]
+      },
+      {
+        "id": "intraday-method",
+        "title": "How the intraday view is modeled.",
+        "paragraphs": [
+          "Intraday wall tracking follows one near-term 1W expiration scope. Price and time change while prior-session open interest and reference implied volatility remain fixed within a comparable window. The model uses a European gamma approximation, 100-share contracts and zero interest and dividends.",
+          "Price observations are delayed at least 15 minutes. Reaction assessments use completed five-minute bars and the recorded wall sequence. A leading wall moving onto price is different from price touching a stable wall."
+        ]
+      },
+      {
+        "id": "plan-method",
+        "title": "How plans become qualified.",
+        "paragraphs": [
+          "Intraday setups require a completed price sequence, entry boundaries and target room. Swing ideas uses an aligned daily trend, recent price movement, ranked walls and average daily range, then waits for a wall test and its daily-close confirmation.",
+          "The 2–5 day swing view uses 1M expirations; the 1–3 week view uses 3M. GEX, DEX, volatility and expiry details are available as context. A displayed contextual metric is not necessarily a qualification rule."
+        ]
+      },
+      {
+        "id": "outcomes",
+        "title": "How to interpret the results.",
+        "paragraphs": [
+          "Conditions met records when the scenario’s rules passed. A later target or invalidation records subsequent price behavior. These observations do not assume you entered a position, obtained a particular fill or earned a return.",
+          "The current research rules do not establish a validated win rate. Markets can gap through levels. Check current price, liquidity, earnings and major events when evaluating a plan."
+        ]
+      },
+      {
+        "id": "questions",
+        "title": "Questions, corrections and account help.",
+        "paragraphs": [
+          "For questions about an explanation, send the page address and the passage you want reviewed. For a product reading, include the symbol, date and view so the team can identify the same comparison.",
+          "Contact support@gexoptions.com or use the Contact page. Subscription and cancellation details are on Pricing; the Terms of Service and Privacy Policy describe the account terms."
+        ]
+      }
+    ],
+    "guides": [
+      "how-to-read-spy-gex-levels",
+      "how-to-use-intraday-wall-tracking",
+      "how-to-use-intraday-setup-alerts",
+      "how-to-use-swing-trading-ideas"
+    ],
+    "faqs": []
+  }
+}
