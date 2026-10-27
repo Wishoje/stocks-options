@@ -66,7 +66,10 @@ export function activeWallRows(rows) {
     && !row.lifecycle?.entry_window_elapsed)
   const groups = new Map()
   active.forEach((row, index) => {
-    const plan = ['conditions_met', 'in_progress'].includes(row.status_group) ? wallActivePlanKey(row) : null
+    const qualified = row.qualified === true || row.lifecycle?.qualified === true || row.status === 'conditions_met'
+    const continuing = ['conditions_met', 'in_progress'].includes(row.status_group)
+      || (row.status_group === 'needs_update' && qualified)
+    const plan = continuing ? wallActivePlanKey(row) : null
     const key = plan || `individual:${index}`
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key).push(row)

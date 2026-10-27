@@ -22,6 +22,10 @@ final class WallWatchlistService
     {
         $now = CarbonImmutable::now('UTC');
         $market = MarketSession::describe($now);
+        // The collector finalizes delayed regular-session closes for 30 minutes after the bell.
+        // Continue reading those saved outcomes without extending current-entry eligibility.
+        $lifecycleUntil = $market['is_trading_day'] && $now->greaterThanOrEqualTo(CarbonImmutable::parse($market['opens_at']))
+            ? CarbonImmutable::parse($market['closes_at'])->addMinutes(30) : null;
         $symbols = Watchlist::where('user_id', $userId)->orderBy('symbol')->distinct()->pluck('symbol')
             ->filter(fn ($symbol) => Symbols::isValid($symbol) && $symbol === Symbols::canon($symbol))->values()->all();
         $result = ['schema_version' => 'wall-watchlist.v1', 'session' => $market['session_date'],
@@ -30,6 +34,7 @@ final class WallWatchlistService
             'watchlist_count' => count($symbols), 'assessed_count' => 0,
             'state' => $market['is_rth'] ? 'ready' : 'outside_session', 'items' => [], 'lifecycle_items' => [], 'lifecycle_truncated' => false,
             'refresh_until' => $market['is_rth'] ? $market['closes_at'] : null,
+            'lifecycle_refresh_until' => $lifecycleUntil && $now->lessThan($lifecycleUntil) ? $lifecycleUntil->toIso8601String() : null,
             'next_refresh_at' => CarbonImmutable::parse($market['next_open_at'])->addMinutes(15)->toIso8601String(),
             'local_demo_available' => app()->environment('local')];
         if (! $symbols || ! $market['is_trading_day'] || $now->lessThan(CarbonImmutable::parse($market['opens_at']))) {
@@ -128,7 +133,7 @@ final class WallWatchlistService
                         'alert_id' => $last['alert_keys']['setup'] ?? $last['alert_keys']['testing'] ?? null,
                         'session' => $result['session'], 'timeframe' => IntradayWallTracker::LIVE_TIMEFRAME,
                         'status_group' => $qualified ? 'conditions_met' : 'watching', 'qualified' => $qualified,
-                        'qualified_at' => $qualified ? $setup['confirmed_at'] : null,
+                        'qualified_at' => $qualified ? $reaction['observed_at'] : null,
                         'evaluated_through' => $reaction['observed_at'], 'outcome' => $qualified ? 'in_progress' : 'watching',
                         'reason' => $last['next_condition']['text'] ?? 'Wait for a completed price sequence.'];
                 }

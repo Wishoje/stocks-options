@@ -100,4 +100,35 @@ class SwingIdeaRulesTest extends TestCase
         $this->assertNull($next['qualified_at']);
         $this->assertSame('2026-11-27', SwingIdeaRules::sessionAfter('2026-11-25', 1));
     }
+
+    public function test_final_entry_close_can_qualify_or_miss_before_an_unqualified_plan_expires(): void
+    {
+        $rules = new SwingIdeaRules;
+        $plan = $rules->propose(SwingInput::make(), 'short');
+        $plan['reviewed_through'] = '2026-10-27';
+        $bar = ['date' => '2026-10-28', 'high' => 108., 'low' => 105.9, 'close' => 106.];
+
+        $expired = $rules->advance($plan, $bar);
+        $this->assertSame('finished', $expired['status']);
+        $this->assertSame('expired', $expired['outcome']);
+        $this->assertSame('2026-10-28', $expired['outcome_at']);
+        $this->assertNull($expired['qualified_at']);
+        $qualified = $rules->advance($plan, [...$bar, 'close' => 106.5]);
+        $this->assertSame('conditions_met', $qualified['status']);
+        $this->assertSame('2026-10-28', $qualified['qualified_at']);
+        $this->assertSame('entry_missed', $rules->advance($plan, [...$bar, 'close' => 107.5])['outcome']);
+        $this->assertSame('invalidated', $rules->advance($plan, [...$bar, 'low' => 103., 'close' => 104.])['outcome']);
+    }
+
+    public function test_nonfinite_daily_close_cannot_consume_a_session_as_progress(): void
+    {
+        $rules = new SwingIdeaRules;
+        $plan = $rules->advance($rules->propose(SwingInput::make(), 'short'),
+            ['date' => '2026-10-26', 'high' => 107., 'low' => 105.9, 'close' => 106.5]);
+        $bad = $rules->advance($plan, ['date' => '2026-10-27', 'high' => 109., 'low' => 106., 'close' => NAN]);
+        $this->assertSame('needs_update', $bad['status']);
+        $this->assertSame('2026-10-26', $bad['reviewed_through']);
+        $this->assertSame($plan['qualified_at'], $bad['qualified_at']);
+        $this->assertSame($plan['levels'], $bad['levels']);
+    }
 }

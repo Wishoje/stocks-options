@@ -133,6 +133,7 @@ onUnmounted(() => document.removeEventListener('keydown', closeNavigationOnEscap
                                     EOD Health
                                 </NavLink>
                                 <NavLink v-if="$page.props.socialAdmin" :href="route('social.index')" :active="route().current('social.*')">Social posts</NavLink>
+                                <NavLink v-if="$page.props.setupStudyAdmin" :href="route('setup-study')" :active="route().current('setup-study')">Setup study</NavLink>
                             </div>
                         </div>
 
@@ -327,6 +328,7 @@ onUnmounted(() => document.removeEventListener('keydown', closeNavigationOnEscap
                             EOD Health
                         </ResponsiveNavLink>
                         <ResponsiveNavLink v-if="$page.props.socialAdmin" :href="route('social.index')" :active="route().current('social.*')">Social posts</ResponsiveNavLink>
+                        <ResponsiveNavLink v-if="$page.props.setupStudyAdmin" :href="route('setup-study')" :active="route().current('setup-study')" @click="closeNavigation()">Setup study</ResponsiveNavLink>
                     </div>
 
                     <!-- Responsive Settings Options -->

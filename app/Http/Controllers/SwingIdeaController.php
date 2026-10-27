@@ -13,8 +13,8 @@ final class SwingIdeaController extends Controller
 {
     public function __invoke(Request $request, SwingIdeaService $service)
     {
-        $request->validate(['horizon' => ['nullable', Rule::in(array_keys(SwingIdeaRules::HORIZONS))], 'demo' => ['nullable', 'boolean']]);
-        $horizon = $request->query('horizon', 'short');
+        $input = $request->validate(['horizon' => ['nullable', Rule::in(array_keys(SwingIdeaRules::HORIZONS))], 'demo' => ['nullable', 'boolean']]);
+        $horizon = ($input['horizon'] ?? '') ?: 'short';
 
         $data = $request->boolean('demo') ? app(\App\Support\Swing\SwingIdeaDemo::class)->build($horizon) : $service->read($request->user()->id, $horizon);
 

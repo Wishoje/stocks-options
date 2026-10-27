@@ -79,6 +79,7 @@ class HandleInertiaRequests extends Middleware
             'seo' => $seo,
             'eodViewDefaults' => fn () => \App\Support\EodViewContext::defaults(),
             'socialAdmin' => $user && in_array((int) $user->id, config('social.admin_ids', []), true),
+            'setupStudyAdmin' => \App\Support\SetupStudy\SetupStudyAccess::allows($user),
             'billing' => [
                 ...$access,
                 'intent' => BillingIntent::current($request),

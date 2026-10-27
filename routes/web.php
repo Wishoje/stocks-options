@@ -96,6 +96,12 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'subscribed
     Route::get('/eod-health', [EodHealthController::class, 'page'])
         ->middleware('eodhealth')
         ->name('eod.health');
+
+    Route::middleware(\App\Http\Middleware\EnsureSetupStudyAccess::class)->group(function () {
+        Route::get('/setup-study', [\App\Http\Controllers\SetupStudyController::class, 'page'])->name('setup-study');
+        Route::get('/api/setup-study', [\App\Http\Controllers\SetupStudyController::class, 'report']);
+        Route::post('/api/setup-study/refresh', [\App\Http\Controllers\SetupStudyController::class, 'refresh'])->middleware('throttle:2,1');
+    });
 });
 
 // Batch 1 verification surface: local only, with the normal account access checks.

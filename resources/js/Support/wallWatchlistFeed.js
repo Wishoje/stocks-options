@@ -43,7 +43,8 @@ export function createWallWatchlistFeed(demonstration = false) {
   function refreshVisible() {
     if (document.visibilityState !== 'visible' || demonstration || denied || Date.now() - lastAttempt < 60000) return
     if (data.value?.session !== sessionToday()) { data.value = null; load(); return }
-    if (!data.value || Date.parse(data.value.refresh_until) > Date.now() || Date.parse(data.value.next_refresh_at) <= Date.now()) load()
+    if (!data.value || Date.parse(data.value.refresh_until) > Date.now()
+      || Date.parse(data.value.lifecycle_refresh_until) > Date.now() || Date.parse(data.value.next_refresh_at) <= Date.now()) load()
   }
   function watchlistChanged() { revision.value++; data.value = null; load({ reset: true }) }
   function stop() {

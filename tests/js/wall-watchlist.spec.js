@@ -146,6 +146,21 @@ describe('Watchlist wall activity', () => {
     expect(axios.get).toHaveBeenCalledTimes(2)
   })
 
+  it('continues read-only lifecycle refreshes after the close through the bounded finalization window', async () => {
+    vi.setSystemTime(new Date('2026-09-30T19:59:30Z'))
+    await render(payload([], { lifecycle_refresh_until: '2026-09-30T20:30:00Z' }))
+    axios.get.mockResolvedValue({ data: payload([], { state: 'outside_session', refresh_until: null,
+      lifecycle_refresh_until: '2026-09-30T20:30:00Z' }) })
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    vi.setSystemTime(new Date('2026-09-30T20:15:30Z'))
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(axios.get).toHaveBeenCalledTimes(3)
+    vi.setSystemTime(new Date('2026-09-30T20:30:00Z'))
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(axios.get).toHaveBeenCalledTimes(3)
+    expect(axios.get.mock.calls.every(([url]) => url === '/api/intraday/wall-watchlist')).toBe(true)
+  })
   it('stops polling after session close and cancels its outstanding request when unmounted', async () => {
     vi.setSystemTime(new Date('2026-09-30T19:59:30Z'))
     const w = await render(payload([], { generated_at: '2026-09-30T19:59:30Z' }))

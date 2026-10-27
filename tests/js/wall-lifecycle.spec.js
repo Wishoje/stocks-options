@@ -57,6 +57,17 @@ describe('shared wall lifecycle presentation', () => {
     expect(fresh.status_group).toBe('conditions_met')
     expect(activeWallRows([{ ...first, status_group: 'finished', outcome: 'invalidated' }, again])[0].alert_id).toBe(again.alert_id)
   })
+  it('keeps identical qualified plans grouped while their latest evidence is stale or unavailable', () => {
+    const setup = { direction: 'bullish', entry_zone: { low: 100.05, high: 100.15 },
+      invalidation: { price: 99.95, close_side: 'below' }, target: { strike: 101 } }
+    const rows = [row('a'), { ...row('b'), observed_at: '2026-10-26T14:35:00Z' }].map(item => ({ ...item, setup }))
+    expect(activeWallRows(wallLifecycleRows(data(rows), now, true))).toHaveLength(1)
+    const saved = rows.map(item => ({ ...item, status: 'conditions_met', qualified: undefined }))
+    const grouped = activeWallRows(wallInboxRows(saved, data(rows), now, true))
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].status_group).toBe('needs_update')
+    expect(grouped[0].related_alert_ids).toHaveLength(2)
+  })
   it('keeps historical local demonstrations independent of the live clock', () => {
     const r = { ...row('a', 'conditions_met'), entry_expires_at: '2026-10-26T14:59:00Z' }
     expect(wallLifecycleRows({ ...data([r]), state: 'demonstration' }, now + 86400000)[0].status_group).toBe('conditions_met')

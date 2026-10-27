@@ -180,7 +180,7 @@ final class SwingIdeaRules
             return $plan;
         }
         $expected = self::sessionAfter($plan['reviewed_through'] ?? $plan['source_date'], 1);
-        if ($bar['date'] !== $expected || ! is_numeric($bar['close'] ?? null) || $bar['close'] <= 0) {
+        if ($bar['date'] !== $expected || ! is_numeric($bar['close'] ?? null) || ! is_finite((float) $bar['close']) || $bar['close'] <= 0) {
             return [...$plan, 'status' => 'needs_update', 'reason' => 'The next daily comparison needs review.'];
         }
         if (! is_numeric($bar['high'] ?? null) || ! is_numeric($bar['low'] ?? null) || ! is_finite((float) $bar['high'])
@@ -200,9 +200,6 @@ final class SwingIdeaRules
             return $this->finish($plan, 'invalidated', 'A daily close crossed the frozen invalidation level.', $bar);
         }
         if ($plan['status'] === 'watching') {
-            if ($bar['date'] > $plan['entry_deadline']) {
-                return $this->finish($plan, 'expired', 'The entry window ended before the conditions passed.', $bar);
-            }
             if ($bar['low'] <= $l['touch_high'] && $bar['high'] >= $l['touch_low']) {
                 $plan['touched_at'] ??= $bar['date'];
             }
@@ -214,6 +211,9 @@ final class SwingIdeaRules
             $far = $d === 1 ? $l['entry_high'] : $l['entry_low'];
             if ($plan['touched_at'] && $d * ($bar['close'] - $far) > 0) {
                 return $this->finish($plan, 'entry_missed', 'The reclaim close moved beyond the entry area.', $bar);
+            }
+            if ($bar['date'] >= $plan['entry_deadline']) {
+                return $this->finish($plan, 'expired', 'The entry window ended before the conditions passed.', $bar);
             }
 
             return $plan;

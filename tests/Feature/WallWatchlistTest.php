@@ -288,6 +288,40 @@ class WallWatchlistTest extends TestCase
         }
     }
 
+    public function test_lifecycle_refresh_window_follows_the_regular_and_early_close_without_current_entries(): void
+    {
+        $this->watchlist('SPY');
+        foreach (['2026-09-30' => '20:00:00', '2026-11-27' => '18:00:00'] as $session => $close) {
+            $at = CarbonImmutable::parse($session.'T'.$close.'Z');
+            $this->travelTo($at);
+            $data = app(WallWatchlistService::class)->read(987);
+            $this->assertSame($at->addMinutes(30)->toIso8601String(), $data['lifecycle_refresh_until']);
+            $this->assertSame('outside_session', $data['state']);
+            $this->assertNull($data['refresh_until']);
+            $this->assertSame([], $data['items']);
+            $this->travelTo($at->addMinutes(30));
+            $this->assertNull(app(WallWatchlistService::class)->read(987)['lifecycle_refresh_until']);
+        }
+        foreach (['2026-09-30T12:00:00Z', '2026-10-03T15:00:00Z'] as $at) {
+            $this->travelTo(CarbonImmutable::parse($at));
+            $this->assertNull(app(WallWatchlistService::class)->read(987)['lifecycle_refresh_until']);
+        }
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_legacy_current_qualification_uses_its_validated_close_time(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $this->record($model, 'intraday_capture');
+        $this->record($this->assessment($model, setupChanges: ['confirmed_at' => '2026-09-30T14:10:00Z']), 'wall_interactions');
+        $data = app(WallWatchlistService::class)->read(987);
+        $this->assertSame('conditions_met', $data['lifecycle_items'][0]['status_group']);
+        $this->assertSame('2026-09-30T14:15:00Z', $data['lifecycle_items'][0]['qualified_at']);
+        $this->assertSame($data['lifecycle_items'][0]['observed_at'], $data['lifecycle_items'][0]['qualified_at']);
+    }
+
     public function test_endpoint_requires_authentication_and_intraday_access_and_ignores_foreign_symbols(): void
     {
         $this->getJson('/api/intraday/wall-watchlist')->assertUnauthorized();

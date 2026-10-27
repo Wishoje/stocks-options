@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\User;
 use App\Services\SwingDataSource;
 use App\Services\SwingIdeaService;
 use Carbon\CarbonImmutable;
@@ -10,6 +11,8 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Inertia\Testing\AssertableInertia as Assert;
+use Laravel\Sanctum\Sanctum;
 use Tests\Fixtures\SwingInput;
 use Tests\TestCase;
 
@@ -133,5 +136,50 @@ class SwingIdeasTest extends TestCase
         $this->assertSame($review->evidence_hash, DB::table('swing_idea_reviews')->where('idea_id', $row->id)->value('evidence_hash'));
         Http::assertNothingSent();
         Bus::assertNothingDispatched();
+    }
+
+    public function test_empty_optional_horizon_uses_the_default_instead_of_failing_the_page(): void
+    {
+        $user = (new User)->forceFill(['id' => 1, 'email' => 'swing.reader@example.test', 'trial_ends_at' => now()->addDays(2)]);
+        $user->setRelation('subscriptions', collect());
+        Sanctum::actingAs($user);
+
+        $this->get('/swing-ideas?horizon=')->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->component('SwingIdeas')->where('horizon', 'short'));
+        $this->getJson('/swing-ideas?horizon=unknown')->assertUnprocessable();
+        $this->assertSame(0, DB::table('swing_ideas')->count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_first_publication_cannot_advertise_a_plan_whose_entry_window_already_ended(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-10-30 17:00', 'America/New_York'));
+        $service = new SwingIdeaService;
+        $service->refresh(SwingInput::make());
+        $rows = DB::table('swing_ideas')->get();
+        $this->assertCount(2, $rows);
+        foreach ($rows as $row) {
+            $plan = json_decode($row->original_plan, true, flags: JSON_THROW_ON_ERROR);
+            $this->assertSame('no_idea', $row->status);
+            $this->assertSame('no_idea', $plan['status']);
+            $this->assertStringContainsString('before this plan could become active', $plan['reason']);
+            $this->assertGreaterThan($plan['entry_deadline'], $plan['activation_session']);
+            $this->assertSame(111., $plan['levels']['target']);
+            $this->assertNotEmpty($plan['evidence']);
+        }
+        $this->assertSame([], $service->refresh(SwingInput::make()));
+        $this->assertSame(2, DB::table('swing_ideas')->count());
+    }
+
+    public function test_publication_on_the_last_entry_session_keeps_that_session_available(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-10-28 08:00', 'America/New_York'));
+        (new SwingIdeaService)->refresh(SwingInput::make());
+        $row = DB::table('swing_ideas')->where('horizon', 'short')->first();
+        $plan = json_decode($row->original_plan, true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame('watching', $row->status);
+        $this->assertSame('2026-10-28', $plan['activation_session']);
+        $this->assertSame($plan['entry_deadline'], $plan['activation_session']);
     }
 }

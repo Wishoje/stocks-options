@@ -188,6 +188,25 @@ describe('wall alert controls and shared polling', () => {
     expect(alerts.notifications.value).toEqual([])
     expect(document.querySelector('.wall-alert-toast')).toBeNull()
   })
+  it('does not replay a same-plan popup when the earlier qualification needs an update', async () => {
+    const first = { ...row('a', '2026-09-30T14:00:00Z'), id: key('a'), alert_id: key('a'),
+      session: '2026-09-30', timeframe: '7d', status_group: 'in_progress', outcome: 'in_progress', qualified: true,
+      qualified_at: '2026-09-30T14:00:00Z', evaluated_through: '2026-09-30T14:15:00Z' }
+    axios.get.mockResolvedValue({ data: { ...payload([]), lifecycle_items: [first] } })
+    const { alerts } = render(); await flushPromises()
+    const repeated = row('b', '2026-09-30T14:20:00Z')
+    axios.get.mockResolvedValue({ data: { ...payload([repeated]), lifecycle_items: [
+      { ...first, status_group: 'needs_update', outcome: 'unresolved' },
+      { ...repeated, id: key('b'), alert_id: key('b'), session: '2026-09-30', timeframe: '7d',
+        status_group: 'conditions_met', outcome: 'in_progress', qualified: true,
+        qualified_at: repeated.observed_at, evaluated_through: repeated.observed_at },
+    ] } })
+    vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.history.value).toHaveLength(2)
+    expect(alerts.notifications.value).toEqual([])
+    expect(alerts.unreadCount.value).toBe(1)
+  })
   it('stores one original notification when a new setup is also present in the watchlist lifecycle', async () => {
     const { alerts } = render(); await flushPromises()
     vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))

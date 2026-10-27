@@ -102,6 +102,21 @@ class UseLocalReviewClockTest extends TestCase
         });
     }
 
+    public function test_setup_study_uses_real_dates_instead_of_the_eod_fixture_clock(): void
+    {
+        $this->app['env'] = 'local';
+        config()->set('ui_review.now', self::REVIEW_NOW);
+        $clock = Carbon::parse('2026-10-27T23:30:00+00:00');
+        Carbon::setTestNow($clock);
+        foreach (['/setup-study', '/api/setup-study', '/api/setup-study/refresh'] as $path) {
+            app(UseLocalReviewClock::class)->handle(\Illuminate\Http\Request::create($path), function () use ($clock) {
+                $this->assertSame($clock->toIso8601String(), now()->utc()->toIso8601String());
+
+                return response()->noContent();
+            });
+        }
+    }
+
     public function test_non_local_environments_ignore_an_opt_in_value(): void
     {
         config()->set('ui_review.now', self::REVIEW_NOW);

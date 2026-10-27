@@ -66,6 +66,10 @@ class SwingIdeaService
                 $plan = $rules->propose($input, $horizon);
                 $market = \App\Support\MarketSession::describe();
                 $plan['activation_session'] = substr(\Carbon\CarbonImmutable::parse($market['next_open_at'])->setTimezone('America/New_York')->toDateString(), 0, 10);
+                if ($plan['status'] === 'watching' && $plan['activation_session'] > $plan['entry_deadline']) {
+                    $plan['status'] = 'no_idea';
+                    $plan['reason'] = 'The entry window ended before this plan could become active. A newer EOD reading is needed.';
+                }
                 $plan['first_recorded_at'] = now('UTC')->toIso8601String();
                 $plan['source_version'] = $input['source_version'] ?? null;
                 $plan['volatility_version'] = $input['volatility_version'] ?? null;

@@ -76,7 +76,10 @@ export function useWallAlerts(owner) {
     const current = new Set(currentWallAlertRows(data).map(row => row.alert_keys[row.status === 'conditions_met' ? 'setup' : 'testing']))
     notifications.value = notifications.value.filter(item => item.preview || current.has(item.alert_id))
     const now = Date.now(), savedIds = new Set(history.value.map(item => item.alert_id))
-    const activePlans = new Set(activeWallRows(wallInboxRows(history.value, data, now)).filter(row => ['conditions_met', 'in_progress'].includes(row.status_group)).map(wallActivePlanKey).filter(Boolean))
+    const activePlans = new Set(activeWallRows(wallInboxRows(history.value, data, now))
+      .filter(row => ['conditions_met', 'in_progress'].includes(row.status_group)
+        || (row.status_group === 'needs_update' && row.lifecycle?.qualified === true))
+      .map(wallActivePlanKey).filter(Boolean))
     const received = candidates.map(row => ({ ...row, received_at: now }))
     const notify = received.filter(row => {
       const plan = row.status === 'conditions_met' ? wallActivePlanKey(row) : null
