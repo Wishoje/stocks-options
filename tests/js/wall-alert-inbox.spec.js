@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createWallAlertInbox, WALL_ALERT_INBOX_LIMIT } from '@/Support/wallAlertInbox'
+import { createWallAlertInbox, wallInboxSetupSnapshots, WALL_ALERT_INBOX_LIMIT } from '@/Support/wallAlertInbox'
 
 const now = Date.parse('2026-09-30T14:36:00Z')
 const key = id => id.toString(16).padStart(64, '0')
@@ -11,6 +11,47 @@ function storage() {
   const values = new Map()
   return { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
 }
+
+const activeSetup = (change = {}) => ({ ...row(), id: key(5), session: '2026-09-30', timeframe: '7d',
+  status_group: 'in_progress', qualified: true, outcome: 'in_progress',
+  qualified_at: '2026-09-30T14:00:00Z', observed_at: '2026-09-30T14:00:00Z',
+  evaluated_through: '2026-09-30T14:20:00Z', entry_expires_at: '2026-09-30T14:15:00Z', ...change })
+const activeFeed = (rows, change = {}) => ({ schema_version: 'wall-watchlist.v1', session: '2026-09-30',
+  timeframe: '7d', state: 'ready', quote_delay_seconds: 900, refresh_until: '2026-09-30T20:00:00Z',
+  lifecycle_items: rows, items: [], ...change })
+
+describe('active watchlist setups in the inbox', () => {
+  it('captures an in-progress scenario with its original qualification and levels after the entry window', () => {
+    const [item] = wallInboxSetupSnapshots(activeFeed([activeSetup()]), now)
+    expect(item).toMatchObject({ origin: 'watchlist', alert_id: key(1), assessment_id: key(1001),
+      status: 'conditions_met', observed_at: '2026-09-30T14:00:00Z', received_at: now,
+      setup: row().setup, read_at: null })
+    expect(item).not.toHaveProperty('status_group')
+  })
+  it('requires fresh, qualified, current-session evidence and valid original assessment levels', () => {
+    for (const change of [{ qualified: false }, { status_group: 'watching' }, { status_group: 'finished', outcome: 'expired' },
+      { status_group: 'needs_update' }, { setup: { direction: 'bullish' } }, { assessment_id: null },
+      { session: '2026-09-29' }, { timeframe: '14d' }, { evaluated_through: '2026-09-30T13:50:00Z' },
+      { qualified_at: '2026-09-30T14:25:00Z' },
+      { status_group: 'conditions_met', entry_expires_at: '2026-09-30T14:10:00Z' }]) {
+      expect(wallInboxSetupSnapshots(activeFeed([activeSetup(change)]), now)).toEqual([])
+    }
+    for (const change of [{ state: 'demonstration' }, { state: 'outside_session' }, { timeframe: '14d' },
+      { session: '2026-09-29' }, { refresh_until: '2026-09-30T14:30:00Z' }]) {
+      expect(wallInboxSetupSnapshots(activeFeed([activeSetup()], change), now)).toEqual([])
+    }
+  })
+  it('retains read state and original levels when the same watchlist setup is rediscovered', () => {
+    const saved = storage(), inbox = createWallAlertInbox(1, saved)
+    inbox.add(wallInboxSetupSnapshots(activeFeed([activeSetup()]), now), now)
+    inbox.markRead(key(1), now + 1000)
+    inbox.add(wallInboxSetupSnapshots(activeFeed([activeSetup({ close: 766 })]), now + 2000), now + 2000)
+    const restored = createWallAlertInbox(1, saved).read(now + 2000)
+    expect(restored).toHaveLength(1)
+    expect(restored[0]).toMatchObject({ origin: 'watchlist', read_at: now + 1000, close: 765.8,
+      observed_at: '2026-09-30T14:00:00Z', assessment_id: key(1001) })
+  })
+})
 
 describe('today’s recorded wall alert inbox', () => {
   it('retains original levels and assessment through reload and later repeated readings', () => {

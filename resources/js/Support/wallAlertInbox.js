@@ -1,10 +1,11 @@
 import { wallAlertSessionDate } from '@/Support/wallAlerts'
+import { wallLifecycleRows } from '@/Support/wallLifecycle'
 
 export const WALL_ALERT_INBOX_LIMIT = 100
 const validKey = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const validPrice = value => Number.isFinite(value) && value > 0
 
-// Retain the notification's original assessment, rather than a later feed row.
+// Retain the original qualifying assessment, rather than a later feed row.
 function snapshot(item, now) {
   if (!item || item.preview || item.demonstration || !validKey(item.alert_id)
     || !/^[A-Z][A-Z0-9.-]{0,9}$/.test(item.symbol || '') || !['put', 'call'].includes(item.side)
@@ -29,7 +30,23 @@ function snapshot(item, now) {
   return { alert_id: item.alert_id, assessment_id: validKey(item.assessment_id) ? item.assessment_id : null,
     symbol: item.symbol, side: item.side, strike: item.strike, close: item.close, status: item.status,
     observed_at: item.observed_at, received_at: received, setup,
+    ...(item.origin === 'watchlist' ? { origin: 'watchlist' } : {}),
     read_at: Number.isFinite(item.read_at) && item.read_at >= received && item.read_at <= now ? item.read_at : null }
+}
+
+export function wallInboxSetupSnapshots(data, now = Date.now()) {
+  if (data?.state !== 'ready' || data.timeframe !== '7d') return []
+  const cutoff = now - (Math.max(900, Number(data.quote_delay_seconds) || 900) * 1000 + 30000)
+  return wallLifecycleRows(data, now)
+    .filter(row => row.qualified === true && row.session === data.session && (row.timeframe || '7d') === '7d'
+      && ['conditions_met', 'in_progress'].includes(row.status_group) && !row.entry_window_elapsed
+      && validKey(row.assessment_id) && validKey(row.alert_id))
+    .map(row => {
+      const observed = row.qualified_at || row.observed_at
+      if (Date.parse(observed) > cutoff) return null
+      return snapshot({ ...row, status: 'conditions_met', observed_at: observed,
+        received_at: now, origin: 'watchlist' }, now)
+    }).filter(Boolean)
 }
 
 function combine(rows, now) {

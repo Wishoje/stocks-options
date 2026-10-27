@@ -123,6 +123,53 @@ describe('wall alert controls and shared polling', () => {
     await vi.advanceTimersByTimeAsync(100000)
     expect(document.querySelector('.wall-alert-toast')).toBeNull()
   })
+  it('loads an active watchlist setup into the inbox without replaying a popup, including after reload', async () => {
+    const owner = ref(++id)
+    const setup = { ...row('c', '2026-09-30T14:00:00Z'), id: key('c'), alert_id: key('c'), symbol: 'NVDA',
+      session: '2026-09-30', timeframe: '7d', status_group: 'in_progress', outcome: 'in_progress', qualified: true,
+      qualified_at: '2026-09-30T14:00:00Z', entry_expires_at: '2026-09-30T14:15:00Z',
+      evaluated_through: '2026-09-30T14:15:00Z' }
+    axios.get.mockResolvedValue({ data: { ...payload([]), lifecycle_items: [setup] } })
+    const first = render({ owner }); await flushPromises()
+    expect(first.alerts.history.value).toHaveLength(1)
+    expect(first.alerts.history.value[0]).toMatchObject({ symbol: 'NVDA', origin: 'watchlist', assessment_id: key('c') })
+    expect(first.alerts.unreadCount.value).toBe(1)
+    expect(first.alerts.notifications.value).toEqual([])
+    await first.wrapper.get('.wall-inbox-trigger').trigger('click')
+    const panel = document.querySelector('#wall-alert-inbox')
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(1)
+    expect(panel.textContent).toContain('NVDA')
+    expect(panel.textContent).toContain('In progress')
+    expect(panel.textContent).toContain('From your watchlist')
+    expect(panel.textContent).toContain('100.05–100.15')
+    expect(panel.querySelector('.wall-inbox-item a').getAttribute('href')).toContain(`wall_assessment=${key('c')}`)
+    first.alerts.markRead(key('c')); await flushPromises()
+    expect(first.alerts.unreadCount.value).toBe(0)
+    first.wrapper.unmount()
+    const second = render({ owner }); await flushPromises()
+    expect(second.alerts.history.value).toHaveLength(1)
+    expect(second.alerts.unreadCount.value).toBe(0)
+    expect(second.alerts.notifications.value).toEqual([])
+    axios.get.mockResolvedValue({ data: { ...payload([]), lifecycle_items: [{ ...setup, status_group: 'finished', outcome: 'expired' }] } })
+    await vi.advanceTimersByTimeAsync(60000)
+    await second.wrapper.get('.wall-inbox-trigger').trigger('click')
+    expect(document.querySelectorAll('.wall-inbox-item')).toHaveLength(0)
+    expect(second.alerts.unreadCount.value).toBe(0)
+  })
+  it('stores one original notification when a new setup is also present in the watchlist lifecycle', async () => {
+    const { alerts } = render(); await flushPromises()
+    vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))
+    const current = row('d', '2026-09-30T14:20:00Z')
+    const lifecycle = { ...current, id: key('d'), alert_id: key('d'), session: '2026-09-30', timeframe: '7d',
+      status_group: 'conditions_met', qualified: true, outcome: 'in_progress',
+      qualified_at: current.observed_at, evaluated_through: current.observed_at }
+    axios.get.mockResolvedValue({ data: { ...payload([current]), lifecycle_items: [lifecycle] } })
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.notifications.value).toHaveLength(1)
+    expect(alerts.history.value).toHaveLength(1)
+    expect(alerts.history.value[0]).not.toHaveProperty('origin')
+    expect(alerts.unreadCount.value).toBe(1)
+  })
   it('shows bearish rejection levels without changing their meaning or price precision', async () => {
     render(); await flushPromises()
     const bearish = row('b', '2026-09-30T14:20:00Z')
@@ -243,7 +290,7 @@ describe('wall alert controls and shared polling', () => {
     await wrapper.get('.wall-inbox-trigger').trigger('click')
     const panel = document.querySelector('#wall-alert-inbox')
     expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(0)
-    expect(panel.textContent).toContain('No active setup alerts')
+    expect(panel.textContent).toContain('No active setups or alerts')
     expect(panel.textContent).not.toMatch(/Finished|Past setups|Entry missed|Expired/)
     expect(panel.querySelectorAll('.filters button')).toHaveLength(5)
   })
@@ -305,7 +352,7 @@ describe('wall alert controls and shared polling', () => {
     const close = dialog.querySelector('.close')
     expect(document.activeElement).toBe(close)
     expect(trigger.attributes('aria-expanded')).toBe('true')
-    expect(dialog.textContent).toContain('No alerts received today')
+    expect(dialog.textContent).toContain('No active setups or alerts')
     const buttons = [...dialog.querySelectorAll('button')]
     close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }))
     expect(document.activeElement).toBe(buttons.at(-1))

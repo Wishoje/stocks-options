@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
 import { createWallAlertEngine, currentWallAlertRows, DEFAULT_WALL_ALERT_SETTINGS, wallAlertSettings } from '@/Support/wallAlerts'
-import { createWallAlertInbox } from '@/Support/wallAlertInbox'
+import { createWallAlertInbox, wallInboxSetupSnapshots } from '@/Support/wallAlertInbox'
 import { activeWallRows, wallInboxRows } from '@/Support/wallLifecycle'
 
 let retainedOwner, retainedEngine, audio, audioOwner
@@ -75,10 +75,14 @@ export function useWallAlerts(owner) {
     const candidates = engine.value.consume(data, settings.value)
     const current = new Set(currentWallAlertRows(data).map(row => row.alert_keys[row.status === 'conditions_met' ? 'setup' : 'testing']))
     notifications.value = notifications.value.filter(item => item.preview || current.has(item.alert_id))
-    if (!candidates.length) return
-    const received = candidates.map(row => ({ ...row, received_at: Date.now() }))
-    history.value = inbox?.add(received) || []
-    inboxPersistent.value = inbox?.persistent ?? true
+    const now = Date.now(), savedIds = new Set(history.value.map(item => item.alert_id))
+    const received = candidates.map(row => ({ ...row, received_at: now }))
+    const watchlistSetups = wallInboxSetupSnapshots(data, now).filter(row => !savedIds.has(row.alert_id))
+    if (received.length || watchlistSetups.length) {
+      history.value = inbox?.add([...received, ...watchlistSetups], now) || []
+      inboxPersistent.value = inbox?.persistent ?? true
+    }
+    if (!received.length) return
     notifications.value = [...received, ...notifications.value].slice(0, 3)
     playSound()
   }, { immediate: true })
