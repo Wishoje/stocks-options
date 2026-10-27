@@ -10,13 +10,13 @@ return [
 
     'pages' => [
         'home' => [
-            'title' => 'GexOptions - GEX Levels, Wall Tracking & Setup Alerts',
-            'description' => 'Find key options levels, follow price reactions at put and call walls, and review setup alerts with entry, invalidation and target levels. Explore the full GEX Options workspace.',
+            'title' => 'GexOptions - GEX Levels, Swing Ideas & Intraday Alerts',
+            'description' => 'Find key price levels, follow intraday setup alerts and explore Swing ideas for 2–5 day and 1–3 week plans with entry conditions, targets and invalidation.',
             'canonical' => 'https://gexoptions.com/',
         ],
         'features' => [
-            'title' => 'GexOptions Features - Wall Analysis, Alerts, Scanner & Options Tools',
-            'description' => 'Explore intraday wall tracking, setup alerts, watchlist Scanner, GEX and DEX analysis, gamma context, volatility tools, the options calculator and AI Export.',
+            'title' => 'GexOptions Features - Swing Ideas, Alerts & Options Analytics',
+            'description' => 'Explore Swing ideas, intraday setup alerts, Scanner, wall tracking, GEX and DEX analysis, volatility tools, the options calculator and AI Export.',
             'canonical' => 'https://gexoptions.com/features',
         ],
         'spy.preview' => [

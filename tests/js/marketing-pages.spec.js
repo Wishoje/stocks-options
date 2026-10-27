@@ -111,8 +111,8 @@ describe('public marketing pages', () => {
   it('preserves the indexed Home metadata, one crawlable h1, and WebSite structured data', () => {
     const wrapper = mount(Home, { global: { stubs: publicPageStubs } })
 
-    const expectedTitle = 'GexOptions - GEX Levels, Wall Tracking & Setup Alerts'
-    const expectedDescription = 'Find key options levels, follow price reactions at put and call walls, and review setup alerts with entry, invalidation and target levels. Explore the full GEX Options workspace.'
+    const expectedTitle = 'GexOptions - GEX Levels, Swing Ideas & Intraday Alerts'
+    const expectedDescription = 'Find key price levels, follow intraday setup alerts and explore Swing ideas for 2–5 day and 1–3 week plans with entry conditions, targets and invalidation.'
     expect(wrapper.get('title').text()).toBe(expectedTitle)
     expect(wrapper.get('link[rel="canonical"]').attributes('href')).toBe('https://gexoptions.com/')
     expect(wrapper.get('meta[name="description"]').attributes('content')).toBe(expectedDescription)
@@ -177,8 +177,8 @@ describe('public marketing pages', () => {
   it('preserves the indexed Features metadata, one h1, and FAQ parity', () => {
     const wrapper = mount(Features, { global: { stubs: publicPageStubs } })
 
-    const expectedTitle = 'GexOptions Features - Wall Analysis, Alerts, Scanner & Options Tools'
-    const expectedDescription = 'Explore intraday wall tracking, setup alerts, watchlist Scanner, GEX and DEX analysis, gamma context, volatility tools, the options calculator and AI Export.'
+    const expectedTitle = 'GexOptions Features - Swing Ideas, Alerts & Options Analytics'
+    const expectedDescription = 'Explore Swing ideas, intraday setup alerts, Scanner, wall tracking, GEX and DEX analysis, volatility tools, the options calculator and AI Export.'
     expect(wrapper.get('title').text()).toBe(expectedTitle)
     expect(wrapper.get('link[rel="canonical"]').attributes('href')).toBe('https://gexoptions.com/features')
     expect(wrapper.get('meta[name="description"]').attributes('content')).toBe(expectedDescription)

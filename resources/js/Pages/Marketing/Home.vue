@@ -42,7 +42,7 @@
           <div class="mk-section-intro" data-reveal>
             <p class="mk-eyebrow">For the way you trade</p>
             <h2 class="mk-heading">Intraday or swing trading. A workflow for both.</h2>
-            <p class="mk-lede">Follow a move during the session or prepare for the days ahead. Start with the same question: which price levels deserve your attention?</p>
+            <p class="mk-lede">Use Scanner and setup alerts during the session. Open Swing ideas for a 2–5 day or 1–3 week plan. See the price condition, target and where the idea ends.</p>
           </div>
           <div class="mk-grid-2 mk-trading-workflows">
             <article v-for="workflow in tradingWorkflows" :id="workflow.id" :key="workflow.id" class="mk-card mk-trading-workflow" data-reveal>
@@ -54,7 +54,8 @@
                 <Link :href="workflow.href" class="mk-button mk-button--quiet">{{ workflow.link }} <span aria-hidden="true">→</span></Link>
                 <p class="mk-meta">{{ workflow.note }}</p>
               </div>
-              <ProductMedia :media="workflow.media" />
+              <SwingIdeasPreview v-if="workflow.visual === 'swing-ideas'" />
+              <ProductMedia v-else :media="workflow.media" />
             </article>
           </div>
         </div>
@@ -88,7 +89,7 @@
 
       <section class="mk-section" id="membership">
         <div class="mk-container mk-membership mk-card" data-reveal>
-          <div class="mk-membership-copy"><p class="mk-eyebrow">One subscription. The complete workspace.</p><h2 class="mk-heading">Build your process around the symbols you trade.</h2><p class="mk-lede">Your trial includes wall analysis, intraday tracking, setup alerts, scanners, volatility tools, the options calculator and AI Export.</p><ul class="mk-feature-list"><li>Save your watchlist and follow it across the platform.</li><li>Review the chart and the evidence behind each assessment.</li><li>Use the same complete feature set on monthly or yearly billing.</li></ul></div>
+          <div class="mk-membership-copy"><p class="mk-eyebrow">One subscription. The complete workspace.</p><h2 class="mk-heading">Build your process around the symbols you trade.</h2><p class="mk-lede">Your trial includes Swing ideas, intraday setup alerts, Scanner, wall analysis, volatility tools, the options calculator and AI Export.</p><ul class="mk-feature-list"><li>Save your watchlist and follow it across the platform.</li><li>Review the chart and the evidence behind each assessment.</li><li>Use the same complete feature set on monthly or yearly billing.</li></ul></div>
           <div class="mk-membership-offer"><p class="mk-eyebrow">{{ trialDays }} days to explore</p><p v-if="monthlyPrice" class="mk-membership-price">{{ monthlyPrice }}<span>/month</span></p><p v-if="yearlyPrice" class="mk-copy">or {{ yearlyPrice }}/year after your trial</p><MarketingCta location="home_offer" source="home" /><p class="mk-meta">Trial begins after checkout. Your selected plan renews automatically unless canceled. Stripe shows the final total and any tax before you confirm.</p><Link href="/pricing" class="mk-text-link">Compare billing options</Link></div>
         </div>
       </section>
@@ -112,14 +113,15 @@ import MarketingCta from '@/Components/Marketing/MarketingCta.vue'
 import GuideCards from '@/Components/Marketing/GuideCards.vue'
 import MarketingSeo from '@/Components/Marketing/MarketingSeo.vue'
 import ProductMedia from '@/Components/Marketing/ProductMedia.vue'
+import SwingIdeasPreview from '@/Components/Marketing/SwingIdeasPreview.vue'
 import { buildHomeFaqs, homeStories, homeToolkit, productMedia, tradingWorkflows, marketingIntros } from '@/Support/marketing-content'
 import { useMarketingMotion } from '@/Support/marketing-motion'
 
 const intro = marketingIntros.home
 const page = usePage()
 const motionRoot = useMarketingMotion()
-const homeTitle = computed(() => page.props.seo?.title || 'GexOptions - GEX Levels, Wall Tracking & Setup Alerts')
-const homeDescription = computed(() => page.props.seo?.description || 'Find key options levels, follow price reactions at put and call walls, and review setup alerts with entry, invalidation and target levels. Explore the full GEX Options workspace.')
+const homeTitle = computed(() => page.props.seo?.title || 'GexOptions - GEX Levels, Swing Ideas & Intraday Alerts')
+const homeDescription = computed(() => page.props.seo?.description || 'Find key price levels, follow intraday setup alerts and explore Swing ideas for 2–5 day and 1–3 week plans with entry conditions, targets and invalidation.')
 const homeCanonical = computed(() => page.props.seo?.canonical || 'https://gexoptions.com/')
 const trialDays = computed(() => Number(page.props.offer?.trial_days) || 7)
 function offerPrice(billing) {

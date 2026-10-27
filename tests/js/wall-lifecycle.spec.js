@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { filterWallRows, wallInboxRows, wallLifecycleRows } from '@/Support/wallLifecycle'
+import { activeWallRows, filterWallRows, wallInboxRows, wallLifecycleRows } from '@/Support/wallLifecycle'
 import WallStatusFilters from '@/Components/WallStatusFilters.vue'
 
 const now = Date.parse('2026-10-26T15:16:00Z')
@@ -26,6 +26,16 @@ describe('shared wall lifecycle presentation', () => {
   it('does not leave an elapsed entry window in conditions met between polls', () => {
     const r = { ...row('a', 'conditions_met'), entry_expires_at: '2026-10-26T14:59:00Z' }
     expect(wallLifecycleRows(data([r]), now)[0].status_group).toBe('needs_update')
+    expect(activeWallRows(wallLifecycleRows(data([r]), now))).toEqual([])
+  })
+  it('excludes ended scenarios from Scanner and Alerts without rewriting their recorded outcomes', () => {
+    const past = ['entry_missed', 'expired', 'target_reached', 'invalidated', 'unresolved']
+      .map((outcome, index) => ({ ...row(String(index), 'finished'), outcome }))
+    const rows = wallLifecycleRows(data([row('a', 'watching'), row('b', 'conditions_met'), row('c'), ...past]), now)
+    expect(activeWallRows(rows).map(r => r.id)).toEqual(['a', 'b', 'c'])
+    const saved = past.map(r => ({ ...r, status: 'conditions_met' }))
+    expect(activeWallRows(wallInboxRows(saved, data(past), now))).toEqual([])
+    expect(rows.filter(r => r.status_group === 'finished').map(r => r.outcome)).toEqual(past.map(r => r.outcome))
   })
   it('keeps historical local demonstrations independent of the live clock', () => {
     const r = { ...row('a', 'conditions_met'), entry_expires_at: '2026-10-26T14:59:00Z' }
@@ -42,6 +52,13 @@ describe('shared wall lifecycle presentation', () => {
     await wrapper.setProps({ rows: [] })
     expect(wrapper.get('button[aria-pressed="true"]').text()).toBe('Conditions met · 0')
     expect(wrapper.findAll('button')).toHaveLength(6)
+    wrapper.unmount()
+  })
+  it('omits the history filter in current-only views while keeping current status counts', () => {
+    const wrapper = mount(WallStatusFilters, { props: { rows: [row('a', 'conditions_met')], currentOnly: true } })
+    expect(wrapper.findAll('button')).toHaveLength(5)
+    expect(wrapper.text()).toContain('Conditions met · 1')
+    expect(wrapper.text()).not.toMatch(/Finished|Past setups|Entry missed|Expired/)
     wrapper.unmount()
   })
 })

@@ -33,8 +33,8 @@ class PublicMarketingRoutesTest extends TestCase
     public function test_initial_html_contains_server_rendered_search_and_social_metadata(): void
     {
         $pages = [
-            '/' => ['GexOptions - GEX Levels, Wall Tracking &amp; Setup Alerts', 'https://gexoptions.com/'],
-            '/features' => ['GexOptions Features - Wall Analysis, Alerts, Scanner &amp; Options Tools', 'https://gexoptions.com/features'],
+            '/' => ['GexOptions - GEX Levels, Swing Ideas &amp; Intraday Alerts', 'https://gexoptions.com/'],
+            '/features' => ['GexOptions Features - Swing Ideas, Alerts &amp; Options Analytics', 'https://gexoptions.com/features'],
             '/pricing' => ['GexOptions Pricing', 'https://gexoptions.com/pricing'],
             '/contact' => ['Contact GexOptions', 'https://gexoptions.com/contact'],
             '/terms-of-service' => ['GexOptions Terms of Service', 'https://gexoptions.com/terms-of-service'],
@@ -69,7 +69,7 @@ class PublicMarketingRoutesTest extends TestCase
 
     public function test_product_explanations_are_available_without_executing_javascript(): void
     {
-        foreach (['/' => ['Intraday or swing trading.', 'See how options pricing is changing.'], '/features' => ['Net GEX by strike', 'Dealer positioning and DEX', 'Setup alerts and your Recent alerts inbox', 'Options Calculator']] as $path => $phrases) {
+        foreach (['/' => ['Intraday or swing trading.', 'See how options pricing is changing.', 'Swing ideas', '2–5 day', '1–3 week'], '/features' => ['Net GEX by strike', 'Dealer positioning and DEX', 'Setup alerts and your Recent alerts inbox', 'Swing ideas for 2–5 days and 1–3 weeks', 'Options Calculator']] as $path => $phrases) {
             $html = $this->get($path)->assertOk()->getContent();
             $dom = new \DOMDocument;
             @$dom->loadHTML($html);
@@ -81,7 +81,7 @@ class PublicMarketingRoutesTest extends TestCase
                 $this->assertStringContainsString($phrase, $main->textContent);
             }
             if ($path === '/features') {
-                $this->assertSame(20, $xpath->query('//nav[@aria-label="All product features"]//a')->length);
+                $this->assertSame(21, $xpath->query('//nav[@aria-label="All product features"]//a')->length);
                 $this->assertSame(1, $xpath->query('//section[@id="eod-strikes"]')->length);
             }
 

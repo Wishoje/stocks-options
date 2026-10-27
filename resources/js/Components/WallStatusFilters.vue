@@ -1,6 +1,6 @@
 <script setup>
 import { WALL_STATUS_FILTERS, filterWallRows } from '@/Support/wallLifecycle'
-const props = defineProps({ rows: { type: Array, default: () => [] }, modelValue: { type: String, default: 'all' }, symbol: { type: String, default: '' }, direction: { type: String, default: 'all' }, unread: Boolean, inbox: Boolean })
+const props = defineProps({ rows: { type: Array, default: () => [] }, modelValue: { type: String, default: 'all' }, symbol: { type: String, default: '' }, direction: { type: String, default: 'all' }, unread: Boolean, inbox: Boolean, currentOnly: Boolean })
 defineEmits(['update:modelValue', 'update:symbol', 'update:direction', 'update:unread'])
 const count = key => filterWallRows(props.rows, { symbol: props.symbol, direction: props.direction, unread: props.unread, status: key }).length
 </script>
@@ -9,7 +9,7 @@ const count = key => filterWallRows(props.rows, { symbol: props.symbol, directio
     <div class="wall-status-search"><label>Symbol<input :value="symbol" type="search" placeholder="Search symbols" maxlength="16" @input="$emit('update:symbol', $event.target.value)"></label>
       <label>Direction<select :value="direction" @change="$emit('update:direction', $event.target.value)"><option value="all">Both directions</option><option value="bullish">Bullish</option><option value="bearish">Bearish</option></select></label>
       <label v-if="inbox" class="wall-unread"><input type="checkbox" :checked="unread" @change="$emit('update:unread', $event.target.checked)">Unread only</label></div>
-    <div class="filters" role="group" aria-label="Setup status filter"><button v-for="[key, label] in WALL_STATUS_FILTERS" :key="key" type="button" :aria-pressed="modelValue === key" @click="$emit('update:modelValue', key)">{{ label }} · {{ count(key) }}</button></div>
+    <div class="filters" role="group" aria-label="Setup status filter"><button v-for="[key, label] in WALL_STATUS_FILTERS.filter(([key]) => !currentOnly || key !== 'finished')" :key="key" type="button" :aria-pressed="modelValue === key" @click="$emit('update:modelValue', key)">{{ label }} · {{ count(key) }}</button></div>
   </div>
 </template>
 <style scoped>

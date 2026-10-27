@@ -424,10 +424,10 @@ export const tradingWorkflows = Object.freeze([
     note: 'Intraday prices are delayed at least 15 minutes. Alerts arrive while the site is open.',
     href: '/features#intraday-wall-tracking', link: 'Explore the intraday tools', media: productMedia.wallTracking },
   { id: 'swing-example', label: 'Swing trading', title: 'Plan beyond today’s session.',
-    description: 'Holding QQQ or TSLA for several days? Map the major price levels and compare contracts expiring during your planned hold.',
-    steps: ['Use after-close wall analysis to identify price areas worth monitoring.', 'See which expiration dates drive those levels and when those contracts expire.', 'Compare volatility and model a long call or put’s risk before entry.'],
-    note: 'Choose expirations that fit your holding period. Recheck the plan as price and positioning change.',
-    href: '/features#eod-analysis', link: 'Explore the swing-trading tools', media: productMedia.wallAnalysis },
+    description: 'Holding QQQ or TSLA for several days? Swing ideas brings your saved symbols into separate 2–5 day and 1–3 week views, with a price condition and clear levels for each qualifying plan.',
+    steps: ['Choose your holding period and review the ideas for your saved symbols.', 'See what price must do before entry, plus the entry area, target and invalidation.', 'Follow daily updates to see whether the plan is developing, in progress or has reached an outcome.'],
+    note: 'Updated from completed end-of-day data. Review current price, earnings and upcoming events before acting.',
+    href: '/features#swing-ideas', link: 'Explore Swing ideas', visual: 'swing-ideas' },
 ])
 
 export const homeStories = Object.freeze([
@@ -440,8 +440,8 @@ export const homeStories = Object.freeze([
     bullets: ['Compare near-money, put and call implied volatility', 'Follow the same expiration throughout the session', 'Inspect the chart to see how pricing has changed since the first reading'],
     href: '/features#intraday-iv-skew', link: 'Explore IV and put-versus-call pricing', media: productMedia.intradayPricing },
   { id: 'alerts-workflow', eyebrow: '03 · Get the setup and its boundaries', title: 'Follow more symbols without watching every chart.',
-    description: 'While the site is open, on-screen alerts bring new qualifying setups to you. Read the scenario, its recorded entry area, invalidation and target in one place.',
-    bullets: ['Setup alerts on by default, with optional sound and wall-test alerts', 'A bell in the navigation keeps today’s received alerts after popups close', 'Each alert links to the matching recorded assessment'],
+    description: 'While the site is open, on-screen alerts bring new qualifying intraday setups to you. Read the scenario, its recorded entry area, invalidation and target in one place.',
+    bullets: ['Filter Scanner and Recent alerts by conditions met, watching or in progress', 'Setup alerts on by default, with optional sound and wall-test alerts', 'Each alert links to the matching recorded assessment'],
     href: '/features#setup-alerts', link: 'Explore alerts and the inbox', media: productMedia.setupAlerts, portrait: true },
 ])
 
@@ -710,11 +710,21 @@ const wallWorkflow = {
     { id: 'wall-setups', title: 'Setup conditions and clear price boundaries', description: 'Know what price still needs to do. When a qualifying sequence is recorded, review the entry area, invalidation boundary and reference target together.',
       bullets: ['Bullish and bearish bounce, rejection, break-and-retest and reclaim scenarios', 'The next condition still needed, including confirming-close progress', 'Recorded assessments link to their supporting price observations'], media: productMedia.wallSetup },
     { id: 'wall-activity', title: 'Scanner: which symbols need attention?', description: 'Monitor wall reactions across your saved symbols. See the next condition for developing setups and open the matching symbol and assessment in one step.',
-      bullets: ['All activity or conditions-met filtering', 'Price response, completed-close time and setup levels', 'Near walls and Options volume scanners remain available'], media: productMedia.wallActivity },
+      bullets: ['Focus on developing and active setups with clear status filters', 'Price response, completed-close time and setup levels', 'Near walls and Options volume scanners remain available'], media: productMedia.wallActivity },
     { id: 'setup-alerts', title: 'Setup alerts and your Recent alerts inbox', description: 'Keep the site open and receive on-screen alerts for new qualifying setups across your watchlist. The navigation bell keeps today’s received alerts available after the popup closes.',
-      bullets: ['Setup alerts on by default; sound and wall-test alerts are optional', 'Original recorded levels and assessment links stay with each alert', 'Unread count and mark-all-read, with today’s history saved in this browser'], media: productMedia.setupAlerts },
+      bullets: ['Setup alerts on by default; sound and wall-test alerts are optional', 'Filter by setup status, symbol, direction or unread alerts', 'Original recorded levels, outcomes and assessment links stay with each alert'], media: productMedia.setupAlerts },
     { id: 'gamma-context', title: 'Gamma context beside your wall chart', description: 'Compare the modeled gamma regime and flip with price using the same near-term expirations as your wall timeline.',
       bullets: ['Modeled positive or negative gamma at the selected price', 'Gamma flip, price distance and flip movement', 'Changing price and time with prior-session OI and reference IV held fixed'], media: productMedia.gammaContext },
+  ],
+}
+const swingResearch = {
+  id: 'swing-research', eyebrow: 'Plans for the days ahead', navLabel: 'Swing ideas', title: 'Give a multi-day trade a clear plan.',
+  description: 'Review your saved symbols after the close. Separate holding periods help you focus on a shorter move or a longer swing.',
+  features: [
+    { id: 'swing-ideas', title: 'Swing ideas for 2–5 days and 1–3 weeks',
+      description: 'See a level to watch, the daily-close confirmation required before entry, a reference target and the price that invalidates the idea. Review price trend, options positioning and volatility together.',
+      bullets: ['Separate 2–5 day and 1–3 week views for your saved symbols', 'Entry conditions, entry area, target, invalidation and time limits in one plan', 'Daily reviews track the original plan from watching through its recorded outcome', 'Open the related EOD analysis or intraday price response for more context'],
+      visual: 'swing-ideas' },
   ],
 }
 const wallAnalysis = { id: 'wall-analysis', title: 'Wall analysis: what makes a level stand out?',
@@ -728,6 +738,7 @@ const pricing = { id: 'intraday-iv-skew', title: 'Intraday IV and put-versus-cal
   bullets: ['Near-money IV, put IV, call IV and put-minus-call skew', 'Changes from the first comparable session reading', 'Inspect recorded times and export IV and skew history'], media: productMedia.intradayPricing }
 export const featureGroups = Object.freeze([
   wallWorkflow,
+  swingResearch,
   ...existingFeatureGroups.map(group => {
     if (group.id === 'eod-analysis') return { ...group, features: [group.features.find(feature => feature.id === 'eod-strikes'), wallAnalysis, expiryMap, ...group.features.filter(feature => feature.id !== 'eod-strikes')] }
     if (group.id === 'intraday-analysis') return { ...group, id: 'volatility-pricing', eyebrow: 'Pricing & session activity', features: [pricing, ...group.features] }
@@ -736,7 +747,8 @@ export const featureGroups = Object.freeze([
 ])
 
 export const buildHomeFaqs = trialDays => Object.freeze([
-  { q: 'What can I use GEX Options for?', a: 'Use it to map important options levels, watch price reactions, identify the next condition at a wall, and review setup boundaries. Add volatility, dealer exposure and contract scenarios to your research in the same workspace.' },
+  { q: 'What can I use GEX Options for?', a: 'Use Scanner and setup alerts to follow intraday opportunities, or Swing ideas to review plans for 2–5 days and 1–3 weeks. Map important options levels, see the price confirmation required before entry, and review targets and invalidation in the same workspace.' },
+  { q: 'Can I use it for swing trading?', a: 'Yes. Swing ideas has separate 2–5 day and 1–3 week views for your saved symbols. Qualifying plans show a level to watch, a daily-close price condition, entry area, target, invalidation and time limits. Plans are reviewed from completed end-of-day data. Review current price and upcoming events before acting.' },
   { q: 'How do setup alerts work?', a: 'On-screen setup alerts follow your saved symbols while the site is open. New qualifying setups include their recorded entry area, five-minute invalidation boundary and reference target. The bell keeps today’s received alerts in this browser. Sound and wall-testing alerts are optional.' },
   { q: 'How current is the intraday data?', a: 'Intraday prices are delayed at least 15 minutes and views update periodically during market hours. Wall tracking uses completed five-minute price observations and near-term 1W expirations. Recorded times are visible so you can compare the assessment with current conditions.' },
   { q: 'Which symbols are supported?', a: 'Explore supported US-listed optionable stocks and ETFs, including SPY, QQQ and TSLA. Search for symbols and save the ones you follow in your watchlist.' },
@@ -745,18 +757,19 @@ export const buildHomeFaqs = trialDays => Object.freeze([
   { q: 'Are these guaranteed trade signals?', a: 'No. The platform provides analytics and modeled scenarios, not a guarantee that a level will hold or a target will be reached. A recorded setup describes conditions at its displayed time. Review current price and your own risk before making a decision.' },
 ])
 export const featureFaqs = Object.freeze([
-  { q: 'Where should I start?', a: 'Save the symbols you trade, then open Scanner’s Wall activity view. Choose a symbol to open its wall chart and matching assessment. Use EOD wall analysis to prepare your levels before the next session.' },
+  { q: 'Where should I start?', a: 'Save the symbols you trade. For intraday trading, open Scanner’s Wall activity view and setup alerts. For a multi-day plan, open Swing ideas and choose 2–5 days or 1–3 weeks. Each workflow links to the analysis behind its levels.' },
+  { q: 'How are Swing ideas different from intraday alerts?', a: 'Swing ideas uses completed end-of-day data and daily-close confirmation for separate 2–5 day and 1–3 week plans. Intraday alerts follow completed five-minute price observations while the site is open, with prices delayed at least 15 minutes. Swing ideas does not send notifications in this version.' },
   { q: 'What does a setup with conditions met mean?', a: 'The recorded price sequence, entry area and target room passed the platform’s rules at the displayed delayed close. It does not mean the same entry remains available now or that the outcome is guaranteed.' },
   { q: 'Do alerts arrive when the site is closed?', a: 'No. These are in-app notifications while the site is open. Setup alerts are on by default and sound is optional. Today’s received alerts remain in the browser’s Recent alerts panel until midnight Eastern time.' },
   { q: 'How are intraday walls modeled?', a: 'The model changes price and time while prior-session open interest and reference IV stay fixed within each comparison window. Walls use the near-term 1W expiry scope. Intraday prices are delayed at least 15 minutes.' },
-  { q: 'What is included in the subscription?', a: 'The full workspace: wall analysis, wall tracking, setup alerts, Scanner, gamma and dealer exposure, volatility and skew, strike and expiry views, unusual activity, the long-call and long-put calculator, and AI Export. Monthly and yearly billing include the same features.' },
+  { q: 'What is included in the subscription?', a: 'The full workspace: Swing ideas, intraday setup alerts, Scanner, wall analysis, wall tracking, gamma and dealer exposure, volatility and skew, strike and expiry views, unusual activity, the long-call and long-put calculator, and AI Export. Monthly and yearly billing include the same features.' },
   { q: 'Can I export my analysis?', a: 'Yes. Download selected datasets as structured JSON through AI Export. Wall timelines and intraday IV and skew also have their own JSON exports, and supported strike charts can be downloaded as PNG images.' },
 ])
 
 // Shared with the initial HTML through scripts/export-marketing-content.mjs.
 export const marketingIntros = Object.freeze({
-  home: { eyebrow: 'Options analytics for stocks & ETFs', heading: 'Find key price levels.', accent: 'Know what to watch next.', description: 'Find prices worth watching, see when price tests or breaks them, and get setup alerts with an entry area, target and the price that invalidates the setup.' },
-  features: { eyebrow: 'The complete trading workspace', heading: 'From key levels to a clearer next step.', description: 'Find key price levels, follow how price reacts, and review entry areas, targets and invalidation levels. Explore the tools for intraday decisions and plans that span several days.' },
+  home: { eyebrow: 'Options analytics for stocks & ETFs', heading: 'Find key price levels.', accent: 'Know what to watch next.', description: 'Find prices worth watching, get intraday setup alerts, and explore Swing ideas for the days ahead. See the entry condition, target and the price that invalidates each qualifying plan.' },
+  features: { eyebrow: 'The complete trading workspace', heading: 'From key levels to a clearer next step.', description: 'Use Scanner and alerts during the session. Review Swing ideas for 2–5 day and 1–3 week plans. Explore the price levels, entry conditions, targets and invalidation behind each workflow.' },
 })
 
 export function buildPublicMarketingContent() {

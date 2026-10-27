@@ -335,7 +335,7 @@
 
 /* Trading workflows and a direct index of the complete toolkit. */
 .mk-trading-workflow { display: flex; flex-direction: column; overflow: hidden; scroll-margin-top: 6rem; }
-.mk-trading-workflow__copy { display: grid; justify-items: start; gap: 1rem; padding: clamp(1.2rem, 2.5vw, 1.8rem); flex: 1; }
+.mk-trading-workflow__copy { display: grid; align-content: start; justify-items: start; gap: 1rem; padding: clamp(1.2rem, 2.5vw, 1.8rem); flex: 1; }
 .mk-trading-steps { list-style: decimal; margin: 0; padding-left: 1.25rem; color: var(--mk-muted); display: grid; gap: .75rem; line-height: 1.6; font-size: .9rem; }
 .mk-trading-steps li { padding-left: .25rem; }
 .mk-trading-steps li::marker { color: var(--mk-cyan); font-weight: 700; }

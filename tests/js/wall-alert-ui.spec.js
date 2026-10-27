@@ -226,6 +226,27 @@ describe('wall alert controls and shared polling', () => {
     expect(document.querySelector('#wall-alert-inbox')).toBeNull()
     expect(JSON.parse(localStorage.getItem(`gex:wall-alert-inbox:v1:${owner.value}`)).items[0].read_at).toBeTruthy()
   })
+  it('removes ended alerts from the inbox, status filters and unread count', async () => {
+    const { wrapper, alerts } = render(); await flushPromises()
+    vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))
+    const received = row('b', '2026-09-30T14:20:00Z')
+    axios.get.mockResolvedValue({ data: payload([received]) })
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.unreadCount.value).toBe(1)
+    const ended = { id: 'ended', alert_id: key('b'), symbol: 'QQQ', side: 'call', strike: 100,
+      session: '2026-09-30', observed_at: received.observed_at, evaluated_through: '2026-09-30T14:20:00Z',
+      status_group: 'finished', outcome: 'entry_missed', qualified: false }
+    axios.get.mockResolvedValue({ data: { ...payload([]), lifecycle_items: [ended] } })
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.unreadCount.value).toBe(0)
+    expect(alerts.history.value).toHaveLength(1)
+    await wrapper.get('.wall-inbox-trigger').trigger('click')
+    const panel = document.querySelector('#wall-alert-inbox')
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(0)
+    expect(panel.textContent).toContain('No active setup alerts')
+    expect(panel.textContent).not.toMatch(/Finished|Past setups|Entry missed|Expired/)
+    expect(panel.querySelectorAll('.filters button')).toHaveLength(5)
+  })
   it('keeps received history when monitoring is disabled or fails, but isolates account changes', async () => {
     const { wrapper, alerts, owner } = render(); await flushPromises()
     vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))

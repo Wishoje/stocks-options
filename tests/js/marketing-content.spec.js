@@ -14,7 +14,7 @@ describe('public marketing content registry', () => {
     expect(new Set(ids).size).toBe(ids.length)
     expect(ids).toEqual(expect.arrayContaining([
       'intraday-wall-tracking', 'wall-setups', 'wall-activity', 'setup-alerts', 'gamma-context',
-      'wall-analysis', 'strike-expiry-map', 'intraday-iv-skew',
+      'wall-analysis', 'strike-expiry-map', 'intraday-iv-skew', 'swing-ideas',
     ]))
     expect(homeStories.map(story => story.media.id)).toEqual([
       'scanner-wall-activity', 'intraday-iv-skew', 'setup-alerts-inbox',
@@ -62,7 +62,7 @@ describe('public marketing content registry', () => {
     const exported = JSON.parse(readFileSync(resolve(process.cwd(), 'resources/marketing/public-content.json'), 'utf8'))
     expect(exported).toEqual(buildPublicMarketingContent())
     expect(exported.home.faqs.some(faq => faq.a.includes('{trial_days}'))).toBe(true)
-    expect(exported.features.groups.flatMap(group => group.features)).toHaveLength(20)
+    expect(exported.features.groups.flatMap(group => group.features)).toHaveLength(21)
   })
 
   it('avoids false cadence, universal coverage, alert, and entitlement claims', () => {

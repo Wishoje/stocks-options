@@ -3,12 +3,12 @@ import { computed, inject, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { WALL_ALERTS } from '@/Support/wallAlerts'
 import WallAlertDetails from '@/Components/WallAlertDetails.vue'
 import WallStatusFilters from '@/Components/WallStatusFilters.vue'
-import { filterWallRows, wallInboxRows } from '@/Support/wallLifecycle'
+import { activeWallRows, filterWallRows, wallInboxRows } from '@/Support/wallLifecycle'
 
 const alerts = inject(WALL_ALERTS)
 const open = ref(false), trigger = ref(null), panel = ref(null), closeButton = ref(null)
 const selectedStatus = ref('all'), symbol = ref(''), direction = ref('all'), unread = ref(false)
-const entries = computed(() => wallInboxRows(alerts.history.value, alerts.activity?.value, alerts.clock?.value || Date.now(), !!alerts.error.value))
+const entries = computed(() => activeWallRows(wallInboxRows(alerts.history.value, alerts.activity?.value, alerts.clock?.value || Date.now(), !!alerts.error.value)))
 const visibleEntries = computed(() => filterWallRows(entries.value, { status: selectedStatus.value, symbol: symbol.value, direction: direction.value, unread: unread.value }))
 const example = computed(() => alerts.notifications.value.find(item => item.preview))
 const status = computed(() => !alerts.settings.value.enabled ? 'Alerts off' : alerts.error.value ? 'Updates paused' : 'Alerts on')
@@ -67,8 +67,8 @@ onScopeDispose(() => close(false))
         <div class="wall-inbox-body">
           <div class="wall-inbox-tools"><span :class="['monitoring', { off: !alerts.settings.value.enabled || alerts.error.value }]">{{ status }}</span>
             <button v-if="alerts.unreadCount.value" type="button" @click="alerts.markRead()">Mark all read</button></div>
-          <p class="intro">Alerts received in this browser today. Saved assessments show what was recorded then, not a current entry signal.</p>
-          <WallStatusFilters v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" v-model:unread="unread" :rows="entries" inbox />
+          <p class="intro">Follow today’s developing and active setups. Open an assessment to check its recorded levels against current price.</p>
+          <WallStatusFilters v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" v-model:unread="unread" :rows="entries" inbox current-only />
           <p v-if="!alerts.inboxPersistent.value" class="storage-note" role="status">Your browser cannot save alerts. They will stay here for this visit.</p>
           <p v-if="!alerts.settings.value.enabled" class="notice">New alerts are turned off. Your saved alerts remain below. <a href="/scanner?scan=activity">Manage alerts in Scanner</a></p>
           <p v-else-if="alerts.error.value" class="notice" role="status">New alerts are paused until wall activity updates. Saved alerts remain available.</p>
@@ -80,7 +80,7 @@ onScopeDispose(() => close(false))
             </li>
           </ol>
           <div v-else-if="!entries.length" class="wall-inbox-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v16H4zM4 14h5l1 2h4l1-2h5M8 8h8M8 11h5" /></svg>
-            <h3>No alerts received today</h3><p>New setup alerts will stay here after their popups close. Keep the site open to receive them.</p></div>
+            <h3>{{ alerts.history.value.length ? 'No active setup alerts' : 'No alerts received today' }}</h3><p>New setup alerts appear here while their scenarios are developing or in progress. Keep the site open to receive them.</p></div>
           <article v-if="example" class="wall-inbox-example" aria-label="Test wall alert example"><WallAlertDetails :item="example" @open="openAssessment(example)" /></article>
           <footer><a href="/scanner?scan=activity">Open Wall activity</a><button v-if="alerts.settings.value.enabled" type="button" @click="alerts.preview()">Preview example</button></footer>
           <p class="retention">Up to 100 alerts · Resets at midnight ET. Viewing a saved assessment marks it as read.</p>

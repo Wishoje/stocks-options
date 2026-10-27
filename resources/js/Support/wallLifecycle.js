@@ -2,11 +2,11 @@ import { currentWallAlertRows, wallAlertSessionDate } from '@/Support/wallAlerts
 
 export const WALL_STATUS_FILTERS = Object.freeze([
   ['all', 'All'], ['conditions_met', 'Conditions met'], ['watching', 'Watching'],
-  ['in_progress', 'In progress'], ['finished', 'Finished'], ['needs_update', 'Needs update'],
+  ['in_progress', 'In progress'], ['finished', 'Past setups'], ['needs_update', 'Needs update'],
 ])
 export const wallStatusLabel = key => WALL_STATUS_FILTERS.find(([value]) => value === key)?.[1] || 'Needs update'
 export const wallOutcomeLabel = key => ({ target_reached: 'Target reached', invalidated: 'Invalidated',
-  expired: 'Expired', entry_missed: 'Entry missed', no_setup: 'Not qualified', unresolved: 'Comparison interrupted' }[key] || '')
+  expired: 'Setup window closed', entry_missed: 'Price moved past entry', no_setup: 'Not qualified', unresolved: 'Comparison interrupted' }[key] || '')
 
 export function wallLifecycleRows(data, now = Date.now(), unavailable = false) {
   if (data?.schema_version !== 'wall-watchlist.v1' || (data.state !== 'demonstration' && data.session !== wallAlertSessionDate(now))) return []
@@ -26,7 +26,8 @@ export function wallLifecycleRows(data, now = Date.now(), unavailable = false) {
       // A proven terminal result remains a recorded fact when collection pauses.
       const expiry = Date.parse(row.entry_expires_at || row.setup?.expires_at)
       const expiredEntry = data.state !== 'demonstration' && row.status_group === 'conditions_met' && Number.isFinite(expiry) && expiry < cutoff
-      return { ...row, status_group: row.status_group === 'finished' || (fresh && !expiredEntry) ? row.status_group : 'needs_update' }
+      return { ...row, entry_window_elapsed: expiredEntry,
+        status_group: row.status_group === 'finished' || (fresh && !expiredEntry) ? row.status_group : 'needs_update' }
     })
 }
 
@@ -41,6 +42,12 @@ export function wallInboxRows(history, data, now = Date.now(), unavailable = fal
       status_group: match ? state.status_group : !unavailable && current.has(item.alert_id)
         ? item.status === 'conditions_met' ? 'conditions_met' : 'watching' : 'needs_update' }
   })
+}
+
+export function activeWallRows(rows) {
+  return rows.filter(row => row.status_group !== 'finished' && !row.entry_window_elapsed
+    && !['expired', 'entry_missed'].includes(row.outcome || row.lifecycle?.outcome)
+    && !row.lifecycle?.entry_window_elapsed)
 }
 
 export function filterWallRows(rows, { status = 'all', symbol = '', direction = 'all', unread = false } = {}) {

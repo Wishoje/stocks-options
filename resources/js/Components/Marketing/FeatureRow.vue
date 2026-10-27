@@ -10,8 +10,9 @@
         </ul>
       </div>
       <div class="mk-feature-row__media">
+        <SwingIdeasPreview v-if="feature.visual === 'swing-ideas'" />
         <ProductPreview
-          v-if="feature.previews?.length"
+          v-else-if="feature.previews?.length"
           :id="`feature-${feature.id}-preview`"
           :items="feature.previews"
           :aria-label="`${feature.title} screenshots`"
@@ -25,6 +26,7 @@
 <script setup>
 import ProductMedia from './ProductMedia.vue'
 import ProductPreview from './ProductPreview.vue'
+import SwingIdeasPreview from './SwingIdeasPreview.vue'
 
 defineProps({
   feature: { type: Object, required: true },

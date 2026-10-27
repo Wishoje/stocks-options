@@ -2,7 +2,7 @@
 import { computed, ref, watch, onScopeDispose } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
 import { wallReactionTitle, wallSetupTitle } from '@/utils/wallDecision'
-import { filterWallRows, wallLifecycleRows, wallStatusLabel } from '@/Support/wallLifecycle'
+import { activeWallRows, filterWallRows, wallLifecycleRows, wallStatusLabel } from '@/Support/wallLifecycle'
 import WallAlertControls from '@/Components/WallAlertControls.vue'
 import WallStatusFilters from '@/Components/WallStatusFilters.vue'
 import WallStatusBadge from '@/Components/WallStatusBadge.vue'
@@ -14,7 +14,7 @@ const selectedStatus = ref('conditions_met'), symbol = ref(''), direction = ref(
 const clock = ref(Date.now())
 const timer = setInterval(() => { clock.value = Date.now() }, 10000)
 onScopeDispose(() => clearInterval(timer))
-const items = computed(() => wallLifecycleRows(data.value, clock.value, !!error.value))
+const items = computed(() => activeWallRows(wallLifecycleRows(data.value, clock.value, !!error.value)))
 const qualifiedCount = computed(() => items.value.filter(row => row.status_group === 'conditions_met').length)
 const filtered = computed(() => filterWallRows(items.value, { status: selectedStatus.value, symbol: symbol.value, direction: direction.value }))
 const visible = computed(() => filtered.value.slice(0, limit.value))
@@ -42,7 +42,7 @@ watch(() => data.value?.session, () => { limit.value = 6 })
       <div v-if="demo" class="demo" role="status">Local demonstration · Synthetic historical examples <button type="button" @click="chooseDemo(false)">Back to my watchlist</button></div>
       <div v-else class="watchlist-summary"><strong>{{ qualifiedCount ? `${qualifiedCount} setup${qualifiedCount === 1 ? '' : 's'} with conditions met` : data.assessed_count ? 'No confirmed setups in your watchlist' : 'Waiting for current wall assessments' }}</strong>
         <span>{{ data.assessed_count }} of {{ data.watchlist_count }} symbols assessed · {{ data.session }}</span></div>
-      <WallStatusFilters v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" :rows="items" />
+      <WallStatusFilters v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" :rows="items" current-only />
       <div v-if="visible.length" class="activity-list">
         <article v-for="row in visible" :key="row.id || `${row.symbol}:${row.side}`" :class="['activity-row', { selected: row.symbol === selectedSymbol, qualified: row.status_group === 'conditions_met' }]">
           <div class="activity-heading"><div><strong class="symbol">{{ row.symbol }}</strong><span :class="row.side">{{ row.side === 'put' ? 'Put' : 'Call' }} wall {{ number(row.strike) }}</span></div><WallStatusBadge :status="row.status_group" :outcome="row.outcome" /></div>
@@ -61,10 +61,10 @@ watch(() => data.value?.session, () => { limit.value = 6 })
           </div>
         </article>
       </div>
-      <p v-else-if="!error" class="notice" role="status">{{ !data.watchlist_count ? 'Add symbols to your watchlist to follow their wall activity here.' : `No ${selectedStatus === 'all' ? 'setups' : wallStatusLabel(selectedStatus).toLowerCase() + ' setups'} match these filters. Your selection stays in place as updates arrive.` }}</p>
+      <p v-else-if="!error" class="notice" role="status">{{ !data.watchlist_count ? 'Add symbols to your watchlist to follow their wall activity here.' : `No ${selectedStatus === 'all' ? 'setups' : selectedStatus === 'finished' ? 'past setups' : wallStatusLabel(selectedStatus).toLowerCase() + ' setups'} match these filters. Your selection stays in place as updates arrive.` }}</p>
       <p v-if="closed" class="footnote">The market is closed. These are the latest recorded states for this session.</p>
       <button v-if="filtered.length > limit" class="show-more" type="button" @click="limit += 6">Show more · {{ filtered.length - limit }} remaining</button>
-      <details class="footnote"><summary>What do these statuses mean?</summary><p>Watching: conditions have not passed. Conditions met: the rules passed at the recorded close. In progress: following a qualified scenario. Finished: its target, invalidation or time limit ended the comparison. Needs update: its latest state is not established.</p></details>
+      <details class="footnote"><summary>What do these statuses mean?</summary><p>Watching: conditions have not passed. Conditions met: the rules passed at the recorded close. In progress: following a qualified scenario. Needs update: open the assessment to check its latest state. This list focuses on developing and active setups.</p></details>
       <p class="footnote">Conditions met refers to the recorded close. Check current price against the entry area before using a setup.</p>
       <button v-if="data.local_demo_available && !demo" class="preview" type="button" @click="chooseDemo(true)">Preview local demonstration</button>
     </template>

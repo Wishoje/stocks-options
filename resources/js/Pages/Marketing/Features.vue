@@ -101,7 +101,7 @@
         <div class="mk-card mk-callout" data-reveal>
           <p class="mk-eyebrow">Everything included in one subscription</p>
           <h2 class="mk-heading">Put the full workflow to work.</h2>
-          <p class="mk-lede">Start with the symbols you trade. Explore wall tracking, alerts, scanners and the complete analytics toolkit during your trial.</p>
+          <p class="mk-lede">Start with the symbols you trade. Explore Swing ideas, intraday setup alerts, Scanner and the complete analytics toolkit during your trial.</p>
           <div class="mk-actions">
             <MarketingCta location="features_final" source="features" />
             <Link href="/pricing" class="mk-button mk-button--secondary">View pricing</Link>
@@ -128,7 +128,7 @@ import { useMarketingMotion } from '@/Support/marketing-motion'
 const intro = marketingIntros.features
 const motionRoot = useMarketingMotion()
 const page = usePage()
-const featuresTitle = computed(() => page.props.seo?.title || 'GexOptions Features - Wall Analysis, Alerts, Scanner & Options Tools')
-const featuresDescription = computed(() => page.props.seo?.description || 'Explore intraday wall tracking, setup alerts, watchlist Scanner, GEX and DEX analysis, gamma context, volatility tools, the options calculator and AI Export.')
+const featuresTitle = computed(() => page.props.seo?.title || 'GexOptions Features - Swing Ideas, Alerts & Options Analytics')
+const featuresDescription = computed(() => page.props.seo?.description || 'Explore Swing ideas, intraday setup alerts, Scanner, wall tracking, GEX and DEX analysis, volatility tools, the options calculator and AI Export.')
 const featuresCanonical = computed(() => page.props.seo?.canonical || 'https://gexoptions.com/features')
 </script>

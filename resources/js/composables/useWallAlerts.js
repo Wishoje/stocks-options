@@ -2,6 +2,7 @@ import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
 import { createWallAlertEngine, currentWallAlertRows, DEFAULT_WALL_ALERT_SETTINGS, wallAlertSettings } from '@/Support/wallAlerts'
 import { createWallAlertInbox } from '@/Support/wallAlertInbox'
+import { activeWallRows, wallInboxRows } from '@/Support/wallLifecycle'
 
 let retainedOwner, retainedEngine, audio, audioOwner
 export function useWallAlerts(owner) {
@@ -121,6 +122,6 @@ export function useWallAlerts(owner) {
     window.removeEventListener('storage', storageChanged)
   })
   return { owner: computed(() => toValue(owner)), settings, notifications, history, inboxPersistent, activity: feed.data, clock,
-    unreadCount: computed(() => history.value.filter(item => !item.read_at).length), markRead,
+    unreadCount: computed(() => activeWallRows(wallInboxRows(history.value, feed.data.value, clock.value, !!feed.error.value)).filter(item => !item.read_at).length), markRead,
     message, soundReady, error: feed.error, loading: feed.loading, update, preview, dismiss }
 }
