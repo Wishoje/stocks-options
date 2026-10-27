@@ -81,7 +81,7 @@
 
     <footer class="mk-footer">
       <div class="mk-container mk-footer-grid">
-        <div>
+        <div class="mk-footer-brand">
           <Link href="/" class="mk-brand mk-brand--footer" aria-label="GEX Options home">
             <img
               src="/marketing/gexoptions_logo.svg"
@@ -93,16 +93,17 @@
             />
           </Link>
           <p class="mk-meta">Options analytics for market levels, positioning, and activity.</p>
-          <p class="mk-meta">&copy; {{ year }} GEX Options.</p>
         </div>
         <nav class="mk-footer-links" aria-label="Footer navigation">
-          <Link v-for="item in publicLinks" :key="item.href" :href="item.href">{{ item.label }}</Link>
-          <Link href="/swing-trading-ideas">Swing ideas</Link>
-          <Link href="/intraday-alerts">Intraday alerts</Link>
-          <Link href="/about">About and methodology</Link>
-          <Link v-for="item in legalLinks" :key="item.href" :href="item.href">{{ item.label }}</Link>
-          <a href="mailto:support@gexoptions.com">support@gexoptions.com</a>
+          <div v-for="group in footerGroups" :key="group.title" class="mk-footer-group">
+            <h2 class="mk-footer-heading">{{ group.title }}</h2>
+            <ul><li v-for="item in group.links" :key="item.href"><Link :href="item.href">{{ item.label }}</Link></li></ul>
+          </div>
         </nav>
+      </div>
+      <div class="mk-container mk-footer-bottom">
+        <p class="mk-meta">&copy; {{ year }} GEX Options.</p>
+        <a href="mailto:support@gexoptions.com">support@gexoptions.com</a>
       </div>
     </footer>
   </div>
@@ -114,6 +115,7 @@ import { Link, router, usePage } from '@inertiajs/vue3'
 import MarketingCta from '@/Components/Marketing/MarketingCta.vue'
 import { journeyUrl, selectionForPage } from '@/Support/marketing-journey'
 import '../../css/marketing-refresh.css'
+import footerGroups from '../../marketing/footer-links.json'
 
 const page = usePage()
 const year = new Date().getFullYear()
@@ -133,10 +135,7 @@ const publicLinks = Object.freeze([
   { label: 'Contact', href: '/contact' },
 ])
 
-const legalLinks = Object.freeze([
-  { label: 'Terms', href: '/terms-of-service' },
-  { label: 'Privacy', href: '/privacy-policy' },
-])
+
 
 function isActive(href) {
   const path = (page.url || '/').split('?')[0]

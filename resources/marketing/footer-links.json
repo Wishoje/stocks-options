@@ -1,0 +1,57 @@
+[
+  {
+    "title": "Product",
+    "links": [
+      {
+        "label": "Features",
+        "href": "/features"
+      },
+      {
+        "label": "Intraday alerts",
+        "href": "/intraday-alerts"
+      },
+      {
+        "label": "Swing ideas",
+        "href": "/swing-trading-ideas"
+      },
+      {
+        "label": "Pricing",
+        "href": "/pricing"
+      }
+    ]
+  },
+  {
+    "title": "Learn",
+    "links": [
+      {
+        "label": "SPY levels",
+        "href": "/spy-gex-levels"
+      },
+      {
+        "label": "Trading guides",
+        "href": "/guides"
+      },
+      {
+        "label": "About and methodology",
+        "href": "/about"
+      }
+    ]
+  },
+  {
+    "title": "Support",
+    "links": [
+      {
+        "label": "Contact",
+        "href": "/contact"
+      },
+      {
+        "label": "Terms",
+        "href": "/terms-of-service"
+      },
+      {
+        "label": "Privacy",
+        "href": "/privacy-policy"
+      }
+    ]
+  }
+]

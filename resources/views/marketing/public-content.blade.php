@@ -85,5 +85,15 @@
         </article>
         @endif
     </main>
-    <footer class="mk-footer"><nav class="mk-container mk-footer-links" aria-label="Footer navigation"><a href="/features">Features</a><a href="/guides">Guides</a><a href="/pricing">Pricing</a><a href="/swing-trading-ideas">Swing ideas</a><a href="/intraday-alerts">Intraday alerts</a><a href="/about">About and methodology</a><a href="/terms-of-service">Terms</a><a href="/privacy-policy">Privacy</a></nav></footer>
+    <footer class="mk-footer">
+        <div class="mk-container mk-footer-grid">
+            <div class="mk-footer-brand"><a href="/" class="mk-brand mk-brand--footer" aria-label="GEX Options home"><img src="/marketing/gexoptions_logo.svg" alt="GEX Options" class="mk-brand__logo" width="798" height="316" loading="lazy"></a><p class="mk-meta">Options analytics for market levels, positioning, and activity.</p></div>
+            <nav class="mk-footer-links" aria-label="Footer navigation">
+                @foreach (json_decode(file_get_contents(resource_path('marketing/footer-links.json')), true, flags: JSON_THROW_ON_ERROR) as $group)
+                    <div class="mk-footer-group"><h2 class="mk-footer-heading">{{ $group['title'] }}</h2><ul>@foreach ($group['links'] as $link)<li><a href="{{ $link['href'] }}">{{ $link['label'] }}</a></li>@endforeach</ul></div>
+                @endforeach
+            </nav>
+        </div>
+        <div class="mk-container mk-footer-bottom"><p class="mk-meta">&copy; {{ date('Y') }} GEX Options.</p><a href="mailto:support@gexoptions.com">support@gexoptions.com</a></div>
+    </footer>
 </div>
