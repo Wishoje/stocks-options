@@ -2,7 +2,7 @@ import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
 import { createWallAlertEngine, currentWallAlertRows, DEFAULT_WALL_ALERT_SETTINGS, wallAlertSettings } from '@/Support/wallAlerts'
 import { createWallAlertInbox, wallInboxSetupSnapshots } from '@/Support/wallAlertInbox'
-import { activeWallRows, wallInboxRows } from '@/Support/wallLifecycle'
+import { activeWallRows, wallInboxRows, wallActivePlanKey } from '@/Support/wallLifecycle'
 
 let retainedOwner, retainedEngine, audio, audioOwner
 export function useWallAlerts(owner) {
@@ -76,14 +76,22 @@ export function useWallAlerts(owner) {
     const current = new Set(currentWallAlertRows(data).map(row => row.alert_keys[row.status === 'conditions_met' ? 'setup' : 'testing']))
     notifications.value = notifications.value.filter(item => item.preview || current.has(item.alert_id))
     const now = Date.now(), savedIds = new Set(history.value.map(item => item.alert_id))
+    const activePlans = new Set(activeWallRows(wallInboxRows(history.value, data, now)).filter(row => ['conditions_met', 'in_progress'].includes(row.status_group)).map(wallActivePlanKey).filter(Boolean))
     const received = candidates.map(row => ({ ...row, received_at: now }))
+    const notify = received.filter(row => {
+      const plan = row.status === 'conditions_met' ? wallActivePlanKey(row) : null
+      if (!plan) return true
+      if (activePlans.has(plan)) return false
+      activePlans.add(plan)
+      return true
+    })
     const watchlistSetups = wallInboxSetupSnapshots(data, now).filter(row => !savedIds.has(row.alert_id))
     if (received.length || watchlistSetups.length) {
       history.value = inbox?.add([...received, ...watchlistSetups], now) || []
       inboxPersistent.value = inbox?.persistent ?? true
     }
-    if (!received.length) return
-    notifications.value = [...received, ...notifications.value].slice(0, 3)
+    if (!notify.length) return
+    notifications.value = [...notify, ...notifications.value].slice(0, 3)
     playSound()
   }, { immediate: true })
   const stopRevision = watch(feed.revision, (value, before) => {
@@ -111,7 +119,8 @@ export function useWallAlerts(owner) {
   }
   const dismiss = id => { notifications.value = id ? notifications.value.filter(item => item.alert_id !== id) : [] }
   function markRead(id = null) {
-    history.value = inbox?.markRead(id) || []
+    const group = id ? activeWallRows(wallInboxRows(history.value, feed.data.value, Date.now(), !!feed.error.value)).find(row => row.alert_id === id) : null
+    history.value = inbox?.markRead(group?.related_alert_ids?.length ? group.related_alert_ids : id) || []
     inboxPersistent.value = inbox?.persistent ?? true
   }
   const timer = setInterval(() => {

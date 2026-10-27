@@ -47,10 +47,43 @@ export function wallInboxRows(history, data, now = Date.now(), unavailable = fal
   })
 }
 
+// A price plan can receive another pattern confirmation without changing its
+// entry, target or invalidation. Keep the individual assessments in storage.
+export function wallActivePlanKey(row) {
+  const setup = row.setup
+  const levels = [row.strike, setup?.entry_zone?.low, setup?.entry_zone?.high, setup?.invalidation?.price, setup?.target?.strike]
+  if (!['bullish', 'bearish'].includes(setup?.direction) || !['put', 'call'].includes(row.side)
+    || !levels.every(value => Number.isFinite(value) && value > 0)) return null
+  const session = row.session || row.lifecycle?.session || (Number.isFinite(Date.parse(row.observed_at)) ? wallAlertSessionDate(Date.parse(row.observed_at)) : null)
+  if (!session || !row.symbol) return null
+  return JSON.stringify([row.symbol, session, row.timeframe || row.lifecycle?.timeframe || '7d',
+    row.side, setup.direction, ...levels, setup.invalidation.close_side || (setup.direction === 'bullish' ? 'below' : 'above')])
+}
+
 export function activeWallRows(rows) {
-  return rows.filter(row => row.status_group !== 'finished' && !row.entry_window_elapsed
+  const active = rows.filter(row => row.status_group !== 'finished' && !row.entry_window_elapsed
     && !['expired', 'entry_missed'].includes(row.outcome || row.lifecycle?.outcome)
     && !row.lifecycle?.entry_window_elapsed)
+  const groups = new Map()
+  active.forEach((row, index) => {
+    const plan = ['conditions_met', 'in_progress'].includes(row.status_group) ? wallActivePlanKey(row) : null
+    const key = plan || `individual:${index}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(row)
+  })
+  return [...groups.values()].map(members => {
+    if (members.length === 1) return members[0]
+    const ordered = [...members].sort((a, b) => Date.parse(a.qualified_at || a.observed_at) - Date.parse(b.qualified_at || b.observed_at))
+    // A fresh qualifying entry takes precedence; otherwise retain the first
+    // original plan as the representative of the continuing follow-up.
+    const representative = [...ordered].reverse().find(row => row.status_group === 'conditions_met') || ordered[0]
+    return { ...representative,
+      related_alert_ids: members.map(row => row.alert_id).filter(Boolean),
+      read_at: members.every(row => row.read_at) ? Math.max(...members.map(row => row.read_at)) : null,
+      additional_confirmations: ordered.filter(row => row !== representative).map(row => ({
+        observed_at: row.qualified_at || row.observed_at, assessment_id: row.assessment_id,
+      })) }
+  })
 }
 
 export function filterWallRows(rows, { status = 'all', symbol = '', direction = 'all', unread = false } = {}) {

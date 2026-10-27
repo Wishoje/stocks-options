@@ -17,6 +17,7 @@ const hasLevels = item => item.status === 'conditions_met'
 <template>
   <WallStatusBadge v-if="item.status_group" :status="item.status_group" :outcome="item.lifecycle?.outcome" />
   <strong>{{ item.preview ? 'Test alert · ' : '' }}{{ item.symbol }} · {{ item.status === 'conditions_met' ? wallSetupTitle(item.setup) : 'Testing a wall' }}</strong>
+  <p v-if="item.additional_confirmations?.length" class="context">Same levels also confirmed at {{ item.additional_confirmations.map(row => time(row.observed_at) + ' ET').join(', ') }}.</p>
   <p v-if="item.origin === 'watchlist'" class="context">From your watchlist</p>
   <p v-if="item.lifecycle?.reason" class="context">{{ item.lifecycle.reason }}</p>
   <p v-if="item.lifecycle?.entry_window_closed && item.status_group === 'in_progress'" class="context">Entry window closed. Following the original target and invalidation until session close.</p>

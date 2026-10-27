@@ -83,6 +83,14 @@ describe('today’s recorded wall alert inbox', () => {
     expect(createWallAlertInbox(2, saved).read(now + 2000)).toEqual([])
     expect(reload.markRead(null, now + 2000).every(item => item.read_at)).toBe(true)
   })
+  it('marks all confirmations in a grouped plan read without affecting another plan', () => {
+    const saved = storage(), inbox = createWallAlertInbox(1, saved)
+    inbox.add([row(1), row(2), row(3)], now)
+    inbox.markRead([key(1), key(2)], now + 1000)
+    const restored = createWallAlertInbox(1, saved).read(now + 2000)
+    expect(restored.filter(item => item.read_at).map(item => item.alert_id).sort()).toEqual([key(1), key(2)])
+    expect(restored.find(item => item.alert_id === key(3)).read_at).toBeNull()
+  })
   it('keeps up to 100 most recently received alerts without carrying live-feed objects', () => {
     const inbox = createWallAlertInbox(1, storage())
     const result = inbox.add(Array.from({ length: 140 }, (_, index) => ({ ...row(index + 1), received_at: now + index,

@@ -104,8 +104,9 @@ export function createWallAlertInbox(owner, storage) {
   }
   function markRead(id = null, now = Date.now()) {
     read(now)
+    const ids = new Set(Array.isArray(id) ? id : [id])
     items = combine([...items, ...(stored(now) || [])], now).map(item =>
-      !item.read_at && (!id || item.alert_id === id) ? { ...item, read_at: now } : item)
+      !item.read_at && (!id || ids.has(item.alert_id)) ? { ...item, read_at: now } : item)
     save()
     return items
   }

@@ -38,6 +38,25 @@ describe('shared wall lifecycle presentation', () => {
     expect(activeWallRows(wallInboxRows(saved, data(past), now))).toEqual([])
     expect(rows.filter(r => r.status_group === 'finished').map(r => r.outcome)).toEqual(past.map(r => r.outcome))
   })
+  it('groups repeated confirmations of the same active price plan without merging different boundaries', () => {
+    const first = { ...row('a'), observed_at: '2026-10-26T14:00:00Z', read_at: now,
+      setup: { direction: 'bullish', pattern: 'reclaim', entry_zone: { low: 100.05, high: 100.15 }, invalidation: { price: 99.95, close_side: 'below' }, target: { strike: 101 } } }
+    const again = { ...first, id: 'b', alert_id: 'b'.repeat(64), observed_at: '2026-10-26T14:30:00Z', read_at: null,
+      setup: { ...first.setup, pattern: 'reversal' } }
+    const [group] = activeWallRows([again, first])
+    expect(group.alert_id).toBe(first.alert_id)
+    expect(group.related_alert_ids).toHaveLength(2)
+    expect(group.additional_confirmations).toEqual([{ observed_at: again.observed_at, assessment_id: undefined }])
+    expect(group.read_at).toBeNull()
+    expect(first).not.toHaveProperty('additional_confirmations')
+    for (const change of [{ target: { strike: 102 } }, { invalidation: { price: 99.9 } }, { entry_zone: { low: 100.06, high: 100.15 } }]) {
+      expect(activeWallRows([first, { ...again, setup: { ...again.setup, ...change } }])).toHaveLength(2)
+    }
+    const [fresh] = activeWallRows([first, { ...again, status_group: 'conditions_met' }])
+    expect(fresh.alert_id).toBe(again.alert_id)
+    expect(fresh.status_group).toBe('conditions_met')
+    expect(activeWallRows([{ ...first, status_group: 'finished', outcome: 'invalidated' }, again])[0].alert_id).toBe(again.alert_id)
+  })
   it('keeps historical local demonstrations independent of the live clock', () => {
     const r = { ...row('a', 'conditions_met'), entry_expires_at: '2026-10-26T14:59:00Z' }
     expect(wallLifecycleRows({ ...data([r]), state: 'demonstration' }, now + 86400000)[0].status_group).toBe('conditions_met')

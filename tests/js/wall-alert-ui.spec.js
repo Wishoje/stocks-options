@@ -157,6 +157,37 @@ describe('wall alert controls and shared polling', () => {
     expect(document.querySelectorAll('.wall-inbox-item')).toHaveLength(0)
     expect(second.alerts.unreadCount.value).toBe(0)
   })
+  it('shows identical NVDA levels once with the second confirmation time and marks both records read', async () => {
+    const life = (id, at) => ({ ...row(id, at), symbol: 'NVDA', id: key(id), alert_id: key(id), session: '2026-09-30', timeframe: '7d',
+      status_group: 'in_progress', outcome: 'in_progress', qualified: true, qualified_at: at,
+      entry_expires_at: '2026-09-30T14:15:00Z', evaluated_through: '2026-09-30T14:15:00Z' })
+    axios.get.mockResolvedValue({ data: { ...payload([]), lifecycle_items: [life('a', '2026-09-30T14:00:00Z'), life('b', '2026-09-30T14:10:00Z')] } })
+    const { wrapper, alerts } = render(); await flushPromises()
+    expect(alerts.history.value).toHaveLength(2)
+    expect(alerts.unreadCount.value).toBe(1)
+    await wrapper.get('.wall-inbox-trigger').trigger('click')
+    expect(document.querySelectorAll('.wall-inbox-item')).toHaveLength(1)
+    expect(document.querySelector('#wall-alert-inbox').textContent).toContain('Same levels also confirmed at 10:10 AM ET')
+    alerts.markRead(key('a')); await flushPromises()
+    expect(alerts.history.value.every(item => item.read_at)).toBe(true)
+    expect(alerts.unreadCount.value).toBe(0)
+  })
+  it('records an additional same-plan confirmation without sending another popup', async () => {
+    const life = (id, at, status_group = 'in_progress') => ({ ...row(id, at), id: key(id), alert_id: key(id), session: '2026-09-30', timeframe: '7d',
+      status_group, outcome: 'in_progress', qualified: true, qualified_at: at,
+      entry_expires_at: '2026-09-30T14:40:00Z', evaluated_through: '2026-09-30T14:15:00Z' })
+    const first = life('a', '2026-09-30T14:00:00Z')
+    axios.get.mockResolvedValue({ data: { ...payload([]), lifecycle_items: [first] } })
+    const { alerts } = render(); await flushPromises()
+    const repeated = life('b', '2026-09-30T14:20:00Z', 'conditions_met')
+    axios.get.mockResolvedValue({ data: { ...payload([row('b', '2026-09-30T14:20:00Z')]), lifecycle_items: [
+      { ...first, evaluated_through: '2026-09-30T14:20:00Z' }, { ...repeated, evaluated_through: '2026-09-30T14:20:00Z' }] } })
+    vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.history.value).toHaveLength(2)
+    expect(alerts.notifications.value).toEqual([])
+    expect(document.querySelector('.wall-alert-toast')).toBeNull()
+  })
   it('stores one original notification when a new setup is also present in the watchlist lifecycle', async () => {
     const { alerts } = render(); await flushPromises()
     vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))

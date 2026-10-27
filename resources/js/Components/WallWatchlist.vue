@@ -47,6 +47,7 @@ watch(() => data.value?.session, () => { limit.value = 6 })
         <article v-for="row in visible" :key="row.id || `${row.symbol}:${row.side}`" :class="['activity-row', { selected: row.symbol === selectedSymbol, qualified: row.status_group === 'conditions_met' }]">
           <div class="activity-heading"><div><strong class="symbol">{{ row.symbol }}</strong><span :class="row.side">{{ row.side === 'put' ? 'Put' : 'Call' }} wall {{ number(row.strike) }}</span></div><WallStatusBadge :status="row.status_group" :outcome="row.outcome" /></div>
           <p class="observed-time"><template v-if="row.qualified_at">Qualified {{ time(row.qualified_at) }} ET · </template>Recorded close {{ number(row.close) }} · {{ time(row.observed_at) }} ET</p>
+          <p v-if="row.additional_confirmations?.length" class="observed-time">Same levels also confirmed at {{ row.additional_confirmations.map(item => time(item.observed_at) + ' ET').join(', ') }}.</p>
           <div class="activity-body"><div><strong>{{ row.setup?.direction ? wallSetupTitle(row.setup) : row.reaction ? wallReactionTitle(row.reaction) : 'Watch for price confirmation' }}</strong>
             <p v-if="checks(row).length">{{ checks(row).join(' · ') }}</p>
             <p v-if="progress(row)">{{ progress(row) }}</p>

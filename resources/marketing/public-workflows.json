@@ -153,7 +153,8 @@
         "title": "Return to the evidence without losing the symbol.",
         "paragraphs": [
           "Recent alerts keeps today’s received notifications in this browser. It also includes fresh active setups found for your saved symbols, so opening the site after a setup qualified does not require an earlier popup to review it.",
-          "An inbox entry can say From your watchlist when it came from that active comparison. This does not replay an old popup. Ended intraday scenarios are removed from the active list as their state updates."
+          "An inbox entry can say From your watchlist when it came from that active comparison. This does not replay an old popup. Ended intraday scenarios are removed from the active list as their state updates.",
+          "Repeated confirmations with the same entry, target and invalidation appear as one active plan with the additional confirmation times. The separate recorded assessments are retained."
         ]
       },
       {
