@@ -10,9 +10,7 @@ final class WallSetupOutcomeEvaluator
 {
     public const SCHEMA = 'wall-setup-reviews.v1';
 
-    public const VERSION = 'frozen-levels-60m-close.v1';
-
-    public const HORIZON_MINUTES = 60;
+    public const VERSION = 'frozen-levels-session-close.v2';
 
     /** Keep the first eligible reading, otherwise the most recent scenario state. */
     public function seeds(array $setups): array
@@ -43,10 +41,6 @@ final class WallSetupOutcomeEvaluator
         $cutoff = strtotime($interaction['evaluated_through'] ?? '') ?: 0;
         $bars = $interaction['bars'] ?? [];
         usort($bars, fn ($a, $b) => $a['t'] <=> $b['t']);
-        $contexts = [];
-        foreach ($interaction['readings'] ?? [] as $reading) {
-            $contexts[$reading['side']][strtotime($reading['observed_at'])] = $reading['wall_identity'];
-        }
         $cases = [];
         foreach ($seeds as $seed) {
             if (! $this->validSeed($seed, $interaction) || strtotime($seed['observed_at']) < $open
@@ -76,7 +70,7 @@ final class WallSetupOutcomeEvaluator
                 'evidence_bar_ids' => [], 'follow_up_bars' => [], 'overlaps_another_review' => false,
                 'historical_outcome_eligible' => false, 'executed_trade' => false];
             if ($qualified) {
-                $this->follow($case, $seed, $bars, $contexts[$seed['side']] ?? [], $close, $cutoff);
+                $this->follow($case, $seed, $bars, $close, $cutoff);
             }
             $cases[$seed['id']] = $case;
         }
@@ -91,7 +85,7 @@ final class WallSetupOutcomeEvaluator
             $until = max($until, strtotime($case['outcome_at'] ?? $case['review_until']));
         }
         unset($case);
-        $counts = array_fill_keys(['target_reached', 'invalidated', 'expired', 'unresolved', 'in_progress', 'entry_missed', 'no_setup', 'watching'], 0);
+        $counts = array_fill_keys(['target_reached', 'invalidated', 'session_ended', 'expired', 'unresolved', 'in_progress', 'entry_missed', 'no_setup', 'watching'], 0);
         foreach ($cases as $case) {
             $counts[$case['outcome']]++;
         }
@@ -105,7 +99,9 @@ final class WallSetupOutcomeEvaluator
         return ['schema_version' => self::SCHEMA, 'rule_version' => self::VERSION,
             'setup_rule_version' => WallSetupRules::VERSION, 'symbol' => $interaction['symbol'],
             'session' => $session, 'timeframe' => $interaction['timeframe'], 'as_of' => $interaction['as_of'],
-            'horizon_minutes' => self::HORIZON_MINUTES, 'outcome_basis' => 'completed_five_minute_close',
+            'review_window' => 'regular_session_close', 'horizon_minutes' => max(0, (int) (($close - $open) / 60)),
+            'session_closes_at' => $close ? gmdate('c', $close) : null,
+            'wall_change_policy' => 'continue_original_qualified_levels', 'outcome_basis' => 'completed_five_minute_close',
             'summary' => ['scenarios' => count($cases), 'qualified' => count(array_filter($cases, fn ($c) => $c['qualified'])),
                 'saved_assessments' => count(array_filter($cases, fn ($c) => $c['review_basis'] === 'saved_assessment')),
                 'overlapping_reviews' => count(array_filter($cases, fn ($c) => $c['overlaps_another_review'])), 'qualified_outcomes' => $qualifiedCounts, ...$counts],
@@ -114,58 +110,65 @@ final class WallSetupOutcomeEvaluator
             'interpretation' => 'Recorded price reviews, not executed trades. Counts include ended and unresolved scenarios; overlapping reviews are not independent samples.'];
     }
 
-    private function follow(array &$case, array $seed, array $bars, array $contexts, int $sessionClose, int $cutoff): void
+    private function follow(array &$case, array $seed, array $bars, int $sessionClose, int $cutoff): void
     {
         $start = strtotime($seed['observed_at']);
-        $deadline = min($sessionClose, $start + self::HORIZON_MINUTES * 60);
-        $case['review_until'] = gmdate('c', $deadline);
+        $case['review_until'] = gmdate('c', $sessionClose);
+        $case['reviewed_through'] = gmdate('c', $start);
+        $case['review_complete'] = true;
         $previous = $start;
         $direction = $seed['direction'] === 'bullish' ? 1 : -1;
+        // Qualification freezes the scenario's levels. Later wall identities and
+        // the entry deadline do not change the subsequent price-only review.
         foreach ($bars as $bar) {
             $barStart = (int) ($bar['t'] / 1000);
             $end = $barStart + 300;
-            if ($barStart < $start || $end > min($deadline, $cutoff)) {
+            if ($barStart < $start || $end > min($sessionClose, $cutoff)) {
                 continue;
             }
-            if ($barStart !== $previous || ! isset($contexts[$end])) {
-                $case['outcome'] = 'unresolved';
-                $case['reason'] = 'The continuous comparison ended before a target or invalidation close.';
-                $case['outcome_at'] = gmdate('c', $previous);
-
-                return;
-            }
-            if ($contexts[$end] !== $seed['wall_identity']) {
-                $case['outcome'] = 'expired';
-                $case['reason'] = 'The wall comparison changed before a target or invalidation close.';
-                $case['outcome_at'] = gmdate('c', $end);
+            if ($barStart !== $previous) {
+                $this->pauseOrClose($case, $previous, $sessionClose, $cutoff);
 
                 return;
             }
             $case['follow_up_bars'][] = ['id' => $bar['id'], 'observed_at' => gmdate('c', $end), 'close' => (float) $bar['c']];
             $case['evidence_bar_ids'][] = $bar['id'];
             $previous = $end;
+            $case['reviewed_through'] = gmdate('c', $end);
             $target = $direction * ($bar['c'] - $seed['target']['strike']) >= 0;
             $invalidated = $direction * ($bar['c'] - $seed['invalidation']['price']) < -1e-9;
             if ($target || $invalidated) {
                 $case['outcome'] = $target ? 'target_reached' : 'invalidated';
-                $case['reason'] = $target ? 'A later five-minute close reached the frozen reference target.' : 'A later five-minute close crossed the frozen invalidation boundary.';
+                $case['reason'] = $target ? 'A later five-minute close reached the original reference target.' : 'A later five-minute close crossed the original invalidation boundary.';
                 $case['outcome_at'] = gmdate('c', $end);
                 $case['outcome_close'] = (float) $bar['c'];
 
                 return;
             }
         }
-        if ($previous >= $deadline) {
-            $case['outcome'] = 'expired';
-            $case['reason'] = $deadline === $sessionClose ? 'The market session ended before a target or invalidation close.' : 'The one-hour review ended before a target or invalidation close.';
-            $case['outcome_at'] = gmdate('c', $deadline);
-        } elseif ($cutoff >= $deadline || $cutoff - $previous > WallInteractionRules::profile()['maximum_bar_age_seconds']) {
-            $case['outcome'] = 'unresolved';
-            $case['reason'] = 'The continuous comparison ended before a target or invalidation close.';
-            $case['outcome_at'] = gmdate('c', $previous);
+        if ($previous >= $sessionClose) {
+            $case['outcome'] = 'session_ended';
+            $case['reason'] = 'The trading session ended without a target or invalidation close.';
+            $case['outcome_at'] = gmdate('c', $sessionClose);
+        } elseif ($cutoff >= $sessionClose || $cutoff - $previous > WallInteractionRules::profile()['maximum_bar_age_seconds']) {
+            $this->pauseOrClose($case, $previous, $sessionClose, $cutoff);
         } else {
-            $case['reason'] = 'Following completed closes within the one-hour review window.';
+            $case['reason'] = 'Following the original target and invalidation through the trading session.';
         }
+    }
+
+    private function pauseOrClose(array &$case, int $previous, int $sessionClose, int $cutoff): void
+    {
+        $closed = $cutoff >= $sessionClose;
+        $case['outcome'] = $closed ? 'session_ended' : 'unresolved';
+        $case['reason'] = $closed
+            ? 'The trading session ended. No target or invalidation result is confirmed in the available closes.'
+            : 'Waiting for completed price bars. The original setup levels remain fixed.';
+        $case['review_complete'] = false;
+        $case['reviewed_through'] = gmdate('c', $previous);
+        // A price-data pause is not a terminal market outcome. A later replay
+        // can resume when the missing bars arrive, without guessing across it.
+        $case['outcome_at'] = $closed ? gmdate('c', $sessionClose) : null;
     }
 
     private function validSeed(array $row, array $context): bool

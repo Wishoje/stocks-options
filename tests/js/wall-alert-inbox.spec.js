@@ -33,13 +33,19 @@ describe('active watchlist setups in the inbox', () => {
       { status_group: 'needs_update' }, { setup: { direction: 'bullish' } }, { assessment_id: null },
       { session: '2026-09-29' }, { timeframe: '14d' }, { evaluated_through: '2026-09-30T13:50:00Z' },
       { qualified_at: '2026-09-30T14:25:00Z' },
-      { status_group: 'conditions_met', entry_expires_at: '2026-09-30T14:10:00Z' }]) {
+      { qualified: false, status_group: 'conditions_met', entry_expires_at: '2026-09-30T14:10:00Z' }]) {
       expect(wallInboxSetupSnapshots(activeFeed([activeSetup(change)]), now)).toEqual([])
     }
     for (const change of [{ state: 'demonstration' }, { state: 'outside_session' }, { timeframe: '14d' },
       { session: '2026-09-29' }, { refresh_until: '2026-09-30T14:30:00Z' }]) {
       expect(wallInboxSetupSnapshots(activeFeed([activeSetup()], change), now)).toEqual([])
     }
+  })
+  it('recovers a qualified setup after the entry deadline without replaying a popup', () => {
+    const [item] = wallInboxSetupSnapshots(activeFeed([activeSetup({ status_group: 'conditions_met', entry_expires_at: '2026-09-30T14:10:00Z' })]), now)
+    expect(item).toMatchObject({ origin: 'watchlist', observed_at: '2026-09-30T14:00:00Z' })
+    const [paused] = wallInboxSetupSnapshots(activeFeed([activeSetup({ status_group: 'needs_update', outcome: 'unresolved' })]), now)
+    expect(paused).toMatchObject({ origin: 'watchlist' })
   })
   it('retains read state and original levels when the same watchlist setup is rediscovered', () => {
     const saved = storage(), inbox = createWallAlertInbox(1, saved)

@@ -104,6 +104,27 @@ class WallInteractionCollectionTest extends TestCase
         Http::assertSentCount(1);
     }
 
+    public function test_review_refresh_reuses_saved_evidence_without_new_provider_requests_or_raw_rewrites(): void
+    {
+        $this->observation();
+        Http::fake(['*' => Http::response($this->provider())]);
+        $service = app(WallInteractionService::class);
+        $service->collect('SPY', '2026-09-30', $this->now());
+        $original = WallObservation::where('dataset', 'wall_interactions')->first();
+        $raw = WallObservation::whereIn('dataset', ['intraday_price_bars', 'intraday_capture'])->pluck('payload_json', 'content_hash')->all();
+        $this->travel(1)->minutes();
+        $this->assertSame('recorded', $service->refreshReviewsFromRecorded('SPY', '2026-09-30')['status']);
+        Http::assertSentCount(1);
+        $this->assertSame($raw, WallObservation::whereIn('dataset', ['intraday_price_bars', 'intraday_capture'])->pluck('payload_json', 'content_hash')->all());
+        $this->assertSame($original->payload_json, $original->fresh()->payload_json);
+        $latest = json_decode(WallObservation::where('dataset', 'wall_interactions')->latest('id')->first()->payload_json, true);
+        $this->assertSame(\App\Support\WallIntelligence\WallSetupOutcomeEvaluator::VERSION, $latest['setup_lifecycle']['review_rule_version']);
+        $this->assertArrayNotHasKey('bars', $latest);
+        $this->assertSame('waiting_for_walls', $service->refreshReviewsFromRecorded('QQQ', '2026-09-30')['status']);
+        $this->artisan('walls:refresh-reviews', ['--symbol' => ['SPY'], '--session' => '2026-09-30'])->assertSuccessful();
+        Http::assertSentCount(1);
+    }
+
     public function test_revised_bars_append_evidence_without_overwriting_the_previous_assessment(): void
     {
         $this->observation();

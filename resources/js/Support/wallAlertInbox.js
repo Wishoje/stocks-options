@@ -39,7 +39,8 @@ export function wallInboxSetupSnapshots(data, now = Date.now()) {
   const cutoff = now - (Math.max(900, Number(data.quote_delay_seconds) || 900) * 1000 + 30000)
   return wallLifecycleRows(data, now)
     .filter(row => row.qualified === true && row.session === data.session && (row.timeframe || '7d') === '7d'
-      && ['conditions_met', 'in_progress'].includes(row.status_group) && !row.entry_window_elapsed
+      && (['conditions_met', 'in_progress'].includes(row.status_group) || (row.status_group === 'needs_update' && row.outcome === 'unresolved'))
+      && !row.entry_window_elapsed
       && validKey(row.assessment_id) && validKey(row.alert_id))
     .map(row => {
       const observed = row.qualified_at || row.observed_at

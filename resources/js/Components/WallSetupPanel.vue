@@ -38,7 +38,7 @@ const trigger = card => ({ continuation: 'Two closes through the wall, a later r
           <div><dt>Reference target</dt><dd>{{ number(card.target?.strike) }}</dd><small>{{ card.target ? `Recorded ${card.target.side} wall · ${time(card.target.observed_at)} ET` : 'Requires a recorded level in this direction' }}</small></div>
           <div><dt>Room to target</dt><dd>{{ Number.isFinite(card.target_room_ratio) ? `${number(card.target_room_ratio)}×` : '—' }}</dd><small>Versus invalidation distance · 1.5× minimum</small></div>
         </dl>
-        <details><summary>Trigger and evidence</summary><p><b>Price trigger.</b> {{ trigger(card) }}</p><p v-if="card.expires_at">This sequence expires by {{ time(card.expires_at) }} ET, or when the wall comparison changes.</p>
+        <details><summary>Trigger and evidence</summary><p><b>Price trigger.</b> {{ trigger(card) }}</p><p v-if="card.expires_at"><template v-if="card.status === 'conditions_met'">Entry window ends at {{ time(card.expires_at) }} ET. Follow-up keeps the original target and invalidation through session close.</template><template v-else>This sequence expires by {{ time(card.expires_at) }} ET, or when the wall comparison changes.</template></p>
           <ul><li v-for="check in card.evidence_checks || []" :key="check.key"><span aria-hidden="true">{{ check.passed ? '✓' : '○' }}</span> {{ check.label }} <b>{{ check.passed ? 'Recorded' : 'Pending' }}</b></li></ul>
           <p v-if="card.confirmed_at">Price sequence completed at {{ time(card.confirmed_at) }} ET. Entry, invalidation and target levels remain fixed for this sequence.</p>
         </details>

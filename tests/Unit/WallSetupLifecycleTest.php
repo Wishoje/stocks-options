@@ -30,4 +30,19 @@ class WallSetupLifecycleTest extends TestCase
         $this->assertArrayNotHasKey('bars', $result);
         $this->assertArrayNotHasKey('evidence_bar_ids', $rows['old']);
     }
+
+    public function test_closed_entry_window_is_follow_up_and_session_close_is_a_distinct_result(): void
+    {
+        $analysis = ['symbol' => 'SPY', 'session' => '2026-10-26', 'timeframe' => '7d',
+            'evaluated_through' => '2026-10-26T19:00:00Z', 'setups' => ['current' => ['put' => ['id' => 'original', 'status' => 'conditions_met']]]];
+        $case = ['id' => 'original', 'side' => 'put', 'strike' => 100., 'outcome' => 'in_progress', 'qualified' => true,
+            'observed_at' => '2026-10-26T14:30:00Z', 'qualified_at' => '2026-10-26T14:30:00Z',
+            'entry_expires_at' => '2026-10-26T14:45:00Z', 'outcome_at' => null, 'reference_close' => 100.1, 'reason' => 'Following original levels.'];
+        $result = (new WallSetupLifecycle)->build($analysis, ['cases' => [$case]]);
+        $this->assertSame('in_progress', $result['items'][0]['status_group']);
+        $case['outcome'] = 'session_ended';
+        $result = (new WallSetupLifecycle)->build($analysis, ['cases' => [$case]]);
+        $this->assertSame('finished', $result['items'][0]['status_group']);
+        $this->assertSame('session_ended', $result['items'][0]['outcome']);
+    }
 }

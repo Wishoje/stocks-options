@@ -141,6 +141,14 @@
         ]
       },
       {
+        "id": "follow-original-levels",
+        "title": "Follow a qualified setup through the session.",
+        "paragraphs": [
+          "After qualification, the original target and invalidation stay fixed. Follow-up ends when a completed five-minute close reaches the target, crosses the invalidation boundary, or the regular trading session closes. A later change in the leading wall does not cancel that qualified scenario.",
+          "The entry window is separate. Entry window closed means the earlier setup is still being followed, not that a new entry has qualified. Needs update pauses the review when completed price bars are not yet available."
+        ]
+      },
+      {
         "id": "what-the-inbox-keeps",
         "title": "Return to the evidence without losing the symbol.",
         "paragraphs": [

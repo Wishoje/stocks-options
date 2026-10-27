@@ -199,7 +199,7 @@
         "paragraphs": [
           "Start with the current delayed price and the distance to each wall. If the card says to watch for a return to the level, the practical next step is to wait for that return rather than assume an entry exists now.",
           "If setup conditions are met, read the recorded direction and time, then the entry area, reference target and five-minute close that invalidates the scenario. Open the evidence to see the price sequence used.",
-          "“Conditions met” describes the assessment at its displayed time. It does not mean an old entry is still available or a target will be reached. A setup may later expire or be invalidated."
+          "“Conditions met” describes the assessment at its displayed time. It does not mean an old entry is still available or a target will be reached. A qualified scenario follows its original target and invalidation through the regular session, even if the leading wall changes. The entry window is separate from this follow-up."
         ],
         "steps": [
           "Check that price reached the relevant wall.",
@@ -303,6 +303,14 @@
           "Read the entry area. The wall strike itself is not automatically the entry.",
           "Read the reference target and the five-minute close that invalidates the scenario.",
           "Open the supporting completed bars. Check current price before deciding whether the scenario is usable."
+        ]
+      },
+      {
+        "id": "follow-through-close",
+        "title": "Keep the entry window separate from the follow-up.",
+        "paragraphs": [
+          "After qualification, the recorded target and invalidation remain fixed until a completed five-minute close reaches a boundary or the regular session closes. A new leading wall does not replace those original levels.",
+          "Entry window closed does not cancel a qualified setup. It means the original entry is no longer presented as a fresh opportunity. The card can remain In progress while later closes are reviewed. A gap in completed price bars shows Needs update and can resume after those bars arrive."
         ]
       },
       {

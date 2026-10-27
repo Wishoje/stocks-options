@@ -51,7 +51,8 @@ watch(() => data.value?.session, () => { limit.value = 6 })
             <p v-if="checks(row).length">{{ checks(row).join(' · ') }}</p>
             <p v-if="progress(row)">{{ progress(row) }}</p>
             <p class="activity-next"><b>{{ row.status_group === 'finished' ? 'Result:' : row.status_group === 'needs_update' ? 'Last assessment:' : 'Next:' }}</b> {{ row.reason || row.next_condition?.text || 'Wait for a completed price sequence at this wall.' }}</p>
-            <p v-if="row.status_group === 'in_progress'">Following the recorded scenario. No entered position is assumed.</p>
+            <p v-if="row.status_group === 'in_progress'">Following the original target and invalidation until session close. No entered position is assumed.</p>
+            <p v-if="row.entry_window_closed && row.status_group === 'in_progress'">Entry window closed. This is follow-up on the recorded setup.</p>
             <p v-if="row.evaluated_through" class="observed-time">Assessed through {{ time(row.evaluated_through) }} ET</p></div>
             <dl v-if="hasLevels(row)"><div><dt>Entry area (recorded)</dt><dd>{{ number(row.setup.entry_zone.low) }}–{{ number(row.setup.entry_zone.high) }}</dd></div>
               <div><dt>Invalid if 5m close</dt><dd>{{ row.setup.invalidation.close_side }} {{ number(row.setup.invalidation.price) }}</dd></div>
@@ -64,7 +65,7 @@ watch(() => data.value?.session, () => { limit.value = 6 })
       <p v-else-if="!error" class="notice" role="status">{{ !data.watchlist_count ? 'Add symbols to your watchlist to follow their wall activity here.' : `No ${selectedStatus === 'all' ? 'setups' : selectedStatus === 'finished' ? 'past setups' : wallStatusLabel(selectedStatus).toLowerCase() + ' setups'} match these filters. Your selection stays in place as updates arrive.` }}</p>
       <p v-if="closed" class="footnote">The market is closed. These are the latest recorded states for this session.</p>
       <button v-if="filtered.length > limit" class="show-more" type="button" @click="limit += 6">Show more · {{ filtered.length - limit }} remaining</button>
-      <details class="footnote"><summary>What do these statuses mean?</summary><p>Watching: conditions have not passed. Conditions met: the rules passed at the recorded close. In progress: following a qualified scenario. Needs update: open the assessment to check its latest state. This list focuses on developing and active setups.</p></details>
+      <details class="footnote"><summary>What do these statuses mean?</summary><p>Watching: conditions have not passed. Conditions met: the rules passed at the recorded close. In progress: following the original qualified levels until target, invalidation or session close. A later wall change does not cancel the setup. Needs update: open the assessment to check its latest state. This list focuses on developing and active setups.</p></details>
       <p class="footnote">Conditions met refers to the recorded close. Check current price against the entry area before using a setup.</p>
       <button v-if="data.local_demo_available && !demo" class="preview" type="button" @click="chooseDemo(true)">Preview local demonstration</button>
     </template>

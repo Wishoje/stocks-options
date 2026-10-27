@@ -36,7 +36,7 @@ final class WallWatchlistService
             return $result;
         }
         $cutoff = app(WallInteractionService::class)->cutoff($now);
-        $key = 'wall-watchlist:projection:v2:'.hash('sha256', json_encode([$userId, $symbols, $result['session']]));
+        $key = 'wall-watchlist:projection:v3:'.hash('sha256', json_encode([$userId, $symbols, $result['session']]));
         [$models, $assessments] = Cache::remember($key, 30, function () use ($userId, $symbols, $result, $now, $cutoff) {
             $models = $this->latest($userId, $symbols, $result['session'], 'intraday_capture', IntradayWallModel::SCHEMA,
                 IntradayWallModel::MODEL, 'model_observation', 'scope->timeframe', $now)
@@ -74,7 +74,7 @@ final class WallWatchlistService
                         && is_numeric($row['strike'] ?? null) && is_finite((float) $row['strike']) && $row['strike'] > 0) {
                         $result['lifecycle_items'][] = array_intersect_key($row, array_flip(['id', 'symbol', 'side', 'strike',
                             'alert_id', 'assessment_id', 'session', 'timeframe', 'status_group', 'outcome', 'qualified',
-                            'observed_at', 'qualified_at', 'entry_expires_at', 'evaluated_through', 'outcome_at', 'close', 'reason', 'setup']));
+                            'observed_at', 'qualified_at', 'entry_expires_at', 'evaluated_through', 'outcome_at', 'review_until', 'reviewed_through', 'close', 'reason', 'setup']));
                     }
                 }
             }

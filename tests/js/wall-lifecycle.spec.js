@@ -23,13 +23,14 @@ describe('shared wall lifecycle presentation', () => {
     expect(wallLifecycleRows(data([row('a')]), now, true)[0].status_group).toBe('needs_update')
     expect(wallLifecycleRows({ ...data([row('a')]), session: '2026-10-23' }, now)).toEqual([])
   })
-  it('does not leave an elapsed entry window in conditions met between polls', () => {
+  it('moves a qualified closed entry window to in progress without hiding it', () => {
     const r = { ...row('a', 'conditions_met'), entry_expires_at: '2026-10-26T14:59:00Z' }
-    expect(wallLifecycleRows(data([r]), now)[0].status_group).toBe('needs_update')
-    expect(activeWallRows(wallLifecycleRows(data([r]), now))).toEqual([])
+    expect(wallLifecycleRows(data([r]), now)[0]).toMatchObject({ status_group: 'in_progress', entry_window_closed: true, entry_window_elapsed: false })
+    expect(activeWallRows(wallLifecycleRows(data([r]), now))).toHaveLength(1)
+    expect(activeWallRows(wallLifecycleRows(data([{ ...r, qualified: false }]), now))).toEqual([])
   })
   it('excludes ended scenarios from Scanner and Alerts without rewriting their recorded outcomes', () => {
-    const past = ['entry_missed', 'expired', 'target_reached', 'invalidated', 'unresolved']
+    const past = ['entry_missed', 'expired', 'target_reached', 'invalidated', 'session_ended', 'unresolved']
       .map((outcome, index) => ({ ...row(String(index), 'finished'), outcome }))
     const rows = wallLifecycleRows(data([row('a', 'watching'), row('b', 'conditions_met'), row('c'), ...past]), now)
     expect(activeWallRows(rows).map(r => r.id)).toEqual(['a', 'b', 'c'])

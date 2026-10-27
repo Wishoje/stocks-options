@@ -77,9 +77,10 @@ class WallSetupOutcomeEvaluatorTest extends TestCase
         $this->assertSame('invalidated', $this->review([100.06], $seed)['cases'][0]['outcome']);
     }
 
-    public function test_complete_horizon_expires_and_partial_continuity_is_unresolved(): void
+    public function test_review_continues_after_one_hour_and_price_gaps_pause_it(): void
     {
-        $this->assertSame('expired', $this->review(array_fill(0, 12, 100.2))['cases'][0]['outcome']);
+        $this->assertSame('in_progress', $this->review(array_fill(0, 12, 100.2))['cases'][0]['outcome']);
+        $this->assertSame('target_reached', $this->review([...array_fill(0, 13, 100.2), 101.1], cutoff: 70)['cases'][0]['outcome']);
         $this->assertSame('unresolved', $this->review([100.2, 100.3])['cases'][0]['outcome']);
         $interaction = $this->interaction([100.2, 100.3, 101.1]);
         unset($interaction['bars'][1]);
@@ -88,12 +89,15 @@ class WallSetupOutcomeEvaluatorTest extends TestCase
         $this->assertCount(1, $result['cases'][0]['follow_up_bars']);
     }
 
-    public function test_wall_comparison_change_ends_review_before_the_later_price_result(): void
+    public function test_original_levels_survive_wall_changes_and_an_elapsed_entry_window(): void
     {
-        $case = $this->review([100.2, 101.2], identities: [1 => 'new-wall'])['cases'][0];
-        $this->assertSame('expired', $case['outcome']);
-        $this->assertCount(1, $case['follow_up_bars']);
-        $this->assertNull($case['outcome_close']);
+        $case = $this->review([100.2, 101.2], $this->caseSeed(['expires_at' => $this->at(5)]), identities: [1 => 'new-wall'])['cases'][0];
+        $this->assertSame('target_reached', $case['outcome']);
+        $this->assertCount(2, $case['follow_up_bars']);
+        $this->assertSame(101.2, $case['outcome_close']);
+        $interaction = $this->interaction([100.2, 99.9]);
+        $interaction['readings'] = [];
+        $this->assertSame('invalidated', (new WallSetupOutcomeEvaluator)->analyze($interaction, [$this->caseSeed()])['cases'][0]['outcome']);
     }
 
     public function test_future_bars_and_wrong_scope_do_not_change_an_earlier_review(): void
@@ -141,6 +145,38 @@ class WallSetupOutcomeEvaluatorTest extends TestCase
         $context['readings'] = [['side' => 'put', 'observed_at' => '2026-11-27T18:00:00Z', 'wall_identity' => 'wall-one']];
         $case = (new WallSetupOutcomeEvaluator)->analyze($context, [$seed])['cases'][0];
         $this->assertSame('2026-11-27T18:00:00+00:00', $case['review_until']);
-        $this->assertSame('expired', $case['outcome']);
+        $this->assertSame('session_ended', $case['outcome']);
+    }
+
+    public function test_regular_close_ends_the_plan_and_the_final_bar_can_reach_a_boundary(): void
+    {
+        $closes = array_fill(0, 72, 100.2); // 10 AM to 4 PM ET.
+        $result = $this->review($closes, cutoff: 365);
+        $case = $result['cases'][0];
+        $this->assertSame('session_ended', $case['outcome']);
+        $this->assertSame('2026-09-30T20:00:00+00:00', $case['outcome_at']);
+        $this->assertSame('regular_session_close', $result['review_window']);
+        $this->assertSame(390, $result['horizon_minutes']);
+        $closes[71] = 101.0;
+        $this->assertSame('target_reached', $this->review($closes, cutoff: 365)['cases'][0]['outcome']);
+        $closes[71] = 99.9;
+        $this->assertSame('invalidated', $this->review($closes, cutoff: 365)['cases'][0]['outcome']);
+    }
+
+    public function test_a_paused_price_review_resumes_only_when_the_gap_is_filled(): void
+    {
+        $full = $this->interaction([100.2, 100.3, 101.1], 15);
+        $gap = $full;
+        unset($gap['bars'][1]);
+        $paused = (new WallSetupOutcomeEvaluator)->analyze($gap, [$this->caseSeed()])['cases'][0];
+        $this->assertSame('unresolved', $paused['outcome']);
+        $this->assertNull($paused['outcome_at']);
+        $this->assertFalse($paused['review_complete']);
+        $this->assertSame('target_reached', (new WallSetupOutcomeEvaluator)->analyze($full, [$this->caseSeed()])['cases'][0]['outcome']);
+        $gap['evaluated_through'] = '2026-09-30T20:00:00Z';
+        $ended = (new WallSetupOutcomeEvaluator)->analyze($gap, [$this->caseSeed()])['cases'][0];
+        $this->assertSame('session_ended', $ended['outcome']);
+        $this->assertFalse($ended['review_complete']);
+        $this->assertNull($ended['outcome_close']);
     }
 }

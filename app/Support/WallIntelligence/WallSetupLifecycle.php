@@ -15,9 +15,10 @@ final class WallSetupLifecycle
             $outcome = $case['outcome'];
             $group = match ($outcome) {
                 'in_progress' => (($current[$case['side']]['id'] ?? null) === $case['id']
-                    && ($current[$case['side']]['status'] ?? null) === 'conditions_met') ? 'conditions_met' : 'in_progress',
+                    && ($current[$case['side']]['status'] ?? null) === 'conditions_met'
+                    && (empty($case['entry_expires_at']) || strtotime($case['entry_expires_at']) >= strtotime($analysis['evaluated_through']))) ? 'conditions_met' : 'in_progress',
                 'watching' => 'watching',
-                'target_reached', 'invalidated', 'expired', 'entry_missed', 'no_setup' => 'finished',
+                'target_reached', 'invalidated', 'session_ended', 'expired', 'entry_missed', 'no_setup' => 'finished',
                 default => 'needs_update',
             };
             $rows[$case['id']] = [
@@ -29,6 +30,7 @@ final class WallSetupLifecycle
                 'observed_at' => $case['observed_at'], 'qualified_at' => $case['qualified_at'],
                 'entry_expires_at' => $case['entry_expires_at'] ?? null,
                 'evaluated_through' => $analysis['evaluated_through'], 'outcome_at' => $case['outcome_at'],
+                'review_until' => $case['review_until'] ?? null, 'reviewed_through' => $case['reviewed_through'] ?? null,
                 'close' => $case['reference_close'], 'reason' => $case['reason'],
                 'setup' => array_intersect_key($case, array_flip(['pattern', 'direction', 'entry_zone', 'invalidation', 'target'])),
             ];

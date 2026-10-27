@@ -138,6 +138,50 @@ final class WallInteractionService
         }
     }
 
+    /** Append a current lifecycle from retained evidence; no provider call or raw-data rewrite. */
+    public function refreshReviewsFromRecorded(string $symbol, string $session): array
+    {
+        $lock = Cache::lock('walls:bars:lock:'.$symbol, 120);
+        if (! $lock->get()) {
+            return ['status' => 'busy'];
+        }
+        try {
+            $rows = WallObservation::where('symbol', $symbol)->where('dataset', 'intraday_capture')
+                ->where('analysis_session', $session)->where('schema_version', IntradayWallModel::SCHEMA)
+                ->where('observation_kind', 'model_observation')
+                ->where('payload_json->scope->timeframe', IntradayWallTracker::LIVE_TIMEFRAME)
+                ->orderByDesc('observed_at')->orderByDesc('id')->limit(501)->get(['content_hash', 'payload_json']);
+            if ($rows->count() > 500) {
+                return ['status' => 'observation_limit'];
+            }
+            $observations = $rows->reverse()->map(function ($row) {
+                $payload = json_decode($row->payload_json, true, flags: JSON_THROW_ON_ERROR);
+                unset($payload['strike_data']);
+                $payload['evidence_hash'] = $row->content_hash;
+
+                return $payload;
+            })->values()->all();
+            if (! $observations) {
+                return ['status' => 'waiting_for_walls'];
+            }
+            $analysis = $this->read($symbol, $session, IntradayWallTracker::LIVE_TIMEFRAME, $observations);
+            if (empty($analysis['as_of']) || empty($analysis['price_evidence_hash'])) {
+                return ['status' => 'waiting_for_completed_bars'];
+            }
+            $reviews = $analysis['setup_reviews'];
+            unset($analysis['setup_reviews']);
+            $analysis['setups']['review_seeds'] = (new WallSetupOutcomeEvaluator)->seeds($analysis['setups']);
+            $analysis['setup_lifecycle'] = (new \App\Support\WallIntelligence\WallSetupLifecycle)->build($analysis, $reviews);
+            $checkpoint = (new WallInteractionCheckpoint)->build($analysis, $observations);
+            $this->record($symbol, $session, 'wall_interactions', $checkpoint, CarbonImmutable::now('UTC'));
+
+            return ['status' => 'recorded', 'qualified' => $reviews['summary']['qualified'],
+                'qualified_outcomes' => $reviews['summary']['qualified_outcomes']];
+        } finally {
+            $lock->release();
+        }
+    }
+
     private function record(string $symbol, string $session, string $dataset, array $payload, CarbonImmutable $now): string
     {
         $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);

@@ -5,7 +5,7 @@ const props = defineProps({ reviews: { type: Object, required: true } })
 const outcome = ref('qualified'), side = ref('all'), page = ref(0), selectedId = ref('')
 const pageSize = 8
 const labels = {
-  target_reached: 'Target reached', invalidated: 'Invalidated', expired: 'Expired',
+  target_reached: 'Target reached', invalidated: 'Invalidated', session_ended: 'Session ended', expired: 'Expired',
   unresolved: 'Unresolved', in_progress: 'In progress', entry_missed: 'Entry missed',
   no_setup: 'No setup', watching: 'Watching',
 }
@@ -36,7 +36,7 @@ watch(cases, () => {
     <header>
       <div><p class="eyebrow">SETUP REVIEW</p><h3>What happened after the setups?</h3>
         <p>Review the later price closes and the levels each scenario used.</p></div>
-      <span class="context">{{ reviews.symbol }} · {{ reviews.session }} · {{ reviews.horizon_minutes }}-minute review</span>
+      <span class="context">{{ reviews.symbol }} · {{ reviews.session }} · {{ reviews.review_window === 'regular_session_close' ? 'Through session close' : `${reviews.horizon_minutes}-minute review` }}</span>
     </header>
     <p v-if="reviews.demonstration" class="review-note">Local synthetic example · These scenarios demonstrate the review rules.</p>
     <p v-else class="review-note">Recorded price behavior · The counts below follow setups whose conditions were met. They do not assume an executed trade.</p>
@@ -44,8 +44,8 @@ watch(cases, () => {
       <div><span>Conditions met</span><strong>{{ counts.qualified || 0 }}</strong><small>One count per setup</small></div>
       <div><span>Target reached</span><strong class="positive">{{ qualifiedCounts.target_reached || 0 }}</strong><small>At a later completed close</small></div>
       <div><span>Invalidated</span><strong class="negative">{{ qualifiedCounts.invalidated || 0 }}</strong><small>Close crossed the boundary</small></div>
-      <div><span>Expired</span><strong>{{ qualifiedCounts.expired || 0 }}</strong><small>Time or wall comparison ended</small></div>
-      <div><span>Unresolved</span><strong>{{ qualifiedCounts.unresolved || 0 }}</strong><small>Comparison ended without a result</small></div>
+      <div><span>Session ended</span><strong>{{ qualifiedCounts.session_ended || 0 }}</strong><small>Regular trading session closed</small></div>
+      <div><span>Needs update</span><strong>{{ qualifiedCounts.unresolved || 0 }}</strong><small>Waiting for completed price bars</small></div>
       <div><span>In progress</span><strong>{{ qualifiedCounts.in_progress || 0 }}</strong><small>Still within the review window</small></div>
     </div>
     <p class="sample-note">{{ counts.scenarios || 0 }} total scenarios in this session · {{ Math.max(0, (counts.scenarios || 0) - (counts.qualified || 0)) }} did not reach an eligible entry close.<template v-if="counts.overlapping_reviews"> {{ counts.overlapping_reviews }} reviews overlap another review.</template></p>
@@ -91,7 +91,7 @@ watch(cases, () => {
     <details class="review-guide"><summary>How to read setup results</summary>
       <p><b>Start with Conditions met.</b> It counts each distinct setup once at its first eligible five-minute close. Repeated readings of the same setup do not add samples. The table also keeps scenarios that expired, missed their zone or never qualified.</p>
       <p><b>Target and invalidation use completed closes.</b> The first later close at or beyond the frozen target is Target reached. A close beyond the opposite invalidation boundary is Invalidated. A wick touching a level does not determine either result. Levels remain fixed from the qualifying assessment.</p>
-      <p><b>Review up to one hour.</b> The window ends sooner at the market close or when the wall comparison changes. Expired means the complete review ended without either boundary closing. Unresolved means the continuous comparison ended before an outcome could be determined. In progress means the review is still running.</p>
+      <p><b>Follow through session close.</b> Qualified setups keep their original target and invalidation even when the leading wall changes or the entry window closes. The first target close, invalidation close or regular-session close ends the follow-up. A gap in completed price bars pauses the review as Needs update; it does not cancel the setup. The review can resume when those bars arrive.</p>
       <p><b>Keep the basis visible.</b> Saved assessment uses the first qualifying scenario preserved by collection. Session replay reconstructs the scenario from retained session evidence. Later price bars can be revised; this review is descriptive and is not an as-published trading backtest.</p>
       <p>Counts describe observed price paths, without simulated orders, profit or loss, or a win rate. Overlapping review windows share market observations. Evidence grades describe the original setup checks and do not measure its future chance of success.</p>
     </details>

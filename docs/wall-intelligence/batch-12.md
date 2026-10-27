@@ -1,18 +1,18 @@
 # Recorded setup results
 
-Intraday > Wall tracking includes **What happened after the setups?** below the conditional setup cards. It reviews later completed price closes against the levels used by each scenario. The selected symbol, session and expiry scope govern the review. Users can filter outcomes and sides, inspect the fixed levels and supporting closes, and switch recorded sessions through the existing timeline selector.
+Intraday > Wall tracking includes **What happened after the setups?** below the conditional setup cards. It reviews later completed price closes against the levels used by each scenario. The selected symbol, session and expiry scope govern the review. Users can filter outcomes and sides, inspect the fixed levels and supporting closes, and follow the current session.
 
 The first view shows setups whose conditions were met. All scenarios also includes sequences that missed their entry zone, failed the setup rules, or ended before an eligible close. Those cases remain visible without entering the qualified outcome counts. The panel describes recorded price paths without simulated orders, profit or loss, success rates or win probabilities.
 
 ## Review rules
 
-The schema is `wall-setup-reviews.v1`; the rules are `frozen-levels-60m-close.v1`. Setup definitions remain `conditional-walls.v1`. Each setup ID contributes at most one case. The first eligible five-minute close starts its review, with the original entry zone, invalidation boundary, reference target, evidence grade and comparison identity held fixed.
+The schema is `wall-setup-reviews.v1`; the rules are `frozen-levels-session-close.v2`. Setup definitions remain `conditional-walls.v1`. Each setup ID contributes at most one case. The first eligible five-minute close starts its review, with the original entry zone, invalidation boundary, reference target, evidence grade and original comparison identity preserved. Price follow-up no longer requires later wall identities to match.
 
-The follow-up lasts up to 60 minutes, ending sooner at the regular market close or when the wall comparison changes. A later completed close at or beyond the reference target is Target reached. A completed close strictly beyond the invalidation boundary is Invalidated. These rules mirror for bullish and bearish scenarios. Wick touches do not determine either result, so the evaluator never invents an order between intrabar high and low prices.
+The follow-up continues through the regular session close. The original target and invalidation remain fixed when the leading wall, basis, scope or source changes after qualification. A later completed close at or beyond the reference target is Target reached. A completed close strictly beyond the invalidation boundary is Invalidated. These rules mirror for bullish and bearish scenarios. Wick touches do not determine either result, so the evaluator never invents an order between intrabar high and low prices.
 
-A fully observed window that ends without either price outcome is Expired. A changed wall comparison also expires the review before a close using that changed context can supply an outcome. A break in continuous five-minute evidence is Unresolved. In progress requires that the review window is still running and its price evidence is recent. The calendar caps reviews at early market closes.
+Session ended means the regular trading session closed. A changed wall comparison does not end qualified follow-up. A break in continuous five-minute evidence pauses the review as Unresolved / Needs update; complete retained bars can resume it. An incomplete review at the session close is labelled Session ended without claiming that neither price boundary was crossed. The calendar honors early closes.
 
-The 15-minute entry window from Batch 11 and the 60-minute price review serve different purposes. Reaching an eligible close starts the follow-up; later movement beyond the entry zone does not erase that earlier eligibility. A missed entry before any eligible close contributes no qualified result.
+The 15-minute entry window and the session-long price review serve different purposes. Reaching an eligible close starts the follow-up; later movement beyond the entry zone does not erase that earlier eligibility. A missed entry before any eligible close contributes no qualified result.
 
 The summary separates all scenarios from qualified outcomes. Overlapping reviews are marked when a later qualifying scenario starts before an earlier review ends. These cases share market observations and cannot be treated as independent performance samples. No aggregate percentages are published.
 

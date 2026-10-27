@@ -6,7 +6,7 @@ export const WALL_STATUS_FILTERS = Object.freeze([
 ])
 export const wallStatusLabel = key => WALL_STATUS_FILTERS.find(([value]) => value === key)?.[1] || 'Needs update'
 export const wallOutcomeLabel = key => ({ target_reached: 'Target reached', invalidated: 'Invalidated',
-  expired: 'Setup window closed', entry_missed: 'Price moved past entry', no_setup: 'Not qualified', unresolved: 'Comparison interrupted' }[key] || '')
+  session_ended: 'Session ended', expired: 'Setup window closed', entry_missed: 'Price moved past entry', no_setup: 'Not qualified', unresolved: 'Comparison interrupted' }[key] || '')
 
 export function wallLifecycleRows(data, now = Date.now(), unavailable = false) {
   if (data?.schema_version !== 'wall-watchlist.v1' || (data.state !== 'demonstration' && data.session !== wallAlertSessionDate(now))) return []
@@ -25,9 +25,12 @@ export function wallLifecycleRows(data, now = Date.now(), unavailable = false) {
         && cutoff - at <= 600000 && data.state === 'ready' && Date.parse(data.refresh_until) > now)
       // A proven terminal result remains a recorded fact when collection pauses.
       const expiry = Date.parse(row.entry_expires_at || row.setup?.expires_at)
-      const expiredEntry = data.state !== 'demonstration' && row.status_group === 'conditions_met' && Number.isFinite(expiry) && expiry < cutoff
-      return { ...row, entry_window_elapsed: expiredEntry,
-        status_group: row.status_group === 'finished' || (fresh && !expiredEntry) ? row.status_group : 'needs_update' }
+      const entryClosed = data.state !== 'demonstration' && Number.isFinite(expiry) && expiry < cutoff
+      const qualified = row.qualified === true
+      const expiredEntry = entryClosed && row.status_group === 'conditions_met' && !qualified
+      const status = entryClosed && qualified && row.status_group === 'conditions_met' ? 'in_progress' : row.status_group
+      return { ...row, entry_window_closed: entryClosed, entry_window_elapsed: expiredEntry,
+        status_group: status === 'finished' || (fresh && !expiredEntry) ? status : 'needs_update' }
     })
 }
 

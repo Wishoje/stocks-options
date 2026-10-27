@@ -141,6 +141,7 @@ describe('wall alert controls and shared polling', () => {
     expect(panel.textContent).toContain('NVDA')
     expect(panel.textContent).toContain('In progress')
     expect(panel.textContent).toContain('From your watchlist')
+    expect(panel.textContent).toContain('Entry window closed. Following the original target and invalidation until session close.')
     expect(panel.textContent).toContain('100.05–100.15')
     expect(panel.querySelector('.wall-inbox-item a').getAttribute('href')).toContain(`wall_assessment=${key('c')}`)
     first.alerts.markRead(key('c')); await flushPromises()
