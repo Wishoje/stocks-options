@@ -7,6 +7,7 @@ use App\Support\MarketSession;
 use App\Support\Symbols;
 use App\Support\WallIntelligence\IntradayWallDemo;
 use App\Support\WallIntelligence\IntradayWallModel;
+use App\Support\WallIntelligence\WallAlertHistory;
 use App\Support\WallIntelligence\WallInteractionDetector;
 use App\Support\WallIntelligence\WallInteractionRules;
 use App\Support\WallIntelligence\WallSetupNextCondition;
@@ -33,6 +34,7 @@ final class WallWatchlistService
             'quote_delay_seconds' => max(900, (int) config('wall_tracking.quote_delay_seconds')),
             'watchlist_count' => count($symbols), 'assessed_count' => 0,
             'state' => $market['is_rth'] ? 'ready' : 'outside_session', 'items' => [], 'lifecycle_items' => [], 'lifecycle_truncated' => false,
+            'alert_history' => [], 'alert_history_truncated' => false,
             'refresh_until' => $market['is_rth'] ? $market['closes_at'] : null,
             'lifecycle_refresh_until' => $lifecycleUntil && $now->lessThan($lifecycleUntil) ? $lifecycleUntil->toIso8601String() : null,
             'next_refresh_at' => CarbonImmutable::parse($market['next_open_at'])->addMinutes(15)->toIso8601String(),
@@ -41,7 +43,7 @@ final class WallWatchlistService
             return $result;
         }
         $cutoff = app(WallInteractionService::class)->cutoff($now);
-        $key = 'wall-watchlist:projection:v3:'.hash('sha256', json_encode([$userId, $symbols, $result['session']]));
+        $key = 'wall-watchlist:projection:v4:'.hash('sha256', json_encode([$userId, $symbols, $result['session']]));
         [$models, $assessments] = Cache::remember($key, 30, function () use ($userId, $symbols, $result, $now, $cutoff) {
             $models = $this->latest($userId, $symbols, $result['session'], 'intraday_capture', IntradayWallModel::SCHEMA,
                 IntradayWallModel::MODEL, 'model_observation', 'scope->timeframe', $now)
@@ -52,16 +54,26 @@ final class WallWatchlistService
                 WallInteractionRules::VERSION, 'interaction_assessment', 'timeframe', $cutoff)
                 ->select(['w.symbol', 'w.observed_at', 'w.payload_json->current as current', 'w.payload_json->state as state',
                     'w.payload_json->setups->current as setups', 'w.payload_json->setups->rule_version as setup_rules',
-                    'w.payload_json->setup_lifecycle as lifecycle'])->get()->keyBy('symbol');
+                    'w.payload_json->setup_lifecycle as lifecycle', 'w.payload_json->events as events',
+                    'w.payload_json->symbol as assessment_symbol', 'w.payload_json->session as assessment_session',
+                    'w.payload_json->timeframe as assessment_timeframe'])->get()->keyBy('symbol');
 
             return [$models, $assessments];
         });
         $rules = WallInteractionRules::profile();
         $detector = new WallInteractionDetector;
+        $history = new WallAlertHistory;
         foreach ($symbols as $symbol) {
             $model = $models->get($symbol);
             $assessment = $assessments->get($symbol);
             $lifecycle = $this->array($assessment?->lifecycle);
+            $historyScope = $assessment?->assessment_symbol === $symbol && $assessment?->assessment_session === $result['session']
+                && $assessment?->assessment_timeframe === IntradayWallTracker::LIVE_TIMEFRAME;
+            $events = $historyScope ? $this->array($assessment?->events) : [];
+            $recorded = $history->read($symbol, $result['session'], $historyScope ? $lifecycle : [], $events, $cutoff,
+                $assessment?->observed_at ? CarbonImmutable::parse($assessment->observed_at, 'UTC') : null);
+            array_push($result['alert_history'], ...$recorded['items']);
+            $result['alert_history_truncated'] = $result['alert_history_truncated'] || $recorded['truncated'];
             if (($lifecycle['schema_version'] ?? null) === \App\Support\WallIntelligence\WallSetupLifecycle::VERSION
                 && ($lifecycle['rule_version'] ?? null) === WallSetupRules::VERSION
                 && ($lifecycle['review_rule_version'] ?? null) === \App\Support\WallIntelligence\WallSetupOutcomeEvaluator::VERSION
@@ -145,6 +157,10 @@ final class WallWatchlistService
         usort($result['lifecycle_items'], fn ($a, $b) => strcmp($b['observed_at'], $a['observed_at']) ?: strcmp($a['id'], $b['id']));
         $result['lifecycle_truncated'] = $result['lifecycle_truncated'] || count($result['lifecycle_items']) > 1000;
         $result['lifecycle_items'] = array_slice($result['lifecycle_items'], 0, 1000);
+        usort($result['alert_history'], fn ($a, $b) => strcmp($b['observed_at'], $a['observed_at'])
+            ?: strcmp($a['alert_id'], $b['alert_id']));
+        $result['alert_history_truncated'] = $result['alert_history_truncated'] || count($result['alert_history']) > WallAlertHistory::LIMIT;
+        $result['alert_history'] = array_slice($result['alert_history'], 0, WallAlertHistory::LIMIT);
 
         return $result;
     }

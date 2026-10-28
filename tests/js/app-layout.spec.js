@@ -141,7 +141,7 @@ describe('AppLayout navigation shell', () => {
       global: { config: { globalProperties: { $page: { props: pageProps(42) } } }, mocks: { route: routeMock }, stubs: componentStubs },
     })
     await flushPromises()
-    expect(wrapper.text()).toContain('Alert me to new setups')
+    expect(wrapper.text()).toContain('Show popup notifications')
     expect(wrapper.get('.alert-switch input').element.checked).toBe(true)
     expect(axios.get).toHaveBeenCalledTimes(1)
     await wrapper.get('.alert-switch input').setValue(true); await flushPromises()

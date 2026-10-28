@@ -6,16 +6,16 @@ const alerts = inject(WALL_ALERTS, null)
 
 <template>
   <div v-if="alerts" class="wall-alert-controls" aria-label="Wall alert settings">
-    <div class="alert-switch"><label><input type="checkbox" :checked="alerts.settings.value.enabled" @change="alerts.update({ enabled: $event.target.checked })"> Alert me to new setups</label><span>While the site is open · Recorded prices delayed 15 min</span></div>
+    <div class="alert-switch"><label><input type="checkbox" :checked="alerts.settings.value.enabled" @change="alerts.update({ enabled: $event.target.checked })"> Show popup notifications</label><span>While the site is open · Recorded prices delayed 15 min</span></div>
     <div v-if="alerts.settings.value.enabled" class="alert-options">
       <label><input type="checkbox" :checked="alerts.settings.value.testing" @change="alerts.update({ testing: $event.target.checked })"> Also alert when price tests a wall</label>
       <label><input type="checkbox" :checked="alerts.settings.value.sound" @change="alerts.update({ sound: $event.target.checked })"> Sound</label>
       <button type="button" @click="alerts.preview()">Test alert</button>
     </div>
-    <p v-if="alerts.settings.value.enabled">New setup alerts are on by default and follow your saved symbols across pages. You can turn them off anytime.</p>
+    <p v-if="alerts.settings.value.enabled">Popups follow your saved symbols across pages. Today's alert history is saved even when the site is closed or popups are off.</p>
     <p v-if="alerts.settings.value.enabled && alerts.settings.value.sound && !alerts.soundReady.value">Click Test alert to activate saved sound for this visit.</p>
     <p v-if="alerts.message.value" role="status">{{ alerts.message.value }}</p>
-    <p v-if="alerts.settings.value.enabled && alerts.error.value" role="status">Alerts are paused until wall activity updates. {{ alerts.error.value }}</p>
+    <p v-if="alerts.settings.value.enabled && alerts.error.value" role="status">Popup updates are paused until wall activity refreshes. {{ alerts.error.value }}</p>
   </div>
 </template>
 

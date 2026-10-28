@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createWallAlertInbox, wallInboxSetupSnapshots, WALL_ALERT_INBOX_LIMIT } from '@/Support/wallAlertInbox'
+import { createWallAlertInbox, wallInboxServerSnapshots, wallInboxSetupSnapshots, WALL_ALERT_INBOX_LIMIT } from '@/Support/wallAlertInbox'
 
 const now = Date.parse('2026-09-30T14:36:00Z')
 const key = id => id.toString(16).padStart(64, '0')
@@ -91,13 +91,15 @@ describe('today’s recorded wall alert inbox', () => {
     expect(restored.filter(item => item.read_at).map(item => item.alert_id).sort()).toEqual([key(1), key(2)])
     expect(restored.find(item => item.alert_id === key(3)).read_at).toBeNull()
   })
-  it('keeps up to 100 most recently received alerts without carrying live-feed objects', () => {
-    const inbox = createWallAlertInbox(1, storage())
-    const result = inbox.add(Array.from({ length: 140 }, (_, index) => ({ ...row(index + 1), received_at: now + index,
-      evidence: 'not retained', alert_keys: { setup: key(index + 1) } })), now + 200)
-    expect(result).toHaveLength(WALL_ALERT_INBOX_LIMIT)
-    expect(result[0].alert_id).toBe(key(140))
-    expect(result.at(-1).alert_id).toBe(key(41))
+  it('keeps current history in memory while bounding the persistent browser cache', () => {
+    const saved = storage(), inbox = createWallAlertInbox(1, saved), count = WALL_ALERT_INBOX_LIMIT + 3
+    const result = inbox.add(Array.from({ length: count }, (_, index) => ({ ...row(index + 1), received_at: now + index,
+      evidence: 'not retained', alert_keys: { setup: key(index + 1) } })), now + count)
+    expect(result).toHaveLength(count)
+    const restored = createWallAlertInbox(1, saved).read(now + count)
+    expect(restored).toHaveLength(WALL_ALERT_INBOX_LIMIT)
+    expect(restored[0].alert_id).toBe(key(count))
+    expect(restored.at(-1).alert_id).toBe(key(4))
     expect(result[0]).not.toHaveProperty('evidence')
     expect(result[0]).not.toHaveProperty('alert_keys')
   })
@@ -142,5 +144,54 @@ describe('today’s recorded wall alert inbox', () => {
     expect(corrupt.read(now)).toEqual([])
     expect(corrupt.add([row()], now)).toHaveLength(1)
     expect(corrupt.persistent).toBe(true)
+  })
+})
+
+
+describe('server-recorded current-day alert history', () => {
+  const completed = () => ({ ...row(), session: '2026-09-30', timeframe: '7d', lifecycle: {
+    ...activeSetup(), status_group: 'finished', outcome: 'target_reached', outcome_at: '2026-09-30T15:00:00Z',
+    evaluated_through: '2026-09-30T15:00:00Z', reason: 'A later completed close reached the target.' } })
+
+  it('recovers a completed morning alert on the first visit after market close', () => {
+    const afterClose = Date.parse('2026-09-30T21:00:00Z')
+    const data = activeFeed([], { state: 'outside_session', refresh_until: '2026-09-30T20:00:00Z', alert_history: [completed()] })
+    const [item] = wallInboxServerSnapshots(data, afterClose)
+    expect(item).toMatchObject({ alert_id: key(1), status: 'conditions_met', observed_at: row().observed_at,
+      setup: row().setup, lifecycle: { status_group: 'finished', outcome: 'target_reached' } })
+  })
+
+  it('imports wall tests only when requested, and rejects yesterday, future, demo and other-scope rows', () => {
+    const data = activeFeed([], { alert_history: [completed(), { ...completed(), alert_id: key(2), status: 'testing', setup: null }] })
+    expect(wallInboxServerSnapshots(data, now)).toHaveLength(1)
+    expect(wallInboxServerSnapshots(data, now, true)).toHaveLength(2)
+    for (const change of [{ session: '2026-09-29' }, { timeframe: '14d' }, { observed_at: '2026-09-30T14:30:00Z' }]) {
+      expect(wallInboxServerSnapshots({ ...data, alert_history: [{ ...completed(), ...change }] }, now)).toEqual([])
+    }
+    expect(wallInboxServerSnapshots({ ...data, state: 'demonstration' }, now)).toEqual([])
+  })
+
+  it('preserves original levels and read marks while caching a newer completed lifecycle', () => {
+    const afterClose = Date.parse('2026-09-30T21:00:00Z'), saved = storage(), inbox = createWallAlertInbox(1, saved)
+    inbox.add([row()], now)
+    inbox.markRead(key(1), now + 1000)
+    inbox.add(wallInboxServerSnapshots(activeFeed([], { alert_history: [{ ...completed(), close: 999 }] }), afterClose), afterClose)
+    const [item] = createWallAlertInbox(1, saved).read(afterClose)
+    expect(item.close).toBe(row().close)
+    expect(item.setup).toEqual(row().setup)
+    expect(item.read_at).toBe(now + 1000)
+    expect(item.lifecycle).toMatchObject({ status_group: 'finished', outcome: 'target_reached' })
+  })
+
+  it('replaces a browser-only later reading with the server original qualification while preserving read state', () => {
+    const afterClose = Date.parse('2026-09-30T21:00:00Z'), saved = storage(), inbox = createWallAlertInbox(1, saved)
+    inbox.add([{ ...row(), close: 766, observed_at: '2026-09-30T14:25:00Z' }], now)
+    inbox.markRead(key(1), now + 1000)
+    inbox.add(wallInboxServerSnapshots(activeFeed([], { alert_history: [completed()] }), afterClose), afterClose)
+    const [item] = inbox.read(afterClose)
+    expect(item.observed_at).toBe(row().observed_at)
+    expect(item.close).toBe(row().close)
+    expect(item.read_at).toBe(now + 1000)
+    expect(item.received_at).toBe(now)
   })
 })

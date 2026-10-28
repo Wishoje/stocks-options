@@ -35,7 +35,19 @@ export function wallLifecycleRows(data, now = Date.now(), unavailable = false) {
 }
 
 export function wallInboxRows(history, data, now = Date.now(), unavailable = false) {
-  const lifecycle = new Map(wallLifecycleRows(data, now, unavailable).filter(row => row.alert_id).map(row => [row.alert_id, row]))
+  const saved = history.map(item => item.lifecycle).filter(Boolean)
+  const recorded = (Array.isArray(data?.alert_history) ? data.alert_history : []).map(item => item.lifecycle).filter(Boolean)
+  const scope = data?.session === wallAlertSessionDate(now) ? data
+    : { schema_version: 'wall-watchlist.v1', session: wallAlertSessionDate(now), timeframe: '7d', state: 'unavailable' }
+  const lifecycle = new Map()
+  for (const row of [...wallLifecycleRows({ ...scope, lifecycle_items: [...saved, ...recorded] }, now, unavailable), ...wallLifecycleRows(data, now, unavailable)]) {
+    if (!row.alert_id) continue
+    const prior = lifecycle.get(row.alert_id)
+    const at = value => Date.parse(value.evaluated_through || value.outcome_at || value.observed_at) || 0
+    if (prior?.status_group === 'finished' && row.status_group !== 'finished') continue
+    if (row.status_group === 'finished' && prior?.status_group !== 'finished') { lifecycle.set(row.alert_id, row); continue }
+    if (!prior || at(row) > at(prior) || (at(row) === at(prior) && row.status_group === 'finished')) lifecycle.set(row.alert_id, row)
+  }
   const current = new Map(currentWallAlertRows(data, now).map(row => [row.alert_keys?.[row.status === 'conditions_met' ? 'setup' : 'testing'], row]))
   return history.map(item => {
     const state = lifecycle.get(item.alert_id)
@@ -45,6 +57,39 @@ export function wallInboxRows(history, data, now = Date.now(), unavailable = fal
       status_group: match ? state.status_group : !unavailable && current.has(item.alert_id)
         ? item.status === 'conditions_met' ? 'conditions_met' : 'watching' : 'needs_update' }
   })
+}
+
+// Today's inbox keeps completed episodes. Scanner continues to use activeWallRows.
+export function wallInboxHistoryRows(rows) {
+  const groups = new Map(), episodes = []
+  const ordered = [...rows].sort((a, b) => Date.parse(a.qualified_at || a.observed_at) - Date.parse(b.qualified_at || b.observed_at))
+  for (const row of ordered) {
+    const plan = row.status === 'conditions_met' || row.qualified === true || row.lifecycle?.qualified === true ? wallActivePlanKey(row) : null
+    const time = Date.parse(row.qualified_at || row.observed_at)
+    const previous = plan ? groups.get(plan) : null
+    let episode = previous && (!Number.isFinite(previous.until) || time <= previous.until) ? previous : null
+    if (!episode) {
+      episode = { members: [], until: null }
+      episodes.push(episode)
+      if (plan) groups.set(plan, episode)
+    }
+    episode.members.push(row)
+    if (row.status_group === 'finished') {
+      const ended = Date.parse(row.lifecycle?.outcome_at || row.outcome_at || row.lifecycle?.evaluated_through || row.evaluated_through)
+      if (Number.isFinite(ended)) episode.until = Number.isFinite(episode.until) ? Math.min(episode.until, ended) : ended
+    }
+  }
+  return episodes.map(({ members }) => {
+    if (members.length === 1) return members[0]
+    const representative = members.find(row => row.status_group === 'finished')
+      || [...members].reverse().find(row => row.status_group === 'conditions_met') || members[0]
+    return { ...representative,
+      related_alert_ids: members.map(row => row.alert_id).filter(Boolean),
+      read_at: members.every(row => row.read_at) ? Math.max(...members.map(row => row.read_at)) : null,
+      additional_confirmations: members.filter(row => row !== representative).map(row => ({
+        observed_at: row.qualified_at || row.observed_at, assessment_id: row.assessment_id,
+      })) }
+  }).sort((a, b) => Date.parse(b.observed_at) - Date.parse(a.observed_at))
 }
 
 // A price plan can receive another pattern confirmation without changing its

@@ -7,7 +7,7 @@ const sessionToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America
 // Scanner and alerts share one current-session read per signed-in account.
 export function createWallWatchlistFeed(demonstration = false) {
   const data = ref(null), loading = ref(false), refreshing = ref(false), error = ref(''), revision = ref(0)
-  let controller, generation = 0, lastAttempt = 0, retryAfter = 0, consumers = 0, timer, denied = false
+  let controller, generation = 0, lastAttempt = 0, retryAfter = 0, consumers = 0, timer, denied = false, resumePending = false
 
   async function load({ reset = false } = {}) {
     if (Date.now() < retryAfter || (!reset && (loading.value || refreshing.value))) return
@@ -40,24 +40,30 @@ export function createWallWatchlistFeed(demonstration = false) {
     }
   }
 
-  function refreshVisible() {
+  function refreshVisible(resuming = false) {
+    if (resuming) resumePending = true
     if (document.visibilityState !== 'visible' || demonstration || denied || Date.now() - lastAttempt < 60000) return
-    if (data.value?.session !== sessionToday()) { data.value = null; load(); return }
-    if (!data.value || Date.parse(data.value.refresh_until) > Date.now()
-      || Date.parse(data.value.lifecycle_refresh_until) > Date.now() || Date.parse(data.value.next_refresh_at) <= Date.now()) load()
+    if (loading.value || refreshing.value || Date.now() < retryAfter) return
+    if (data.value?.session !== sessionToday()) { resumePending = false; data.value = null; load(); return }
+    if (resumePending || !data.value || Date.parse(data.value.refresh_until) > Date.now()
+      || Date.parse(data.value.lifecycle_refresh_until) > Date.now() || Date.parse(data.value.next_refresh_at) <= Date.now()) {
+      resumePending = false; load()
+    }
   }
+  function resumeVisible() { refreshVisible(true) }
   function watchlistChanged() { revision.value++; data.value = null; load({ reset: true }) }
   function stop() {
     generation++; controller?.abort(); clearInterval(timer)
+    resumePending = false
     loading.value = false; refreshing.value = false
-    document.removeEventListener('visibilitychange', refreshVisible)
+    document.removeEventListener('visibilitychange', resumeVisible)
     window.removeEventListener('watchlist-updated', watchlistChanged)
   }
   function subscribe() {
     if (++consumers === 1) {
       if (!demonstration) {
         timer = setInterval(refreshVisible, 60000)
-        document.addEventListener('visibilitychange', refreshVisible)
+        document.addEventListener('visibilitychange', resumeVisible)
         window.addEventListener('watchlist-updated', watchlistChanged)
       }
       if (!data.value || (!demonstration && (data.value.session !== sessionToday() || Date.now() - lastAttempt >= 60000))) load({ reset: data.value?.session !== sessionToday() })

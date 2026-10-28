@@ -59,12 +59,13 @@ describe('wall alert controls and shared polling', () => {
     expect(document.querySelector('.wall-alert-toast')).toBeNull()
     expect(document.querySelector('.wall-alert-notifications').getAttribute('aria-live')).toBe('polite')
   })
-  it('preserves a saved opt-out on reload and starts only after the user enables alerts', async () => {
+  it('preserves a popup opt-out while still reading daily history', async () => {
     const owner = ref(++id)
     localStorage.setItem(`gex:wall-alert-settings:v1:${owner.value}`, JSON.stringify({ enabled: false }))
     const first = render({ owner }); await flushPromises()
     expect(first.wrapper.get('.alert-switch input').element.checked).toBe(false)
-    expect(axios.get).not.toHaveBeenCalled()
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    expect(first.alerts.notifications.value).toEqual([])
     await first.wrapper.get('.alert-switch input').setValue(true); await flushPromises()
     expect(axios.get).toHaveBeenCalledTimes(1)
     await first.wrapper.get('.alert-switch input').setValue(false)
@@ -73,7 +74,7 @@ describe('wall alert controls and shared polling', () => {
     expect(second.wrapper.get('.alert-switch input').element.checked).toBe(false)
     expect(axios.get).toHaveBeenCalledTimes(1)
   })
-  it('does not monitor signed-out users or start a request for an account with alerts turned off', async () => {
+  it('does not read signed-out history and isolates history reads for accounts with popups off', async () => {
     const owner = ref(null), { wrapper } = render({ owner }); await flushPromises()
     expect(axios.get).not.toHaveBeenCalled()
     expect(wrapper.find('.wall-inbox-trigger').exists()).toBe(false)
@@ -83,9 +84,9 @@ describe('wall alert controls and shared polling', () => {
     localStorage.setItem(`gex:wall-alert-settings:v1:${optedOut}`, JSON.stringify({ enabled: false }))
     owner.value = optedOut; await flushPromises()
     expect(wrapper.get('.alert-switch input').element.checked).toBe(false)
-    expect(axios.get).toHaveBeenCalledTimes(1)
+    expect(axios.get).toHaveBeenCalledTimes(2)
   })
-  it('shares Scanner polling, continues on another page and stops when alerts are disabled', async () => {
+  it('shares Scanner polling and continues reading history when popups are disabled', async () => {
     const { wrapper } = render({ scanner: true })
     await flushPromises(); expect(axios.get).toHaveBeenCalledTimes(1)
     expect(wrapper.get('.alert-switch input').element.checked).toBe(true)
@@ -109,7 +110,7 @@ describe('wall alert controls and shared polling', () => {
     await wrapper.get('.alert-switch input').setValue(false)
     const count = axios.get.mock.calls.length
     await vi.advanceTimersByTimeAsync(60000)
-    expect(axios.get).toHaveBeenCalledTimes(count)
+    expect(axios.get).toHaveBeenCalledTimes(count + 1)
     expect(document.querySelector('.wall-alert-toast')).toBeNull()
   })
   it('does not replay initial data or repeated setup readings, and removes expired notifications', async () => {
@@ -154,7 +155,8 @@ describe('wall alert controls and shared polling', () => {
     axios.get.mockResolvedValue({ data: { ...payload([]), lifecycle_items: [{ ...setup, status_group: 'finished', outcome: 'expired' }] } })
     await vi.advanceTimersByTimeAsync(60000)
     await second.wrapper.get('.wall-inbox-trigger').trigger('click')
-    expect(document.querySelectorAll('.wall-inbox-item')).toHaveLength(0)
+    expect(document.querySelectorAll('.wall-inbox-item')).toHaveLength(1)
+    expect(document.querySelector('#wall-alert-inbox').textContent).toContain('Setup window closed')
     expect(second.alerts.unreadCount.value).toBe(0)
   })
   it('shows identical NVDA levels once with the second confirmation time and marks both records read', async () => {
@@ -267,7 +269,7 @@ describe('wall alert controls and shared polling', () => {
   it('backs off rate limits and retries an initial network failure only once per minute', async () => {
     axios.get.mockRejectedValueOnce(new Error('network'))
     const { wrapper } = render(); await flushPromises()
-    expect(wrapper.text()).toContain('Alerts are paused')
+    expect(wrapper.text()).toContain('Popup updates are paused')
     axios.get.mockRejectedValueOnce({ response: { status: 429, headers: { 'retry-after': '180' } } })
     await vi.advanceTimersByTimeAsync(60000)
     const count = axios.get.mock.calls.length
@@ -324,7 +326,7 @@ describe('wall alert controls and shared polling', () => {
     expect(document.querySelector('#wall-alert-inbox')).toBeNull()
     expect(JSON.parse(localStorage.getItem(`gex:wall-alert-inbox:v1:${owner.value}`)).items[0].read_at).toBeTruthy()
   })
-  it('removes ended alerts from the inbox, status filters and unread count', async () => {
+  it("retains ended alerts in today's inbox and status filters until the day ends", async () => {
     const { wrapper, alerts } = render(); await flushPromises()
     vi.setSystemTime(new Date('2026-09-30T14:36:00Z'))
     const received = row('b', '2026-09-30T14:20:00Z')
@@ -336,14 +338,14 @@ describe('wall alert controls and shared polling', () => {
       status_group: 'finished', outcome: 'entry_missed', qualified: false }
     axios.get.mockResolvedValue({ data: { ...payload([]), lifecycle_items: [ended] } })
     await vi.advanceTimersByTimeAsync(60000)
-    expect(alerts.unreadCount.value).toBe(0)
+    expect(alerts.unreadCount.value).toBe(1)
     expect(alerts.history.value).toHaveLength(1)
     await wrapper.get('.wall-inbox-trigger').trigger('click')
     const panel = document.querySelector('#wall-alert-inbox')
-    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(0)
-    expect(panel.textContent).toContain('No active setups or alerts')
-    expect(panel.textContent).not.toMatch(/Finished|Past setups|Entry missed|Expired/)
-    expect(panel.querySelectorAll('.filters button')).toHaveLength(5)
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(1)
+    expect(panel.textContent).toContain('Price moved past entry')
+    expect(panel.textContent).toContain('Past setups')
+    expect(panel.querySelectorAll('.filters button')).toHaveLength(6)
   })
   it('keeps received history when monitoring is disabled or fails, but isolates account changes', async () => {
     const { wrapper, alerts, owner } = render(); await flushPromises()
@@ -355,7 +357,7 @@ describe('wall alert controls and shared polling', () => {
     expect(alerts.history.value).toHaveLength(1)
     alerts.update({ enabled: false }); await flushPromises()
     await wrapper.get('.wall-inbox-trigger').trigger('click')
-    expect(document.querySelector('#wall-alert-inbox').textContent).toContain('Alerts off')
+    expect(document.querySelector('#wall-alert-inbox').textContent).toContain('Popups off')
     expect(document.querySelectorAll('.wall-inbox-item')).toHaveLength(1)
     owner.value = ++id; await flushPromises()
     expect(alerts.history.value).toEqual([])
@@ -403,7 +405,7 @@ describe('wall alert controls and shared polling', () => {
     const close = dialog.querySelector('.close')
     expect(document.activeElement).toBe(close)
     expect(trigger.attributes('aria-expanded')).toBe('true')
-    expect(dialog.textContent).toContain('No active setups or alerts')
+    expect(dialog.textContent).toContain('No alerts recorded today')
     const buttons = [...dialog.querySelectorAll('button')]
     close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }))
     expect(document.activeElement).toBe(buttons.at(-1))
@@ -417,5 +419,126 @@ describe('wall alert controls and shared polling', () => {
     expect(document.querySelector('#wall-alert-inbox')).toBeNull()
     expect(document.activeElement).toBe(trigger.element)
     expect(document.body.style.overflow).not.toBe('hidden')
+  })
+})
+
+
+describe('server history recovery independent of browser presence', () => {
+  const archived = (id = 'd', change = {}) => {
+    const original = row(id, '2026-09-30T14:00:00Z')
+    return { ...original, alert_id: key(id), session: '2026-09-30', timeframe: '7d',
+      lifecycle: { ...original, id: key(id), alert_id: key(id), session: '2026-09-30', timeframe: '7d',
+        observed_at: original.observed_at, qualified_at: original.observed_at, qualified: true,
+        status_group: 'finished', outcome: 'target_reached', outcome_at: '2026-09-30T15:00:00Z',
+        evaluated_through: '2026-09-30T15:00:00Z' }, ...change }
+  }
+  const dayFeed = (history, change = {}) => ({ ...payload(), state: 'outside_session', alert_history: history,
+    alert_history_truncated: false, refresh_until: '2026-09-30T20:00:00Z', ...change })
+
+  it('shows history loading rather than an empty result before the first server response', async () => {
+    let complete
+    axios.get.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    const { wrapper } = render(); await flushPromises()
+    await wrapper.get('.wall-inbox-trigger').trigger('click')
+    expect(document.querySelector('#wall-alert-inbox').textContent).toContain("Loading today's alerts")
+    expect(document.querySelector('#wall-alert-inbox').textContent).not.toContain('No alerts recorded today')
+    complete({ data: dayFeed([]) }); await flushPromises()
+    expect(document.querySelector('#wall-alert-inbox').textContent).toContain('No alerts recorded today')
+  })
+
+  it('recovers a completed morning setup after close with popups disabled and preserves read state on reload', async () => {
+    vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
+    const owner = ref(++id)
+    localStorage.setItem(`gex:wall-alert-settings:v1:${owner.value}`, JSON.stringify({ enabled: false }))
+    axios.get.mockResolvedValue({ data: dayFeed([archived()]) })
+    const first = render({ owner }); await flushPromises()
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    expect(first.alerts.history.value).toHaveLength(1)
+    expect(first.alerts.notifications.value).toEqual([])
+    expect(first.alerts.unreadCount.value).toBe(1)
+    await first.wrapper.get('.wall-inbox-trigger').trigger('click')
+    const panel = document.querySelector('#wall-alert-inbox')
+    expect(panel.textContent).toContain('Target reached')
+    expect(panel.textContent).toContain('Popups off')
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(1)
+    first.alerts.markRead(key('d')); await flushPromises()
+    first.wrapper.unmount()
+    const reload = render({ owner }); await flushPromises()
+    expect(reload.alerts.history.value).toHaveLength(1)
+    expect(reload.alerts.unreadCount.value).toBe(0)
+    expect(reload.alerts.notifications.value).toEqual([])
+  })
+
+  it('recovers history in an empty browser without replaying popups and only displays a truncation notice when flagged', async () => {
+    vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
+    axios.get.mockResolvedValue({ data: dayFeed([archived()]) })
+    const first = render(); await flushPromises()
+    expect(first.alerts.history.value).toHaveLength(1)
+    expect(first.alerts.notifications.value).toEqual([])
+    await first.wrapper.get('.wall-inbox-trigger').trigger('click')
+    expect(document.querySelector('#wall-alert-inbox').textContent).not.toContain('Some recorded history could not be included')
+    first.wrapper.unmount()
+    axios.get.mockResolvedValue({ data: dayFeed([archived()], { alert_history_truncated: true }) })
+    const second = render(); await flushPromises()
+    await second.wrapper.get('.wall-inbox-trigger').trigger('click')
+    expect(document.querySelector('#wall-alert-inbox').textContent).toContain('Some recorded history could not be included')
+  })
+
+  it('keeps all current server items visible even when local storage cannot save them', async () => {
+    vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
+    try {
+      axios.get.mockResolvedValue({ data: dayFeed([archived('d'), archived('e', { symbol: 'SPY', lifecycle: null })]) })
+      const { alerts } = render(); await flushPromises()
+      expect(alerts.history.value).toHaveLength(2)
+      expect(alerts.inboxPersistent.value).toBe(false)
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(alerts.history.value).toHaveLength(2)
+    } finally { vi.restoreAllMocks() }
+  })
+
+  it('does not recover testing history until opted in, and never creates a trade setup from it', async () => {
+    vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
+    axios.get.mockResolvedValue({ data: dayFeed([archived('d', { status: 'testing', setup: null, lifecycle: null })]) })
+    const { alerts, wrapper } = render(); await flushPromises()
+    expect(alerts.history.value).toEqual([])
+    alerts.update({ testing: true }); await flushPromises()
+    expect(alerts.history.value).toHaveLength(1)
+    expect(alerts.notifications.value).toEqual([])
+    await wrapper.get('.wall-inbox-trigger').trigger('click')
+    const item = document.querySelector('.wall-inbox-item')
+    expect(item.textContent).toContain('Testing a wall')
+    expect(item.querySelector('dl')).toBeNull()
+    alerts.update({ testing: false }); await flushPromises()
+    expect(alerts.history.value).toHaveLength(1)
+  })
+
+  it('keeps every server history row available when the bounded browser cache is synchronized', async () => {
+    vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
+    const rows = Array.from({ length: 2003 }, (_, index) => {
+      const alert = (index + 1).toString(16).padStart(64, '0')
+      return { ...archived(), alert_id: alert, assessment_id: alert, symbol: `S${index}`, lifecycle: null }
+    })
+    axios.get.mockResolvedValue({ data: dayFeed(rows) })
+    const { alerts, owner } = render(); await flushPromises()
+    expect(alerts.history.value).toHaveLength(2003)
+    const storageKey = `gex:wall-alert-inbox:v1:${owner.value}`
+    expect(JSON.parse(localStorage.getItem(storageKey)).items).toHaveLength(2000)
+    window.dispatchEvent(new StorageEvent('storage', { key: storageKey })); await flushPromises()
+    expect(alerts.history.value).toHaveLength(2003)
+  })
+
+  it('clears server history immediately when the account changes while the next response is pending', async () => {
+    vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
+    axios.get.mockResolvedValueOnce({ data: dayFeed([archived()]) })
+    const { alerts, owner } = render(); await flushPromises()
+    expect(alerts.history.value.map(item => item.symbol)).toEqual(['QQQ'])
+    let complete
+    axios.get.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    owner.value = ++id; await flushPromises()
+    expect(alerts.history.value).toEqual([])
+    complete({ data: dayFeed([archived('e', { symbol: 'SPY', lifecycle: null })]) }); await flushPromises()
+    expect(alerts.history.value.map(item => item.symbol)).toEqual(['SPY'])
+    expect(alerts.notifications.value).toEqual([])
   })
 })

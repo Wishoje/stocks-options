@@ -86,6 +86,178 @@ class WallWatchlistTest extends TestCase
             'payload_bytes' => strlen($json), 'payload_json' => $json]);
     }
 
+    private function historyCase(string $symbol = 'SPY', array $changes = []): array
+    {
+        $id = hash('sha256', 'saved-setup-'.$symbol);
+
+        return array_replace_recursive(['id' => $id, 'symbol' => $symbol, 'session' => '2026-09-30', 'timeframe' => '7d',
+            'alert_id' => hash('sha256', json_encode([$symbol, '2026-09-30', 'setup', $id])),
+            'assessment_id' => hash('sha256', 'original-assessment-'.$symbol), 'side' => 'put', 'strike' => 100.,
+            'status_group' => 'finished', 'outcome' => 'target_reached', 'qualified' => true,
+            'observed_at' => '2026-09-30T14:00:00Z', 'qualified_at' => '2026-09-30T14:00:00Z',
+            'evaluated_through' => '2026-09-30T14:15:00Z', 'entry_expires_at' => '2026-09-30T14:10:00Z',
+            'outcome_at' => '2026-09-30T14:10:00Z', 'close' => 100.1, 'reason' => 'A later close reached the original target.',
+            'setup' => ['direction' => 'bullish', 'pattern' => 'reversal', 'entry_zone' => ['low' => 100.05, 'high' => 100.15],
+                'invalidation' => ['price' => 99.95, 'close_side' => 'below'], 'target' => ['strike' => 101.]]], $changes);
+    }
+
+    private function withHistory(array $analysis, array $rows): array
+    {
+        return [...$analysis, 'setup_lifecycle' => ['schema_version' => 'wall-lifecycle.v1', 'rule_version' => WallSetupRules::VERSION,
+            'review_rule_version' => \App\Support\WallIntelligence\WallSetupOutcomeEvaluator::VERSION,
+            'symbol' => $analysis['symbol'], 'session' => $analysis['session'], 'timeframe' => $analysis['timeframe'],
+            'truncated' => false, 'items' => $rows]];
+    }
+
+    public function test_today_history_recovers_original_qualified_alerts_after_an_offline_visit_and_market_close(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $this->record($model, 'intraday_capture');
+        $case = $this->historyCase();
+        $analysis = $this->withHistory($this->assessment($model), [$case]);
+        $analysis['setups']['current']['put']['entry_zone'] = ['low' => 200., 'high' => 201.];
+        $analysis['setups']['current']['put']['target'] = ['strike' => 210.];
+        $this->record($analysis, 'wall_interactions');
+        $before = WallObservation::count();
+        $this->travelTo(CarbonImmutable::parse('2026-10-01T03:59:00Z'));
+        DB::enableQueryLog();
+        $data = app(WallWatchlistService::class)->read(987);
+        $this->assertCount(3, DB::getQueryLog());
+        DB::disableQueryLog();
+        $this->assertSame('outside_session', $data['state']);
+        $this->assertSame([], $data['items']);
+        $this->assertCount(1, $data['alert_history']);
+        $alert = $data['alert_history'][0];
+        $this->assertSame($case['alert_id'], $alert['alert_id']);
+        $this->assertSame('conditions_met', $alert['status']);
+        $this->assertSame('2026-09-30T14:00:00+00:00', $alert['observed_at']);
+        $this->assertSame(101., $alert['setup']['target']['strike']);
+        $this->assertSame(100.05, $alert['setup']['entry_zone']['low']);
+        $this->assertSame('target_reached', $alert['lifecycle']['outcome']);
+        $this->assertFalse($data['alert_history_truncated']);
+        $this->assertSame([], app(WallWatchlistService::class)->read(999)['alert_history']);
+        $this->assertSame($before, WallObservation::count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+        $this->travelTo(CarbonImmutable::parse('2026-10-01T04:00:00Z'));
+        $this->assertSame([], app(WallWatchlistService::class)->read(987)['alert_history']);
+    }
+
+    public function test_qualified_terminal_history_is_kept_but_unqualified_invalid_and_cross_session_rows_are_not(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $cases = [];
+        foreach (['target_reached', 'invalidated', 'session_ended', 'expired', 'entry_missed'] as $index => $outcome) {
+            $case = $this->historyCase(changes: ['id' => hash('sha256', 'terminal-'.$index), 'outcome' => $outcome]);
+            $case['alert_id'] = hash('sha256', json_encode(['SPY', '2026-09-30', 'setup', $case['id']]));
+            $cases[] = $case;
+        }
+        $bad = [
+            ['qualified' => false], ['session' => '2026-09-29'], ['timeframe' => '14d'], ['symbol' => 'QQQ'],
+            ['qualified_at' => '2026-09-29T14:00:00Z'], ['qualified_at' => '2026-09-30T14:20:00Z'],
+            ['alert_id' => str_repeat('x', 64)], ['setup' => ['target' => ['strike' => 99.]]],
+        ];
+        foreach ($bad as $change) {
+            $cases[] = $this->historyCase(changes: $change);
+        }
+        $this->record($this->withHistory($this->assessment($model), $cases), 'wall_interactions');
+        $data = app(WallWatchlistService::class)->read(987);
+        $this->assertCount(5, $data['alert_history']);
+        $this->assertEqualsCanonicalizing(['target_reached', 'invalidated', 'session_ended', 'expired', 'entry_missed'],
+            array_column(array_column($data['alert_history'], 'lifecycle'), 'outcome'));
+        $this->assertFalse($data['alert_history_truncated']);
+    }
+
+    public function test_optional_testing_history_uses_the_first_episode_event_and_original_assessment_identity(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $analysis = $this->assessment($model, 'testing');
+        $event = [...$analysis['current']['put'], 'rule_version' => WallInteractionRules::VERSION, 'bar_interval_minutes' => 5,
+            'bar_start' => '2026-09-30T14:10:00Z'];
+        $event['id'] = WallInteractionDetector::assessmentId($event);
+        $later = [...$event, 'bar_start' => '2026-09-30T14:15:00Z', 'observed_at' => '2026-09-30T14:20:00Z',
+            'evidence_bar_ids' => [hash('sha256', 'later-bar')]];
+        $later['id'] = WallInteractionDetector::assessmentId($later);
+        $future = [...$event, 'observed_at' => '2026-09-30T15:00:00Z'];
+        $foreignDay = [...$event, 'observed_at' => '2026-09-29T14:15:00Z'];
+        $badId = [...$event, 'id' => str_repeat('f', 64)];
+        $analysis['events'] = [$later, $future, $foreignDay, $badId, $event];
+        $this->record($analysis, 'wall_interactions');
+        $this->travelTo(CarbonImmutable::parse('2026-09-30T14:36:00Z'));
+        $data = app(WallWatchlistService::class)->read(987);
+        $this->assertCount(1, $data['alert_history']);
+        $alert = $data['alert_history'][0];
+        $this->assertSame('testing', $alert['status']);
+        $this->assertSame('2026-09-30T14:15:00+00:00', $alert['observed_at']);
+        $this->assertSame($event['id'], $alert['assessment_id']);
+        $this->assertSame(hash('sha256', json_encode(['SPY', '2026-09-30', 'testing', $event['wall_identity'],
+            $event['episode_started_at'], WallInteractionRules::VERSION])), $alert['alert_id']);
+        $this->assertNull($alert['setup']);
+        $this->assertNull($alert['lifecycle']);
+    }
+
+    public function test_history_source_truncation_is_reported_and_weekends_do_not_replay_friday(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $analysis = $this->withHistory($this->assessment($model), [$this->historyCase()]);
+        $analysis['setup_lifecycle']['truncated'] = true;
+        $this->record($analysis, 'wall_interactions');
+        $this->assertTrue(app(WallWatchlistService::class)->read(987)['alert_history_truncated']);
+        $this->travelTo(CarbonImmutable::parse('2026-10-03T15:00:00Z'));
+        $data = app(WallWatchlistService::class)->read(987);
+        $this->assertSame([], $data['alert_history']);
+        $this->assertFalse($data['alert_history_truncated']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_history_cannot_claim_events_or_outcomes_later_than_its_saved_assessment(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $analysis = $this->withHistory($this->assessment($model, 'testing'), [
+            $this->historyCase(changes: ['outcome_at' => '2026-09-30T14:20:00Z']),
+        ]);
+        $event = [...$analysis['current']['put'], 'rule_version' => WallInteractionRules::VERSION, 'bar_interval_minutes' => 5,
+            'observed_at' => '2026-09-30T14:20:00Z', 'bar_start' => '2026-09-30T14:15:00Z'];
+        $event['id'] = WallInteractionDetector::assessmentId($event);
+        $analysis['events'] = [$event];
+        $this->record($analysis, 'wall_interactions');
+        $this->travelTo(CarbonImmutable::parse('2026-09-30T14:36:00Z'));
+        $this->assertSame([], app(WallWatchlistService::class)->read(987)['alert_history']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_history_keeps_more_than_one_hundred_alerts_and_reports_its_response_limit_honestly(): void
+    {
+        for ($index = 0; $index < 21; $index++) {
+            $symbol = 'SYM'.$index;
+            $this->watchlist($symbol);
+            $cases = [];
+            for ($event = 0; $event < 100; $event++) {
+                $id = hash('sha256', $symbol.':'.$event);
+                $cases[] = $this->historyCase($symbol, ['id' => $id,
+                    'alert_id' => hash('sha256', json_encode([$symbol, '2026-09-30', 'setup', $id]))]);
+            }
+            $this->record($this->withHistory($this->assessment($this->model($symbol)), $cases), 'wall_interactions');
+            if ($index === 1) {
+                $data = app(WallWatchlistService::class)->read(987);
+                $this->assertCount(200, $data['alert_history']);
+                $this->assertFalse($data['alert_history_truncated']);
+            }
+        }
+        $data = app(WallWatchlistService::class)->read(987);
+        $this->assertCount(\App\Support\WallIntelligence\WallAlertHistory::LIMIT, $data['alert_history']);
+        $this->assertTrue($data['alert_history_truncated']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
     public function test_compact_lifecycle_results_are_private_bounded_and_survive_session_close(): void
     {
         $this->watchlist('SPY');
