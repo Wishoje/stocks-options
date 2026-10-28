@@ -12,6 +12,20 @@ final class IntradayStudySource
 {
     private const CHECKPOINT_LIMIT = 20000;
 
+    private const PAGE_SIZE = 10;
+
+    private const SEED_BYTES = 2097152;
+
+    private const LIFECYCLE_BYTES = 1048576;
+
+    private const RETAINED_BYTES = 8388608;
+
+    private const ORIGINAL_LIMIT = 2000;
+
+    private const STATE_LIMIT = 4000;
+
+    private const CONFIRMATION_LIMIT = 100;
+
     public function read(array $symbols, string $from, string $through): array
     {
         $symbols = array_values(array_unique(array_filter(array_map(
@@ -22,21 +36,13 @@ final class IntradayStudySource
             return ['samples' => [], 'truncated' => false, 'warnings' => []];
         }
 
-        // Projection avoids the large legacy interaction and intraday-capture payloads.
-        $records = $this->scope($symbols, $from, $through, 'wall_interactions', 'wall-interactions.v1')
-            ->whereNotNull('payload_json->setups->review_seeds')
-            ->orderBy('recorded_at')->orderBy('id')->limit(self::CHECKPOINT_LIMIT + 1)
-            ->get(['id', 'symbol', 'analysis_session', 'content_hash', 'recorded_at',
-                'payload_json->timeframe as timeframe', 'payload_json->setups->rule_version as rule_version',
-                'payload_json->setups->review_seeds as seeds', 'payload_json->setup_lifecycle->items as lifecycle',
-                'payload_json->price_evidence_hash as price_hash', 'payload_json->state as state',
-                'payload_json->dataset as source_dataset', 'payload_json->demonstration as demonstration',
-                'payload_json->setup_reviews->demonstration as review_demonstration']);
-        $truncated = $records->count() > self::CHECKPOINT_LIMIT;
+        $truncated = false;
+        $warnings = [];
         $originals = [];
         $nativeStates = [];
         $calendars = [];
-        foreach ($records->take(self::CHECKPOINT_LIMIT) as $record) {
+        $retainedBytes = 0;
+        foreach ($this->checkpoints($symbols, $from, $through, $truncated, $warnings) as $record) {
             if ($this->synthetic((array) $record)) {
                 continue;
             }
@@ -49,7 +55,13 @@ final class IntradayStudySource
             $scope = [$record->symbol, $session, $record->timeframe, $record->rule_version];
             foreach ($this->decode($record->lifecycle) as $item) {
                 if (is_array($item) && is_string($item['id'] ?? null)) {
-                    $nativeStates[$this->hash([...$scope, $item['id']])] = $item;
+                    $stateKey = $this->hash([...$scope, $item['id']]);
+                    if (isset($nativeStates[$stateKey]) || count($nativeStates) < self::STATE_LIMIT) {
+                        $nativeStates[$stateKey] = array_intersect_key($item, array_flip(['outcome', 'outcome_at']));
+                    } else {
+                        $truncated = true;
+                        $warnings['states'] = 'Intraday lifecycle identity limit reached.';
+                    }
                 }
             }
             foreach ($this->decode($record->seeds) as $seed) {
@@ -57,20 +69,37 @@ final class IntradayStudySource
                     continue;
                 }
                 $nativeKey = $this->hash([...$scope, $seed['id']]);
-                // First qualification owns the original prices even if a later checkpoint revises them.
-                $originals[$nativeKey] ??= [
-                    'seed' => $seed, 'record' => $record, 'calendar' => $calendar,
-                    'native_key' => $nativeKey, 'confirmations' => [], 'source_hashes' => [],
-                ];
+                if (! isset($originals[$nativeKey])) {
+                    $compact = $this->compactSeed($seed);
+                    $bytes = strlen(json_encode($compact, JSON_THROW_ON_ERROR));
+                    if (count($originals) >= self::ORIGINAL_LIMIT || $bytes > 8192 || $retainedBytes + $bytes > self::RETAINED_BYTES) {
+                        $truncated = true;
+                        $warnings['originals'] = 'Intraday original-assessment memory limit reached; some saved assessments were omitted.';
+
+                        continue;
+                    }
+                    $retainedBytes += $bytes;
+                    // Never retain the checkpoint object: its seed/lifecycle strings are cumulative histories.
+                    $metadata = (object) array_intersect_key((array) $record, array_flip(['id', 'symbol', 'analysis_session',
+                        'timeframe', 'rule_version', 'recorded_at', 'content_hash', 'price_hash']));
+                    $originals[$nativeKey] = ['seed' => $compact, 'record' => $metadata, 'calendar' => $calendar,
+                        'native_key' => $nativeKey, 'confirmations' => []];
+                }
                 $frozen = $originals[$nativeKey]['seed'];
                 if ($this->levels($seed) === $this->levels($frozen)) {
-                    $originals[$nativeKey]['confirmations'][] = $this->iso($seed['observed_at']);
-                    $originals[$nativeKey]['source_hashes'][] = $record->content_hash;
+                    $at = $this->iso($seed['observed_at']);
+                    if (isset($originals[$nativeKey]['confirmations'][$at])
+                        || count($originals[$nativeKey]['confirmations']) < self::CONFIRMATION_LIMIT) {
+                        $originals[$nativeKey]['confirmations'][$at] = true;
+                    } else {
+                        $truncated = true;
+                        $warnings['confirmations'] = 'Intraday repeated-confirmation limit reached.';
+                    }
                 }
             }
         }
 
-        $bundles = $this->priceBundles($symbols, $from, $through, $calendars);
+        $bundles = $this->priceBundles($symbols, $from, $through, $calendars, $truncated, $warnings);
         uasort($originals, fn ($a, $b) => strcmp($this->iso($a['seed']['observed_at']), $this->iso($b['seed']['observed_at']))
             ?: strcmp($a['native_key'], $b['native_key']));
         $samples = [];
@@ -112,9 +141,10 @@ final class IntradayStudySource
             }
             $id = $active[$key];
             $sample = &$samples[$id];
-            $sample['confirmations'] = [...$sample['confirmations'], ...$original['confirmations']];
-            $sample['native_ids'][] = $seed['id'];
-            $sample['source_hashes'] = [...$sample['source_hashes'], ...$original['source_hashes']];
+            $sample['confirmations'] += $original['confirmations'];
+            $sample['native_ids'][$seed['id']] = true;
+            // Only each original assessment's source hash is provenance; repeat checkpoint hashes add no original evidence.
+            $sample['source_hashes'][$record->content_hash] = true;
             $state = $nativeStates[$nativeKey] ?? [];
             $outcome = $state['outcome'] ?? $seed['status'];
             if (! isset($terminalTimes[$id])) {
@@ -131,7 +161,7 @@ final class IntradayStudySource
         }
         foreach ($samples as &$sample) {
             foreach (['confirmations', 'native_ids', 'source_hashes'] as $field) {
-                $sample[$field] = array_values(array_unique($sample[$field]));
+                $sample[$field] = array_keys($sample[$field]);
                 sort($sample[$field], SORT_STRING);
             }
         }
@@ -139,13 +169,78 @@ final class IntradayStudySource
         usort($samples, fn ($a, $b) => strcmp($a['signal_at'], $b['signal_at']) ?: strcmp($a['id'], $b['id']));
 
         return ['samples' => $samples, 'truncated' => $truncated,
-            'warnings' => $truncated ? ['Intraday checkpoint limit reached; later saved assessments were omitted.'] : []];
+            'warnings' => array_values($warnings)];
     }
 
     private function scope(array $symbols, string $from, string $through, string $dataset, string $schema): Builder
     {
         return DB::table('wall_observations')->whereIn('symbol', $symbols)->where('dataset', $dataset)
             ->where('schema_version', $schema)->whereBetween('analysis_session', [$from, $through]);
+    }
+
+    /** Explicit keyset pages also bound MySQL's buffered PDO result, unlike cursor(). */
+    private function checkpoints(array $symbols, string $from, string $through, bool &$truncated, array &$warnings): \Generator
+    {
+        $base = $this->scope($symbols, $from, $through, 'wall_interactions', 'wall-interactions.v1')
+            ->whereNotNull('payload_json->setups->review_seeds');
+        $lastAt = null;
+        $lastId = 0;
+        $seen = 0;
+        do {
+            $query = (clone $base)->orderBy('recorded_at')->orderBy('id')
+                ->limit(min(self::PAGE_SIZE, self::CHECKPOINT_LIMIT - $seen + 1));
+            if ($lastAt !== null) {
+                $query->where(fn ($q) => $q->where('recorded_at', '>', $lastAt)
+                    ->orWhere(fn ($tie) => $tie->where('recorded_at', $lastAt)->where('id', '>', $lastId)));
+            }
+            $query->select(['id', 'symbol', 'analysis_session', 'content_hash', 'recorded_at',
+                'payload_json->timeframe as timeframe', 'payload_json->setups->rule_version as rule_version',
+                'payload_json->price_evidence_hash as price_hash', 'payload_json->state as state',
+                'payload_json->dataset as source_dataset', 'payload_json->demonstration as demonstration',
+                'payload_json->setup_reviews->demonstration as review_demonstration']);
+            $this->boundedProjection($query, 'payload_json->setups->review_seeds', 'seeds', self::SEED_BYTES);
+            $this->boundedProjection($query, 'payload_json->setup_lifecycle->items', 'lifecycle', self::LIFECYCLE_BYTES);
+            $rows = $query->get();
+            $count = $rows->count();
+            foreach ($rows as $record) {
+                if (++$seen > self::CHECKPOINT_LIMIT) {
+                    $truncated = true;
+                    $warnings['checkpoints'] = 'Intraday checkpoint limit reached; later saved assessments were omitted.';
+
+                    return;
+                }
+                $lastAt = $record->recorded_at;
+                $lastId = $record->id;
+                if ($record->seeds_oversized || $record->lifecycle_oversized) {
+                    $truncated = true;
+                    $warnings['payload'] = 'Oversized intraday checkpoint fields were omitted to keep reads bounded.';
+                }
+                yield $record;
+            }
+            unset($rows);
+        } while ($count === self::PAGE_SIZE);
+    }
+
+    /** Reject an oversized JSON field inside SQL, before PDO buffers it in PHP. */
+    private function boundedProjection(Builder $query, string $path, string $alias, int $limit): void
+    {
+        $expression = $query->getGrammar()->wrap($path);
+        $length = DB::connection()->getDriverName() === 'sqlite'
+            ? 'LENGTH(CAST('.$expression.' AS BLOB))' : 'OCTET_LENGTH('.$expression.')';
+        $query->selectRaw('CASE WHEN '.$length.' <= '.$limit.' THEN '.$expression.' ELSE NULL END AS '.$alias)
+            ->selectRaw('CASE WHEN '.$length.' > '.$limit.' THEN 1 ELSE 0 END AS '.$alias.'_oversized');
+    }
+
+    private function compactSeed(array $seed): array
+    {
+        $compact = array_intersect_key($seed, array_flip(['id', 'side', 'strike', 'pattern', 'direction', 'status',
+            'observed_at', 'confirmed_at', 'terminal_at', 'close', 'wall_identity', 'evidence_grade',
+            'scope', 'evidence_checks', 'persistence', 'target_room_ratio']));
+        $compact['entry_zone'] = array_intersect_key($seed['entry_zone'], array_flip(['low', 'high']));
+        $compact['invalidation'] = ['price' => $seed['invalidation']['price']];
+        $compact['target'] = ['strike' => $seed['target']['strike']];
+
+        return $compact;
     }
 
     private function qualified(array $seed, object $record, array $calendar): bool
@@ -184,45 +279,62 @@ final class IntradayStudySource
                 : $seed['invalidation']['price'] > $high && $seed['target']['strike'] < $low);
     }
 
-    private function priceBundles(array $symbols, string $from, string $through, array $calendars): array
+    private function priceBundles(array $symbols, string $from, string $through, array $calendars, bool &$truncated, array &$warnings): array
     {
         $latest = $this->scope($symbols, $from, $through, 'intraday_price_bars', 'wall-price-bars.v1')
             ->selectRaw('MAX(id) as id')->groupBy('symbol', 'analysis_session');
-        $rows = DB::table('wall_observations')->whereIn('id', $latest)->orderBy('id')
-            ->get(['symbol', 'analysis_session', 'content_hash', 'recorded_at', 'payload_json->bars as bars']);
         $bundles = [];
-        foreach ($rows as $row) {
-            $calendar = $calendars[$row->analysis_session] ?? MarketSession::describe(CarbonImmutable::parse($row->analysis_session.' 12:00', 'America/New_York'));
-            $open = strtotime($calendar['opens_at'] ?? '') ?: PHP_INT_MAX;
-            $close = min(strtotime($calendar['closes_at'] ?? '') ?: 0, strtotime($row->recorded_at) ?: 0);
-            $bars = $this->decode($row->bars);
-            $counts = array_count_values(array_map(fn ($bar) => is_array($bar) ? (string) ($bar['t'] ?? '') : '', $bars));
-            $normalized = [];
-            foreach ($bars as $bar) {
-                if (! is_array($bar) || ! is_numeric($bar['t'] ?? null)
-                    || (float) $bar['t'] != (int) $bar['t'] || (int) $bar['t'] % 300000 !== 0
-                    || ($counts[(string) $bar['t']] ?? 0) !== 1) {
-                    continue;
-                }
-                $start = (int) ($bar['t'] / 1000);
-                if ($start < $open || $start + 300 > $close) {
-                    continue;
-                }
-                foreach (['o', 'h', 'l', 'c'] as $field) {
-                    if (! is_numeric($bar[$field] ?? null) || ! is_finite((float) $bar[$field]) || $bar[$field] <= 0) {
-                        continue 2;
+        $lastId = 0;
+        do {
+            $query = DB::table('wall_observations')->whereIn('id', $latest)->where('id', '>', $lastId)
+                ->orderBy('id')->limit(self::PAGE_SIZE)->select(['id', 'symbol', 'analysis_session', 'content_hash', 'recorded_at']);
+            $this->boundedProjection($query, 'payload_json->bars', 'bars', 131072);
+            $rows = $query->get();
+            $count = $rows->count();
+            foreach ($rows as $row) {
+                $lastId = $row->id;
+                if ($row->bars_oversized || count($bundles) >= 512) {
+                    $truncated = true;
+                    $warnings['prices'] = 'Intraday price-evidence memory limit reached; some price evidence was omitted.';
+                    if (count($bundles) >= 512) {
+                        break 2;
                     }
-                }
-                if ($bar['l'] > min($bar['o'], $bar['c']) || $bar['h'] < max($bar['o'], $bar['c']) || $bar['l'] > $bar['h']) {
+
                     continue;
                 }
-                $normalized[] = ['at' => gmdate('c', $start + 300), 'open' => (float) $bar['o'],
-                    'high' => (float) $bar['h'], 'low' => (float) $bar['l'], 'close' => (float) $bar['c']];
+                $calendar = $calendars[$row->analysis_session] ?? MarketSession::describe(CarbonImmutable::parse($row->analysis_session.' 12:00', 'America/New_York'));
+                $open = strtotime($calendar['opens_at'] ?? '') ?: PHP_INT_MAX;
+                $close = min(strtotime($calendar['closes_at'] ?? '') ?: 0, strtotime($row->recorded_at) ?: 0);
+                $bars = $this->decode($row->bars);
+                $counts = array_count_values(array_map(fn ($bar) => is_array($bar) ? (string) ($bar['t'] ?? '') : '', $bars));
+                $normalized = [];
+                foreach ($bars as $bar) {
+                    if (! is_array($bar) || ! is_numeric($bar['t'] ?? null)
+                        || (float) $bar['t'] != (int) $bar['t'] || (int) $bar['t'] % 300000 !== 0
+                        || ($counts[(string) $bar['t']] ?? 0) !== 1) {
+                        continue;
+                    }
+                    $start = (int) ($bar['t'] / 1000);
+                    if ($start < $open || $start + 300 > $close) {
+                        continue;
+                    }
+                    foreach (['o', 'h', 'l', 'c'] as $field) {
+                        if (! is_numeric($bar[$field] ?? null) || ! is_finite((float) $bar[$field]) || $bar[$field] <= 0) {
+                            continue 2;
+                        }
+                    }
+                    if ($bar['l'] > min($bar['o'], $bar['c']) || $bar['h'] < max($bar['o'], $bar['c']) || $bar['l'] > $bar['h']) {
+                        continue;
+                    }
+                    $normalized[] = ['at' => gmdate('c', $start + 300), 'open' => (float) $bar['o'],
+                        'high' => (float) $bar['h'], 'low' => (float) $bar['l'], 'close' => (float) $bar['c']];
+                }
+                usort($normalized, fn ($a, $b) => strcmp($a['at'], $b['at']));
+                $bundles[$row->symbol.'|'.$row->analysis_session] = ['bars' => $normalized,
+                    'hash' => $row->content_hash, 'recorded_at' => $this->iso($row->recorded_at)];
             }
-            usort($normalized, fn ($a, $b) => strcmp($a['at'], $b['at']));
-            $bundles[$row->symbol.'|'.$row->analysis_session] = ['bars' => $normalized,
-                'hash' => $row->content_hash, 'recorded_at' => $this->iso($row->recorded_at)];
-        }
+            unset($rows);
+        } while ($count === self::PAGE_SIZE);
 
         return $bundles;
     }

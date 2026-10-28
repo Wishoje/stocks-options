@@ -58,12 +58,17 @@ class IntradayStudySourceTest extends TestCase
         DB::disableQueryLog();
         $this->assertCount(2, $result['samples']);
         $this->assertFalse($result['truncated']);
-        $this->assertCount(2, $queries);
+        $this->assertCount(19, $queries); // Eighteen explicit checkpoint pages and one price page.
         foreach ($queries as $query) {
             $this->assertStringStartsWith('select ', strtolower($query['query']));
             $this->assertStringNotContainsString('select *', strtolower($query['query']));
             $this->assertNotContains('intraday_capture', $query['bindings']);
+            $this->assertStringContainsString('limit 10', strtolower($query['query']));
+            $this->assertStringNotContainsString('offset ', strtolower($query['query']));
         }
+        $original = collect($result['samples'])->firstWhere('target', 101.0);
+        $this->assertCount(1, $original['source_hashes']);
+        $this->assertCount(1, $original['confirmations']);
         $this->assertSame($before, DB::table('wall_observations')->orderBy('id')->pluck('payload_json', 'content_hash')->all());
         Http::assertNothingSent();
     }
@@ -82,6 +87,32 @@ class IntradayStudySourceTest extends TestCase
 
         $this->checkpoint([$this->caseSeed(['status' => 'invalidated', 'ever_eligible' => true, 'terminal_at' => '2026-09-30T14:05:00Z'])]);
         $this->assertCount(1, $this->read()['samples']);
+    }
+
+    public function test_keyset_pages_keep_earliest_recorded_qualification_even_when_ids_are_out_of_time_order(): void
+    {
+        for ($i = 0; $i < 25; $i++) {
+            $this->checkpoint([$this->caseSeed(['target' => ['strike' => 105.0]])], '2026-09-30 14:30:00');
+        }
+        $hash = $this->checkpoint([$this->caseSeed()], '2026-09-30 14:20:00');
+        $sample = $this->read()['samples'][0];
+        $this->assertSame($hash, $sample['source_hash']);
+        $this->assertSame('2026-09-30T14:20:00+00:00', $sample['available_at']);
+        $this->assertSame(101.0, $sample['target']);
+        $this->assertCount(1, $sample['confirmations']);
+    }
+
+    public function test_oversized_fields_are_bounded_in_sql_and_do_not_hide_later_small_checkpoints(): void
+    {
+        $this->checkpoint([$this->caseSeed()]);
+        $this->checkpoint([$this->caseSeed(['unrelated_history' => str_repeat('x', 2200000)])]);
+        $this->checkpoint([$this->caseSeed(['id' => 'later', 'target' => ['strike' => 102.0]])]);
+        $result = $this->read();
+        $this->assertCount(2, $result['samples']);
+        $this->assertTrue($result['truncated']);
+        $this->assertStringContainsString('Oversized', implode(' ', $result['warnings']));
+        $this->assertCount(1, $result['samples'][0]['source_hashes']);
+        $this->assertLessThan(10000, strlen(json_encode($result['samples'])));
     }
 
     public function test_latest_completed_price_bundle_is_used_and_bar_ends_are_normalized(): void
