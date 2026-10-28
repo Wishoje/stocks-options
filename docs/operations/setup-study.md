@@ -13,12 +13,15 @@ Date filters use the qualifying close's market date. An unqualified swing plan u
 All move measurements start from the first recorded qualifying close, using the original target and invalidation. They describe price behavior, not executed trades, option returns, or fills. Intraday uses completed five-minute closes; swing uses daily closes. The first target close, invalidation close, or applicable session/holding deadline stops follow-up. Invalidation equality is not a crossing.
 
 - Exact-target rate counts a target close before invalidation.
+- +0.5% and +1% rates measure fixed favorable stock-price moves from each plan's recorded signal close before the same stopping point. A rise is favorable for bullish plans; a fall is favorable for bearish plans. Adverse moves run in the opposite direction.
 - +0.5R and +1R rates measure smaller favorable close moves before the same stopping point. A partial move can be recorded even when a later close invalidates the plan.
 - R is the distance between the qualifying close and original invalidation. It does not assume an entry at that price was executable.
 - Favorable and adverse excursions are maximum completed-close distances from that reference, shown in R and percent.
 - Entry-area revisit means a subsequent complete bar overlaps the entry zone after the qualification was available. Bars that started before publication are excluded. Overlap does not establish a fill.
 
 Outcome-rate denominators contain only completed, continuous follow-ups. Open plans and unavailable follow-up are separate counts. A gap cannot be treated as a loss, target success, or proof that no invalidation occurred. Repeated confirmations at the same active intraday levels count as one plan. A later recorded episode after a terminal result can count separately.
+
+Percentage summaries read the existing stored favorable and adverse stock-price percentages. Each average uses the individual completed plans' finite percentage values. The milestone denominator includes completed plans with a finite favorable percentage. Missing values are excluded; a measured zero remains included. These percentages are not option P&L or executed returns. The fixed percentage milestones are separate from risk multiples and exact-target success. Reading these summaries does not change qualification, entry areas, targets, invalidation, or archived records.
 
 Signal time and first retained qualification publication time remain separate because intraday data is delayed. Retrospective imports are labelled. The selected sample consists of the owner's saved symbols when collected, plus symbols already archived; it is not an unbiased sample of every market opportunity. These descriptive results do not establish an out-of-sample trading edge.
 

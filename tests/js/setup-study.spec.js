@@ -15,7 +15,7 @@ const plan = () => ({
   signal_at: '2026-10-26T14:00:00Z', available_at: '2026-10-26T14:05:00Z',
   status: 'completed', outcome: 'window_closed', signal_price: 100, entry_low: 99.5, entry_high: 100.5,
   invalidation: 98, target: 104, qualified: true, followup_complete: true, needs_update: false, confirmation_count: 3,
-  metrics: { mfe_r: 0.8, mae_r: 0.3, reached_05r: true, reached_1r: false, entry_revisited: true, strict_outcome: 'window_closed' },
+  metrics: { mfe_r: 0.8, mae_r: 0.3, mfe_pct: 1.6, mae_pct: 0.6, reached_05r: true, reached_1r: false, entry_revisited: true, strict_outcome: 'window_closed' },
   evidence: { observations: 8, first_close: 100, source_complete: true },
   source: { type: 'intraday_wall_setup', record_id: 123, source_date: '2026-10-26' },
 })
@@ -25,8 +25,9 @@ const report = (overrides = {}) => ({
   summary: { total: 3, qualified: 2, watching: 1, in_progress: 1, completed: 1, needs_update: 0,
     strict_target: { hits: 0, eligible: 1, rate: 0 }, favorable_05r: { hits: 1, eligible: 1, rate: 100 },
     favorable_1r: { hits: 0, eligible: 1, rate: 0 }, entry_revisit: { hits: 1, eligible: 1, rate: 100 },
+    favorable_05pct: { hits: 1, eligible: 1, rate: 100 }, favorable_1pct: { hits: 1, eligible: 1, rate: 100 },
     after_publication_target: { hits: 0, eligible: 1, rate: 0 }, resolved_before_publication: 0, publication_timing_unknown: 0,
-    avg_mfe_r: 0.8, avg_mae_r: 0.3 },
+    avg_mfe_r: 0.8, avg_mae_r: 0.3, avg_mfe_pct: 1.6, avg_mae_pct: 0.6 },
   rows: [plan()], warnings: [], methodology: { followup: 'Completed observed closes only' }, ...overrides,
 })
 function start(props = {}) { const wrapper = mount(SetupStudy, { props }); wrappers.push(wrapper); return wrapper }
@@ -63,9 +64,11 @@ describe('Setup study formatting and export', () => {
     expect(csv).toContain('"\'=HYPERLINK(""https://example.com"")"')
     expect(csv).toContain('"\'  +SUM(1,2)"')
     expect(csv).toContain('"0.3"')
-    expect(csv).toContain('"Best close R"')
-    expect(csv).toContain('"Availability timing"')
-    expect(csv).toContain('"First favorable 0.5R time"')
+    expect(csv).toContain('"Best favorable stock move (%)"')
+    expect(csv).toContain('"Best favorable move ($)"')
+    expect(csv).toContain('"Advanced: Best close R"')
+    expect(csv).toContain('"Advanced: Availability timing"')
+    expect(csv).toContain('"Advanced: First favorable 0.5R time (UTC)"')
     expect(csv).not.toContain('undefined')
   })
 })
@@ -81,11 +84,13 @@ describe('Setup study page', () => {
   it('shows strict outcomes separately from favorable moves and keeps each denominator visible', async () => {
     const wrapper = start(); await flushPromises()
     expect(wrapper.get('[data-metric="strict_target"]').text()).toContain('0%')
-    expect(wrapper.get('[data-metric="strict_target"]').text()).toContain('0 of 1 eligible plans')
-    expect(wrapper.get('[data-metric="favorable_05r"]').text()).toContain('100%')
+    expect(wrapper.get('[data-metric="strict_target"] strong').text()).toBe('0 of 1')
+    expect(wrapper.get('[data-metric="favorable_05pct"]').text()).toContain('100% of eligible completed plans')
     expect(wrapper.text()).toContain('Recorded scenarios, not executed trades.')
     expect(wrapper.text()).toContain('Repeated confirmations at the same level count as one plan.')
-    expect(wrapper.text()).toContain('+0.8R / -0.3R')
+    expect(wrapper.get('.study-table').text()).toContain('+1.6%')
+    expect(wrapper.get('.study-table').text()).toContain('+$1.60')
+    expect(wrapper.get('.study-table').text()).not.toContain('0.5R')
     expect(axios.get).toHaveBeenCalledTimes(1)
     expect(axios.post).not.toHaveBeenCalled()
   })
@@ -103,6 +108,37 @@ describe('Setup study page', () => {
     expect(wrapper.get('.study-detail-content').text()).toContain('Observations8')
     expect(wrapper.get('.study-detail-content').text()).toContain('Source provenance')
     expect(wrapper.get('.study-detail-content').text()).toContain('Record Id123')
+    expect(wrapper.get('.study-detail-content').text()).toContain('Distance to invalidation$2.00 · 2%')
+    expect(wrapper.get('.study-advanced').attributes('open')).toBeUndefined()
+    expect(wrapper.get('.study-advanced').text()).toContain('Best close in R+0.8R')
+  })
+
+  it('shows NVDA stock percentage and dollar moves alongside its invalidated outcome without implying profit', async () => {
+    const nvda = { ...plan(), id: 'nvda-recorded', symbol: 'NVDA', signal_price: 217.68, outcome: 'invalidated', metrics: {
+      ...plan().metrics, mfe_pct: 100 * 1.47 / 217.68, mae_pct: 100 * 0.31 / 217.68,
+      mfe_r: 0.8, strict_outcome: 'invalidated', observations: 8,
+    } }
+    axios.get.mockResolvedValueOnce({ data: report({ rows: [nvda], summary: {
+      ...report().summary, strict_target: { hits: 4, eligible: 18, rate: 22.2 },
+      favorable_05pct: { hits: 12, eligible: 18, rate: 66.7 }, favorable_1pct: { hits: 6, eligible: 18, rate: 33.3 },
+      avg_mfe_pct: 0.68, avg_mae_pct: 0.14,
+    } }) })
+    const wrapper = start(); await flushPromises()
+    const row = wrapper.get('.study-table tbody tr')
+    expect(row.text()).toContain('NVDA')
+    expect(row.text()).toContain('Invalidated')
+    expect(row.get('.study-price-move--favorable').text()).toContain('+0.68%')
+    expect(row.get('.study-price-move--favorable').text()).toContain('+$1.47')
+    expect(row.get('.study-price-move--adverse').text()).toContain('-0.14%')
+    expect(row.get('.study-price-move--adverse').text()).toContain('-$0.31')
+    expect(row.text()).toContain('0.5%: Yes · 1%: No')
+    expect(row.text()).not.toMatch(/\b(?:0\.5|1|0\.8)R\b/)
+    expect(wrapper.get('[data-metric="strict_target"] strong').text()).toBe('4 of 18')
+    expect(wrapper.get('[data-metric="strict_target"] p').text()).toBe('22.2% of eligible completed plans')
+    expect(wrapper.get('[data-metric="avg_mfe_pct"] strong').text()).toBe('+0.68%')
+    expect(wrapper.get('[data-metric="avg_mae_pct"] strong').text()).toBe('-0.14%')
+    expect(wrapper.text()).toContain('Counts describe recorded plans, not profit.')
+    expect(wrapper.text()).toContain('up for bullish, down for bearish')
   })
 
   it('separates a target reached before publication from the target rate after app availability', async () => {
@@ -118,13 +154,13 @@ describe('Setup study page', () => {
     expect(wrapper.text()).toContain('Signal-close response')
     expect(wrapper.get('[data-metric="strict_target"]').text()).toContain('33.3%')
     expect(wrapper.get('[data-metric="after_publication_target"]').text()).toContain('0%')
-    expect(wrapper.get('[data-metric="after_publication_target"]').text()).toContain('0 of 1 eligible plans')
+    expect(wrapper.get('[data-metric="after_publication_target"] dd').text()).toBe('0 of 1')
     expect(wrapper.get('.study-availability').text()).toContain('Completed plans still open when the app received them.')
     expect(wrapper.get('.study-availability').text()).toContain('Resolved before app availability2')
     expect(wrapper.get('.study-timing-late').text()).toBe('Resolved before app availability')
     await wrapper.get('.study-inspect').trigger('click')
-    expect(wrapper.get('.study-timing-detail').text()).toContain('3:40 PM ET')
-    expect(wrapper.get('.study-timing-detail').text()).toContain('3:45 PM ET')
+    expect(wrapper.get('.study-advanced').text()).toContain('3:40 PM ET')
+    expect(wrapper.get('.study-advanced').text()).toContain('3:45 PM ET')
     const csv = studyCsv([late])
     expect(csv).toContain('"resolved_before_publication"')
     expect(csv).toContain('"2026-10-26T19:40:00Z"')
@@ -168,10 +204,11 @@ describe('Setup study page', () => {
     const empty = { hits: 0, eligible: 0, rate: 0 }
     axios.get.mockResolvedValueOnce({ data: report({ rows: [], summary: {
       total: 0, qualified: 0, watching: 0, in_progress: 0, completed: 0, needs_update: 0,
-      strict_target: empty, favorable_05r: empty, favorable_1r: empty, entry_revisit: empty, avg_mfe_r: null, avg_mae_r: null,
+      strict_target: empty, favorable_05pct: empty, favorable_1pct: empty, entry_revisit: empty, avg_mfe_pct: null, avg_mae_pct: null,
     } }) })
     const wrapper = start(); await flushPromises()
     expect(wrapper.get('[data-metric="strict_target"] strong').text()).toBe('—')
+    expect(wrapper.get('[data-metric="strict_target"]').text()).toContain('No completed setups yet')
     expect(wrapper.text()).toContain('No recorded plans in this view')
     expect(wrapper.find('.study-metrics').text()).not.toContain('0%')
     expect(wrapper.findAll('.study-actions button')[0].attributes('disabled')).toBeDefined()
@@ -183,8 +220,8 @@ describe('Setup study page', () => {
       collected_symbols: 7, total_symbols: 96, first_pass_complete: false,
     }, summary: {
       total: 0, qualified: 0, watching: 0, in_progress: 0, completed: 0, needs_update: 0,
-      strict_target: empty, favorable_05r: empty, favorable_1r: empty, entry_revisit: empty,
-      after_publication_target: empty, avg_mfe_r: null, avg_mae_r: null,
+      strict_target: empty, favorable_05pct: empty, favorable_1pct: empty, entry_revisit: empty,
+      after_publication_target: empty, avg_mfe_pct: null, avg_mae_pct: null,
     } }) })
     const wrapper = start(); await flushPromises()
     expect(wrapper.get('.study-coverage').text()).toBe('Preparing your study: 7 of 96 symbols checked. Results are partial while the first collection finishes.')
@@ -220,21 +257,23 @@ describe('Setup study page', () => {
     } }) })
     const wrapper = start(); await flushPromises()
     expect(wrapper.get('table[aria-label="By setup pattern"]').text()).toContain('Wall Reclaim')
-    expect(wrapper.get('table[aria-label="By setup pattern"]').text()).toContain('0 / 1')
+    expect(wrapper.get('table[aria-label="By setup pattern"]').text()).toContain('0 of 1')
+    expect(wrapper.get('table[aria-label="By setup pattern"]').text()).toContain('Move ≥ 0.5%')
+    expect(wrapper.get('table[aria-label="By setup pattern"]').text()).not.toContain('0.5R')
     expect(wrapper.get('table[aria-label="By symbol"]').text()).toContain('SPY')
     expect(wrapper.get('table[aria-label="By symbol"]').text()).toContain('—')
   })
 
   it('does not label an unfinished or unobserved favorable move as a failed move', async () => {
     axios.get.mockResolvedValueOnce({ data: report({ rows: [
-      { ...plan(), status: 'in_progress', followup_complete: false, metrics: { observations: 2, reached_05r: false, reached_1r: false } },
+      { ...plan(), status: 'in_progress', followup_complete: false, metrics: { observations: 2, mfe_pct: 0.2, mae_pct: null } },
       { ...plan(), id: 'no-closes', symbol: 'QQQ', status: 'needs_update', followup_complete: false, needs_update: true,
-        metrics: { observations: 0, reached_05r: false, reached_1r: false } },
+        metrics: { observations: 0, mfe_pct: null, mae_pct: null } },
     ] }) })
     const wrapper = start(); await flushPromises()
-    expect(wrapper.get('.study-table').text()).toContain('0.5R: Pending')
-    expect(wrapper.get('.study-table').text()).toContain('0.5R: —')
-    expect(wrapper.get('.study-table').text()).not.toContain('0.5R: No')
+    expect(wrapper.get('.study-table').text()).toContain('0.5%: Pending')
+    expect(wrapper.get('.study-table').text()).toContain('0.5%: —')
+    expect(wrapper.get('.study-table').text()).not.toContain('0.5%: No')
   })
 
   it('recovers from read errors and reports owner-only access without rendering a fake report', async () => {

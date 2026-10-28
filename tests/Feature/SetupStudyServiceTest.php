@@ -137,14 +137,76 @@ class SetupStudyServiceTest extends TestCase
         $this->assertSame(3, $report['summary']['total']);
         $this->assertSame(2, $report['summary']['qualified']);
         $this->assertSame(0, $report['summary']['completed']);
-        foreach (['strict_target', 'favorable_05r', 'favorable_1r', 'entry_revisit'] as $rate) {
+        foreach (['strict_target', 'favorable_05r', 'favorable_1r', 'favorable_05pct', 'favorable_1pct', 'entry_revisit'] as $rate) {
             $this->assertSame(['hits' => 0, 'eligible' => 0, 'rate' => null], $report['summary'][$rate]);
         }
         $this->assertNull($report['summary']['avg_mfe_r']);
+        $this->assertNull($report['summary']['avg_mfe_pct']);
+        $this->assertNull($report['summary']['avg_mae_pct']);
         $this->archive();
         $summary = (new SetupStudyService)->report(self::OWNER, $this->filters())['summary'];
         $this->assertSame(1, $summary['completed']);
         $this->assertSame(['hits' => 1, 'eligible' => 1, 'rate' => 100.], $summary['strict_target']);
+    }
+
+    public function test_stock_percentage_summaries_use_each_stored_move_instead_of_relabelling_risk_multiples(): void
+    {
+        foreach ([['HIGH', 'bullish', 'reclaim', 1000., 999.8, 999.9, 1001.],
+            ['LOW', 'bearish', 'reversal', 50., 51., 50.5, 49.]] as [$symbol, $direction, $pattern, $price, $invalid, $adverse, $target]) {
+            $sample = ['id' => $symbol, 'mode' => 'intraday', 'horizon' => 'session', 'symbol' => $symbol,
+                'session' => '2026-10-23', 'direction' => $direction, 'pattern' => $pattern, 'rule_version' => 'fixture.v1',
+                'signal_at' => '2026-10-23T14:00:00Z', 'available_at' => '2026-10-23T14:00:00Z',
+                'signal_price' => $price, 'invalidation' => $invalid, 'target' => $target,
+                'entry_low' => $price - .01, 'entry_high' => $price + .01, 'review_until' => '2026-10-23T20:00:00Z',
+                'confirmations' => [], 'bars' => [
+                    ['at' => '2026-10-23T14:05:00Z', 'open' => $price, 'high' => max($price, $adverse),
+                        'low' => min($price, $adverse), 'close' => $adverse],
+                    ['at' => '2026-10-23T14:10:00Z', 'open' => $adverse, 'high' => max($adverse, $target),
+                        'low' => min($adverse, $target), 'close' => $target],
+                ]];
+            $measurement = (new SetupStudyMetrics)->measure($sample);
+            unset($measurement['id']);
+            $this->archive($measurement);
+        }
+        $before = DB::table('setup_study_records')->orderBy('id')->pluck('payload')->all();
+        $report = (new SetupStudyService)->report(self::OWNER, $this->filters());
+        $summary = $report['summary'];
+        $this->assertSame(3., $summary['avg_mfe_r']);
+        $this->assertSame(1.05, $summary['avg_mfe_pct']);
+        $this->assertSame(.505, $summary['avg_mae_pct']);
+        $this->assertSame(['hits' => 2, 'eligible' => 2, 'rate' => 100.], $summary['favorable_1r']);
+        $this->assertSame(['hits' => 1, 'eligible' => 2, 'rate' => 50.], $summary['favorable_05pct']);
+        $this->assertSame(['hits' => 1, 'eligible' => 2, 'rate' => 50.], $summary['favorable_1pct']);
+        $symbols = collect($report['breakdowns']['symbols'])->keyBy('label');
+        $this->assertSame(5., $symbols['HIGH']['avg_mfe_r']);
+        $this->assertSame(.1, $symbols['HIGH']['avg_mfe_pct']);
+        $this->assertSame(0, $symbols['HIGH']['favorable_1pct']['hits']);
+        $this->assertSame(1., $symbols['LOW']['avg_mfe_r']);
+        $this->assertSame(2., $symbols['LOW']['avg_mfe_pct']);
+        $this->assertSame(1, $symbols['LOW']['favorable_1pct']['hits']);
+        $patterns = collect($report['breakdowns']['patterns'])->keyBy('label');
+        $this->assertSame(.1, $patterns['reclaim']['avg_mfe_pct']);
+        $this->assertSame(2., $patterns['reversal']['avg_mfe_pct']);
+        $this->assertSame($before, DB::table('setup_study_records')->orderBy('id')->pluck('payload')->all());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_percentage_denominators_exclude_unknown_nonfinite_and_unfinished_moves_but_include_zero(): void
+    {
+        $this->archive(['metrics' => ['mfe_pct' => 0., 'mae_pct' => 0.]]);
+        $this->archive(['metrics' => ['mfe_pct' => .5, 'mae_pct' => .2]]);
+        $this->archive(['metrics' => ['mfe_pct' => null, 'mae_pct' => null]]);
+        $this->archive(['metrics' => ['mfe_pct' => '1e999', 'mae_pct' => 'unknown']]);
+        $this->archive(['status' => 'in_progress', 'followup_complete' => false, 'metrics' => ['mfe_pct' => 100., 'mae_pct' => 100.]]);
+        $this->archive(['needs_update' => true, 'metrics' => ['mfe_pct' => 100., 'mae_pct' => 100.]]);
+
+        $summary = (new SetupStudyService)->report(self::OWNER, $this->filters())['summary'];
+        $this->assertSame(4, $summary['completed']);
+        $this->assertSame(.25, $summary['avg_mfe_pct']);
+        $this->assertSame(.1, $summary['avg_mae_pct']);
+        $this->assertSame(['hits' => 1, 'eligible' => 2, 'rate' => 50.], $summary['favorable_05pct']);
+        $this->assertSame(['hits' => 0, 'eligible' => 2, 'rate' => 0.], $summary['favorable_1pct']);
     }
 
     public function test_collection_is_idempotent_provider_free_and_leaves_source_records_unchanged(): void

@@ -158,6 +158,7 @@ class SetupStudyService
             'methodology' => [
                 'version' => SetupStudyMetrics::VERSION,
                 'reference' => 'Moves start at the recorded qualifying close. Prices are the underlying stock or ETF, not option returns or executed fills.',
+                'percentages' => 'Percent moves use each recorded signal close as the reference. Up is favorable for bullish plans; down is favorable for bearish plans. +0.5% and +1% are fixed stock-price milestones, separate from risk multiples and exact-target results.',
                 'risk' => '1R is the distance from that close to the original invalidation price. +0.5R and +1R use completed closes before target, invalidation or the review deadline.',
                 'denominator' => 'Outcome rates use only completed, continuous follow-ups. Open and incomplete records are counted separately. Later wins never erase an earlier invalidation.',
                 'entry' => 'Entry revisit means a later full bar overlaps the original entry area after the assessment was available. It does not establish an executed entry.',
@@ -187,6 +188,8 @@ class SetupStudyService
     {
         $qualified = array_values(array_filter($rows, fn ($r) => $r['qualified'] ?? false));
         $completed = array_values(array_filter($qualified, fn ($r) => ($r['followup_complete'] ?? false) && ! ($r['needs_update'] ?? false)));
+        $percentCompleted = array_values(array_filter($completed, fn ($r) => is_numeric($r['metrics']['mfe_pct'] ?? null)
+            && is_finite((float) $r['metrics']['mfe_pct'])));
         $observable = array_values(array_filter($completed, fn ($r) => $r['metrics']['entry_observable'] ?? false));
         $openWhenPublished = array_values(array_filter($completed, fn ($r) => ($r['metrics']['publication_timing'] ?? '') === 'open_at_publication'));
         $rate = function (array $eligible, callable $hit): array {
@@ -200,6 +203,12 @@ class SetupStudyService
 
             return count($values) ? round(array_sum($values) / count($values), 3) : null;
         };
+        $averagePercentage = function (string $key) use ($completed): ?float {
+            $values = array_filter(array_column(array_column($completed, 'metrics'), $key),
+                fn ($v) => is_numeric($v) && is_finite((float) $v));
+
+            return count($values) ? round(array_sum($values) / count($values), 3) : null;
+        };
 
         return ['total' => count($rows), 'qualified' => count($qualified),
             'watching' => count(array_filter($rows, fn ($r) => ($r['status'] ?? '') === 'watching')),
@@ -208,11 +217,14 @@ class SetupStudyService
             'strict_target' => $rate($completed, fn ($r) => $r['metrics']['strict_outcome'] === 'target_reached'),
             'favorable_05r' => $rate($completed, fn ($r) => $r['metrics']['reached_05r'] === true),
             'favorable_1r' => $rate($completed, fn ($r) => $r['metrics']['reached_1r'] === true),
+            'favorable_05pct' => $rate($percentCompleted, fn ($r) => (float) $r['metrics']['mfe_pct'] >= .5),
+            'favorable_1pct' => $rate($percentCompleted, fn ($r) => (float) $r['metrics']['mfe_pct'] >= 1),
             'entry_revisit' => $rate($observable, fn ($r) => $r['metrics']['entry_revisited'] === true),
             'after_publication_target' => $rate($openWhenPublished, fn ($r) => $r['metrics']['strict_outcome'] === 'target_reached'),
             'resolved_before_publication' => count(array_filter($qualified, fn ($r) => ($r['metrics']['publication_timing'] ?? '') === 'resolved_before_publication')),
             'publication_timing_unknown' => count(array_filter($qualified, fn ($r) => ($r['metrics']['publication_timing'] ?? 'timing_unknown') === 'timing_unknown')),
-            'avg_mfe_r' => $average('mfe_r'), 'avg_mae_r' => $average('mae_r')];
+            'avg_mfe_r' => $average('mfe_r'), 'avg_mae_r' => $average('mae_r'),
+            'avg_mfe_pct' => $averagePercentage('mfe_pct'), 'avg_mae_pct' => $averagePercentage('mae_pct')];
     }
 
     private function breakdown(array $rows, string $key): array
