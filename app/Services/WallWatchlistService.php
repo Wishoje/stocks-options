@@ -188,7 +188,9 @@ final class WallWatchlistService
         $ids = DB::table('watchlists as saved')->where('saved.user_id', $userId)->whereIn('saved.symbol', $symbols)
             ->selectSub($newest, 'latest_id')->distinct();
 
-        return DB::table('wall_observations as w')->whereIn('w.id', $ids);
+        // Materialize the distinct IDs once before projecting JSON by primary key.
+        return DB::table('wall_observations as w')->joinSub($ids, 'latest_wall_ids',
+            fn ($join) => $join->on('latest_wall_ids.latest_id', '=', 'w.id'));
     }
 
     private function qualified(array $setup, array $reaction, CarbonImmutable $cutoff): bool

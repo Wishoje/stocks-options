@@ -8,6 +8,7 @@ import WallWatchlist from '@/Components/WallWatchlist.vue'
 import { useWallAlerts } from '@/composables/useWallAlerts'
 import { WALL_ALERTS } from '@/Support/wallAlerts'
 import { WALL_WATCHLIST_OWNER } from '@/Support/wallWatchlistFeed'
+import { createWallAlertInbox } from '@/Support/wallAlertInbox'
 
 vi.mock('axios', () => ({ default: { get: vi.fn() } }))
 let id = 700, wrappers = []
@@ -434,6 +435,11 @@ describe('server history recovery independent of browser presence', () => {
   }
   const dayFeed = (history, change = {}) => ({ ...payload(), state: 'outside_session', alert_history: history,
     alert_history_truncated: false, refresh_until: '2026-09-30T20:00:00Z', ...change })
+  const distinctHistory = count => Array.from({ length: count }, (_, index) => {
+    const original = archived(), identity = (index + 1).toString(16).padStart(64, '0'), symbol = `S${index}`
+    return { ...original, symbol, alert_id: identity, assessment_id: identity,
+      lifecycle: { ...original.lifecycle, symbol, id: identity, alert_id: identity, assessment_id: identity } }
+  })
 
   it('shows history loading rather than an empty result before the first server response', async () => {
     let complete
@@ -444,6 +450,73 @@ describe('server history recovery independent of browser presence', () => {
     expect(document.querySelector('#wall-alert-inbox').textContent).not.toContain('No alerts recorded today')
     complete({ data: dayFeed([]) }); await flushPromises()
     expect(document.querySelector('#wall-alert-inbox').textContent).toContain('No alerts recorded today')
+  })
+
+  it('waits for the server history instead of flashing six cached alerts before the full eighteen', async () => {
+    vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
+    const owner = ref(++id), records = distinctHistory(18), now = Date.now()
+    createWallAlertInbox(owner.value).add(records.slice(0, 6).map(item => ({ ...item, received_at: now })), now)
+    let complete
+    axios.get.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    const { wrapper, alerts } = render({ owner }); await flushPromises()
+    expect(alerts.history.value).toHaveLength(6)
+    expect(wrapper.find('.wall-inbox-badge').exists()).toBe(false)
+    expect(wrapper.get('.wall-inbox-trigger').attributes('aria-label')).toBe("Recent alerts, loading today's history")
+    await wrapper.get('.wall-inbox-trigger').trigger('click')
+    const panel = document.querySelector('#wall-alert-inbox')
+    expect(panel.querySelector('.wall-inbox-body').getAttribute('aria-busy')).toBe('true')
+    expect(panel.textContent).toContain("Loading today's alerts")
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(0)
+    expect(panel.querySelector('.wall-status-filters')).toBeNull()
+    expect(panel.textContent).not.toContain('Mark all read')
+    complete({ data: dayFeed(records) }); await flushPromises()
+    expect(alerts.history.value).toHaveLength(18)
+    expect(wrapper.get('.wall-inbox-badge').text()).toBe('18')
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(18)
+    expect(panel.querySelector('.wall-inbox-body').getAttribute('aria-busy')).toBe('false')
+    expect(panel.textContent).toContain('All · 18')
+    expect(panel.textContent).not.toContain("Loading today's alerts")
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(wrapper.get('.wall-inbox-badge').text()).toBe('18')
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(18)
+  })
+
+  it('reveals cached alerts and preserves read marks if the initial history request fails', async () => {
+    vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
+    const owner = ref(++id), records = distinctHistory(6), now = Date.now()
+    const inbox = createWallAlertInbox(owner.value)
+    inbox.add(records.map(item => ({ ...item, received_at: now })), now)
+    inbox.markRead(records[0].alert_id, now)
+    let fail
+    axios.get.mockImplementationOnce(() => new Promise((resolve, reject) => { fail = reject }))
+    const { wrapper, alerts } = render({ owner }); await flushPromises()
+    await wrapper.get('.wall-inbox-trigger').trigger('click')
+    expect(document.querySelectorAll('.wall-inbox-item')).toHaveLength(0)
+    fail(new Error('network')); await flushPromises()
+    const panel = document.querySelector('#wall-alert-inbox')
+    expect(panel.textContent).toContain("Could not refresh today's alerts")
+    expect(panel.textContent).not.toContain("Loading today's alerts")
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(6)
+    expect(alerts.history.value.find(item => item.alert_id === records[0].alert_id).read_at).toBe(now)
+    expect(wrapper.get('.wall-inbox-badge').text()).toBe('5')
+  })
+
+  it('keeps the loaded list visible and stable while its background history refresh is pending', async () => {
+    const records = distinctHistory(18).map(item => ({ ...item,
+      lifecycle: { ...item.lifecycle, status_group: 'in_progress', outcome: 'in_progress', outcome_at: null,
+        evaluated_through: '2026-09-30T14:15:00Z' } }))
+    axios.get.mockResolvedValueOnce({ data: { ...dayFeed(records), state: 'ready' } })
+    const { wrapper } = render(); await flushPromises()
+    await wrapper.get('.wall-inbox-trigger').trigger('click')
+    let complete
+    axios.get.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    await vi.advanceTimersByTimeAsync(60000); await flushPromises()
+    const panel = document.querySelector('#wall-alert-inbox')
+    expect(wrapper.get('.wall-inbox-badge').text()).toBe('18')
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(18)
+    expect(panel.textContent).not.toContain("Loading today's alerts")
+    complete({ data: { ...dayFeed(records), state: 'ready' } }); await flushPromises()
+    expect(panel.querySelectorAll('.wall-inbox-item')).toHaveLength(18)
   })
 
   it('recovers a completed morning setup after close with popups disabled and preserves read state on reload', async () => {

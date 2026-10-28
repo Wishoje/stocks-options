@@ -16,6 +16,8 @@ The active-only Scanner filters remain unchanged. The inbox has its own grouping
 
 The shared account feed refreshes on a visible-tab return after the normal request cooldown, including after the post-close finalization window. This reads saved history without restarting idle overnight polling. The existing current-event freshness rules and delayed-price cutoff still apply to popups.
 
+On the first request, the inbox shows a loading state until the server history arrives. Cached numeric badges, filter counts and rows do not appear as a complete daily list during that request. A failed request makes cached records available with a refresh warning. Later background refreshes keep the loaded list visible. The server joins the bounded set of latest assessment IDs before reading their payloads; account scope, timestamp ordering and the three-query budget remain unchanged.
+
 No migration, environment flag, additional worker or data subscription is required. Collection must still be running to create source evidence; history recovery cannot manufacture observations that were never recorded.
 
 ## Complete saved-qualification reads

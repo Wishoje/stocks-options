@@ -12,6 +12,9 @@ const entries = computed(() => wallInboxHistoryRows(wallInboxRows(alerts.history
 const visibleEntries = computed(() => filterWallRows(entries.value, { status: selectedStatus.value, symbol: symbol.value, direction: direction.value, unread: unread.value }))
 const example = computed(() => alerts.notifications.value.find(item => item.preview))
 const status = computed(() => !alerts.settings.value.enabled ? 'Popups off' : alerts.error.value ? 'Updates paused' : 'Popups on')
+const initialHistoryLoading = computed(() => !!alerts.loading?.value && !alerts.error.value)
+const triggerLabel = computed(() => initialHistoryLoading.value ? "Recent alerts, loading today's history"
+  : `Recent alerts${alerts.unreadCount.value ? `, ${alerts.unreadCount.value} unread` : ''}`)
 let previousOverflow = ''
 
 async function show() {
@@ -51,10 +54,10 @@ onScopeDispose(() => close(false))
 
 <template>
   <button ref="trigger" type="button" class="wall-inbox-trigger" aria-haspopup="dialog" aria-controls="wall-alert-inbox"
-    :aria-expanded="open" :aria-label="`Recent alerts${alerts.unreadCount.value ? `, ${alerts.unreadCount.value} unread` : ''}`" @click="show">
+    :aria-expanded="open" :aria-label="triggerLabel" @click="show">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
     <span class="wall-inbox-label">Alerts</span>
-    <span v-if="alerts.unreadCount.value" class="wall-inbox-badge" aria-hidden="true">{{ alerts.unreadCount.value > 99 ? '99+' : alerts.unreadCount.value }}</span>
+    <span v-if="!initialHistoryLoading && alerts.unreadCount.value" class="wall-inbox-badge" aria-hidden="true">{{ alerts.unreadCount.value > 99 ? '99+' : alerts.unreadCount.value }}</span>
   </button>
   <Teleport to="body">
     <div v-if="open" class="wall-inbox-overlay" @keydown="keydown">
@@ -64,25 +67,26 @@ onScopeDispose(() => close(false))
           <div><p class="eyebrow">Today · Eastern time</p><h2 id="wall-inbox-title">Recent alerts</h2></div>
           <button ref="closeButton" type="button" class="close" aria-label="Close recent alerts" @click="close()">×</button>
         </header>
-        <div class="wall-inbox-body">
+        <div class="wall-inbox-body" :aria-busy="initialHistoryLoading">
           <div class="wall-inbox-tools"><span :class="['monitoring', { off: !alerts.settings.value.enabled || alerts.error.value }]">{{ status }}</span>
-            <button v-if="alerts.unreadCount.value" type="button" @click="alerts.markRead()">Mark all read</button></div>
+            <button v-if="!initialHistoryLoading && alerts.unreadCount.value" type="button" @click="alerts.markRead()">Mark all read</button></div>
           <p class="intro">Today's watchlist alerts are saved even while you are away. Open an assessment to review its original levels and latest outcome.</p>
-          <WallStatusFilters v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" v-model:unread="unread" :rows="entries" inbox />
+          <WallStatusFilters v-if="!initialHistoryLoading" v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" v-model:unread="unread" :rows="entries" inbox />
           <p v-if="!alerts.inboxPersistent.value" class="storage-note" role="status">Your browser cannot save read status. Today's server alerts remain available when you return.</p>
           <p v-if="!alerts.settings.value.enabled" class="notice">Popup notifications are off. Today's recorded alerts remain below. <a href="/scanner?scan=activity">Manage alerts in Scanner</a></p>
           <p v-if="alerts.error.value" class="notice" role="status">Could not refresh today's alerts. Previously loaded alerts remain available.</p>
           <p v-if="alerts.activity?.value?.alert_history_truncated" class="notice" role="status">Some recorded history could not be included. Previously loaded alerts remain available.</p>
-          <p v-if="entries.length && !visibleEntries.length" class="notice" role="status">No alerts match these filters. Your selection stays in place as updates arrive.</p>
-          <ol v-if="visibleEntries.length" class="wall-inbox-list" aria-label="Today's recorded wall alerts">
+          <div v-if="initialHistoryLoading" class="wall-inbox-empty" role="status"><h3>Loading today's alerts...</h3><p>Recovering today's recorded alerts.</p></div>
+          <p v-if="!initialHistoryLoading && entries.length && !visibleEntries.length" class="notice" role="status">No alerts match these filters. Your selection stays in place as updates arrive.</p>
+          <ol v-if="!initialHistoryLoading && visibleEntries.length" class="wall-inbox-list" aria-label="Today's recorded wall alerts">
             <li v-for="item in visibleEntries" :key="item.alert_id" :class="['wall-inbox-item', { unread: !item.read_at }]">
               <span v-if="!item.read_at" class="unread-label">Unread</span>
               <WallAlertDetails :item="item" archived @open="openAssessment(item)" />
             </li>
           </ol>
-          <div v-else-if="!entries.length" class="wall-inbox-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v16H4zM4 14h5l1 2h4l1-2h5M8 8h8M8 11h5" /></svg>
-            <h3>{{ alerts.loading?.value ? "Loading today's alerts…" : alerts.error.value ? "Today's alerts could not load" : 'No alerts recorded today' }}</h3>
-            <p v-if="alerts.loading?.value">Recovering today's recorded alerts.</p><p v-else-if="alerts.error.value">The next refresh will try again. Previously loaded alerts will remain available.</p><p v-else>Alerts appear here as their conditions occur, including while you are away. Keep the site open if you want popups.</p></div>
+          <div v-else-if="!initialHistoryLoading && !entries.length" class="wall-inbox-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v16H4zM4 14h5l1 2h4l1-2h5M8 8h8M8 11h5" /></svg>
+            <h3>{{ alerts.error.value ? "Today's alerts could not load" : 'No alerts recorded today' }}</h3>
+            <p v-if="alerts.error.value">The next refresh will try again. Previously loaded alerts will remain available.</p><p v-else>Alerts appear here as their conditions occur, including while you are away. Keep the site open if you want popups.</p></div>
           <article v-if="example" class="wall-inbox-example" aria-label="Test wall alert example"><WallAlertDetails :item="example" @open="openAssessment(example)" /></article>
           <footer><a href="/scanner?scan=activity">Open Wall activity</a><button v-if="alerts.settings.value.enabled" type="button" @click="alerts.preview()">Preview example</button></footer>
           <p class="retention">Today's alerts are saved on the server. Read status is saved in this browser · Resets at midnight ET. Viewing an assessment marks it as read.</p>
