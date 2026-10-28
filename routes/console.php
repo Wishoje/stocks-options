@@ -22,7 +22,7 @@ Schedule::command('walls:capture-interactions')->everyMinute()->withoutOverlappi
 Schedule::command('social:tick')->everyMinute()->withoutOverlapping(5)->onOneServer();
 
 // Archive compact study metrics in small rotating batches. No provider requests or queue jobs.
-Schedule::command('setup-study:collect --limit=12')
+Schedule::command('setup-study:collect --limit=6')
     ->timezone('America/New_York')->weekdays()->everyFifteenMinutes()->between('10:00', '22:00')
     ->withoutOverlapping(5)->onOneServer()->runInBackground()->name('setup-study:collect')
     ->when(fn () => (bool) config('setup_study.enabled'));

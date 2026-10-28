@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Schema;
 class SetupStudyService
 {
     /** Bounded archival collection from existing evidence only, never a provider or queue. */
-    public function collect(int $ownerId, int $limit = 12, bool $backfill = false): array
+    public function collect(int $ownerId, int $limit = 6, bool $backfill = false): array
     {
         if (! Schema::hasTable('setup_study_records')) {
             return ['prepared' => false, 'symbols' => 0, 'records' => 0, 'warnings' => ['Apply the setup-study migration to start keeping study records.']];
@@ -36,10 +36,12 @@ class SetupStudyService
             $through = $now->setTimezone('America/New_York')->toDateString();
             $coveredKey = 'setup-study:covered:'.$ownerId;
             $covered = Cache::get($coveredKey, []);
-            $initial = $backfill || array_diff($selected, array_keys($covered)) !== [];
+            $initial = array_diff($selected, array_keys($covered)) !== [];
             $previous = $initial ? null : min(array_intersect_key($covered, array_flip($selected)));
-            $intradayFrom = $initial ? $now->subDays(14)->toDateString()
-                : max($now->subDays(14)->toDateString(), min($now->subDays(3)->toDateString(), CarbonImmutable::parse($previous)->subDay()->toDateString()));
+            $window = CarbonImmutable::parse($through, 'America/New_York');
+            $intradayFrom = $backfill ? $window->subDays(14)->toDateString()
+                : ($initial ? $window->subDays(3)->toDateString()
+                    : max($window->subDays(14)->toDateString(), min($window->subDays(3)->toDateString(), CarbonImmutable::parse($previous)->subDay()->toDateString())));
             $warnings = [];
             $samples = [];
             foreach ([

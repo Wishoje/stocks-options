@@ -178,39 +178,34 @@ final class IntradayStudySource
             ->where('schema_version', $schema)->whereBetween('analysis_session', [$from, $through]);
     }
 
-    /** Explicit keyset pages also bound MySQL's buffered PDO result, unlike cursor(). */
+    /** Sort thin metadata once; JSON is fetched only for a small primary-key batch. */
     private function checkpoints(array $symbols, string $from, string $through, bool &$truncated, array &$warnings): \Generator
     {
-        $base = $this->scope($symbols, $from, $through, 'wall_interactions', 'wall-interactions.v1')
-            ->whereNotNull('payload_json->setups->review_seeds');
-        $lastAt = null;
-        $lastId = 0;
-        $seen = 0;
-        do {
-            $query = (clone $base)->orderBy('recorded_at')->orderBy('id')
-                ->limit(min(self::PAGE_SIZE, self::CHECKPOINT_LIMIT - $seen + 1));
-            if ($lastAt !== null) {
-                $query->where(fn ($q) => $q->where('recorded_at', '>', $lastAt)
-                    ->orWhere(fn ($tie) => $tie->where('recorded_at', $lastAt)->where('id', '>', $lastId)));
-            }
-            $query->select(['id', 'symbol', 'analysis_session', 'content_hash', 'recorded_at',
-                'payload_json->timeframe as timeframe', 'payload_json->setups->rule_version as rule_version',
-                'payload_json->price_evidence_hash as price_hash', 'payload_json->state as state',
-                'payload_json->dataset as source_dataset', 'payload_json->demonstration as demonstration',
-                'payload_json->setup_reviews->demonstration as review_demonstration']);
+        // No JSON predicate or projection here: either can parse every remaining large row before a filesort.
+        $metadata = $this->scope($symbols, $from, $through, 'wall_interactions', 'wall-interactions.v1')
+            ->orderBy('recorded_at')->orderBy('id')->limit(self::CHECKPOINT_LIMIT + 1)
+            ->get(['id', 'symbol', 'analysis_session', 'recorded_at']);
+        if ($metadata->count() > self::CHECKPOINT_LIMIT) {
+            $truncated = true;
+            $warnings['checkpoints'] = 'Intraday checkpoint limit reached; later saved assessments were omitted.';
+            $metadata->pop();
+        }
+        foreach ($metadata->chunk(self::PAGE_SIZE) as $batch) {
+            $query = DB::table('wall_observations')->whereIn('id', $batch->pluck('id')->all())
+                ->limit(self::PAGE_SIZE)->select(['id', 'symbol', 'analysis_session', 'content_hash', 'recorded_at',
+                    'payload_json->timeframe as timeframe', 'payload_json->setups->rule_version as rule_version',
+                    'payload_json->price_evidence_hash as price_hash', 'payload_json->state as state',
+                    'payload_json->dataset as source_dataset', 'payload_json->demonstration as demonstration',
+                    'payload_json->setup_reviews->demonstration as review_demonstration']);
             $this->boundedProjection($query, 'payload_json->setups->review_seeds', 'seeds', self::SEED_BYTES);
             $this->boundedProjection($query, 'payload_json->setup_lifecycle->items', 'lifecycle', self::LIFECYCLE_BYTES);
-            $rows = $query->get();
-            $count = $rows->count();
-            foreach ($rows as $record) {
-                if (++$seen > self::CHECKPOINT_LIMIT) {
-                    $truncated = true;
-                    $warnings['checkpoints'] = 'Intraday checkpoint limit reached; later saved assessments were omitted.';
-
-                    return;
+            $rows = $query->get()->keyBy('id');
+            // A primary-key lookup may return ID order; retain recorded_at/id qualification precedence.
+            foreach ($batch as $identity) {
+                $record = $rows->get($identity->id);
+                if (! $record) {
+                    continue;
                 }
-                $lastAt = $record->recorded_at;
-                $lastId = $record->id;
                 if ($record->seeds_oversized || $record->lifecycle_oversized) {
                     $truncated = true;
                     $warnings['payload'] = 'Oversized intraday checkpoint fields were omitted to keep reads bounded.';
@@ -218,7 +213,7 @@ final class IntradayStudySource
                 yield $record;
             }
             unset($rows);
-        } while ($count === self::PAGE_SIZE);
+        }
     }
 
     /** Reject an oversized JSON field inside SQL, before PDO buffers it in PHP. */

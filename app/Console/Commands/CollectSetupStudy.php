@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
 
 final class CollectSetupStudy extends Command
 {
-    protected $signature = 'setup-study:collect {--limit=12 : Symbols per bounded batch} {--backfill : Read up to fourteen retained intraday days}';
+    protected $signature = 'setup-study:collect {--limit=6 : Symbols per bounded batch} {--backfill : Read up to fourteen retained intraday days}';
 
     protected $description = 'Keep compact owner-only setup study measurements from already recorded evidence';
 

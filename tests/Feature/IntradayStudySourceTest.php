@@ -58,12 +58,21 @@ class IntradayStudySourceTest extends TestCase
         DB::disableQueryLog();
         $this->assertCount(2, $result['samples']);
         $this->assertFalse($result['truncated']);
-        $this->assertCount(19, $queries); // Eighteen explicit checkpoint pages and one price page.
-        foreach ($queries as $query) {
+        $this->assertCount(20, $queries); // One thin metadata read, eighteen primary-key batches, and one price page.
+        $this->assertStringNotContainsString('payload_json', strtolower($queries[0]['query']));
+        $this->assertStringContainsString('limit 20001', strtolower($queries[0]['query']));
+        foreach ($queries as $index => $query) {
             $this->assertStringStartsWith('select ', strtolower($query['query']));
             $this->assertStringNotContainsString('select *', strtolower($query['query']));
             $this->assertNotContains('intraday_capture', $query['bindings']);
-            $this->assertStringContainsString('limit 10', strtolower($query['query']));
+            if ($index > 0) {
+                $this->assertStringContainsString('limit 10', strtolower($query['query']));
+            }
+            if ($index > 0 && $index < count($queries) - 1) {
+                $this->assertStringContainsString('"id" in (', strtolower($query['query']));
+                $this->assertLessThanOrEqual(10, count($query['bindings']));
+                $this->assertStringNotContainsString('order by', strtolower($query['query']));
+            }
             $this->assertStringNotContainsString('offset ', strtolower($query['query']));
         }
         $original = collect($result['samples'])->firstWhere('target', 101.0);
