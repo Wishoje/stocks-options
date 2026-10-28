@@ -177,6 +177,42 @@ describe('Setup study page', () => {
     expect(wrapper.findAll('.study-actions button')[0].attributes('disabled')).toBeDefined()
   })
 
+  it('explains partial first-pass coverage and prepares an empty study without inventing outcomes', async () => {
+    const empty = { hits: 0, eligible: 0, rate: null }
+    axios.get.mockResolvedValueOnce({ data: report({ rows: [], coverage: {
+      collected_symbols: 7, total_symbols: 96, first_pass_complete: false,
+    }, summary: {
+      total: 0, qualified: 0, watching: 0, in_progress: 0, completed: 0, needs_update: 0,
+      strict_target: empty, favorable_05r: empty, favorable_1r: empty, entry_revisit: empty,
+      after_publication_target: empty, avg_mfe_r: null, avg_mae_r: null,
+    } }) })
+    const wrapper = start(); await flushPromises()
+    expect(wrapper.get('.study-coverage').text()).toBe('Preparing your study: 7 of 96 symbols checked. Results are partial while the first collection finishes.')
+    expect(wrapper.get('.study-empty h3').text()).toBe('Preparing your study')
+    expect(wrapper.get('.study-empty').text()).toContain('saved symbols in batches')
+    expect(wrapper.get('[data-metric="strict_target"] strong').text()).toBe('—')
+    expect(wrapper.text()).not.toContain('No recorded plans in this view')
+    expect(axios.get).toHaveBeenCalledTimes(1)
+    expect(axios.post).not.toHaveBeenCalled()
+  })
+
+  it('hides first-pass preparation once complete and ignores coverage during synthetic preview', async () => {
+    axios.get.mockResolvedValueOnce({ data: report({ rows: [], coverage: {
+      collected_symbols: 96, total_symbols: 96, first_pass_complete: true,
+    } }) })
+    const saved = start(); await flushPromises()
+    expect(saved.find('.study-coverage').exists()).toBe(false)
+    expect(saved.get('.study-empty h3').text()).toBe('No recorded plans in this view')
+    const preview = start({ localDemoAvailable: true }); await flushPromises()
+    axios.get.mockResolvedValueOnce({ data: report({ rows: [], demonstration: true, coverage: {
+      collected_symbols: 7, total_symbols: 96, first_pass_complete: false,
+    } }) })
+    await preview.get('.study-preview-toggle').trigger('click'); await flushPromises()
+    expect(preview.find('.study-coverage').exists()).toBe(false)
+    expect(preview.get('.study-empty h3').text()).toBe('No synthetic examples match this view')
+    expect(preview.text()).not.toContain('Preparing your study')
+  })
+
   it('shows compact pattern and symbol results with their own visible denominators', async () => {
     const group = { ...report().summary, label: 'wall_reclaim' }
     axios.get.mockResolvedValueOnce({ data: report({ breakdowns: {

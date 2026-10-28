@@ -151,6 +151,7 @@ class SetupStudyService
         return ['filters' => $filters, 'prepared' => $prepared, 'generated_at' => now('UTC')->toIso8601String(),
             'last_collected_at' => $last ? CarbonImmutable::parse($last, 'UTC')->toIso8601String() : null,
             'collection_enabled' => (bool) config('setup_study.enabled'), 'collection' => $lastCollection,
+            'coverage' => $this->coverage($ownerId, $prepared),
             'summary' => $this->summarize($rows), 'rows' => $rows, 'breakdowns' => [
                 'patterns' => $this->breakdown($rows, 'pattern'), 'symbols' => $this->breakdown($rows, 'symbol')],
             'warnings' => $warnings,
@@ -165,6 +166,21 @@ class SetupStudyService
                 'scope' => 'Your saved symbols at collection time, plus symbols already in this study. This is a selected sample, not all market opportunities.',
                 'retention' => 'Compact study records are kept independently of raw observation retention. Repeated confirmations of the same active intraday levels are grouped.',
             ]];
+    }
+
+    private function coverage(int $ownerId, bool $prepared): array
+    {
+        $saved = DB::table('watchlists')->where('user_id', $ownerId);
+        $savedCount = (clone $saved)->distinct()->count('symbol');
+        $recent = $prepared ? DB::table('setup_study_records')->where('owner_id', $ownerId)
+            ->where('session', '>=', now()->subDays(45)->toDateString())
+            ->whereNotIn('symbol', (clone $saved)->select('symbol'))->distinct()->pluck('symbol')->all() : [];
+        $covered = array_keys(Cache::get('setup-study:covered:'.$ownerId, []));
+        $collected = ($covered ? (clone $saved)->whereIn('symbol', $covered)->distinct()->count('symbol') : 0)
+            + count(array_intersect($recent, $covered));
+        $total = $savedCount + count($recent);
+
+        return ['collected_symbols' => $collected, 'total_symbols' => $total, 'first_pass_complete' => $collected === $total];
     }
 
     public function summarize(array $rows): array

@@ -6,6 +6,8 @@
 
 The three cohorts are intraday, swing 2–5 trading days, and swing 1–3 weeks. Intraday includes saved qualified plans. Swing also includes published plans still waiting for qualification. Plans with no eligible swing idea are excluded.
 
+The report includes first-pass coverage separately from qualifying-plan counts. Checked symbols with no qualifying plan still count toward coverage. Until every saved or recently archived symbol has been checked, the page labels results partial and shows preparation progress instead of implying that zero records means no signals. Coverage remains owner-scoped and independent of the current report filters.
+
 Date filters use the qualifying close's market date. An unqualified swing plan uses its first publication date until it qualifies. The original EOD source date remains in its evidence.
 
 All move measurements start from the first recorded qualifying close, using the original target and invalidation. They describe price behavior, not executed trades, option returns, or fills. Intraday uses completed five-minute closes; swing uses daily closes. The first target close, invalidation close, or applicable session/holding deadline stops follow-up. Invalidation equality is not a crossing.

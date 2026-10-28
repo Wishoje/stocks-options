@@ -234,6 +234,60 @@ class SetupStudyServiceTest extends TestCase
         $this->assertSame(0, DB::table('setup_study_records')->count());
     }
 
+    public function test_first_pass_progress_counts_scanned_symbols_even_when_they_have_no_qualifying_records(): void
+    {
+        foreach (['AAA', 'BBB', 'CCC'] as $symbol) {
+            DB::table('watchlists')->insert(['user_id' => self::OWNER, 'symbol' => $symbol]);
+        }
+        $service = new SetupStudyService;
+        $this->assertSame(['collected_symbols' => 0, 'total_symbols' => 3, 'first_pass_complete' => false],
+            $service->report(self::OWNER, $this->filters())['coverage']);
+        $service->collect(self::OWNER, 1);
+        $partial = $service->report(self::OWNER, $this->filters());
+        $this->assertSame(['collected_symbols' => 1, 'total_symbols' => 3, 'first_pass_complete' => false], $partial['coverage']);
+        $this->assertSame(0, $partial['summary']['total']);
+        $this->assertStringContainsString('selected sample', $partial['methodology']['scope']);
+        $service->collect(self::OWNER, 2);
+        $this->assertSame(['collected_symbols' => 3, 'total_symbols' => 3, 'first_pass_complete' => true],
+            $service->report(self::OWNER, $this->filters())['coverage']);
+        $this->assertSame(0, DB::table('setup_study_records')->count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_coverage_uses_only_the_current_owner_universe_and_stays_read_only_with_bounded_queries(): void
+    {
+        DB::table('watchlists')->insert([
+            ['user_id' => self::OWNER, 'symbol' => 'SPY'], ['user_id' => self::OWNER, 'symbol' => 'SPY'],
+            ['user_id' => self::OWNER, 'symbol' => 'QQQ'], ['user_id' => 1, 'symbol' => 'OTHER'],
+        ]);
+        $this->archive(['symbol' => 'IWM']);
+        $this->archive(['symbol' => 'IWM'], 'swing_short');
+        $this->archive(['symbol' => 'OLD', 'session' => '2026-08-01']);
+        $this->archive(['symbol' => 'FOREIGN'], owner: 1);
+        Cache::put('setup-study:covered:'.self::OWNER, array_fill_keys(['SPY', 'IWM', 'OLD', 'FOREIGN', 'REMOVED'], '2026-10-28'));
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+
+        $report = (new SetupStudyService)->report(self::OWNER, [...$this->filters(), 'symbol' => 'NO-MATCH']);
+        $this->assertSame(['collected_symbols' => 2, 'total_symbols' => 3, 'first_pass_complete' => false], $report['coverage']);
+        $this->assertSame([], $report['rows']);
+        $this->assertLessThanOrEqual(5, count(DB::getQueryLog()));
+        foreach (DB::getQueryLog() as $query) {
+            $this->assertStringStartsWith('select ', strtolower($query['query']));
+        }
+        DB::disableQueryLog();
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_empty_saved_universe_has_no_first_pass_work(): void
+    {
+        Cache::put('setup-study:covered:'.self::OWNER, ['REMOVED' => '2026-10-28']);
+        $this->assertSame(['collected_symbols' => 0, 'total_symbols' => 0, 'first_pass_complete' => true],
+            (new SetupStudyService)->report(self::OWNER, $this->filters())['coverage']);
+    }
+
     public function test_collection_catches_up_retained_days_after_an_outage_without_unbounded_backfill(): void
     {
         DB::table('watchlists')->insert(['user_id' => self::OWNER, 'symbol' => 'SPY']);

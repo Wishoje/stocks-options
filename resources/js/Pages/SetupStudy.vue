@@ -24,6 +24,13 @@ let disposed = false
 
 const rows = computed(() => report.value?.rows || [])
 const summary = computed(() => report.value?.summary || {})
+const preparingStudy = computed(() => !demonstration.value && Number(report.value?.coverage?.total_symbols) > 0
+  && !report.value?.coverage?.first_pass_complete)
+const emptyHeading = computed(() => demonstration.value ? 'No synthetic examples match this view'
+  : preparingStudy.value ? 'Preparing your study' : 'No recorded plans in this view')
+const emptyMessage = computed(() => demonstration.value ? 'Choose another period, symbol or direction to inspect the examples.'
+  : preparingStudy.value ? 'The first collection checks your saved symbols in batches. Results will appear as collection finishes. Refresh this view to see the latest saved records.'
+    : 'Choose another period or refresh records to collect available saved evidence.')
 const filterError = computed(() => !filters.from || !filters.to ? 'Choose both dates.'
   : filters.from > filters.to ? 'From date must be on or before To date.' : '')
 const busy = computed(() => loading.value || refreshing.value)
@@ -192,6 +199,7 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
         <div class="study-meta"><p>Showing {{ studyLabel(report.filters?.cohort) }} · {{ report.filters?.from }} to {{ report.filters?.to }} · {{ report.filters?.symbol || 'All symbols' }} · {{ report.filters?.direction ? studyLabel(report.filters.direction) : 'Both directions' }}</p></div>
         <div class="study-meta"><p v-if="!demonstration">Last collection: {{ studyTime(report.last_collected_at) }}</p><p>Report: {{ studyTime(report.generated_at) }}</p></div>
         <div v-if="!demonstration && report.collection_enabled === false" class="study-warning" role="status">Record collection is disabled. Existing records remain available.</div>
+        <div v-if="preparingStudy" class="study-warning study-coverage" role="status">Preparing your study: {{ studyNumber(report.coverage.collected_symbols, 0) }} of {{ studyNumber(report.coverage.total_symbols, 0) }} symbols checked. Results are partial while the first collection finishes.</div>
         <div v-for="(warning, index) in report.warnings || []" :key="index" class="study-warning" role="status">{{ typeof warning === 'string' ? warning : warning.message || studyLabel(warning.code) }}</div>
         <section class="study-counts" aria-label="Plan counts"><div v-for="count in counts" :key="count.label" class="study-panel"><span>{{ count.label }}</span><strong>{{ studyNumber(count.value, 0) }}</strong></div></section>
         <div class="study-section-heading"><h2>Signal-close response</h2><p>Observed price moves from the qualifying close, including moves before the app received the record.</p></div>
@@ -210,7 +218,7 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
         </section>
         <section class="study-panel study-records" aria-label="Recorded plans">
           <header class="study-records-heading"><div><h2>Recorded plans</h2><p>Repeated confirmations at the same level count as one plan.</p></div><span>{{ rows.length }} {{ rows.length === 1 ? 'plan' : 'plans' }}</span></header>
-          <div v-if="!rows.length" class="study-empty" role="status"><h3>{{ demonstration ? 'No synthetic examples match this view' : 'No recorded plans in this view' }}</h3><p>{{ demonstration ? 'Choose another period, symbol or direction to inspect the examples.' : 'Choose another period or refresh records to collect available saved evidence.' }}</p></div>
+          <div v-if="!rows.length" class="study-empty" role="status"><h3>{{ emptyHeading }}</h3><p>{{ emptyMessage }}</p></div>
           <div v-else class="study-table-scroll"><table class="study-table"><caption class="sr-only">Recorded setup scenarios and their observed price outcomes</caption><thead><tr><th scope="col">Plan</th><th scope="col">Signal time</th><th scope="col">State</th><th scope="col">Target outcome</th><th scope="col">Best / worst close</th><th scope="col">Favorable moves</th><th scope="col">Details</th></tr></thead><tbody>
             <template v-for="row in rows" :key="row.id">
               <tr><th scope="row"><strong>{{ row.symbol }}</strong><span class="study-direction" :class="row.direction">{{ studyLabel(row.direction) }}</span></th><td>{{ studyTime(row.signal_at) }}</td><td><span class="study-state" :class="{ 'study-state--stale': row.needs_update }">{{ studyLabel(rowStatus(row)) }}</span></td><td>{{ studyLabel(row.metrics?.strict_outcome || row.outcome) }}<span v-if="row.metrics?.publication_timing" class="study-cell-line" :class="{ 'study-timing-late': row.metrics.publication_timing === 'resolved_before_publication' }">{{ studyLabel(row.metrics.publication_timing) }}</span></td><td><span class="study-tabular">{{ studyR(bestClose(row)) }} / {{ studyAdverseR(worstClose(row)) }}</span></td><td><span>0.5R: {{ moveLabel(row, 'reached_05r') }}</span><span class="study-cell-line">1R: {{ moveLabel(row, 'reached_1r') }}</span></td><td><button type="button" class="study-inspect" :aria-expanded="expandedPlans.has(row.id)" :aria-controls="`study-plan-${row.id}`" @click="togglePlan(row.id)">{{ expandedPlans.has(row.id) ? 'Close details' : 'Inspect plan' }}</button></td></tr>
