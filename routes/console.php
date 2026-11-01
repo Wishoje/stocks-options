@@ -28,6 +28,12 @@ Schedule::command('setup-study:collect --limit=6')
     ->when(fn () => (bool) config('setup_study.enabled'));
 
 // Example default command
+// Enable only on the designated worker. These batches read retained evidence only.
+Schedule::command('swing-research:collect --limit=6')
+    ->timezone('America/New_York')->weekdays()->everyFifteenMinutes()->between('18:00', '22:00')
+    ->withoutOverlapping(5)->onOneServer()->runInBackground()->name('swing-research:collect')
+    ->when(fn () => (bool) config('swing_research.enabled'));
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 });

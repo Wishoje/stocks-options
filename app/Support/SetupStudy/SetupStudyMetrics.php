@@ -26,7 +26,8 @@ final class SetupStudyMetrics
                 'observations' => 0, 'last_at' => null, 'risk_per_share' => null, 'evidence_gap' => false,
                 'first_05r_at' => null, 'first_1r_at' => null, 'publication_timing' => 'timing_unknown']];
         if (! $qualified) {
-            $result['status'] = in_array($sample['native_status'] ?? '', ['finished', 'no_idea'], true) ? 'not_qualified' : 'watching';
+            $result['status'] = $result['needs_update'] ? 'needs_update'
+                : (in_array($sample['native_status'] ?? '', ['finished', 'no_idea'], true) ? 'not_qualified' : 'watching');
 
             return $result;
         }

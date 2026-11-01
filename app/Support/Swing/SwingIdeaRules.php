@@ -30,6 +30,15 @@ final class SwingIdeaRules
 
     public function propose(array $input, string $horizon): array
     {
+        return $this->proposeWithEntryCandidates($input, $horizon, 3);
+    }
+
+    /** Research changes only the ranked entry-wall candidate count. */
+    public function proposeWithEntryCandidates(array $input, string $horizon, int $candidates): array
+    {
+        if (! in_array($candidates, [3, 10], true)) {
+            throw new \InvalidArgumentException('Entry-wall candidates must be 3 or 10.');
+        }
         $profile = self::HORIZONS[$horizon];
         $date = $input['data_date'];
         $base = ['rule_version' => self::VERSION, 'symbol' => $input['symbol'], 'horizon' => $horizon,
@@ -118,7 +127,7 @@ final class SwingIdeaRules
         $base['evidence']['expiry_totals'] = $expiryTotals;
         $walls = array_values(array_filter($strikes, fn ($r) => $d * $r['net_gex'] < 0));
         usort($walls, fn ($a, $b) => abs($b['net_gex']) <=> abs($a['net_gex']) ?: $a['strike'] <=> $b['strike']);
-        $near = array_values(array_filter(array_slice($walls, 0, 3), fn ($r) => $d * ($close - $r['strike']) >= 0 && abs($close - $r['strike']) <= 2 * $atr));
+        $near = array_values(array_filter(array_slice($walls, 0, $candidates), fn ($r) => $d * ($close - $r['strike']) >= 0 && abs($close - $r['strike']) <= 2 * $atr));
         usort($near, fn ($a, $b) => abs($a['strike'] - $close) <=> abs($b['strike'] - $close));
         if (! $near) {
             return [...$base, 'reason' => 'Price is not near a ranked wall that fits the daily trend.'];

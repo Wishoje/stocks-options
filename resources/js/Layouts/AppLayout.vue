@@ -12,15 +12,21 @@ import WallAlertCenter from '@/Components/WallAlertCenter.vue';
 import { useWallAlerts } from '@/composables/useWallAlerts';
 import { WALL_ALERTS } from '@/Support/wallAlerts';
 import { WALL_WATCHLIST_OWNER } from '@/Support/wallWatchlistFeed';
+import { useSwingResearchAlerts } from '@/composables/useSwingResearchAlerts';
+import { SWING_RESEARCH_ALERTS } from '@/Support/swingResearch';
 
-defineProps({
+const props = defineProps({
     title: String,
+    researchDemo: Boolean,
 });
 
 const layout = getCurrentInstance();
 const wallAlertOwner = computed(() => layout.proxy.$page?.props?.auth?.user?.id || null);
 provide(WALL_WATCHLIST_OWNER, wallAlertOwner);
 provide(WALL_ALERTS, useWallAlerts(wallAlertOwner));
+const researchOwner = computed(() => layout.proxy.$page?.props?.setupStudyAdmin && !props.researchDemo
+    ? wallAlertOwner.value : null);
+provide(SWING_RESEARCH_ALERTS, useSwingResearchAlerts(researchOwner));
 
 const showingNavigationDropdown = ref(false);
 const mobileNavigationButton = ref(null);

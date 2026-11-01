@@ -41,6 +41,8 @@ No-idea results are shown in a compact reasons list, outside the active lifecycl
 
 The page reads prepared records for the signed-in user's saved symbols. Page views do not fetch provider data, run the research rules or enqueue work. The command reuses existing EOD option chains, daily prices, DEX, IV, realized volatility, skew and open-interest data. It requires no new provider subscription or AI service.
 
+Open plans are read independently of the 250-row recent-history limit. Active cards show the latest available completed-session close and its percentage distance to the nearest edge of the frozen entry area. This price context does not qualify a plan or rewrite its original evidence. The original close and indicators retain their source date.
+
 The two new tables are additive: `swing_ideas` and `swing_idea_reviews`. Apply migration `2026_10_26_180000_create_swing_ideas_tables.php` during a future release. Original plans and daily reviews are retained; this release adds no automatic deletion of those records. An idea requiring evidence review remains paused until an operator reviews it. This version sends no swing notifications.
 
 Explicit local or operator refresh:
@@ -51,6 +53,8 @@ php artisan swing:refresh --watchlist --limit=10
 ```
 
 The command accepts at most twenty symbols, uses a shared lock and stops admitting another symbol after ninety seconds. Failed saved-symbol attempts wait thirty minutes before retrying. Both horizons share one source read per symbol. It does not add an intraday queue consumer.
+
+Saved-symbol selection checks both horizons independently and includes older open plans awaiting review even when another record is current. A paused evidence-review plan does not trigger repeated ineffective refreshes or prevent the other horizon from updating.
 
 `SWING_IDEAS_AUTOMATIC_REFRESH_ENABLED` defaults to false. When enabled on the scheduler worker after migration, saved symbols refresh in batches every fifteen minutes on weekdays from 18:00 through 22:00 America/New_York. Only one scheduler should own this task. No production flag or schema change is part of the local review.
 

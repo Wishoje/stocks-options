@@ -182,4 +182,84 @@ class SwingIdeasTest extends TestCase
         $this->assertSame('2026-10-28', $plan['activation_session']);
         $this->assertSame($plan['entry_deadline'], $plan['activation_session']);
     }
+
+    public function test_active_plans_remain_visible_beyond_the_recent_history_limit(): void
+    {
+        $service = new SwingIdeaService;
+        $service->refresh(SwingInput::make());
+        $original = DB::table('swing_ideas')->where('horizon', 'short')->first();
+        DB::table('watchlists')->insert(['user_id' => 1, 'symbol' => 'SPY']);
+        $this->travelTo(CarbonImmutable::parse('2026-10-26 17:00', 'America/New_York'));
+        for ($i = 0; $i < 251; $i++) {
+            $symbol = 'T'.chr(65 + intdiv($i, 26)).chr(65 + $i % 26);
+            DB::table('watchlists')->insert(['user_id' => 1, 'symbol' => $symbol]);
+            $state = ['symbol' => $symbol, 'status' => 'no_idea', 'source_date' => '2026-10-26', 'reviewed_through' => '2026-10-26'];
+            DB::table('swing_ideas')->insert([...get_object_vars($original), 'id' => hash('sha256', $symbol), 'symbol' => $symbol,
+                'status' => 'no_idea', 'source_date' => '2026-10-26', 'reviewed_through' => '2026-10-26',
+                'original_plan' => json_encode($state), 'current_state' => json_encode($state)]);
+        }
+
+        $items = $service->read(1, 'short')['items'];
+        $this->assertContains($original->id, array_column($items, 'id'));
+        $this->assertCount(1, array_filter($items, fn ($item) => $item['id'] === $original->id));
+        $this->assertSame(253, DB::table('swing_ideas')->count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_a_newer_no_idea_record_does_not_hide_an_open_plan_for_the_same_symbol(): void
+    {
+        $service = new SwingIdeaService;
+        $service->refresh(SwingInput::make());
+        $original = DB::table('swing_ideas')->where('horizon', 'short')->first();
+        DB::table('watchlists')->insert(['user_id' => 1, 'symbol' => 'SPY']);
+        DB::table('swing_ideas')->insert([...get_object_vars($original), 'id' => hash('sha256', 'new-no-idea'),
+            'source_date' => '2026-10-26', 'reviewed_through' => '2026-10-26', 'status' => 'no_idea',
+            'current_state' => json_encode(['symbol' => 'SPY', 'status' => 'no_idea', 'source_date' => '2026-10-26'])]);
+
+        $items = $service->read(1, 'short')['items'];
+        $this->assertContains($original->id, array_column($items, 'id'));
+        $this->assertCount(2, $items);
+    }
+
+    public function test_entry_distance_uses_the_latest_completed_close_without_changing_frozen_evidence(): void
+    {
+        $service = new SwingIdeaService;
+        $service->refresh(SwingInput::make());
+        $original = DB::table('swing_ideas')->where('horizon', 'short')->first();
+        $plan = json_decode($original->original_plan, true);
+        DB::table('watchlists')->insert(['user_id' => 1, 'symbol' => 'SPY']);
+        Schema::create('prices_daily', function (Blueprint $table) {
+            $table->string('symbol');
+            $table->date('trade_date');
+            $table->double('close')->nullable();
+        });
+        DB::table('prices_daily')->insert([
+            ['symbol' => 'SPY', 'trade_date' => '2026-10-22', 'close' => 90],
+            ['symbol' => 'SPY', 'trade_date' => '2026-10-23', 'close' => 110],
+            ['symbol' => 'SPY', 'trade_date' => '2026-10-26', 'close' => 999],
+            ['symbol' => 'QQQ', 'trade_date' => '2026-10-23', 'close' => 900],
+        ]);
+
+        foreach ([110 => 'above', 105 => 'below', '106.2' => 'inside', '106.9' => 'inside', 0 => null] as $close => $position) {
+            DB::table('prices_daily')->where('symbol', 'SPY')->where('trade_date', '2026-10-23')->update(['close' => $close]);
+            $item = $service->read(1, 'short')['items'][0];
+            $this->assertSame($plan['levels'], $item['levels']);
+            $this->assertSame($plan['evidence'], $item['evidence']);
+            if ($position === null) {
+                $this->assertNull($item['latest_price']);
+
+                continue;
+            }
+            $this->assertSame('2026-10-23', $item['latest_price']['date']);
+            $this->assertSame((float) $close, $item['latest_price']['close']);
+            $this->assertSame($position, $item['latest_price']['entry_position']);
+            $expected = 100 * max($plan['levels']['entry_low'] - $close, $close - $plan['levels']['entry_high'], 0) / $close;
+            $this->assertEqualsWithDelta($expected, $item['latest_price']['distance_to_entry_pct'], 0.000001);
+        }
+        $this->assertSame($original->original_plan, DB::table('swing_ideas')->where('id', $original->id)->value('original_plan'));
+        $this->assertSame(0, DB::table('swing_idea_reviews')->count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
 }

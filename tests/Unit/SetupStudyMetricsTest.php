@@ -145,4 +145,17 @@ class SetupStudyMetricsTest extends TestCase
         $this->assertSame(['hits' => 1, 'eligible' => 1, 'rate' => 100.], $summary['after_publication_target']);
         $this->assertSame(['hits' => 3, 'eligible' => 4, 'rate' => 75.], $summary['strict_target']);
     }
+
+    public function test_paused_unqualified_plans_do_not_also_count_as_waiting_for_confirmation(): void
+    {
+        $paused = $this->measure($this->sample(['signal_at' => null, 'signal_price' => null, 'native_status' => 'needs_update']));
+        $waiting = $this->measure($this->sample(['signal_at' => null, 'signal_price' => null, 'native_status' => 'watching']));
+        $summary = (new SetupStudyService)->summarize([$paused, $waiting]);
+
+        $this->assertSame('needs_update', $paused['status']);
+        $this->assertSame(1, $summary['watching']);
+        $this->assertSame(1, $summary['needs_update']);
+        $this->assertSame(0, $summary['qualified']);
+        $this->assertSame(0, $summary['strict_target']['eligible']);
+    }
 }

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\PublicSpyPreview;
+use App\Support\Swing\PausedSwingPlan;
 use App\Support\Swing\SwingIdeaRules;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -26,6 +27,10 @@ class SwingIdeaService
                     ->where('rule_version', SwingIdeaRules::VERSION)->whereIn('status', ['watching', 'conditions_met', 'in_progress', 'needs_update'])
                     ->orderByDesc('source_date')->limit(10)->lockForUpdate()->get();
                 foreach ($existing as $row) {
+                    // Preserve paused evidence byte-for-byte while considering a later plan separately.
+                    if ($row->status === 'needs_update') {
+                        continue;
+                    }
                     $state = json_decode($row->current_state, true, flags: JSON_THROW_ON_ERROR);
                     if ($state['source_date'] > $date) {
                         continue;
@@ -57,9 +62,17 @@ class SwingIdeaService
                         'reviewed_through' => $state['reviewed_through'] ?? $row->reviewed_through,
                         'current_state' => json_encode($state, JSON_THROW_ON_ERROR), 'updated_at' => now()]);
                 }
-                // A newer EOD refresh does not silently move an existing idea's levels.
+                // A later plan has its own identity; frozen levels and qualified plans remain protected.
                 $active = DB::table('swing_ideas')->where('symbol', $input['symbol'])->where('horizon', $horizon)
-                    ->where('rule_version', SwingIdeaRules::VERSION)->whereIn('status', ['watching', 'conditions_met', 'in_progress', 'needs_update'])->exists();
+                    ->where('rule_version', SwingIdeaRules::VERSION)->whereIn('status', ['watching', 'conditions_met', 'in_progress', 'needs_update'])
+                    ->get(['status', 'current_state'])->contains(function ($row) use ($date) {
+                        if ($row->status !== 'needs_update') {
+                            return true;
+                        }
+                        $state = json_decode($row->current_state, true);
+
+                        return ! is_array($state) || ! PausedSwingPlan::replaceable($state, $date);
+                    });
                 if ($active) {
                     continue;
                 }
@@ -96,23 +109,59 @@ class SwingIdeaService
             return ['items' => [], 'prepared' => false];
         }
         $symbols = DB::table('watchlists')->where('user_id', $userId)->select('symbol')->distinct();
-        $rows = DB::table('swing_ideas')->whereIn('symbol', $symbols)->where('horizon', $horizon)
-            ->where('rule_version', SwingIdeaRules::VERSION)->orderByDesc('source_date')->orderByDesc('created_at')->limit(250)->get();
+        $query = DB::table('swing_ideas')->whereIn('symbol', $symbols)->where('horizon', $horizon)
+            ->where('rule_version', SwingIdeaRules::VERSION);
+        $activeStatuses = ['watching', 'conditions_met', 'in_progress', 'needs_update'];
+        // Bound historical rows without hiding older open plans as daily no-idea records accumulate.
+        $active = (clone $query)->whereIn('status', $activeStatuses)->get();
+        $rows = (clone $query)->orderByDesc('source_date')->orderByDesc('created_at')->limit(250)->get()
+            ->concat($active)->unique('id')->sort(fn ($a, $b) => [$b->source_date, $b->created_at, $b->id] <=> [$a->source_date, $a->created_at, $a->id]);
+        $completedSession = PublicSpyPreview::completedSession();
+        $prices = collect();
+        if ($active->isNotEmpty() && Schema::hasTable('prices_daily')) {
+            $latestDates = DB::table('prices_daily')->whereIn('symbol', $active->pluck('symbol')->unique())
+                ->where('trade_date', '<=', $completedSession)->groupBy('symbol')->select('symbol')->selectRaw('MAX(trade_date) as latest_date');
+            $prices = DB::table('prices_daily as prices')->joinSub($latestDates, 'latest', fn ($join) => $join
+                ->on('latest.symbol', '=', 'prices.symbol')->on('latest.latest_date', '=', 'prices.trade_date'))
+                ->get(['prices.symbol', 'prices.trade_date', 'prices.close'])->keyBy('symbol');
+        }
         $items = [];
         $seen = [];
         foreach ($rows as $row) {
             $state = json_decode($row->current_state, true, flags: JSON_THROW_ON_ERROR);
-            // Include prior qualified ideas; collapse repeated no-idea/watch plans per symbol.
-            if (isset($seen[$row->symbol]) && ! in_array($row->status, ['conditions_met', 'in_progress', 'finished', 'needs_update'], true)) {
+            // Always retain open plans; only collapse repeated no-idea records per symbol.
+            if (isset($seen[$row->symbol]) && ! in_array($row->status, [...$activeStatuses, 'finished'], true)) {
                 continue;
             }
             $seen[$row->symbol] = true;
             $items[] = [...$state, 'id' => $row->id, 'prepared_at' => $row->created_at,
                 'status_group' => $row->status === 'no_idea' ? 'finished' : $row->status,
                 'outcome' => $row->status === 'no_idea' ? 'no_setup' : ($state['outcome'] ?? null),
-                'is_current' => $row->reviewed_through === PublicSpyPreview::completedSession()];
+                'is_current' => $row->reviewed_through === $completedSession,
+                'latest_price' => in_array($row->status, $activeStatuses, true) ? $this->latestPrice($prices->get($row->symbol), $state['levels'] ?? null) : null];
         }
 
         return ['items' => $items, 'prepared' => true];
+    }
+
+    /** Read-time price context; original plan evidence and entry conditions stay frozen. */
+    private function latestPrice(?object $price, ?array $levels): ?array
+    {
+        $close = $price?->close;
+        $low = $levels['entry_low'] ?? null;
+        $high = $levels['entry_high'] ?? null;
+        foreach ([$close, $low, $high] as $value) {
+            if (! is_numeric($value) || ! is_finite((float) $value) || $value <= 0) {
+                return null;
+            }
+        }
+        if ($low > $high) {
+            return null;
+        }
+        $close = (float) $close;
+
+        return ['date' => $price->trade_date, 'close' => $close,
+            'entry_position' => $close < $low ? 'below' : ($close > $high ? 'above' : 'inside'),
+            'distance_to_entry_pct' => 100 * max($low - $close, $close - $high, 0) / $close];
     }
 }

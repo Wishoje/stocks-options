@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import axios from 'axios'
+import { Link } from '@inertiajs/vue3'
 import AppLayout from '@/Layouts/AppLayout.vue'
 import {
   defaultStudyFilters, studyAdversePercent, studyAdverseR, studyCohorts, studyCsv, studyDollars,
@@ -177,6 +178,7 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
 <template>
   <AppLayout title="Setup study">
     <main class="study-page gex-ui" data-theme="dark">
+      <nav class="study-subnav" aria-label="Private research"><Link href="/setup-study" aria-current="page">Setup study</Link><Link href="/swing-research">Swing experiments</Link></nav>
       <header class="study-heading">
         <div><p class="study-eyebrow">OWNER RESEARCH</p><h1>Setup study</h1><p>Review what price did after a recorded setup.</p></div>
         <div class="study-actions">
@@ -253,4 +255,8 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
 .study-preview-control{margin:13px 0 0}.study-preview-toggle{font-size:.78rem;color:#c4c9ff;text-decoration:underline;text-underline-offset:4px;padding:5px 0}.study-preview-toggle:disabled{opacity:.5;cursor:not-allowed}.study-demo{background:#2c2949;border:1px solid #8375ba;border-radius:8px;padding:16px 18px;margin-top:14px;color:#e5dfff}.study-demo strong{font-size:.87rem;font-weight:650}.study-demo p{color:#d2c7f2;font-size:.8rem;margin:6px 0 0}
 .study-section-heading{margin:22px 0 13px}.study-section-heading h2{font-size:.94rem}.study-section-heading p{font-size:.74rem;margin:5px 0 0}.study-availability{display:grid;grid-template-columns:minmax(200px,1fr) minmax(0,2fr);gap:24px;padding:18px 20px;margin:0 0 22px}.study-availability h2{font-size:.9rem}.study-availability p{font-size:.74rem;margin-bottom:0}.study-availability dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}.study-availability dt{font-size:.7rem;color:#bac9df;line-height:1.5}.study-availability dd{font-size:1.35rem;font-weight:650;margin:7px 0 4px;font-variant-numeric:tabular-nums}.study-availability small{display:block;font-size:.66rem;color:#a7b9d2;line-height:1.5}.study-timing-late{color:#edc895}.study-timing-detail{border-top:1px solid #46546c;padding-top:18px;grid-template-columns:repeat(3,minmax(0,1fr))}@media(max-width:800px){.study-availability{grid-template-columns:1fr;gap:18px}}@media(max-width:550px){.study-availability{padding:16px}.study-availability dl{grid-template-columns:repeat(2,minmax(0,1fr));gap:17px}.study-timing-detail{grid-template-columns:1fr}}
 .study-price-move{font-variant-numeric:tabular-nums}.study-price-move strong{font-size:.92rem;white-space:nowrap}.study-price-move--favorable strong{color:#a5dfc0}.study-price-move--adverse strong{color:#edbaa9}.study-price-move .study-cell-line{white-space:nowrap}.study-price-move .study-milestones{color:#9faec6;font-size:.64rem;margin-top:9px}.study-advanced{grid-column:1 / -1;border-top:1px solid #46546c;padding-top:15px}.study-advanced summary{cursor:pointer;font-size:.78rem;color:#cad4ed}.study-advanced p{font-size:.73rem;margin:12px 0 17px}.study-advanced .study-detail-grid{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:650px){.study-advanced .study-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+
+<style scoped>
+.study-subnav{display:flex;gap:20px;margin-bottom:24px;font-size:.8rem;color:#b7c7e3}.study-subnav a{padding:8px 0;min-height:36px}.study-subnav a[aria-current=page]{color:#d4d0ff;border-bottom:2px solid #a49be0}.study-subnav a:focus-visible{outline:2px solid #b6baff;outline-offset:3px}
 </style>

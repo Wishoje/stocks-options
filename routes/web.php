@@ -101,6 +101,11 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'subscribed
         Route::get('/setup-study', [\App\Http\Controllers\SetupStudyController::class, 'page'])->name('setup-study');
         Route::get('/api/setup-study', [\App\Http\Controllers\SetupStudyController::class, 'report']);
         Route::post('/api/setup-study/refresh', [\App\Http\Controllers\SetupStudyController::class, 'refresh'])->middleware('throttle:2,1');
+        Route::get('/swing-research', [\App\Http\Controllers\SwingResearchController::class, 'page'])->name('swing-research');
+        Route::get('/api/swing-research', [\App\Http\Controllers\SwingResearchController::class, 'report']);
+        Route::post('/api/swing-research/refresh', [\App\Http\Controllers\SwingResearchController::class, 'refresh'])->middleware('throttle:2,1');
+        Route::get('/api/swing-research/alerts', [\App\Http\Controllers\SwingResearchController::class, 'alerts']);
+        Route::post('/api/swing-research/alerts/{id}/read', [\App\Http\Controllers\SwingResearchController::class, 'readAlert'])->where('id', '[a-f0-9]{64}');
     });
 });
 

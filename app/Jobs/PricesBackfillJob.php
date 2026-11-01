@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
@@ -19,11 +20,16 @@ class PricesBackfillJob extends QueueJob implements ShouldQueue
 {
     use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    // A class default also applies to jobs serialized before this option existed.
+    public bool $replaceExisting = false;
+
     public function __construct(
         public array $symbols,
         public int $days = 90,
-        public ?string $endDate = null
+        public ?string $endDate = null,
+        bool $replaceExisting = false
     ) {
+        $this->replaceExisting = $replaceExisting;
         $this->endDate = $endDate
             ? substr($endDate, 0, 10)
             : Carbon::now('America/New_York')->toDateString();
@@ -196,11 +202,63 @@ class PricesBackfillJob extends QueueJob implements ShouldQueue
     protected function upsertDailyRows(array $rows): void
     {
         foreach (array_chunk($rows, 500) as $chunk) {
-            DB::table('prices_daily')->upsert(
-                $chunk,
-                ['symbol', 'trade_date'],
-                ['open', 'high', 'low', 'close', 'updated_at', 'created_at']
-            );
+            if ($this->replaceExisting ?? false) {
+                DB::table('prices_daily')->upsert(
+                    $chunk,
+                    ['symbol', 'trade_date'],
+                    ['open', 'high', 'low', 'close', 'updated_at']
+                );
+
+                continue;
+            }
+
+            DB::table('prices_daily')->insertOrIgnore($chunk);
+            $rowsByKey = [];
+            $datesBySymbol = [];
+            foreach ($chunk as $row) {
+                $rowsByKey[$row['symbol'].':'.$row['trade_date']] = $row;
+                $datesBySymbol[$row['symbol']][] = $row['trade_date'];
+            }
+
+            $candidates = $this->incompleteBars(DB::table('prices_daily')->where(function (Builder $query) use ($datesBySymbol) {
+                foreach ($datesBySymbol as $symbol => $dates) {
+                    $query->orWhere(fn (Builder $pair) => $pair->where('symbol', $symbol)->whereIn('trade_date', $dates));
+                }
+            }))->get(['symbol', 'trade_date']);
+
+            foreach ($candidates as $candidate) {
+                $row = $rowsByKey[$candidate->symbol.':'.$candidate->trade_date];
+                if (! $this->completeBar($row)) {
+                    continue;
+                }
+
+                // Recheck after selection so a concurrent complete repair wins.
+                $this->incompleteBars(DB::table('prices_daily')->where('symbol', $candidate->symbol)
+                    ->where('trade_date', $candidate->trade_date))
+                    ->update(array_intersect_key($row, array_flip(['open', 'high', 'low', 'close', 'updated_at'])));
+            }
         }
+    }
+
+    private function incompleteBars(Builder $query): Builder
+    {
+        return $query->where(function (Builder $bar) {
+            foreach (['open', 'high', 'low', 'close'] as $field) {
+                $bar->orWhereNull($field)->orWhere($field, '<=', 0);
+            }
+            $bar->orWhereColumn('high', '<', 'open')->orWhereColumn('high', '<', 'close')
+                ->orWhereColumn('low', '>', 'open')->orWhereColumn('low', '>', 'close');
+        });
+    }
+
+    private function completeBar(array $row): bool
+    {
+        foreach (['open', 'high', 'low', 'close'] as $field) {
+            if (! is_numeric($row[$field] ?? null) || ! is_finite((float) $row[$field]) || $row[$field] <= 0) {
+                return false;
+            }
+        }
+
+        return $row['high'] >= max($row['open'], $row['close']) && $row['low'] <= min($row['open'], $row['close']);
     }
 }

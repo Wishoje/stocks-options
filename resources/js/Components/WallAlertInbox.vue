@@ -4,8 +4,11 @@ import { WALL_ALERTS } from '@/Support/wallAlerts'
 import WallAlertDetails from '@/Components/WallAlertDetails.vue'
 import WallStatusFilters from '@/Components/WallStatusFilters.vue'
 import { wallInboxHistoryRows, filterWallRows, wallInboxRows } from '@/Support/wallLifecycle'
+import { SWING_RESEARCH_ALERTS } from '@/Support/swingResearch'
+import ExperimentalSwingAlerts from '@/Components/ExperimentalSwingAlerts.vue'
 
 const alerts = inject(WALL_ALERTS)
+const researchAlerts = inject(SWING_RESEARCH_ALERTS, null)
 const open = ref(false), trigger = ref(null), panel = ref(null), closeButton = ref(null)
 const selectedStatus = ref('all'), symbol = ref(''), direction = ref('all'), unread = ref(false)
 const entries = computed(() => wallInboxHistoryRows(wallInboxRows(alerts.history.value, alerts.activity?.value, alerts.clock?.value || Date.now(), !!alerts.error.value)))
@@ -14,7 +17,7 @@ const example = computed(() => alerts.notifications.value.find(item => item.prev
 const status = computed(() => !alerts.settings.value.enabled ? 'Popups off' : alerts.error.value ? 'Updates paused' : 'Popups on')
 const initialHistoryLoading = computed(() => !!alerts.loading?.value && !alerts.error.value)
 const triggerLabel = computed(() => initialHistoryLoading.value ? "Recent alerts, loading today's history"
-  : `Recent alerts${alerts.unreadCount.value ? `, ${alerts.unreadCount.value} unread` : ''}`)
+  : `Recent alerts${alerts.unreadCount.value ? `, ${alerts.unreadCount.value} unread wall alerts` : ''}${researchAlerts?.unreadCount.value ? `, ${researchAlerts.unreadCount.value} unread experimental alerts` : ''}`)
 let previousOverflow = ''
 
 async function show() {
@@ -58,19 +61,20 @@ onScopeDispose(() => close(false))
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
     <span class="wall-inbox-label">Alerts</span>
     <span v-if="!initialHistoryLoading && alerts.unreadCount.value" class="wall-inbox-badge" aria-hidden="true">{{ alerts.unreadCount.value > 99 ? '99+' : alerts.unreadCount.value }}</span>
+    <span v-if="researchAlerts?.owner.value && researchAlerts.unreadCount.value" class="wall-inbox-badge experimental-badge" :aria-label="`${researchAlerts.unreadCount.value} unread experimental alerts`">E {{ researchAlerts.unreadCount.value > 99 ? '99+' : researchAlerts.unreadCount.value }}</span>
   </button>
   <Teleport to="body">
     <div v-if="open" class="wall-inbox-overlay" @keydown="keydown">
       <div class="wall-inbox-backdrop" aria-hidden="true" @click="close()" />
       <section id="wall-alert-inbox" ref="panel" class="wall-inbox-panel" role="dialog" aria-modal="true" aria-labelledby="wall-inbox-title" tabindex="-1">
         <header>
-          <div><p class="eyebrow">Today · Eastern time</p><h2 id="wall-inbox-title">Recent alerts</h2></div>
+          <div><p class="eyebrow">{{ researchAlerts?.owner.value ? 'Intraday + experimental' : 'Today · Eastern time' }}</p><h2 id="wall-inbox-title">Recent alerts</h2></div>
           <button ref="closeButton" type="button" class="close" aria-label="Close recent alerts" @click="close()">×</button>
         </header>
         <div class="wall-inbox-body" :aria-busy="initialHistoryLoading">
-          <div class="wall-inbox-tools"><span :class="['monitoring', { off: !alerts.settings.value.enabled || alerts.error.value }]">{{ status }}</span>
-            <button v-if="!initialHistoryLoading && alerts.unreadCount.value" type="button" @click="alerts.markRead()">Mark all read</button></div>
-          <p class="intro">Today's watchlist alerts are saved even while you are away. Open an assessment to review its original levels and latest outcome.</p>
+          <div class="wall-inbox-tools"><span :class="['monitoring', { off: !alerts.settings.value.enabled || alerts.error.value }]">{{ researchAlerts?.owner.value ? 'Intraday: ' : '' }}{{ status }}</span>
+            <button v-if="!initialHistoryLoading && alerts.unreadCount.value" type="button" @click="alerts.markRead()">{{ researchAlerts?.owner.value ? 'Mark intraday read' : 'Mark all read' }}</button></div>
+          <p class="intro">Today's intraday watchlist alerts are saved even while you are away. Open an assessment to review its original levels and latest outcome.</p>
           <WallStatusFilters v-if="!initialHistoryLoading" v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" v-model:unread="unread" :rows="entries" inbox />
           <p v-if="!alerts.inboxPersistent.value" class="storage-note" role="status">Your browser cannot save read status. Today's server alerts remain available when you return.</p>
           <p v-if="!alerts.settings.value.enabled" class="notice">Popup notifications are off. Today's recorded alerts remain below. <a href="/scanner?scan=activity">Manage alerts in Scanner</a></p>
@@ -90,6 +94,7 @@ onScopeDispose(() => close(false))
           <article v-if="example" class="wall-inbox-example" aria-label="Test wall alert example"><WallAlertDetails :item="example" @open="openAssessment(example)" /></article>
           <footer><a href="/scanner?scan=activity">Open Wall activity</a><button v-if="alerts.settings.value.enabled" type="button" @click="alerts.preview()">Preview example</button></footer>
           <p class="retention">Today's alerts are saved on the server. Read status is saved in this browser · Resets at midnight ET. Viewing an assessment marks it as read.</p>
+          <ExperimentalSwingAlerts @open="close(false)" />
         </div>
       </section>
     </div>
@@ -98,4 +103,8 @@ onScopeDispose(() => close(false))
 
 <style scoped>
 .wall-inbox-trigger{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:42px;padding:7px 10px;border:1px solid #43536a;border-radius:8px;background:#1c2433;color:#d9e6fa;font-size:.78rem;white-space:nowrap;cursor:pointer}.wall-inbox-trigger svg{width:18px;height:18px}.wall-inbox-badge{padding:2px 5px;border-radius:8px;background:#b5bcff;color:#151b29;font-size:.66rem;font-weight:750;min-width:18px}.wall-inbox-overlay{position:fixed;inset:0;z-index:120;display:flex;justify-content:flex-end}.wall-inbox-backdrop{position:absolute;inset:0;background:#0009}.wall-inbox-panel{position:relative;display:flex;flex-direction:column;width:min(470px,100%);height:100vh;height:100dvh;background:#171d29;border-left:1px solid #43536a;color:#edf3fc;box-shadow:-18px 0 60px #0006;min-width:0}.wall-inbox-panel header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:22px;border-bottom:1px solid #39485d;flex-shrink:0}.eyebrow{font-size:.7rem;color:#b7c6db;margin:0 0 5px}h2{font-size:1.2rem;font-weight:700;margin:0}.wall-inbox-panel button{border:1px solid #536382;border-radius:7px;background:#26334a;color:#edf3fc;padding:7px 10px;font-size:.76rem;cursor:pointer}.wall-inbox-panel .close{width:38px;height:38px;padding:0;font-size:1.4rem;flex-shrink:0}.wall-inbox-body{padding:20px 22px;overflow-y:auto;overscroll-behavior:contain;min-height:0;scrollbar-width:thin}.wall-inbox-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px}.monitoring{color:#a5e5c4;font-size:.75rem}.monitoring.off{color:#c7cddc}.intro,.notice,.retention,.storage-note{font-size:.76rem;line-height:1.6;color:#bac9dc;margin:12px 0 18px}.notice,.storage-note{padding:10px;border:1px solid #43536a;border-radius:7px}.wall-inbox-list{list-style:none;display:grid;gap:12px;padding:0;margin:18px 0}.wall-inbox-item,.wall-inbox-example{position:relative;min-width:0;padding:16px;border:1px solid #3b495f;border-radius:9px;background:#1c2433}.wall-inbox-item.unread{border-left:3px solid #b5bcff}.unread-label{display:block;color:#c6caff;font-size:.66rem;font-weight:650;margin-bottom:7px}.wall-inbox-example{border:1px dashed #8e9dbe;margin-top:16px}.wall-inbox-empty{padding:36px 6px;text-align:center}.wall-inbox-empty svg{width:34px;height:34px;color:#91a6c3;margin:0 auto 14px}.wall-inbox-empty h3{font-weight:650;font-size:.95rem;margin:0 0 8px}.wall-inbox-empty p{font-size:.8rem;line-height:1.6;color:#bac9dc;margin:0 auto;max-width:300px}footer{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding-top:16px;border-top:1px solid #39485d}a{color:#b5d6ff;font-size:.8rem;display:inline-flex;align-items:center;min-height:36px}.retention{font-size:.69rem;margin:14px 0 0}button:hover{border-color:#a6b4e9;background:#32415c}button:focus-visible,a:focus-visible{outline:2px solid #b5bcff;outline-offset:3px}@media(max-width:600px){.wall-inbox-label{display:none}.wall-inbox-trigger{min-width:42px;padding:7px}.wall-inbox-body{padding:16px}.wall-inbox-panel header{padding:18px 16px}.wall-inbox-item,.wall-inbox-example{padding:14px}}
+</style>
+
+<style scoped>
+.experimental-badge{background:#d5baf5;color:#251b35}
 </style>
