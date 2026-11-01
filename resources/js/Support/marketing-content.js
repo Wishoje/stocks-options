@@ -701,14 +701,19 @@ const existingFeatureGroups = Object.freeze([
 ])
 
 
+const wallSetupExample = Object.freeze({
+  symbol: 'SPY', wall: '755', entryLow: '753.8675', entryHigh: '754.6225', target: '750', invalidation: '755.3775',
+  caption: 'Illustrative prices. Each setup in the platform includes its recorded time and supporting bars. Intraday prices are delayed at least 15 minutes.',
+})
+
 const wallWorkflow = {
   id: 'wall-workflow', eyebrow: 'Walls, reactions & alerts', navLabel: 'Walls & alerts', title: 'Follow a level all the way to a recorded setup.',
   description: 'See the wall, understand the price response, and read the conditions and boundaries of the next scenario. Intraday prices are delayed at least 15 minutes.',
   features: [
     { id: 'intraday-wall-tracking', title: 'Intraday wall tracking', description: 'Follow put and call wall levels alongside price through today’s session. See where the leading walls move and how price behaves around them.',
       bullets: ['One focused 1W expiry scope across tracked symbols', 'Chart events for approaches, tests, touches, bounces and breaks', 'Open the completed price bars behind an event'], media: productMedia.wallTracking },
-    { id: 'wall-setups', title: 'Setup conditions and clear price boundaries', description: 'Know what price still needs to do. When a qualifying sequence is recorded, review the entry area, invalidation boundary and reference target together.',
-      bullets: ['Bullish and bearish bounce, rejection, break-and-retest and reclaim scenarios', 'The next condition still needed, including confirming-close progress', 'Recorded assessments link to their supporting price observations'], media: productMedia.wallSetup },
+    { id: 'wall-setups', learnHref: '/guides/how-to-use-intraday-setup-alerts', title: 'Setup conditions and clear price boundaries', description: 'Know what price still needs to do. When a qualifying sequence is recorded, review the entry area, invalidation boundary and reference target together.',
+      bullets: ['Bullish and bearish bounce, rejection, break-and-retest and reclaim scenarios', 'The next condition still needed, including confirming-close progress', 'Recorded assessments link to their supporting price observations'], setupExample: wallSetupExample },
     { id: 'wall-activity', title: 'Scanner: which symbols need attention?', description: 'Monitor wall reactions across your saved symbols. See the next condition for developing setups and open the matching symbol and assessment in one step.',
       bullets: ['Focus on developing and active setups with clear status filters', 'Price response, completed-close time and setup levels', 'Near walls and Options volume scanners remain available'], media: productMedia.wallActivity },
     { id: 'setup-alerts', learnHref: '/intraday-alerts', title: 'Setup alerts and your Recent alerts inbox', description: 'Keep the site open and receive on-screen alerts for new qualifying setups across your watchlist. The navigation bell keeps today’s received alerts available after the popup closes.',
@@ -773,10 +778,11 @@ export const marketingIntros = Object.freeze({
 })
 
 export function buildPublicMarketingContent() {
-  const card = ({ id, label, title, description, steps, bullets, note, href, link, learnHref }) => ({
+  const card = ({ id, label, title, description, steps, bullets, note, href, link, learnHref, setupExample }) => ({
     ...(id ? { id } : {}), ...(learnHref ? { learnHref } : {}), ...(label ? { label } : {}), title, description,
     ...(steps ? { steps } : {}), ...(bullets ? { bullets } : {}),
     ...(note ? { note } : {}), ...(href ? { href, link: link || title } : {}),
+    ...(setupExample ? { setupExample } : {}),
   })
   return {
     home: { intro: marketingIntros.home, workflows: tradingWorkflows.map(card), stories: homeStories.map(card), tools: homeToolkit.map(card), faqs: buildHomeFaqs('{trial_days}') },

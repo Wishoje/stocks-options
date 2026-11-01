@@ -65,6 +65,18 @@
                             <section id="{{ $feature['id'] }}" class="mk-card mk-card-pad">
                                 <h3 class="mk-subheading">{{ $feature['title'] }}</h3><p class="mk-copy">{{ $feature['description'] }}</p>
                                 <ul>@foreach ($feature['bullets'] as $bullet)<li>{{ $bullet }}</li>@endforeach</ul>@if (isset($feature['learnHref']))<a href="{{ $feature['learnHref'] }}">See how this workflow works</a>@endif
+                                @if (isset($feature['setupExample']))
+                                    <figure aria-label="Illustrative SPY setup with entry, target and invalidation">
+                                        <p>Example setup · {{ $feature['setupExample']['symbol'] }} · Put wall {{ $feature['setupExample']['wall'] }} · Bearish</p>
+                                        <p>Conditions met. The price conditions passed in this example.</p>
+                                        <dl>
+                                            <dt>Entry area</dt><dd>{{ $feature['setupExample']['entryLow'] }}–{{ $feature['setupExample']['entryHigh'] }}<p>Compare current price with this area.</p></dd>
+                                            <dt>Reference target</dt><dd>{{ $feature['setupExample']['target'] }}</dd>
+                                            <dt>Invalid if a five-minute bar closes</dt><dd>Above {{ $feature['setupExample']['invalidation'] }}</dd>
+                                        </dl>
+                                        <figcaption>{{ $feature['setupExample']['caption'] }}</figcaption>
+                                    </figure>
+                                @endif
                             </section>
                         @endforeach
                     </section>

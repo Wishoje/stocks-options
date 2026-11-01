@@ -172,13 +172,23 @@
           },
           {
             "id": "wall-setups",
+            "learnHref": "/guides/how-to-use-intraday-setup-alerts",
             "title": "Setup conditions and clear price boundaries",
             "description": "Know what price still needs to do. When a qualifying sequence is recorded, review the entry area, invalidation boundary and reference target together.",
             "bullets": [
               "Bullish and bearish bounce, rejection, break-and-retest and reclaim scenarios",
               "The next condition still needed, including confirming-close progress",
               "Recorded assessments link to their supporting price observations"
-            ]
+            ],
+            "setupExample": {
+              "symbol": "SPY",
+              "wall": "755",
+              "entryLow": "753.8675",
+              "entryHigh": "754.6225",
+              "target": "750",
+              "invalidation": "755.3775",
+              "caption": "Illustrative prices. Each setup in the platform includes its recorded time and supporting bars. Intraday prices are delayed at least 15 minutes."
+            }
           },
           {
             "id": "wall-activity",
