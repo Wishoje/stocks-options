@@ -111,8 +111,8 @@ describe('public marketing pages', () => {
   it('preserves the indexed Home metadata, one crawlable h1, and WebSite structured data', () => {
     const wrapper = mount(Home, { global: { stubs: publicPageStubs } })
 
-    const expectedTitle = 'GexOptions - GEX Levels, Swing Ideas & Intraday Alerts'
-    const expectedDescription = 'Find key price levels, follow intraday setup alerts and explore Swing ideas for 2–5 day and 1–3 week plans with entry conditions, targets and invalidation.'
+    const expectedTitle = 'GexOptions | Gamma Exposure Levels, Intraday Alerts & Swing Ideas'
+    const expectedDescription = 'GexOptions is a gamma exposure and options analytics platform with GEX levels, intraday setup alerts and swing ideas for stocks and ETFs.'
     expect(wrapper.get('title').text()).toBe(expectedTitle)
     expect(wrapper.get('link[rel="canonical"]').attributes('href')).toBe('https://gexoptions.com/')
     expect(wrapper.get('meta[name="description"]').attributes('content')).toBe(expectedDescription)
@@ -130,18 +130,23 @@ describe('public marketing pages', () => {
     expect(wrapper.get('meta[name="twitter:description"]').attributes('content')).toBe(expectedDescription)
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.get('h1').text()).toBe('Find key price levels.Know what to watch next.')
+    expect(wrapper.get('.mk-hero-copy .mk-eyebrow').text()).toBe('GexOptions · Gamma exposure & options analytics')
+    expect(wrapper.get('.mk-hero-copy .mk-lede').text()).toBe('GexOptions is a gamma exposure (GEX) and options analytics platform for stocks and ETFs. Find where options positioning is concentrated, follow price reactions at those levels, and review intraday setups and swing ideas.')
+    expect(wrapper.get('meta[property="og:site_name"]').attributes('content')).toBe('GexOptions')
 
     const structuredData = wrapper.findAll('script[type="application/ld+json"]')
       .map(script => JSON.parse(script.text()))
       .find(value => value['@type'] === 'WebSite')
     expect(structuredData).toMatchObject({
-      name: 'GEX Options',
+      name: 'GexOptions',
+      alternateName: 'GEX Options',
       url: 'https://gexoptions.com/',
       inLanguage: 'en-US',
     })
     expect(structuredData).not.toHaveProperty('offers')
     expect(structuredData).not.toHaveProperty('aggregateRating')
     expect(structuredData).not.toHaveProperty('review')
+    expect(structuredData).not.toHaveProperty('sameAs')
 
     const faq = wrapper.findAll('script[type="application/ld+json"]')
       .map(script => JSON.parse(script.text()))

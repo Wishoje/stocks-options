@@ -22,7 +22,7 @@
             <meta inertia="seo-description" name="description" content="{{ $seo['description'] }}">
             <link inertia="seo-canonical" rel="canonical" href="{{ $seo['canonical'] }}">
             <meta inertia="seo-og-type" property="og:type" content="{{ $seo['type'] ?? 'website' }}">
-            <meta inertia="seo-og-site-name" property="og:site_name" content="GEX Options">
+            <meta inertia="seo-og-site-name" property="og:site_name" content="GexOptions">
             <meta inertia="seo-og-title" property="og:title" content="{{ $seo['title'] }}">
             <meta inertia="seo-og-description" property="og:description" content="{{ $seo['description'] }}">
             <meta inertia="seo-og-url" property="og:url" content="{{ $seo['canonical'] }}">
@@ -37,6 +37,9 @@
             <meta inertia="seo-twitter-image-alt" name="twitter:image:alt" content="{{ $seo['image_alt'] }}">
             @if (!empty($seo['structured_data']))
                 <script inertia="product-json-ld" type="application/ld+json">{!! json_encode($seo['structured_data'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) !!}</script>
+            @endif
+            @if (request()->routeIs('home'))
+                <script inertia="website-json-ld" type="application/ld+json">{!! json_encode(\App\Support\PublicMarketingContent::websiteSchema($seo), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) !!}</script>
             @endif
             @if (!empty($publicContent['faqs']))
                 <script inertia="faq-json-ld" type="application/ld+json">{!! json_encode(\App\Support\PublicMarketingContent::faqSchema($publicContent), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) !!}</script>

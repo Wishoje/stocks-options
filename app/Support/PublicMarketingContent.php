@@ -60,7 +60,7 @@ class PublicMarketingContent
             'name' => $seo['title'],
             'description' => $seo['description'],
             'inLanguage' => 'en-US',
-            'isPartOf' => ['@type' => 'WebSite', '@id' => $site.'#website', 'name' => 'GEX Options', 'url' => $site],
+            'isPartOf' => ['@type' => 'WebSite', '@id' => $site.'#website', 'name' => 'GexOptions', 'alternateName' => 'GEX Options', 'url' => $site],
             'about' => ['@id' => $site.'#application'],
             'publisher' => ['@id' => $site.'#organization'],
         ];
@@ -103,6 +103,15 @@ class PublicMarketingContent
                 '@type' => 'Question', 'name' => $faq['q'],
                 'acceptedAnswer' => ['@type' => 'Answer', 'text' => $faq['a']],
             ], $content['faqs']),
+        ];
+    }
+
+    public static function websiteSchema(array $seo): array
+    {
+        return [
+            '@context' => 'https://schema.org', '@type' => 'WebSite', '@id' => 'https://gexoptions.com/#website',
+            'url' => 'https://gexoptions.com/', 'name' => 'GexOptions', 'alternateName' => 'GEX Options',
+            'description' => $seo['description'], 'inLanguage' => 'en-US',
         ];
     }
 }

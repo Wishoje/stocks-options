@@ -61,6 +61,6 @@ describe('free SPY EOD preview', () => {
     wrapper.unmount()
   })
   it('uses fixed attribution values without broadening analytics collection', () => {
-    expect(sanitizeEventParams({ source:'spy_preview',location:'spy_preview_final',email:'private@example.com' })).toEqual({source:'spy_preview',location:'spy_preview_final'})
+    expect(sanitizeEventParams({ source:'spy_preview',location:'spy_preview_final',email:'private@example.com' })).toEqual({event_origin:'spy_preview',location:'spy_preview_final'})
   })
 })

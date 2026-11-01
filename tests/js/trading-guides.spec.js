@@ -36,7 +36,7 @@ describe('public trading guide navigation', () => {
     expect(wrapper.findAll('table')).toHaveLength(guide.sections.filter(section => section.rows).length)
   })
   it('keeps trial attribution useful without admitting arbitrary analytics values', () => {
-    expect(sanitizeEventParams({ source: 'guides', location: 'guide_final', email: 'private@example.com' })).toEqual({ source: 'guides', location: 'guide_final' })
+    expect(sanitizeEventParams({ source: 'guides', location: 'guide_final', email: 'private@example.com' })).toEqual({ event_origin: 'guides', location: 'guide_final' })
     expect(sanitizeEventParams({ source: 'untrusted', location: 'untrusted' })).toEqual({})
   })
 })

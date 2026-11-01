@@ -6,7 +6,7 @@ import {
   selectionFromUrl,
   yearlySavings,
 } from '../../resources/js/Support/marketing-journey.js'
-import { initGA, isAllowedEventParam, sanitizeEventParams, sanitizePageUrl, sanitizeReferrer, trackEvent, trackEventOnce, trackEventOnceAndWait, trackPageView } from '../../resources/js/lib/ga.js'
+import { initGA, isAllowedEventParam, isStripeCheckoutReferrer, sanitizeEventParams, sanitizePageUrl, sanitizeReferrer, trackEvent, trackEventOnce, trackEventOnceAndWait, trackPageView } from '../../resources/js/lib/ga.js'
 
 describe('public journey contracts', () => {
   beforeEach(() => {
@@ -60,7 +60,7 @@ describe('public journey contracts', () => {
       symbol: 'SPY',
       message: 'private',
       nested: { unsafe: true },
-    })).toEqual({ source: 'pricing_page', billing: 'yearly' })
+    })).toEqual({ billing: 'yearly', event_origin: 'pricing_page' })
 
     expect(sanitizeEventParams({
       source: 'john_smith',
@@ -75,6 +75,18 @@ describe('public journey contracts', () => {
       expect(isAllowedEventParam('location', value)).toBe(true)
     }
     expect(isAllowedEventParam('source', 'marketing_nav')).toBe(true)
+    expect(isAllowedEventParam('event_origin', 'marketing_nav')).toBe(true)
+  })
+
+  it('keeps internal event placement separate from acquisition source on the wire', () => {
+    expect(trackEvent('pricing_view', { source: 'pricing_page' })).toBe(true)
+    const payload = window.gtag.mock.calls[0][2]
+    expect(payload.event_origin).toBe('pricing_page')
+    expect(payload).not.toHaveProperty('source')
+    expect(payload).not.toHaveProperty('campaign_source')
+    expect(sanitizeEventParams({ event_origin: 'home', source: 'pricing_page' })).toEqual({ event_origin: 'home' })
+    expect(sanitizeEventParams({ source: 'pricing_page', event_origin: 'home' })).toEqual({ event_origin: 'home' })
+    expect(sanitizeEventParams({ event_origin: 'private@example.test' })).toEqual({})
   })
 
   it('removes sensitive query values while retaining safe attribution', () => {
@@ -96,6 +108,57 @@ describe('public journey contracts', () => {
     expect(trackEventOnce('subscription_activation_confirmed', 'trial', { state: 'trial' })).toBe(true)
     expect(trackEventOnce('subscription_activation_confirmed', 'trial', { state: 'trial' })).toBe(false)
     expect(window.gtag).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains known email attribution while grouping account and billing details', () => {
+    for (const campaign of ['welcome_signup', 'finish_checkout_1h', 'finish_checkout_24h']) {
+      const safe = sanitizePageUrl(`/pricing?utm_source=email&utm_medium=lifecycle&utm_campaign=${campaign}&email=private@example.test`)
+      expect(safe.pagePath).toBe(`/pricing?utm_source=email&utm_medium=lifecycle&utm_campaign=${campaign}`)
+    }
+    for (const campaign of ['trial_started', 'payment_failed_1', 'payment_failed_2', 'payment_failed_3', 'cancellation_confirmation', 'winback_7d']) {
+      expect(sanitizePageUrl(`/user/profile?utm_source=email&utm_medium=lifecycle&utm_campaign=${campaign}`).pagePath)
+        .toBe('/user/profile?utm_source=email&utm_medium=lifecycle&utm_campaign=account_updates')
+    }
+    for (const query of [
+      'utm_source=email&utm_medium=lifecycle&utm_campaign=private@example.test',
+      'utm_source=google&utm_medium=organic&utm_campaign=welcome_signup',
+      'utm_source=email&utm_medium=cpc&utm_campaign=payment_failed_1',
+    ]) expect(sanitizePageUrl(`/pricing?${query}`).pagePath).not.toContain('utm_campaign')
+  })
+
+  it('retains only the existing public social campaign labels without arbitrary content', () => {
+    for (const symbol of ['spy', 'qqq', 'tsla']) {
+      expect(sanitizePageUrl(`/?utm_source=x&utm_medium=social&utm_campaign=daily_gex&utm_content=${symbol}`).pagePath)
+        .toBe(`/?utm_source=x&utm_medium=social&utm_campaign=daily_gex&utm_content=${symbol}`)
+    }
+    for (const query of [
+      'utm_source=x&utm_medium=social&utm_campaign=daily_gex&utm_content=private@example.test',
+      'utm_source=email&utm_medium=lifecycle&utm_campaign=daily_gex&utm_content=spy',
+      'utm_source=x&utm_medium=social&utm_campaign=unknown&utm_content=spy',
+      'utm_source=x&utm_medium=referral&utm_campaign=daily_gex&utm_content=spy',
+    ]) expect(sanitizePageUrl(`/?${query}`).pagePath).not.toContain('utm_content')
+  })
+
+  it('recognizes only the HTTPS hosted Stripe checkout origin as a processor return', () => {
+    expect(isStripeCheckoutReferrer('https://checkout.stripe.com/c/pay/cs_private?token=private')).toBe(true)
+    expect(isStripeCheckoutReferrer('https://checkout.stripe.com:443/')).toBe(true)
+    for (const referrer of ['', 'not a URL', 'https://www.google.com/search?q=gex', 'https://gexoptions.com/pricing', 'http://checkout.stripe.com/', 'https://checkout.stripe.com.evil.test/', 'https://stripe.com/', 'https://checkout.stripe.com@evil.test/']) {
+      expect(isStripeCheckoutReferrer(referrer)).toBe(false)
+    }
+  })
+
+  it.each(['https://checkout.stripe.com/c/pay/cs_private', '', 'https://www.google.com/search?q=gex', 'https://checkout.stripe.com.evil.test/'])('ignores a referral only on a genuine processor return: %s', async referrer => {
+    vi.resetModules()
+    const referrerGetter = vi.spyOn(document, 'referrer', 'get').mockReturnValue(referrer)
+    try {
+      const freshGA = await import('../../resources/js/lib/ga.js')
+      window.gtag = vi.fn()
+      freshGA.initGA('G-REFERRERTEST')
+      const config = window.gtag.mock.calls.find(args => args[0] === 'config')[2]
+      if (referrer.startsWith('https://checkout.stripe.com/')) expect(config.ignore_referrer).toBe(true)
+      else expect(config).not.toHaveProperty('ignore_referrer')
+      expect(config.page_referrer).not.toContain('cs_private')
+    } finally { referrerGetter.mockRestore() }
   })
 
   it('deduplicates in memory when browser storage is unavailable', () => {

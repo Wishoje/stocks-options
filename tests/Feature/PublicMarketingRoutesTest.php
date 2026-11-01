@@ -33,7 +33,7 @@ class PublicMarketingRoutesTest extends TestCase
     public function test_initial_html_contains_server_rendered_search_and_social_metadata(): void
     {
         $pages = [
-            '/' => ['GexOptions - GEX Levels, Swing Ideas &amp; Intraday Alerts', 'https://gexoptions.com/'],
+            '/' => ['GexOptions | Gamma Exposure Levels, Intraday Alerts &amp; Swing Ideas', 'https://gexoptions.com/'],
             '/features' => ['GexOptions Features - Swing Ideas, Alerts &amp; Options Analytics', 'https://gexoptions.com/features'],
             '/pricing' => ['GexOptions Pricing', 'https://gexoptions.com/pricing'],
             '/contact' => ['Contact GexOptions', 'https://gexoptions.com/contact'],
@@ -50,7 +50,7 @@ class PublicMarketingRoutesTest extends TestCase
             $this->assertStringContainsString("<title inertia>{$title}</title>", $html);
             $this->assertStringContainsString('inertia="seo-description" name="description"', $html);
             $this->assertStringContainsString("inertia=\"seo-canonical\" rel=\"canonical\" href=\"{$canonical}\"", $html);
-            $this->assertStringContainsString('inertia="seo-og-site-name" property="og:site_name" content="GEX Options"', $html);
+            $this->assertStringContainsString('inertia="seo-og-site-name" property="og:site_name" content="GexOptions"', $html);
             $this->assertStringContainsString("inertia=\"seo-og-image\" property=\"og:image\" content=\"{$socialImage}\"", $html);
             $this->assertStringContainsString('inertia="seo-og-image-width" property="og:image:width" content="1200"', $html);
             $this->assertStringContainsString('inertia="seo-og-image-height" property="og:image:height" content="630"', $html);
@@ -64,6 +64,23 @@ class PublicMarketingRoutesTest extends TestCase
                 ->where('seo.image_alt', $socialImageAlt)
                 ->where('seo.image_width', 1200)
                 ->where('seo.image_height', 630));
+            if ($path === '/') {
+                $dom = new \DOMDocument;
+                @$dom->loadHTML('<?xml encoding="utf-8" ?>'.$html);
+                $xpath = new \DOMXPath($dom);
+                $scripts = $xpath->query('//script[@inertia="website-json-ld"]');
+                $this->assertSame(1, $scripts->length);
+                $website = json_decode($scripts->item(0)->textContent, true, flags: JSON_THROW_ON_ERROR);
+                $this->assertSame('WebSite', $website['@type']);
+                $this->assertSame('GexOptions', $website['name']);
+                $this->assertSame('GEX Options', $website['alternateName']);
+                $this->assertSame($canonical, $website['url']);
+                $this->assertSame(config('marketing_seo.pages.home.description'), $website['description']);
+                $this->assertArrayNotHasKey('sameAs', $website);
+                $hero = $xpath->query('//main[@id="marketing-main"]//header')->item(0);
+                $this->assertStringContainsString('GexOptions · Gamma exposure & options analytics', $hero->textContent);
+                $this->assertStringContainsString('GexOptions is a gamma exposure (GEX) and options analytics platform for stocks and ETFs. Find where options positioning is concentrated, follow price reactions at those levels, and review intraday setups and swing ideas.', $hero->textContent);
+            }
         }
     }
 

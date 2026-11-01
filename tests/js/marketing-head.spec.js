@@ -115,7 +115,8 @@ describe('marketing head serialization', () => {
     expect(faq.mainEntity).not.toHaveLength(0)
     expect(website).toMatchObject({
       '@type': 'WebSite',
-      name: 'GEX Options',
+      name: 'GexOptions',
+      alternateName: 'GEX Options',
       url: 'https://gexoptions.com/',
     })
 

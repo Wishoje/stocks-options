@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { sitemapContentVersion } from './lib/sitemap-content-version.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -23,10 +23,9 @@ function sourceDate(paths) {
 }
 async function add(path, content, paths, initialDate) {
   const sources = await Promise.all(paths.map(read))
-  const hash = createHash('sha256').update(JSON.stringify([content, ...sources])).digest('hex')
   const prior = previous[path]
-  const lastmod = prior?.hash === hash ? prior.lastmod : (prior ? today : initialDate || sourceDate(paths))
-  output[path] = { lastmod, hash }
+  output[path] = sitemapContentVersion({ content, sources, previous: prior, today,
+    initialDate: prior ? undefined : initialDate || sourceDate(paths) })
 }
 const pages = await json('resources/marketing/public-content.json')
 await add('/', pages.home, ['resources/js/Pages/Marketing/Home.vue'])

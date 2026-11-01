@@ -4,6 +4,10 @@ Public workflow pages are `/swing-trading-ideas`, `/intraday-alerts` and `/about
 
 Run `npm run build` after editing public content. Its prebuild exports Home and Features content and updates `resources/marketing/sitemap-content.json`. Commit the generated files with the change. Content hashes preserve modification dates across unchanged builds. Do not update all dates just because a deployment occurred.
 
+Source files are hashed with normalized LF line endings. The exporter recognizes legacy LF, CRLF and mixed-file hashes when migrating the manifest, preserving the existing content dates. A Windows checkout and Linux production build therefore produce the same content versions. Genuine public-content or template changes advance the affected page date.
+
+The homepage identifies the product as GexOptions, a gamma exposure and options analytics platform for stocks and ETFs. Its initial HTML and Vue output use the same hero text, page title and website structured data. `GexOptions` is the preferred website name and `GEX Options` is an alternate. The foundation batch does not add public X links or connect an X account.
+
 `/sitemap.xml` is a Laravel response rather than a static file. It lists stable public URLs. The SPY entry uses the later of its content-version date and the last published public-preview date. Reading the sitemap uses cached metadata and never starts a market-data fetch or chart build. An unavailable cache leaves the committed content date in place.
 
 Public authentication pages send `X-Robots-Tag: noindex, follow` and an initial HTML robots directive. They remain crawlable so search engines can read that directive. Dashboard, account, billing and API restrictions remain in robots.txt and their authentication middleware remains in force.

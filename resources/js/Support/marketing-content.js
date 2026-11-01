@@ -768,7 +768,7 @@ export const featureFaqs = Object.freeze([
 
 // Shared with the initial HTML through scripts/export-marketing-content.mjs.
 export const marketingIntros = Object.freeze({
-  home: { eyebrow: 'Options analytics for stocks & ETFs', heading: 'Find key price levels.', accent: 'Know what to watch next.', description: 'Find prices worth watching, get intraday setup alerts, and explore Swing ideas for the days ahead. See the entry condition, target and the price that invalidates each qualifying plan.' },
+  home: { eyebrow: 'GexOptions · Gamma exposure & options analytics', heading: 'Find key price levels.', accent: 'Know what to watch next.', description: 'GexOptions is a gamma exposure (GEX) and options analytics platform for stocks and ETFs. Find where options positioning is concentrated, follow price reactions at those levels, and review intraday setups and swing ideas.' },
   features: { eyebrow: 'The complete trading workspace', heading: 'From key levels to a clearer next step.', description: 'Use Scanner and alerts during the session. Review Swing ideas for 2–5 day and 1–3 week plans. Explore the price levels, entry conditions, targets and invalidation behind each workflow.' },
 })
 

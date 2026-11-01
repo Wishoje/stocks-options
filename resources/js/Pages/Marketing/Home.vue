@@ -120,8 +120,8 @@ import { useMarketingMotion } from '@/Support/marketing-motion'
 const intro = marketingIntros.home
 const page = usePage()
 const motionRoot = useMarketingMotion()
-const homeTitle = computed(() => page.props.seo?.title || 'GexOptions - GEX Levels, Swing Ideas & Intraday Alerts')
-const homeDescription = computed(() => page.props.seo?.description || 'Find key price levels, follow intraday setup alerts and explore Swing ideas for 2–5 day and 1–3 week plans with entry conditions, targets and invalidation.')
+const homeTitle = computed(() => page.props.seo?.title || 'GexOptions | Gamma Exposure Levels, Intraday Alerts & Swing Ideas')
+const homeDescription = computed(() => page.props.seo?.description || 'GexOptions is a gamma exposure and options analytics platform with GEX levels, intraday setup alerts and swing ideas for stocks and ETFs.')
 const homeCanonical = computed(() => page.props.seo?.canonical || 'https://gexoptions.com/')
 const trialDays = computed(() => Number(page.props.offer?.trial_days) || 7)
 function offerPrice(billing) {
@@ -132,5 +132,5 @@ function offerPrice(billing) {
 const monthlyPrice = computed(() => offerPrice('monthly'))
 const yearlyPrice = computed(() => offerPrice('yearly'))
 const homeFaqs = computed(() => buildHomeFaqs(trialDays.value))
-const homeStructuredDataJson = computed(() => JSON.stringify({ '@context': 'https://schema.org', '@type': 'WebSite', '@id': 'https://gexoptions.com/#website', url: 'https://gexoptions.com/', name: 'GEX Options', description: homeDescription.value, inLanguage: 'en-US' }).replace(/</g, '\\u003c'))
+const homeStructuredDataJson = computed(() => JSON.stringify({ '@context': 'https://schema.org', '@type': 'WebSite', '@id': 'https://gexoptions.com/#website', url: 'https://gexoptions.com/', name: 'GexOptions', alternateName: 'GEX Options', description: homeDescription.value, inLanguage: 'en-US' }).replace(/</g, '\\u003c'))
 </script>

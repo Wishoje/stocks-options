@@ -1,10 +1,10 @@
 {
   "home": {
     "intro": {
-      "eyebrow": "Options analytics for stocks & ETFs",
+      "eyebrow": "GexOptions · Gamma exposure & options analytics",
       "heading": "Find key price levels.",
       "accent": "Know what to watch next.",
-      "description": "Find prices worth watching, get intraday setup alerts, and explore Swing ideas for the days ahead. See the entry condition, target and the price that invalidates each qualifying plan."
+      "description": "GexOptions is a gamma exposure (GEX) and options analytics platform for stocks and ETFs. Find where options positioning is concentrated, follow price reactions at those levels, and review intraday setups and swing ideas."
     },
     "workflows": [
       {

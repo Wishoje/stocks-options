@@ -10,8 +10,8 @@ return [
 
     'pages' => [
         'home' => [
-            'title' => 'GexOptions - GEX Levels, Swing Ideas & Intraday Alerts',
-            'description' => 'Find key price levels, follow intraday setup alerts and explore Swing ideas for 2–5 day and 1–3 week plans with entry conditions, targets and invalidation.',
+            'title' => 'GexOptions | Gamma Exposure Levels, Intraday Alerts & Swing Ideas',
+            'description' => 'GexOptions is a gamma exposure and options analytics platform with GEX levels, intraday setup alerts and swing ideas for stocks and ETFs.',
             'canonical' => 'https://gexoptions.com/',
         ],
         'features' => [

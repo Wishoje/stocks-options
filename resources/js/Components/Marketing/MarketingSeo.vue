@@ -4,7 +4,7 @@
     <meta head-key="seo-description" name="description" :content="description" />
     <link head-key="seo-canonical" rel="canonical" :href="canonical" />
     <meta head-key="seo-og-type" property="og:type" :content="type" />
-    <meta head-key="seo-og-site-name" property="og:site_name" content="GEX Options" />
+    <meta head-key="seo-og-site-name" property="og:site_name" content="GexOptions" />
     <meta head-key="seo-og-title" property="og:title" :content="title" />
     <meta head-key="seo-og-description" property="og:description" :content="description" />
     <meta head-key="seo-og-url" property="og:url" :content="canonical" />

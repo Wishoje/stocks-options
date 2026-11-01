@@ -20,7 +20,7 @@ const allowedEventNames = new Set([
   'subscription_activation_confirmed',
 ]);
 const allowedParameterValues = Object.freeze({
-  source: new Set(['workflow', 'features', 'guides', 'spy_preview', 'home', 'marketing', 'marketing_nav', 'pricing_page', 'register_page']),
+  event_origin: new Set(['workflow', 'features', 'guides', 'spy_preview', 'home', 'marketing', 'marketing_nav', 'pricing_page', 'register_page']),
   location: new Set(['workflow_hero', 'workflow_final', 'features_final', 'features_hero', 'guides_index', 'guide_final', 'spy_preview_hero', 'spy_preview_final', 'home_final', 'home_hero', 'home_offer', 'marketing_mobile_nav', 'marketing_nav']),
   destination: new Set(['checkout', 'dashboard', 'register']),
   plan: new Set(['earlybird']),
@@ -32,21 +32,27 @@ const allowedParameterValues = Object.freeze({
 });
 
 export function isAllowedEventParam(key, value) {
-  return typeof value === 'string' && allowedParameterValues[key]?.has(value) === true;
+  const outputKey = key === 'source' ? 'event_origin' : key;
+  return typeof value === 'string' && allowedParameterValues[outputKey]?.has(value) === true;
 }
 const retainedQueryValues = Object.freeze({
-  utm_source: new Set(['bing', 'facebook', 'google', 'instagram', 'linkedin', 'newsletter', 'partner', 'reddit', 'x']),
-  utm_medium: new Set(['cpc', 'email', 'organic', 'referral', 'social']),
+  utm_source: new Set(['bing', 'email', 'facebook', 'google', 'instagram', 'linkedin', 'newsletter', 'partner', 'reddit', 'x']),
+  utm_medium: new Set(['cpc', 'email', 'lifecycle', 'organic', 'referral', 'social']),
   plan: new Set(['earlybird']),
   billing: new Set(['monthly', 'yearly']),
   canceled: new Set(['1']),
   activating: new Set(['1']),
   welcome: new Set(['1']),
 });
+const acquisitionEmailCampaigns = new Set(['welcome_signup', 'finish_checkout_1h', 'finish_checkout_24h']);
+const accountEmailCampaigns = new Set(['trial_started', 'payment_failed_1', 'payment_failed_2', 'payment_failed_3', 'cancellation_confirmation', 'winback_7d', 'account_updates']);
+const publicPostContent = new Set(['spy', 'qqq', 'tsla']);
 
 export function sanitizeEventParams(params = {}) {
+  // Existing component props use source for placement. Never send that key as traffic attribution.
+  const normalized = { ...params, event_origin: params.event_origin ?? params.source };
   return Object.fromEntries(
-    Object.entries(params).flatMap(([key, value]) => {
+    Object.entries(normalized).flatMap(([key, value]) => {
       const allowedValues = allowedParameterValues[key];
       if (blockedParameter.test(key) || !allowedValues || !isAllowedEventParam(key, value)) return [];
       return [[key, value]];
@@ -90,6 +96,17 @@ export function sanitizePageUrl(input, origin = window.location.origin) {
     retained.set(key, normalized);
   }
 
+  const campaign = String(parsed.searchParams.get('utm_campaign') || '').toLowerCase();
+  if (retained.get('utm_source') === 'email' && retained.get('utm_medium') === 'lifecycle') {
+    if (acquisitionEmailCampaigns.has(campaign)) retained.set('utm_campaign', campaign);
+    // Billing and membership email details remain grouped instead of being disclosed to Analytics.
+    else if (accountEmailCampaigns.has(campaign)) retained.set('utm_campaign', 'account_updates');
+  } else if (retained.get('utm_source') === 'x' && retained.get('utm_medium') === 'social' && campaign === 'daily_gex') {
+    retained.set('utm_campaign', campaign);
+    const content = String(parsed.searchParams.get('utm_content') || '').toLowerCase();
+    if (publicPostContent.has(content)) retained.set('utm_content', content);
+  }
+
   const query = retained.toString();
   const pagePath = `${pathname}${query ? `?${query}` : ''}`;
 
@@ -108,6 +125,14 @@ export function sanitizeReferrer(input, currentOrigin = window.location.origin) 
     return sanitizePageUrl(parsed.href, currentOrigin).pageLocation;
   } catch {
     return '';
+  }
+}
+
+export function isStripeCheckoutReferrer(input) {
+  try {
+    return new URL(input).origin === 'https://checkout.stripe.com';
+  } catch {
+    return false;
   }
 }
 
@@ -133,6 +158,7 @@ export function initGA(gaId) {
     page_location: safePage.pageLocation,
     page_path: safePage.pagePath,
     page_referrer: safeReferrer,
+    ...(isStripeCheckoutReferrer(document.referrer) ? { ignore_referrer: true } : {}),
   });
 }
 
