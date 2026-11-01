@@ -34,6 +34,11 @@ Schedule::command('swing-research:collect --limit=6')
     ->withoutOverlapping(5)->onOneServer()->runInBackground()->name('swing-research:collect')
     ->when(fn () => (bool) config('swing_research.enabled'));
 
+Schedule::command('intraday-research:collect --limit=100')
+    ->timezone('America/New_York')->weekdays()->everyMinute()->between('09:45', '16:45')
+    ->withoutOverlapping(2)->onOneServer()->runInBackground()->name('intraday-research:collect')
+    ->when(fn () => (bool) config('intraday_research.enabled') && \App\Services\IntradayResearch\IntradayResearchService::collectionAllowed());
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 });

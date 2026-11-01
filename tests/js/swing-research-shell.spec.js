@@ -20,16 +20,17 @@ afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 it('only gives research alerts a polling owner for the shared private access flag', async () => {
   const { page } = start(false); await flushPromises(); expect(axios.get).not.toHaveBeenCalled()
   page.props.setupStudyAdmin = true; await flushPromises()
-  expect(axios.get).toHaveBeenCalledTimes(1); expect(axios.get.mock.calls[0][0]).toBe('/api/swing-research/alerts')
+  expect(axios.get).toHaveBeenCalledTimes(2)
+  expect(axios.get.mock.calls.map(call => call[0])).toEqual(['/api/swing-research/alerts', '/api/intraday-research/alerts'])
   const signal = axios.get.mock.calls[0][1].signal
   page.props.setupStudyAdmin = false; await flushPromises(); expect(signal.aborted).toBe(false)
-  expect(axios.get).toHaveBeenCalledTimes(1)
+  expect(axios.get).toHaveBeenCalledTimes(2)
 })
 it('does not request real research alerts in initial synthetic mode and aborts on entry to synthetic mode', async () => {
   const demo = start(true, true); await flushPromises(); expect(axios.get).not.toHaveBeenCalled()
   let resolve
   axios.get.mockImplementation(() => new Promise(done => { resolve = done }))
-  await demo.wrapper.setProps({ researchDemo: false }); expect(axios.get).toHaveBeenCalledTimes(1)
+  await demo.wrapper.setProps({ researchDemo: false }); expect(axios.get).toHaveBeenCalledTimes(2)
   const signal = axios.get.mock.calls[0][1].signal
   await demo.wrapper.setProps({ researchDemo: true }); expect(signal.aborted).toBe(true)
   resolve({ data: { items: [], unread_count: 0 } }); await flushPromises()

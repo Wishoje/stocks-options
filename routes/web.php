@@ -106,6 +106,11 @@ Route::middleware(['auth:sanctum', config('jetstream.auth_session'), 'subscribed
         Route::post('/api/swing-research/refresh', [\App\Http\Controllers\SwingResearchController::class, 'refresh'])->middleware('throttle:2,1');
         Route::get('/api/swing-research/alerts', [\App\Http\Controllers\SwingResearchController::class, 'alerts']);
         Route::post('/api/swing-research/alerts/{id}/read', [\App\Http\Controllers\SwingResearchController::class, 'readAlert'])->where('id', '[a-f0-9]{64}');
+        Route::get('/intraday-research', [\App\Http\Controllers\IntradayResearchController::class, 'page'])->name('intraday-research');
+        Route::get('/api/intraday-research', [\App\Http\Controllers\IntradayResearchController::class, 'report']);
+        Route::post('/api/intraday-research/refresh', [\App\Http\Controllers\IntradayResearchController::class, 'refresh'])->middleware('throttle:2,1');
+        Route::get('/api/intraday-research/alerts', [\App\Http\Controllers\IntradayResearchController::class, 'alerts']);
+        Route::post('/api/intraday-research/alerts/{id}/read', [\App\Http\Controllers\IntradayResearchController::class, 'readAlert'])->where('id', '[a-f0-9]{64}');
     });
 });
 

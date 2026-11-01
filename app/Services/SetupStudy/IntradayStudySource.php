@@ -28,12 +28,32 @@ final class IntradayStudySource
 
     public function read(array $symbols, string $from, string $through): array
     {
-        $symbols = array_values(array_unique(array_filter(array_map(
-            fn ($symbol) => is_string($symbol) ? strtoupper(trim($symbol)) : '', $symbols
-        ))));
-        sort($symbols, SORT_STRING);
+        return $this->readEvidence($symbols, $from, $through);
+    }
+
+    /**
+     * Reads one symbol's new checkpoints and its latest saved session prices.
+     * Availability is the first receipt in this slice; callers preserve an earlier archived receipt.
+     */
+    public function readIncremental(array $symbols, string $session, int $afterCheckpointId = 0): array
+    {
+        $symbols = $this->symbols($symbols);
+        if (count($symbols) > 1 || $afterCheckpointId < 0) {
+            throw new \InvalidArgumentException('Incremental intraday reads require at most one symbol and a nonnegative checkpoint ID.');
+        }
+
+        return $this->readEvidence($symbols, $session, $session, $afterCheckpointId);
+    }
+
+    private function readEvidence(array $symbols, string $from, string $through, ?int $afterCheckpointId = null): array
+    {
+        $symbols = $this->symbols($symbols);
+        $lastCheckpointId = $afterCheckpointId ?? 0;
         if ($symbols === [] || $from > $through) {
-            return ['samples' => [], 'truncated' => false, 'warnings' => []];
+            $result = ['samples' => [], 'truncated' => false, 'warnings' => []];
+
+            return $afterCheckpointId === null ? $result : [...$result, 'bars' => [], 'price_recorded_at' => null,
+                'price_hash' => null, 'last_checkpoint_id' => $lastCheckpointId];
         }
 
         $truncated = false;
@@ -42,7 +62,8 @@ final class IntradayStudySource
         $nativeStates = [];
         $calendars = [];
         $retainedBytes = 0;
-        foreach ($this->checkpoints($symbols, $from, $through, $truncated, $warnings) as $record) {
+        foreach ($this->checkpoints($symbols, $from, $through, $truncated, $warnings, $afterCheckpointId) as $record) {
+            $lastCheckpointId = max($lastCheckpointId, (int) $record->id);
             if ($this->synthetic((array) $record)) {
                 continue;
             }
@@ -125,10 +146,11 @@ final class IntradayStudySource
                     'rule_version' => $record->rule_version, 'signal_at' => $signal,
                     'available_at' => $this->iso($record->recorded_at), 'signal_price' => (float) $seed['close'],
                     'entry_low' => (float) $seed['entry_zone']['low'], 'entry_high' => (float) $seed['entry_zone']['high'],
+                    'entry_expires_at' => $this->iso($seed['expires_at'] ?? null),
                     'invalidation' => (float) $seed['invalidation']['price'],
                     'invalidation_side' => $seed['direction'] === 'bullish' ? 'below' : 'above',
                     'target' => (float) $seed['target']['strike'], 'review_until' => $this->iso($calendar['closes_at']),
-                    'native_outcome' => null, 'native_status' => $seed['status'], 'confirmations' => [],
+                    'native_outcome' => null, 'native_outcome_at' => null, 'native_status' => $seed['status'], 'confirmations' => [],
                     'bars' => $bundle['bars'] ?? [], 'source_id' => $record->id, 'source_hash' => $record->content_hash,
                     'assessment_hash' => $record->content_hash, 'native_ids' => [], 'source_hashes' => [],
                     'source_price_evidence_hash' => $record->price_hash,
@@ -155,6 +177,7 @@ final class IntradayStudySource
                 if ($at !== null && (! isset($terminalTimes[$id]) || $at < $terminalTimes[$id])) {
                     $terminalTimes[$id] = $at;
                     $sample['native_outcome'] = $outcome;
+                    $sample['native_outcome_at'] = $at;
                 }
             }
             unset($sample);
@@ -168,8 +191,24 @@ final class IntradayStudySource
         unset($sample);
         usort($samples, fn ($a, $b) => strcmp($a['signal_at'], $b['signal_at']) ?: strcmp($a['id'], $b['id']));
 
-        return ['samples' => $samples, 'truncated' => $truncated,
-            'warnings' => array_values($warnings)];
+        $result = ['samples' => $samples, 'truncated' => $truncated, 'warnings' => array_values($warnings)];
+        if ($afterCheckpointId !== null) {
+            $bundle = $bundles[$symbols[0].'|'.$from] ?? [];
+            $result += ['bars' => $bundle['bars'] ?? [], 'price_recorded_at' => $bundle['recorded_at'] ?? null,
+                'price_hash' => $bundle['hash'] ?? null, 'last_checkpoint_id' => $lastCheckpointId];
+        }
+
+        return $result;
+    }
+
+    private function symbols(array $symbols): array
+    {
+        $symbols = array_values(array_unique(array_filter(array_map(
+            fn ($symbol) => is_string($symbol) ? strtoupper(trim($symbol)) : '', $symbols
+        ))));
+        sort($symbols, SORT_STRING);
+
+        return $symbols;
     }
 
     private function scope(array $symbols, string $from, string $through, string $dataset, string $schema): Builder
@@ -179,16 +218,24 @@ final class IntradayStudySource
     }
 
     /** Sort thin metadata once; JSON is fetched only for a small primary-key batch. */
-    private function checkpoints(array $symbols, string $from, string $through, bool &$truncated, array &$warnings): \Generator
+    private function checkpoints(array $symbols, string $from, string $through, bool &$truncated, array &$warnings, ?int $afterCheckpointId = null): \Generator
     {
         // No JSON predicate or projection here: either can parse every remaining large row before a filesort.
-        $metadata = $this->scope($symbols, $from, $through, 'wall_interactions', 'wall-interactions.v1')
-            ->orderBy('recorded_at')->orderBy('id')->limit(self::CHECKPOINT_LIMIT + 1)
-            ->get(['id', 'symbol', 'analysis_session', 'recorded_at']);
+        $query = $this->scope($symbols, $from, $through, 'wall_interactions', 'wall-interactions.v1');
+        if ($afterCheckpointId === null) {
+            $query->orderBy('recorded_at')->orderBy('id');
+        } else {
+            // Limit in ID order so advancing a truncated cursor cannot skip a lower ID.
+            $query->where('id', '>', $afterCheckpointId)->orderBy('id');
+        }
+        $metadata = $query->limit(self::CHECKPOINT_LIMIT + 1)->get(['id', 'symbol', 'analysis_session', 'recorded_at']);
         if ($metadata->count() > self::CHECKPOINT_LIMIT) {
             $truncated = true;
             $warnings['checkpoints'] = 'Intraday checkpoint limit reached; later saved assessments were omitted.';
             $metadata->pop();
+        }
+        if ($afterCheckpointId !== null) {
+            $metadata = $metadata->sort(fn ($a, $b) => strcmp($a->recorded_at, $b->recorded_at) ?: $a->id <=> $b->id)->values();
         }
         foreach ($metadata->chunk(self::PAGE_SIZE) as $batch) {
             $query = DB::table('wall_observations')->whereIn('id', $batch->pluck('id')->all())
@@ -196,6 +243,7 @@ final class IntradayStudySource
                     'payload_json->timeframe as timeframe', 'payload_json->setups->rule_version as rule_version',
                     'payload_json->price_evidence_hash as price_hash', 'payload_json->state as state',
                     'payload_json->dataset as source_dataset', 'payload_json->demonstration as demonstration',
+                    'payload_json->provenance->quote_source as quote_source',
                     'payload_json->setup_reviews->demonstration as review_demonstration']);
             $this->boundedProjection($query, 'payload_json->setups->review_seeds', 'seeds', self::SEED_BYTES);
             $this->boundedProjection($query, 'payload_json->setup_lifecycle->items', 'lifecycle', self::LIFECYCLE_BYTES);
@@ -229,7 +277,7 @@ final class IntradayStudySource
     private function compactSeed(array $seed): array
     {
         $compact = array_intersect_key($seed, array_flip(['id', 'side', 'strike', 'pattern', 'direction', 'status',
-            'observed_at', 'confirmed_at', 'terminal_at', 'close', 'wall_identity', 'evidence_grade',
+            'observed_at', 'confirmed_at', 'terminal_at', 'expires_at', 'close', 'wall_identity', 'evidence_grade',
             'scope', 'evidence_checks', 'persistence', 'target_room_ratio']));
         $compact['entry_zone'] = array_intersect_key($seed['entry_zone'], array_flip(['low', 'high']));
         $compact['invalidation'] = ['price' => $seed['invalidation']['price']];
@@ -282,12 +330,17 @@ final class IntradayStudySource
         $lastId = 0;
         do {
             $query = DB::table('wall_observations')->whereIn('id', $latest)->where('id', '>', $lastId)
-                ->orderBy('id')->limit(self::PAGE_SIZE)->select(['id', 'symbol', 'analysis_session', 'content_hash', 'recorded_at']);
+                ->orderBy('id')->limit(self::PAGE_SIZE)->select(['id', 'symbol', 'analysis_session', 'content_hash', 'recorded_at',
+                    'payload_json->state as state', 'payload_json->dataset as source_dataset',
+                    'payload_json->demonstration as demonstration', 'payload_json->provenance->quote_source as quote_source']);
             $this->boundedProjection($query, 'payload_json->bars', 'bars', 131072);
             $rows = $query->get();
             $count = $rows->count();
             foreach ($rows as $row) {
                 $lastId = $row->id;
+                if ($this->synthetic((array) $row)) {
+                    continue;
+                }
                 if ($row->bars_oversized || count($bundles) >= 512) {
                     $truncated = true;
                     $warnings['prices'] = 'Intraday price-evidence memory limit reached; some price evidence was omitted.';
@@ -338,7 +391,7 @@ final class IntradayStudySource
     {
         return in_array($value['state'] ?? null, ['demonstration', 'synthetic_review'], true)
             || in_array($value['source_dataset'] ?? $value['dataset'] ?? null, ['synthetic_review', 'demonstration'], true)
-            || in_array($value['provenance']['quote_source'] ?? null, ['synthetic_review', 'demonstration'], true)
+            || in_array($value['provenance']['quote_source'] ?? $value['quote_source'] ?? null, ['synthetic_review', 'demonstration'], true)
             || in_array($value['demonstration'] ?? false, [true, 1, '1', 'true'], true)
             || in_array($value['review_demonstration'] ?? false, [true, 1, '1', 'true'], true);
     }

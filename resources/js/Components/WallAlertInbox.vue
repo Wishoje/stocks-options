@@ -5,10 +5,15 @@ import WallAlertDetails from '@/Components/WallAlertDetails.vue'
 import WallStatusFilters from '@/Components/WallStatusFilters.vue'
 import { wallInboxHistoryRows, filterWallRows, wallInboxRows } from '@/Support/wallLifecycle'
 import { SWING_RESEARCH_ALERTS } from '@/Support/swingResearch'
+import { INTRADAY_RESEARCH_ALERTS } from '@/Support/intradayResearch'
 import ExperimentalSwingAlerts from '@/Components/ExperimentalSwingAlerts.vue'
+import ExperimentalIntradayAlerts from '@/Components/ExperimentalIntradayAlerts.vue'
 
 const alerts = inject(WALL_ALERTS)
 const researchAlerts = inject(SWING_RESEARCH_ALERTS, null)
+const intradayResearchAlerts = inject(INTRADAY_RESEARCH_ALERTS, null)
+const experimentalUnread = computed(() => [researchAlerts, intradayResearchAlerts]
+  .reduce((total, source) => total + (source?.owner.value ? source.unreadCount.value : 0), 0))
 const open = ref(false), trigger = ref(null), panel = ref(null), closeButton = ref(null)
 const selectedStatus = ref('all'), symbol = ref(''), direction = ref('all'), unread = ref(false)
 const entries = computed(() => wallInboxHistoryRows(wallInboxRows(alerts.history.value, alerts.activity?.value, alerts.clock?.value || Date.now(), !!alerts.error.value)))
@@ -17,7 +22,7 @@ const example = computed(() => alerts.notifications.value.find(item => item.prev
 const status = computed(() => !alerts.settings.value.enabled ? 'Popups off' : alerts.error.value ? 'Updates paused' : 'Popups on')
 const initialHistoryLoading = computed(() => !!alerts.loading?.value && !alerts.error.value)
 const triggerLabel = computed(() => initialHistoryLoading.value ? "Recent alerts, loading today's history"
-  : `Recent alerts${alerts.unreadCount.value ? `, ${alerts.unreadCount.value} unread wall alerts` : ''}${researchAlerts?.unreadCount.value ? `, ${researchAlerts.unreadCount.value} unread experimental alerts` : ''}`)
+  : `Recent alerts${alerts.unreadCount.value ? `, ${alerts.unreadCount.value} unread wall alerts` : ''}${experimentalUnread.value ? `, ${experimentalUnread.value} unread experimental alerts` : ''}`)
 let previousOverflow = ''
 
 async function show() {
@@ -61,7 +66,7 @@ onScopeDispose(() => close(false))
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
     <span class="wall-inbox-label">Alerts</span>
     <span v-if="!initialHistoryLoading && alerts.unreadCount.value" class="wall-inbox-badge" aria-hidden="true">{{ alerts.unreadCount.value > 99 ? '99+' : alerts.unreadCount.value }}</span>
-    <span v-if="researchAlerts?.owner.value && researchAlerts.unreadCount.value" class="wall-inbox-badge experimental-badge" :aria-label="`${researchAlerts.unreadCount.value} unread experimental alerts`">E {{ researchAlerts.unreadCount.value > 99 ? '99+' : researchAlerts.unreadCount.value }}</span>
+    <span v-if="experimentalUnread" class="wall-inbox-badge experimental-badge" :aria-label="`${experimentalUnread} unread experimental alerts`">E {{ experimentalUnread > 99 ? '99+' : experimentalUnread }}</span>
   </button>
   <Teleport to="body">
     <div v-if="open" class="wall-inbox-overlay" @keydown="keydown">
@@ -95,6 +100,7 @@ onScopeDispose(() => close(false))
           <footer><a href="/scanner?scan=activity">Open Wall activity</a><button v-if="alerts.settings.value.enabled" type="button" @click="alerts.preview()">Preview example</button></footer>
           <p class="retention">Today's alerts are saved on the server. Read status is saved in this browser · Resets at midnight ET. Viewing an assessment marks it as read.</p>
           <ExperimentalSwingAlerts @open="close(false)" />
+          <ExperimentalIntradayAlerts @open="close(false)" />
         </div>
       </section>
     </div>

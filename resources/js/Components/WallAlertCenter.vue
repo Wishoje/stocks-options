@@ -5,15 +5,18 @@ import WallAlertDetails from '@/Components/WallAlertDetails.vue'
 import WallAlertInbox from '@/Components/WallAlertInbox.vue'
 import ExperimentalSwingAlertDetails from '@/Components/ExperimentalSwingAlertDetails.vue'
 import { SWING_RESEARCH_ALERTS } from '@/Support/swingResearch'
+import { INTRADAY_RESEARCH_ALERTS } from '@/Support/intradayResearch'
+import ExperimentalIntradayAlertDetails from '@/Components/ExperimentalIntradayAlertDetails.vue'
 const alerts = inject(WALL_ALERTS, null)
 const researchAlerts = inject(SWING_RESEARCH_ALERTS, null)
+const intradayResearchAlerts = inject(INTRADAY_RESEARCH_ALERTS, null)
 </script>
 
 <template>
   <template v-if="alerts">
     <WallAlertInbox v-if="alerts.owner.value" />
     <Teleport to="body">
-      <div :class="['wall-alert-notifications', { 'has-alerts': alerts.notifications.value.length || researchAlerts?.notifications.value.length }]" aria-live="polite" aria-relevant="additions" aria-label="Alert notifications">
+      <div :class="['wall-alert-notifications', { 'has-alerts': alerts.notifications.value.length || researchAlerts?.notifications.value.length || intradayResearchAlerts?.notifications.value.length }]" aria-live="polite" aria-relevant="additions" aria-label="Alert notifications">
         <article v-for="item in alerts.notifications.value" :key="item.alert_id" class="wall-alert-toast" :class="{ testing: item.status === 'testing' }" :aria-label="item.preview ? 'Test wall alert' : `${item.symbol} wall alert`">
           <button type="button" class="dismiss" :aria-label="`Dismiss ${item.preview ? 'test' : item.symbol} wall alert`" @click="alerts.dismiss(item.alert_id)">×</button>
           <WallAlertDetails :item="item" @open="!item.preview && alerts.markRead(item.alert_id)" />
@@ -21,6 +24,10 @@ const researchAlerts = inject(SWING_RESEARCH_ALERTS, null)
         <article v-for="item in researchAlerts?.notifications.value || []" :key="`research-${item.id}`" class="wall-alert-toast experimental" :aria-label="`${item.symbol} experimental swing alert`">
           <button type="button" class="dismiss" :aria-label="`Dismiss ${item.symbol} experimental alert`" @click="researchAlerts.dismiss(item.id)">×</button>
           <ExperimentalSwingAlertDetails :item="item" :mark-read="researchAlerts.markRead" />
+        </article>
+        <article v-for="item in intradayResearchAlerts?.notifications.value || []" :key="`intraday-research-${item.id}`" class="wall-alert-toast experimental" :aria-label="`${item.symbol} experimental intraday conditions-met alert`">
+          <button type="button" class="dismiss" :aria-label="`Dismiss ${item.symbol} experimental intraday alert`" @click="intradayResearchAlerts.dismiss(item.id)">×</button>
+          <ExperimentalIntradayAlertDetails :item="item" :mark-read="intradayResearchAlerts.markRead" />
         </article>
       </div>
     </Teleport>

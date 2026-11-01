@@ -7,9 +7,9 @@ import { useSwingResearchAlerts } from '@/composables/useSwingResearchAlerts'
 vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 const wrappers = []
 const alert = (id = 1, overrides = {}) => ({ id, symbol: 'SPY', horizon: 'short', variant: 'nearer_entry', label: 'Closer entry', experimental: true, status: 'qualified', signal_recorded_at: '2026-10-20T20:00:00Z', alert_read_at: null, ...overrides })
-function start(owner = ref(19)) {
+function start(owner = ref(19), options = {}) {
   let alerts
-  const wrapper = mount(defineComponent({ setup() { alerts = useSwingResearchAlerts(owner); return {} }, template: '<div />' }))
+  const wrapper = mount(defineComponent({ setup() { alerts = useSwingResearchAlerts(owner, options); return {} }, template: '<div />' }))
   wrappers.push(wrapper)
   return { alerts, owner, wrapper }
 }
@@ -87,5 +87,40 @@ describe('private experimental swing alerts', () => {
     expect(alerts.history.value[0].alert_read_at).toBeTruthy(); expect(alerts.unreadCount.value).toBe(1)
     wrapper.unmount(); await alerts.markRead(2)
     expect(axios.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('only creates condition-event popups and keeps their snapshots when later outcomes arrive', async () => {
+    const { alerts } = start(); await flushPromises()
+    axios.get.mockResolvedValue(response([
+      alert(1, { status: 'conditions_met' }), alert(2, { status: 'in_progress' }),
+      ...['target_reached', 'invalidated', 'expired', 'finished', 'needs_review', 'approaching', 'testing'].map((status, index) => alert(index + 3, { status })),
+      alert(11, { status: 'in_progress', needs_update: true }), alert(12, { status: 'in_progress', outcome: 'target_reached' }),
+      alert(13, { status: 'conditions_met', notification_type: 'target_reached' }),
+    ]))
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.notifications.value.map(item => item.id)).toEqual([1, 2])
+    expect(alerts.notifications.value.every(item => item.status === 'conditions_met' && item.notification_type === 'conditions_met')).toBe(true)
+    axios.get.mockResolvedValue(response([alert(1, { status: 'target_reached', outcome: 'target_reached' }), alert(2, { status: 'invalidated', outcome: 'invalidated' })]))
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.history.value.map(item => item.status)).toEqual(['target_reached', 'invalidated'])
+    expect(alerts.notifications.value.map(item => item.status)).toEqual(['conditions_met', 'conditions_met'])
+    expect(alerts.notifications.value.some(item => item.outcome)).toBe(false)
+  })
+
+  it('separates intraday history from Swing, excludes control popups and keeps deduplication through day rollover', async () => {
+    vi.setSystemTime(new Date('2026-10-30T23:59:00Z'))
+    const { alerts } = start(ref(19), { endpointPrefix: '/api/intraday-research', storageNamespace: 'intraday-research', allowedVariants: ['post_publication_retest'] })
+    await flushPromises()
+    expect(axios.get.mock.calls[0][0]).toBe('/api/intraday-research/alerts')
+    axios.get.mockResolvedValue(response([alert(20, { variant: 'baseline', status: 'conditions_met' }), alert(21, { variant: 'post_publication_retest', status: 'conditions_met' })]))
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.notifications.value.map(item => item.id)).toEqual([21])
+    alerts.dismiss(21)
+    vi.setSystemTime(new Date('2026-10-31T23:59:00Z')); await vi.advanceTimersByTimeAsync(60000)
+    expect(alerts.history.value).toHaveLength(1); expect(alerts.notifications.value).toEqual([])
+    expect(JSON.parse(localStorage.getItem('gex:intraday-research-seen:v1:19'))).toEqual(['21'])
+    expect(localStorage.getItem('gex:swing-research-seen:v1:19')).toBeNull()
+    await alerts.markRead(21)
+    expect(axios.post.mock.calls[0][0]).toBe('/api/intraday-research/alerts/21/read')
   })
 })

@@ -178,7 +178,7 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
 <template>
   <AppLayout title="Setup study">
     <main class="study-page gex-ui" data-theme="dark">
-      <nav class="study-subnav" aria-label="Private research"><Link href="/setup-study" aria-current="page">Setup study</Link><Link href="/swing-research">Swing experiments</Link></nav>
+      <nav class="study-subnav" aria-label="Private research"><Link href="/setup-study" aria-current="page">Setup study</Link><Link href="/swing-research">Swing experiments</Link><Link href="/intraday-research">Intraday experiments</Link></nav>
       <header class="study-heading">
         <div><p class="study-eyebrow">OWNER RESEARCH</p><h1>Setup study</h1><p>Review what price did after a recorded setup.</p></div>
         <div class="study-actions">
@@ -258,5 +258,5 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
 </style>
 
 <style scoped>
-.study-subnav{display:flex;gap:20px;margin-bottom:24px;font-size:.8rem;color:#b7c7e3}.study-subnav a{padding:8px 0;min-height:36px}.study-subnav a[aria-current=page]{color:#d4d0ff;border-bottom:2px solid #a49be0}.study-subnav a:focus-visible{outline:2px solid #b6baff;outline-offset:3px}
+.study-subnav{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:24px;font-size:.8rem;color:#b7c7e3}.study-subnav a{padding:8px 0;min-height:36px}.study-subnav a[aria-current=page]{color:#d4d0ff;border-bottom:2px solid #a49be0}.study-subnav a:focus-visible{outline:2px solid #b6baff;outline-offset:3px}
 </style>

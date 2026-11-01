@@ -14,6 +14,7 @@ import { WALL_ALERTS } from '@/Support/wallAlerts';
 import { WALL_WATCHLIST_OWNER } from '@/Support/wallWatchlistFeed';
 import { useSwingResearchAlerts } from '@/composables/useSwingResearchAlerts';
 import { SWING_RESEARCH_ALERTS } from '@/Support/swingResearch';
+import { INTRADAY_RESEARCH_ALERTS } from '@/Support/intradayResearch';
 
 const props = defineProps({
     title: String,
@@ -27,6 +28,11 @@ provide(WALL_ALERTS, useWallAlerts(wallAlertOwner));
 const researchOwner = computed(() => layout.proxy.$page?.props?.setupStudyAdmin && !props.researchDemo
     ? wallAlertOwner.value : null);
 provide(SWING_RESEARCH_ALERTS, useSwingResearchAlerts(researchOwner));
+provide(INTRADAY_RESEARCH_ALERTS, useSwingResearchAlerts(researchOwner, {
+    endpointPrefix: '/api/intraday-research',
+    storageNamespace: 'intraday-research',
+    allowedVariants: ['post_publication_retest'],
+}));
 
 const showingNavigationDropdown = ref(false);
 const mobileNavigationButton = ref(null);
