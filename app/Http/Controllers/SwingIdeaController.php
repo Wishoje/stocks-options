@@ -16,7 +16,14 @@ final class SwingIdeaController extends Controller
         $input = $request->validate(['horizon' => ['nullable', Rule::in(array_keys(SwingIdeaRules::HORIZONS))], 'demo' => ['nullable', 'boolean']]);
         $horizon = ($input['horizon'] ?? '') ?: 'short';
 
-        $data = $request->boolean('demo') ? app(\App\Support\Swing\SwingIdeaDemo::class)->build($horizon) : $service->read($request->user()->id, $horizon);
+        if ($request->boolean('demo')) {
+            $data = app(\App\Support\Swing\SwingIdeaDemo::class)->build($horizon);
+            $examples = array_values(array_filter($data['items'], fn (array $row): bool => ($row['status'] ?? null) !== 'no_idea' && is_array($row['levels'] ?? null)));
+            $data['items'] = array_map(fn (array $row): array => \App\Support\CustomerIdeaPresentation::swing($row, $row,
+                array_intersect_key($row, array_flip(['id', 'demonstration', 'is_current', 'reviewed_through']))), $examples);
+        } else {
+            $data = $service->readCustomerIdeas($request->user()->id, $horizon);
+        }
 
         return Inertia::render('SwingIdeas', [...$data, 'localDemoAvailable' => app()->environment('local'),
             'horizon' => $horizon, 'horizons' => SwingIdeaRules::HORIZONS,

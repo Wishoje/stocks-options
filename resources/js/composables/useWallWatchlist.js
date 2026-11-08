@@ -19,5 +19,5 @@ export function useWallWatchlist({ owner = inject(WALL_WATCHLIST_OWNER, ref(null
   window.addEventListener('watchlist-updated', exitDemo)
   onScopeDispose(() => { stop(); release?.(); window.removeEventListener('watchlist-updated', exitDemo) })
   return { data: field('data'), loading: field('loading'), refreshing: field('refreshing'), error: field('error'),
-    revision: field('revision'), demo, load, chooseDemo }
+    revision: field('revision'), initialized: field('initialized'), accessDenied: field('accessDenied'), demo, load, chooseDemo }
 }

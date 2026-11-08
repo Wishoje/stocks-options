@@ -2,7 +2,8 @@
 import { computed, ref, watch, onScopeDispose } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
 import { wallReactionTitle, wallSetupTitle } from '@/utils/wallDecision'
-import { activeWallRows, filterWallRows, wallLifecycleRows, wallStatusLabel } from '@/Support/wallLifecycle'
+import { filterWallRows } from '@/Support/wallLifecycle'
+import { wallIdeaRows, ideaStatusLabel } from '@/Support/ideaPresentation'
 import WallAlertControls from '@/Components/WallAlertControls.vue'
 import WallStatusFilters from '@/Components/WallStatusFilters.vue'
 import WallStatusBadge from '@/Components/WallStatusBadge.vue'
@@ -14,7 +15,7 @@ const selectedStatus = ref('conditions_met'), symbol = ref(''), direction = ref(
 const clock = ref(Date.now())
 const timer = setInterval(() => { clock.value = Date.now() }, 10000)
 onScopeDispose(() => clearInterval(timer))
-const items = computed(() => activeWallRows(wallLifecycleRows(data.value, clock.value, !!error.value)))
+const items = computed(() => wallIdeaRows(data.value, clock.value))
 const qualifiedCount = computed(() => items.value.filter(row => row.status_group === 'conditions_met').length)
 const filtered = computed(() => filterWallRows(items.value, { status: selectedStatus.value, symbol: symbol.value, direction: direction.value }))
 const visible = computed(() => filtered.value.slice(0, limit.value))
@@ -33,7 +34,7 @@ watch(() => data.value?.session, () => { limit.value = 6 })
 
 <template>
   <section class="wall-watchlist" aria-label="Watchlist wall activity" :aria-busy="loading || refreshing">
-    <header><div><h3>Which symbols need attention?</h3><p>Intraday setups · All saved symbols · 1W expiries · Prices delayed 15 min</p></div>
+    <header><div><h3>Which symbols need attention?</h3><p>Today's intraday ideas · All saved symbols · 1W expiries · Prices delayed 15 min</p></div>
       <button type="button" :disabled="loading || refreshing" @click="load()">{{ refreshing ? 'Refreshing…' : 'Refresh watchlist' }}</button></header>
     <WallAlertControls />
     <p v-if="loading" class="notice" role="status">Checking your watchlist’s wall assessments…</p>
@@ -45,29 +46,26 @@ watch(() => data.value?.session, () => { limit.value = 6 })
       <WallStatusFilters v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" :rows="items" current-only />
       <div v-if="visible.length" class="activity-list">
         <article v-for="row in visible" :key="row.id || `${row.symbol}:${row.side}`" :class="['activity-row', { selected: row.symbol === selectedSymbol, qualified: row.status_group === 'conditions_met' }]">
-          <div class="activity-heading"><div><strong class="symbol">{{ row.symbol }}</strong><span :class="row.side">{{ row.side === 'put' ? 'Put' : 'Call' }} wall {{ number(row.strike) }}</span></div><WallStatusBadge :status="row.status_group" :outcome="row.outcome" /></div>
+          <div class="activity-heading"><div><strong class="symbol">{{ row.symbol }}</strong><span :class="row.side">{{ row.side === 'put' ? 'Put' : 'Call' }} wall {{ number(row.strike) }}</span></div><WallStatusBadge :status="row.status_group" /></div>
           <p class="observed-time"><template v-if="row.qualified_at">Qualified {{ time(row.qualified_at) }} ET · </template>Recorded close {{ number(row.close) }} · {{ time(row.observed_at) }} ET</p>
           <p v-if="row.additional_confirmations?.length" class="observed-time">Same levels also confirmed at {{ row.additional_confirmations.map(item => time(item.observed_at) + ' ET').join(', ') }}.</p>
           <div class="activity-body"><div><strong>{{ row.setup?.direction ? wallSetupTitle(row.setup) : row.reaction ? wallReactionTitle(row.reaction) : 'Watch for price confirmation' }}</strong>
             <p v-if="checks(row).length">{{ checks(row).join(' · ') }}</p>
             <p v-if="progress(row)">{{ progress(row) }}</p>
-            <p class="activity-next"><b>{{ row.status_group === 'finished' ? 'Result:' : row.status_group === 'needs_update' ? 'Last assessment:' : 'Next:' }}</b> {{ row.reason || row.next_condition?.text || 'Wait for a completed price sequence at this wall.' }}</p>
-            <p v-if="row.status_group === 'in_progress'">Following the original target and invalidation until session close. No entered position is assumed.</p>
-            <p v-if="row.entry_window_closed && row.status_group === 'in_progress'">Entry window closed. This is follow-up on the recorded setup.</p>
-            <p v-if="row.evaluated_through" class="observed-time">Assessed through {{ time(row.evaluated_through) }} ET</p></div>
+            <p class="activity-next"><b>{{ row.status_group === 'conditions_met' ? 'Idea:' : 'Next:' }}</b> {{ row.reason || row.next_condition?.text || 'Wait for a completed price sequence at this wall.' }}</p></div>
             <dl v-if="hasLevels(row)"><div><dt>Entry area (recorded)</dt><dd>{{ number(row.setup.entry_zone.low) }}–{{ number(row.setup.entry_zone.high) }}</dd></div>
-              <div><dt>Invalid if 5m close</dt><dd>{{ row.setup.invalidation.close_side }} {{ number(row.setup.invalidation.price) }}</dd></div>
+              <div><dt>Risk boundary · 5m close</dt><dd>{{ row.setup.invalidation.close_side }} {{ number(row.setup.invalidation.price) }}</dd></div>
               <div><dt>Reference target</dt><dd>{{ number(row.setup.target.strike) }}</dd></div></dl>
             <a v-if="chartHref" :href="chartHref({ ...row, demonstration: demo })" :aria-label="`View ${row.symbol} wall assessment`" class="chart-link">{{ row.assessment_id ? 'View assessment' : 'Open wall tracking' }} <span aria-hidden="true">→</span></a>
             <button v-else type="button" :aria-label="`View ${row.symbol} wall assessment`" @click="emit('open', { ...row, demonstration: demo })">View assessment <span aria-hidden="true">→</span></button>
           </div>
         </article>
       </div>
-      <p v-else-if="!error" class="notice" role="status">{{ !data.watchlist_count ? 'Add symbols to your watchlist to follow their wall activity here.' : `No ${selectedStatus === 'all' ? 'setups' : selectedStatus === 'finished' ? 'past setups' : wallStatusLabel(selectedStatus).toLowerCase() + ' setups'} match these filters. Your selection stays in place as updates arrive.` }}</p>
+      <p v-else-if="!error" class="notice" role="status">{{ !data.watchlist_count ? 'Add symbols to your watchlist to follow their wall activity here.' : `No ${selectedStatus === 'all' ? 'ideas' : ideaStatusLabel(selectedStatus).toLowerCase() + ' ideas'} match these filters. Your selection stays in place as updates arrive.` }}</p>
       <p v-if="closed" class="footnote">The market is closed. These are the latest recorded states for this session.</p>
       <button v-if="filtered.length > limit" class="show-more" type="button" @click="limit += 6">Show more · {{ filtered.length - limit }} remaining</button>
-      <details class="footnote"><summary>What do these statuses mean?</summary><p>Watching: conditions have not passed. Conditions met: the rules passed at the recorded close. In progress: following the original qualified levels until target, invalidation or session close. A later wall change does not cancel the setup. Needs update: open the assessment to check its latest state. This list focuses on developing and active setups.</p></details>
-      <p class="footnote">Conditions met refers to the recorded close. Check current price against the entry area before using a setup.</p>
+      <details class="footnote"><summary>How to use these ideas</summary><p>Watching means the price conditions have not passed. Conditions met means they passed at the recorded close. Today's recorded ideas stay here until the next day. Entry areas, risk boundaries and targets are reference levels to compare with current price.</p></details>
+      <p class="footnote">Conditions met refers to the recorded close. Check current price against the entry area before using an idea.</p>
       <button v-if="data.local_demo_available && !demo" class="preview" type="button" @click="chooseDemo(true)">Preview local demonstration</button>
     </template>
   </section>

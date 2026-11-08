@@ -1,6 +1,6 @@
 <template>
   <figure class="mk-swing-preview" aria-label="How Swing ideas works">
-    <div class="mk-swing-preview__heading"><span>Swing ideas</span><span class="mk-swing-preview__tag">Daily-close plans</span></div>
+    <div class="mk-swing-preview__heading"><span>Swing ideas</span><span class="mk-swing-preview__tag">Ideas with clear dates</span></div>
     <div class="mk-swing-preview__horizons">
       <div><strong>2–5 days</strong><span>Plan a shorter hold</span></div>
       <div><strong>1–3 weeks</strong><span>Give the idea more time</span></div>
@@ -8,9 +8,9 @@
     <ol class="mk-swing-preview__steps">
       <li><span aria-hidden="true">01</span><strong>A price condition</strong></li>
       <li><span aria-hidden="true">02</span><strong>An entry area</strong></li>
-      <li><span aria-hidden="true">03</span><strong>Target + invalidation</strong></li>
+      <li><span aria-hidden="true">03</span><strong>Target + risk boundary</strong></li>
     </ol>
-    <figcaption>Follow the plan as new daily closes arrive.</figcaption>
+    <figcaption>Compare each idea with the latest daily close and its availability date.</figcaption>
   </figure>
 </template>
 

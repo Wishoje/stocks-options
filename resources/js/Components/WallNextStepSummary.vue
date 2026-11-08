@@ -14,19 +14,13 @@ const time = value => value ? new Date(value).toLocaleTimeString('en-US', {
 }) : '—'
 const assessedAt = computed(() => event.value?.observed_at || props.interaction.as_of)
 function next(card) {
-  if (!event.value && closed.value) return 'Session ended. There is no active entry.'
-  if (!event.value && paused.value) return 'Wait for the next completed five-minute assessment. The last setup is not active.'
+  if (!event.value && closed.value) return 'Session record. New intraday ideas appear in the next session.'
+  if (!event.value && paused.value) return 'Showing the last recorded assessment while the next update loads.'
   const saved = savedWallNextCondition(card)
   if (saved) return saved.text
-  return ({
-    entry_missed: 'Price moved beyond the entry area. Wait for a new price sequence.',
-    expired: 'The setup window ended. Wait for a new price sequence.',
-    invalidated: 'This setup ended. Wait for a new price sequence.',
-    target_reached: 'A later close reached the reference target. Wait for a new price sequence.',
-    no_setup: 'Wait for a new price sequence with enough room to the next level.',
-  }[card.setup?.status]) || (Number.isFinite(card.strike)
+  return Number.isFinite(card.strike)
     ? `Watch for price to reach ${number(card.strike)}, then assess the completed five-minute closes.`
-    : 'Waiting for a wall level to assess.')
+    : 'Waiting for a wall level to assess.'
 }
 function progress(card) {
   if ((!event.value && (closed.value || paused.value)) || card.ready) return null
@@ -50,7 +44,7 @@ const title = computed(() => event.value ? 'At this recorded assessment' : close
           <span v-if="card.ready">{{ card.setup.direction === 'bullish' ? 'Bullish' : 'Bearish' }} · Conditions met {{ time(card.setup.observed_at) }} ET</span></div>
         <template v-if="card.ready">
           <dl><div><dt>Entry area</dt><dd>{{ number(card.setup.entry_zone.low) }}–{{ number(card.setup.entry_zone.high) }}</dd></div>
-            <div><dt>Invalid if 5m close</dt><dd>{{ card.setup.invalidation.close_side }} {{ number(card.setup.invalidation.price) }}</dd></div>
+            <div><dt>Risk boundary · 5m close</dt><dd>{{ card.setup.invalidation.close_side }} {{ number(card.setup.invalidation.price) }}</dd></div>
             <div><dt>Reference target</dt><dd>{{ number(card.setup.target.strike) }}</dd></div></dl>
           <p class="recorded-note">Conditions passed at this delayed close. Check current price against the entry area.</p>
         </template>

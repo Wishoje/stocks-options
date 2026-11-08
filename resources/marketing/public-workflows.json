@@ -10,13 +10,14 @@
         "id": "choose-your-horizon",
         "title": "Choose the time you want to give the idea.",
         "paragraphs": [
-          "Swing ideas reviews your saved stocks and ETFs in two separate views. The 2–5 day view uses a 1M options-expiry scope; the 1–3 week view uses 3M expirations. Holding period and options scope are different: one describes the plan’s review window, the other describes which contracts shape its levels."
+          "Swing ideas reviews your saved stocks and ETFs in two separate views. The 2–5 day view uses a 1M options-expiry scope; the 1–3 week view uses 3M expirations. The horizon describes the idea’s availability window, while the options scope describes which contracts shape its levels.",
+          "Each idea carries an available-through date. Daily EOD updates add current price context without restarting that window."
         ],
         "rows": [
           [
             "Holding period",
             "Options context",
-            "Review after qualification"
+            "Idea availability"
           ],
           [
             "2–5 trading days",
@@ -39,7 +40,7 @@
         "steps": [
           "Save the symbols you trade and open Swing ideas.",
           "Choose your holding period. Read the price condition, entry area, reference target and daily-close invalidation.",
-          "After the next completed session, check whether the plan is still watching, has qualified or is in progress.",
+          "Check the idea date and availability date, then compare its levels with the latest completed daily close.",
           "Compare the recorded levels with current price and review upcoming earnings or major events before deciding."
         ]
       },
@@ -55,7 +56,7 @@
         "id": "read-the-example",
         "title": "What a useful card tells you.",
         "paragraphs": [
-          "The interface preview summarizes the workflow. A qualifying product card provides its own dated numbers: what price must do, where the entry area starts and ends, the reference target, the daily close that invalidates the scenario and the entry deadline.",
+          "The interface preview summarizes the workflow. Each idea card provides its own dated numbers: what price must do, where the entry area starts and ends, the reference target, the daily-close risk boundary and the date the idea stays available through.",
           "Read the swing guide below for a numerical teaching example. If no plan qualifies for a symbol, the product shows the reason instead of manufacturing an idea."
         ]
       },
@@ -101,7 +102,7 @@
         "steps": [
           "Save the stocks and ETFs you follow. Setup alerts are on by default; sound and wall-testing alerts are optional.",
           "Keep the site open during the session. Use Scanner’s Wall activity view to compare your symbols.",
-          "Open the bell for Recent alerts. Filter for Conditions met when you want setups that qualified, or In progress when you want to follow their development.",
+          "Open the bell for Recent alerts. Filter for Conditions met to review ideas whose price conditions were recorded as met.",
           "Open an assessment to see the matching symbol, recorded time, entry area, reference target and five-minute invalidation boundary. Compare with current market price."
         ]
       },
@@ -131,30 +132,26 @@
             "Review the recorded entry, target and invalidation after the price rules pass."
           ],
           [
-            "In progress",
-            "Follow a qualified scenario as later completed bars arrive."
-          ],
-          [
-            "Needs update",
-            "Check the assessment time and wait for an updated comparison before treating it as current."
+            "Recorded time",
+            "Compare the assessment with current price before using its levels."
           ]
         ]
       },
       {
         "id": "follow-original-levels",
-        "title": "Follow a qualified setup through the session.",
+        "title": "Keep today’s ideas available for review.",
         "paragraphs": [
-          "After qualification, the original target and invalidation stay fixed. Follow-up ends when a completed five-minute close reaches the target, crosses the invalidation boundary, or the regular trading session closes. A later change in the leading wall does not cancel that qualified scenario.",
-          "The entry window is separate. Entry window closed means the earlier setup is still being followed, not that a new entry has qualified. Needs update pauses the review when completed price bars are not yet available."
+          "A recorded idea keeps its original entry area, reference target and risk boundary. It remains available for that day so you can return to its assessment without interpreting a changing trade status.",
+          "Conditions met describes the price assessment at its displayed time. It does not refresh an earlier entry area or mean that a trade was entered. Compare the recorded time and levels with current market price."
         ]
       },
       {
         "id": "what-the-inbox-keeps",
         "title": "Return to the evidence without losing the symbol.",
         "paragraphs": [
-          "Recent alerts keeps today’s received notifications in this browser. It also includes fresh active setups found for your saved symbols, so opening the site after a setup qualified does not require an earlier popup to review it.",
-          "An inbox entry can say From your watchlist when it came from that active comparison. This does not replay an old popup. Ended intraday scenarios are removed from the active list as their state updates.",
-          "Repeated confirmations with the same entry, target and invalidation appear as one active plan with the additional confirmation times. The separate recorded assessments are retained."
+          "Recent alerts includes today’s recorded ideas for your saved symbols, including ideas recorded while you were away. Opening the site after the conditions passed does not require an earlier popup to review the assessment.",
+          "An inbox entry can say From your watchlist when it came from that saved-symbol comparison. This does not replay an old popup. Today’s recorded ideas remain available until the next day starts in Eastern time.",
+          "Repeated confirmations with the same entry, target and risk boundary appear together with their additional confirmation times. The separate recorded assessments remain available."
         ]
       },
       {
@@ -177,7 +174,7 @@
       },
       {
         "q": "Can I review a setup if I did not see its popup?",
-        "a": "Yes. The inbox also includes fresh active setups from your saved symbols. Open the recorded assessment to check its time, levels and current state."
+        "a": "Yes. The inbox includes today’s recorded ideas from your saved symbols, including those recorded while you were away. Open the assessment to check its time and levels."
       },
       {
         "q": "Does a bullish alert mean I should buy immediately?",
@@ -225,9 +222,9 @@
       },
       {
         "id": "outcomes",
-        "title": "How to interpret the results.",
+        "title": "How to interpret the ideas.",
         "paragraphs": [
-          "Conditions met records when the scenario’s rules passed. A later target or invalidation records subsequent price behavior. These observations do not assume you entered a position, obtained a particular fill or earned a return.",
+          "Conditions met records when an idea’s price rules passed. Entry areas, reference targets and risk boundaries give you prices to review. The customer workspace presents ideas without assuming an entered position, a particular fill or an earned return.",
           "The current research rules do not establish a validated win rate. Markets can gap through levels. Check current price, liquidity, earnings and major events when evaluating a plan."
         ]
       },

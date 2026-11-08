@@ -532,6 +532,78 @@ describe('Dashboard intraday ingestion freshness', () => {
     expect(wrapper.vm.topError).toBe('')
   })
 
+  it('keeps the mounted intraday view through a pending same-session refresh and applies the completed replacement', async () => {
+    summaryResponse = () => Promise.resolve(response(summary({ trade_date: '2026-09-04' })))
+    strikesResponse = () => Promise.resolve(response(strikes({ trade_date: '2026-09-04' })))
+    const wrapper = await mountIntraday()
+    const panel = wrapper.findComponent({ name: 'IntradayFlowPanel' }).element
+    const retained = wrapper.vm.intradayLevels
+    let finish
+    strikesResponse = () => new Promise(resolve => { finish = resolve })
+
+    const update = wrapper.vm.manualRefresh()
+    await flushPromises()
+    expect(wrapper.vm.intradayRefreshing).toBe(true)
+    expect(wrapper.findComponent({ name: 'IntradayFlowPanel' }).element).toBe(panel)
+    finish(response(strikes({ trade_date: '2026-09-04', snapshot_available: false, items: [], totals: {} })))
+    await update
+    await flushPromises()
+
+    expect(wrapper.vm.intradayLevels).toBe(retained)
+    expect(wrapper.vm.intradaySnapshotAvailable).toBe(true)
+    expect(wrapper.vm.lastUpdated).toBe('2026-09-04T14:40:00Z')
+    expect(wrapper.vm.primaryViewLoading).toBe(false)
+    expect(wrapper.findComponent({ name: 'IntradayFlowPanel' }).element).toBe(panel)
+    expect(wrapper.text()).toContain('Update pending. Showing the last recorded readings.')
+
+    strikesResponse = () => Promise.resolve(response(strikes({ trade_date: '2026-09-04',
+      source_asof: '2026-09-04T14:45:00Z', totals: { call_vol: 150, put_vol: 80 } })))
+    await advance(5000)
+    expect(wrapper.vm.intradayLevels.call_volume_total).toBe(150)
+    expect(wrapper.vm.lastUpdated).toBe('2026-09-04T14:45:00Z')
+    expect(wrapper.vm.intradayRefreshNotice).toBe('')
+    expect(wrapper.findComponent({ name: 'IntradayFlowPanel' }).element).toBe(panel)
+    expect(pulls()).toHaveLength(0)
+  })
+
+  it('does not carry a prior-session intraday snapshot into a pending new session', async () => {
+    summaryResponse = () => Promise.resolve(response(summary({ trade_date: '2026-09-04' })))
+    strikesResponse = () => Promise.resolve(response(strikes({ trade_date: '2026-09-04' })))
+    const wrapper = await mountIntraday()
+    summaryResponse = () => Promise.resolve(response(summary({ trade_date: '2026-09-08' })))
+    strikesResponse = () => Promise.resolve(response(strikes({ trade_date: '2026-09-08',
+      snapshot_available: false, source_asof: null, items: [], totals: {} })))
+
+    await wrapper.vm.manualRefresh()
+    await flushPromises()
+
+    expect(wrapper.vm.intradayHasData).toBe(false)
+    expect(wrapper.vm.intradayTradeDate).toBe('2026-09-08')
+    expect(wrapper.vm.intradayRefreshNotice).toBe('')
+    expect(wrapper.vm.intradayLevels.strike_data).toEqual([])
+  })
+
+  it.each(['pending', 'failed'])('ages retained readings during a %s background refresh', async kind => {
+    const source = '2026-09-04T14:58:45Z'
+    const known = { trade_date: '2026-09-04', source_asof: source }
+    summaryResponse = () => Promise.resolve(response(summary(known)))
+    strikesResponse = () => Promise.resolve(response(strikes(known)))
+    const wrapper = await mountIntraday()
+    expect(wrapper.vm.intradaySourceLabel).toBe('Live')
+
+    await advance(20000)
+    if (kind === 'failed') summaryResponse = () => Promise.reject(new Error('temporary failure'))
+    else strikesResponse = () => Promise.resolve(response(strikes({ trade_date: '2026-09-04',
+      snapshot_available: false, source_asof: null, items: [], totals: {} })))
+    await wrapper.vm.manualRefresh()
+    await flushPromises()
+
+    expect(wrapper.vm.intradayHasData).toBe(true)
+    expect(wrapper.vm.lastUpdated).toBe(source)
+    expect(wrapper.vm.intradaySourceAge).toBeGreaterThanOrEqual(95)
+    expect(wrapper.vm.intradaySourceLabel).toBe('Delayed (1m)')
+  })
+
   it('does not refresh symbol-scoped intraday endpoints when the hidden EOD timeframe changes', async () => {
     const wrapper = await mountIntraday()
     const summaryCalls = calls('/api/intraday/summary').length

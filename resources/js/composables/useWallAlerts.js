@@ -1,8 +1,9 @@
 import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
 import { useWallWatchlist } from '@/composables/useWallWatchlist'
-import { createWallAlertEngine, currentWallAlertRows, DEFAULT_WALL_ALERT_SETTINGS, wallAlertSettings } from '@/Support/wallAlerts'
+import { createWallAlertEngine, DEFAULT_WALL_ALERT_SETTINGS, wallAlertSessionDate, wallAlertSettings } from '@/Support/wallAlerts'
 import { createWallAlertInbox, mergeWallAlertHistory, wallInboxServerSnapshots, wallInboxSetupSnapshots } from '@/Support/wallAlertInbox'
-import { activeWallRows, wallInboxHistoryRows, wallInboxRows, wallActivePlanKey } from '@/Support/wallLifecycle'
+import { activeWallRows, wallInboxHistoryRows, wallActivePlanKey } from '@/Support/wallLifecycle'
+import { presentIdea, wallInboxIdeaRows } from '@/Support/ideaPresentation'
 
 let retainedOwner, retainedEngine, audio, audioOwner
 export function useWallAlerts(owner) {
@@ -71,15 +72,23 @@ export function useWallAlerts(owner) {
     tone.connect(volume); volume.connect(audio.destination)
     tone.start(); tone.stop(audio.currentTime + 0.2)
   }
+  function reconcileNotifications(now = Date.now()) {
+    if (!notifications.value.length) return
+    if (feed?.accessDenied.value) { notifications.value = []; return }
+    const visible = new Set(notifications.value.map(item => item.alert_id))
+    const saved = history.value.filter(item => visible.has(item.alert_id))
+    const states = new Map(wallInboxIdeaRows(saved, feed?.data.value, now).map(row => [row.alert_id, row]))
+    notifications.value = notifications.value
+      .filter(item => now - item.received_at < 90000
+        && (item.preview || wallAlertSessionDate(Date.parse(item.observed_at)) === wallAlertSessionDate(now)))
+      .map(item => item.preview ? item : presentIdea({ ...item, ...states.get(item.alert_id) }))
+  }
   const stopData = watch([feed.data, () => settings.value.testing], ([data]) => {
-    if (!data || !inbox) return
+    if (!data || !inbox) { reconcileNotifications(); return }
     const candidates = settings.value.enabled && engine.value ? engine.value.consume(data, settings.value) : []
-    const current = new Set(currentWallAlertRows(data).map(row => row.alert_keys[row.status === 'conditions_met' ? 'setup' : 'testing']))
-    notifications.value = notifications.value.filter(item => item.preview || current.has(item.alert_id))
     const now = Date.now()
-    const activePlans = new Set(activeWallRows(wallInboxRows(history.value, data, now))
-      .filter(row => ['conditions_met', 'in_progress'].includes(row.status_group)
-        || (row.status_group === 'needs_update' && row.lifecycle?.qualified === true))
+    const activePlans = new Set(activeWallRows(wallInboxIdeaRows(history.value, data, now))
+      .filter(row => row.status_group === 'conditions_met')
       .map(wallActivePlanKey).filter(Boolean))
     const received = candidates.map(row => ({ ...row, received_at: now }))
     const notify = received.filter(row => {
@@ -94,14 +103,18 @@ export function useWallAlerts(owner) {
       history.value = inbox?.add([...received, ...watchlistSetups], now) || []
       inboxPersistent.value = inbox?.persistent ?? true
     }
-    if (!notify.length) return
-    notifications.value = [...notify, ...notifications.value].slice(0, 3)
-    playSound()
+    if (notify.length) notifications.value = [...notify, ...notifications.value].slice(0, 3)
+    reconcileNotifications(now)
+    if (notify.length) playSound()
   }, { immediate: true })
   const stopRevision = watch(feed.revision, (value, before) => {
-    if (value > Number(before)) { engine.value?.reset(); notifications.value = [] }
+    if (value > Number(before)) {
+      engine.value?.reset()
+      notifications.value = notifications.value.filter(item => !item.preview)
+      reconcileNotifications()
+    }
   })
-  const stopError = watch(feed.error, error => { if (error) notifications.value = [] })
+  const stopError = watch([feed.error, feed.accessDenied], () => reconcileNotifications())
   function storageChanged(event) {
     if (event.key === inbox?.key || event.key === null) {
       history.value = mergeWallAlertHistory([...(inbox?.sync() || []), ...serverHistory()])
@@ -123,7 +136,8 @@ export function useWallAlerts(owner) {
   }
   const dismiss = id => { notifications.value = id ? notifications.value.filter(item => item.alert_id !== id) : [] }
   function markRead(id = null) {
-    const group = id ? wallInboxHistoryRows(wallInboxRows(history.value, feed.data.value, Date.now(), !!feed.error.value)).find(row => row.alert_id === id) : null
+    const group = id ? wallInboxHistoryRows(wallInboxIdeaRows(history.value, feed.data.value, Date.now(), feed.accessDenied.value))
+      .find(row => row.alert_id === id || row.related_alert_ids?.includes(id)) : null
     // The current server page remains readable even when it exceeds the browser cache.
     if (serverHistory().length) inbox?.add(serverHistory())
     history.value = inbox?.markRead(group?.related_alert_ids?.length ? group.related_alert_ids : id) || []
@@ -132,8 +146,7 @@ export function useWallAlerts(owner) {
   const timer = setInterval(() => {
     clock.value = Date.now()
     readInbox()
-    const current = new Set(currentWallAlertRows(feed.data.value).map(row => row.alert_keys[row.status === 'conditions_met' ? 'setup' : 'testing']))
-    notifications.value = notifications.value.filter(item => clock.value - item.received_at < 90000 && (item.preview || current.has(item.alert_id)))
+    reconcileNotifications(clock.value)
   }, 10000)
   window.addEventListener('storage', storageChanged)
   onScopeDispose(() => {
@@ -141,6 +154,6 @@ export function useWallAlerts(owner) {
     window.removeEventListener('storage', storageChanged)
   })
   return { owner: computed(() => toValue(owner)), settings, notifications, history, inboxPersistent, activity: feed.data, clock,
-    unreadCount: computed(() => wallInboxHistoryRows(wallInboxRows(history.value, feed.data.value, clock.value, !!feed.error.value)).filter(item => !item.read_at).length), markRead,
-    message, soundReady, error: feed.error, loading: feed.loading, update, preview, dismiss }
+    unreadCount: computed(() => wallInboxHistoryRows(wallInboxIdeaRows(history.value, feed.data.value, clock.value, feed.accessDenied.value)).filter(item => !item.read_at).length), markRead,
+    message, soundReady, error: feed.error, loading: feed.loading, initialized: feed.initialized, accessDenied: feed.accessDenied, update, preview, dismiss }
 }

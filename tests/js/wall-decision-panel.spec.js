@@ -24,8 +24,8 @@ describe('Simple wall decisions', () => {
       setups: { current: { put: setup({ status: 'expired' }) }, readings: [] },
       setup_reviews: { summary: { scenarios: 6, qualified: 0, qualified_outcomes: {} }, cases: [] } })
     const w = render(data)
-    expect(w.text()).toContain('Session ended · No setup confirmed')
-    expect(w.text()).toContain('no active entry')
+    expect(w.text()).toContain('Session record')
+    expect(w.text()).toContain('recorded price conditions and idea levels')
     expect(w.findAll('.decision-card')).toHaveLength(2)
     expect(w.get('.decision-card.put').text()).toContain('Earlier price response')
     expect(w.text()).toContain('3:55 PM ET')
@@ -70,7 +70,7 @@ describe('Simple wall decisions', () => {
   it('pauses a previously qualifying entry while the next assessment is pending', () => {
     const w = render(interaction({ state: 'awaiting_update', setups: { current: { put: setup() } } }))
     expect(w.text()).toContain('Waiting for the next price assessment')
-    expect(w.text()).toContain('The last setup is not active')
+    expect(w.text()).toContain('Showing the last recorded assessment while the next update loads')
     expect(w.find('.ready').exists()).toBe(false)
     w.unmount()
   })
@@ -111,7 +111,7 @@ describe('Simple wall decisions', () => {
       latestReading: { ...reading, walls: { put: [{ strike: 760 }], call: [{ strike: 785 }] } },
     })
     expect(w.get('.decision-card.put').text()).not.toContain('Price touched the level')
-    expect(w.text()).toContain('No active setup')
+    expect(w.text()).toContain('Session record')
     expect(w.text()).not.toContain('No setup confirmed')
     w.unmount()
   })

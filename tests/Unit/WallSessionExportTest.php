@@ -10,7 +10,7 @@ use Tests\TestCase;
 
 class WallSessionExportTest extends TestCase
 {
-    public function test_ai_export_preserves_session_follow_up_rules_and_original_levels(): void
+    public function test_ai_export_keeps_idea_conditions_and_hides_private_outcome_reviews(): void
     {
         Http::preventStrayRequests();
         $payload = ['symbol' => 'SPY', 'session' => '2026-10-27', 'timeframe' => '7d',
@@ -25,9 +25,10 @@ class WallSessionExportTest extends TestCase
         $this->mock(IntradayWallTracker::class)->shouldReceive('history')->once()->with('SPY', null, '7d')->andReturn($payload);
         $item = app(AiExportBuilder::class)->build(['SPY'], ['intraday_walls'], '14d')['items'][0];
         $this->assertTrue($item['intraday_walls']['ok']);
-        $this->assertSame($payload, $item['intraday_walls']['data']);
-        $this->assertSame(WallSetupOutcomeEvaluator::VERSION, $item['summary']['intraday_setups']['outcome_rule_version']);
-        $this->assertSame(1, $item['summary']['intraday_setups']['recorded_reviews']['qualified']);
+        $this->assertSame('ideas.v1', $item['intraday_walls']['data']['presentation']);
+        $this->assertArrayNotHasKey('setup_reviews', $item['intraday_walls']['data']['wall_interaction']);
+        $this->assertArrayNotHasKey('outcome_rule_version', $item['summary']['intraday_setups']);
+        $this->assertArrayNotHasKey('recorded_reviews', $item['summary']['intraday_setups']);
         Http::assertNothingSent();
     }
 }

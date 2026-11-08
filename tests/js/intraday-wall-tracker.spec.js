@@ -96,7 +96,7 @@ describe('Intraday wall tracker', () => {
     }
     wrapper.unmount()
   })
-  it('shows one summary by default and opens results on demand without another request', async () => {
+  it('shows recorded ideas and price evidence without exposing private results even when details are opened', async () => {
     axios.get.mockResolvedValueOnce({ data: { ...payload(), wall_interaction: {
       state: 'session_review', current: {}, events: [], readings: [], bars: [],
       setup_reviews: { symbol: 'SPY', session: '2026-09-30', timeframe: '7d', horizon_minutes: 60,
@@ -111,7 +111,7 @@ describe('Intraday wall tracker', () => {
     const details = wrapper.get('.advanced-review')
     details.element.open = true
     await details.trigger('toggle')
-    expect(wrapper.find('[aria-label="Recorded setup results"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Recorded setup results"]').exists()).toBe(false)
     expect(axios.get).toHaveBeenCalledTimes(1)
     await wrapper.setProps({ symbol: 'QQQ' }); await flushPromises()
     expect(wrapper.find('[aria-label="Recorded setup results"]').exists()).toBe(false)

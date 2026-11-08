@@ -82,14 +82,14 @@ describe('shared wall lifecycle presentation', () => {
     const wrapper = mount(WallStatusFilters, { props: { rows: [row('a', 'conditions_met')], modelValue: 'conditions_met' } })
     await wrapper.setProps({ rows: [] })
     expect(wrapper.get('button[aria-pressed="true"]').text()).toBe('Conditions met · 0')
-    expect(wrapper.findAll('button')).toHaveLength(6)
+    expect(wrapper.findAll('button')).toHaveLength(3)
     wrapper.unmount()
   })
-  it('omits the history filter in current-only views while keeping current status counts', () => {
+  it('shows only idea filters while keeping current condition counts', () => {
     const wrapper = mount(WallStatusFilters, { props: { rows: [row('a', 'conditions_met')], currentOnly: true } })
-    expect(wrapper.findAll('button')).toHaveLength(5)
+    expect(wrapper.findAll('button')).toHaveLength(3)
     expect(wrapper.text()).toContain('Conditions met · 1')
-    expect(wrapper.text()).not.toMatch(/Finished|Past setups|Entry missed|Expired/)
+    expect(wrapper.text()).not.toMatch(/In progress|Needs update|Finished|Past setups|Entry missed|Expired/)
     wrapper.unmount()
   })
 })

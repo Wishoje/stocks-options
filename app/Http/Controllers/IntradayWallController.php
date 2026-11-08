@@ -22,6 +22,6 @@ class IntradayWallController extends Controller
             ? app(IntradayWallDemo::class)->build($input['symbol'], $input['timeframe'] ?? IntradayWallTracker::LIVE_TIMEFRAME)
             : $tracker->history($input['symbol'], $input['session'] ?? null, $input['timeframe'] ?? IntradayWallTracker::LIVE_TIMEFRAME);
 
-        return response()->json($result)->header('Cache-Control', 'private, no-store');
+        return response()->json(\App\Support\CustomerIdeaPresentation::timeline($result))->header('Cache-Control', 'private, no-store');
     }
 }

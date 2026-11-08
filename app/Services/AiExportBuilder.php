@@ -46,6 +46,10 @@ class AiExportBuilder
 
             foreach ($indicators as $indicator) {
                 $item[$indicator] = $this->buildIndicatorPayload($indicator, $symbol, $timeframe, $context);
+                if ($indicator === 'intraday_walls' && ($item[$indicator]['ok'] ?? false)
+                    && is_array($item[$indicator]['data'] ?? null)) {
+                    $item[$indicator]['data'] = \App\Support\CustomerIdeaPresentation::timeline($item[$indicator]['data']);
+                }
             }
 
             $item['summary'] = $this->buildSummary($item, $timeframe);
@@ -130,8 +134,6 @@ class AiExportBuilder
                 'as_of' => data_get($item, 'intraday_walls.data.wall_interaction.setups.as_of'),
                 'rule_version' => data_get($item, 'intraday_walls.data.wall_interaction.setups.rule_version'),
                 'current' => data_get($item, 'intraday_walls.data.wall_interaction.setups.current'),
-                'recorded_reviews' => data_get($item, 'intraday_walls.data.wall_interaction.setup_reviews.summary'),
-                'outcome_rule_version' => data_get($item, 'intraday_walls.data.wall_interaction.setup_reviews.rule_version'),
                 'actionable' => false,
             ] : null,
             'vrp' => $this->summarizeVrp($vrpData),

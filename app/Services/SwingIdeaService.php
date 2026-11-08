@@ -144,6 +144,60 @@ class SwingIdeaService
         return ['items' => $items, 'prepared' => true];
     }
 
+    /** Read the newest dated idea for each saved symbol without publishing private outcome research. */
+    public function readCustomerIdeas(int $userId, string $horizon): array
+    {
+        if (! Schema::hasTable('swing_ideas')) {
+            return ['items' => [], 'prepared' => false];
+        }
+        $profile = SwingIdeaRules::HORIZONS[$horizon];
+        $completedSession = PublicSpyPreview::completedSession();
+        $availabilitySession = now('America/New_York')->toDateString();
+        $cutoff = \Carbon\CarbonImmutable::parse($availabilitySession, 'America/New_York');
+        $remaining = $profile['max_sessions'] + 5;
+        while ($remaining > 0) {
+            $cutoff = $cutoff->subDay();
+            if (\App\Support\MarketSession::isTradingDay($cutoff)) {
+                $remaining--;
+            }
+        }
+        $symbols = DB::table('watchlists')->where('user_id', $userId)->select('symbol')->distinct();
+        $newest = DB::table('swing_ideas')->whereIn('symbol', $symbols)->where('horizon', $horizon)
+            ->where('rule_version', SwingIdeaRules::VERSION)->where('original_plan->status', 'watching')
+            ->whereBetween('source_date', [$cutoff->toDateString(), $completedSession])
+            ->groupBy('symbol')->select('symbol')->selectRaw('MAX(source_date) as newest_date');
+        $rows = DB::table('swing_ideas as ideas')->joinSub($newest, 'newest', fn ($join) => $join
+            ->on('ideas.symbol', '=', 'newest.symbol')->on('ideas.source_date', '=', 'newest.newest_date'))
+            ->where('ideas.horizon', $horizon)->where('ideas.rule_version', SwingIdeaRules::VERSION)
+            ->orderBy('ideas.symbol')->limit(1000)
+            ->get(['ideas.id', 'ideas.symbol', 'ideas.original_plan', 'ideas.current_state', 'ideas.created_at', 'ideas.reviewed_through']);
+        $prices = collect();
+        if ($rows->isNotEmpty() && Schema::hasTable('prices_daily')) {
+            $latestDates = DB::table('prices_daily')->whereIn('symbol', $rows->pluck('symbol')->unique())
+                ->where('trade_date', '<=', $completedSession)->groupBy('symbol')->select('symbol')->selectRaw('MAX(trade_date) as latest_date');
+            $prices = DB::table('prices_daily as prices')->joinSub($latestDates, 'latest', fn ($join) => $join
+                ->on('latest.symbol', '=', 'prices.symbol')->on('latest.latest_date', '=', 'prices.trade_date'))
+                ->get(['prices.symbol', 'prices.trade_date', 'prices.close'])->keyBy('symbol');
+        }
+        $items = [];
+        foreach ($rows as $row) {
+            $original = json_decode($row->original_plan, true, flags: JSON_THROW_ON_ERROR);
+            $state = json_decode($row->current_state, true, flags: JSON_THROW_ON_ERROR);
+            if (! is_array($original['levels'] ?? null)) {
+                continue;
+            }
+            $idea = \App\Support\CustomerIdeaPresentation::swing($original, $state, [
+                'id' => $row->id, 'prepared_at' => $row->created_at, 'reviewed_through' => $row->reviewed_through,
+                'is_current' => true, 'latest_price' => $this->latestPrice($prices->get($row->symbol), $original['levels']),
+            ]);
+            if ($idea['available_through'] >= $availabilitySession) {
+                $items[] = $idea;
+            }
+        }
+
+        return ['items' => $items, 'prepared' => true, 'presentation' => \App\Support\CustomerIdeaPresentation::VERSION];
+    }
+
     /** Read-time price context; original plan evidence and entry conditions stay frozen. */
     private function latestPrice(?object $price, ?array $levels): ?array
     {

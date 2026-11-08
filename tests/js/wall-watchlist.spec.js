@@ -40,7 +40,7 @@ describe('Watchlist wall activity', () => {
     expect(w.text()).toContain('Price bounced higher')
     expect(w.text()).toContain('1 of 2 confirming closes recorded')
     expect(w.text()).toContain('Next: Wait for a second consecutive five-minute close above 100.05.')
-    expect(w.text()).not.toContain('Entry area')
+    expect(w.find('.activity-row dl').exists()).toBe(false)
     expect(w.text()).not.toContain('Higher-price scenario')
     expect(w.get('[aria-label="View QQQ wall assessment"]').text()).toContain('View assessment')
     expect(axios.get).toHaveBeenCalledTimes(1)
@@ -77,14 +77,18 @@ describe('Watchlist wall activity', () => {
     expect(axios.get).toHaveBeenCalledTimes(1)
   })
 
-  it('removes expired qualifying entries between polls rather than leaving stale entry levels', async () => {
+  it('keeps qualified ideas through the session after their private entry window closes', async () => {
     const w = await render(payload([row('SPY', { status: 'conditions_met', setup: { ...setup(), expires_at: '2026-09-30T14:15:45Z' } }), row('QQQ')]))
     expect(w.text()).toContain('Entry area')
     await w.get('.filters button[aria-pressed="false"]').trigger('click')
     await vi.advanceTimersByTimeAsync(20000)
+    expect(w.findAll('.activity-row')).toHaveLength(1)
+    expect(w.get('.filters button[aria-pressed="true"]').text()).toBe('Conditions met · 1')
+    expect(w.get('.activity-row').text()).toContain('Entry area (recorded)')
+    expect(w.text()).not.toMatch(/In progress|Past setups|Target reached|Invalidated/)
+    vi.setSystemTime(new Date('2026-10-01T04:00:00Z'))
+    await vi.advanceTimersByTimeAsync(10000)
     expect(w.findAll('.activity-row')).toHaveLength(0)
-    expect(w.get('.filters button[aria-pressed="true"]').text()).toBe('Conditions met · 0')
-    expect(w.text()).not.toContain('Entry area')
   })
 
   it('refreshes only while visible, avoids overlap, and backs off after a rate limit', async () => {

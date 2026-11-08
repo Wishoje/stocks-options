@@ -41,7 +41,7 @@ describe('Next wall condition summary', () => {
     const w = render(interaction({ state, setups: { current: { put: setup({ status: 'conditions_met' }) } } }))
     expect(w.text()).not.toContain('Entry area')
     expect(w.find('.progress').exists()).toBe(false)
-    expect(w.text()).toContain(state === 'session_review' ? 'There is no active entry' : 'The last setup is not active')
+    expect(w.text()).toContain(state === 'session_review' ? 'New intraday ideas appear in the next session' : 'Showing the last recorded assessment while the next update loads')
     w.unmount()
   })
 
@@ -51,7 +51,8 @@ describe('Next wall condition summary', () => {
     expect(w.find('.progress').exists()).toBe(false)
     w.unmount()
     const missed = render(interaction({ setups: { current: { put: setup({ status: 'entry_missed' }) } } }))
-    expect(missed.text()).toContain('Price moved beyond the entry area')
+    expect(missed.text()).toContain('Watch for price to reach 765')
+    expect(missed.text()).not.toMatch(/Entry missed|Price moved beyond the entry area|Target reached|Invalidated/)
     expect(missed.text()).not.toContain('second consecutive')
     expect(missed.find('.progress').exists()).toBe(false)
     missed.unmount()

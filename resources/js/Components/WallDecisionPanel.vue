@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import WallInteractionPanel from '@/Components/WallInteractionPanel.vue'
 import WallSetupPanel from '@/Components/WallSetupPanel.vue'
-import WallSetupHistoryPanel from '@/Components/WallSetupHistoryPanel.vue'
 import { findWallAssessment, savedWallNextCondition, wallDecisionCards } from '@/utils/wallDecision'
 
 const props = defineProps({ interaction: { type: Object, required: true }, selectedEventId: String, latestReading: Object, detailsOnly: Boolean })
@@ -10,8 +9,7 @@ const emit = defineEmits(['inspect'])
 const advancedOpen = ref(false)
 const selectedEvent = computed(() => findWallAssessment(props.interaction, props.selectedEventId))
 const closed = computed(() => props.interaction.state === 'session_review')
-const qualifiedCount = computed(() => props.interaction.setup_reviews?.summary?.qualified || 0)
-const hasReview = computed(() => Number.isFinite(props.interaction.setup_reviews?.summary?.qualified))
+const qualifiedCount = computed(() => (props.interaction.setups?.readings || []).filter(row => row.status === 'conditions_met').length)
 const price = computed(() => selectedEvent.value ? selectedEvent.value.close : props.latestReading?.spot)
 const priceTime = computed(() => selectedEvent.value?.observed_at || props.latestReading?.observed_at)
 const time = value => value ? new Date(value).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) : '—'
@@ -27,15 +25,15 @@ const reactionLabel = status => ({
 const cards = computed(() => wallDecisionCards(props.interaction, props.latestReading, selectedEvent.value))
 const readyCards = computed(() => cards.value.filter(card => card.ready))
 const headline = computed(() => selectedEvent.value ? 'Reviewing a recorded price reaction'
-  : closed.value ? (hasReview.value ? (qualifiedCount.value ? `Session ended · ${qualifiedCount.value} setup${qualifiedCount.value === 1 ? '' : 's'} met the conditions` : 'Session ended · No setup confirmed') : 'Session ended · No active setup')
+  : closed.value ? 'Session record'
     : props.interaction.state === 'awaiting_update' ? 'Waiting for the next price assessment'
       : readyCards.value.length ? 'Setup conditions met at the recorded close' : 'No confirmed setup yet')
 const description = computed(() => selectedEvent.value ? `Inspecting ${time(selectedEvent.value.observed_at)} ET. Return to latest to see the current assessment.`
-  : closed.value ? 'These are past reactions, with no active entry. Use the current session’s walls for your next assessment.'
+  : closed.value ? 'Review the recorded price conditions and idea levels for this session.'
     : readyCards.value.length ? 'Review the levels below. These conditions describe a delayed price close; check current price before acting.'
       : 'Use these levels as areas to watch. A touch alone does not confirm a hold or a break.')
 function nextWatch(card) {
-  if (props.interaction.state === 'awaiting_update' && !selectedEvent.value) return 'Wait for the next completed five-minute assessment. The last setup is not active.'
+  if (props.interaction.state === 'awaiting_update' && !selectedEvent.value) return 'Showing the last recorded assessment while the next update loads.'
   if (savedWallNextCondition(card)) return savedWallNextCondition(card).text
   if (card.pending) {
     const zone = card.setup.entry_zone
@@ -88,7 +86,7 @@ watch(() => selectedEvent.value?.id, id => { if (id) advancedOpen.value = true }
         <div v-if="card.ready" class="next-condition ready"><h4>{{ selectedEvent ? 'Conditions met at this time' : 'Setup conditions met' }}</h4>
           <p>{{ card.setup.direction === 'bullish' ? 'Higher-price' : 'Lower-price' }} scenario · {{ time(card.setup.observed_at) }} ET</p>
           <dl><div><dt>Entry area</dt><dd>{{ number(card.setup.entry_zone?.low) }}–{{ number(card.setup.entry_zone?.high) }}</dd></div>
-            <div><dt>Invalid if 5m close</dt><dd>{{ card.setup.invalidation?.close_side }} {{ number(card.setup.invalidation?.price) }}</dd></div>
+            <div><dt>Risk boundary · 5m close</dt><dd>{{ card.setup.invalidation?.close_side }} {{ number(card.setup.invalidation?.price) }}</dd></div>
             <div><dt>Reference target</dt><dd>{{ number(card.setup.target?.strike) }}</dd></div></dl>
         </div>
         <div v-else-if="!closed || selectedEvent" class="next-condition"><h4>{{ selectedEvent ? 'Condition being watched at this time' : 'What to watch next' }}</h4><p>{{ nextWatch(card) }}</p></div>
@@ -99,14 +97,13 @@ watch(() => selectedEvent.value?.id, id => { if (id) advancedOpen.value = true }
       <p><b>Find an area to monitor.</b> The chart shows where modeled option exposure is concentrated. A wall is not a guaranteed support or resistance level.</p>
       <p><b>See how price responds.</b> A touch only means price reached the area. Later five-minute closes show whether price moved away or crossed it.</p>
       <p><b>Wait for the conditions.</b> A setup needs the required price sequence, an entry area, an invalidation level and enough room to another recorded level. No confirmed setup means those checks have not passed together.</p>
-      <p>Put and call identify the exposure side. Either wall can be above or below price. The later results describe recorded price paths, without assuming a trade was placed.</p>
+      <p>Put and call identify the exposure side. Either wall can be above or below price. Recorded ideas stay available for the day. Compare their reference levels with current price.</p>
     </details>
     <details class="advanced-review" :open="advancedOpen" @toggle="advancedOpen = $event.target.open">
       <summary><span>Earlier reactions and setup details <span class="disclosure" aria-hidden="true">{{ advancedOpen ? '▾' : '▸' }}</span></span><small v-if="qualifiedCount">{{ qualifiedCount }} setup{{ qualifiedCount === 1 ? '' : 's' }} with conditions met</small></summary>
       <template v-if="advancedOpen">
         <WallInteractionPanel :interaction="interaction" :selected-event-id="selectedEventId" @inspect="emit('inspect', $event)" />
         <WallSetupPanel v-if="interaction.setups" :interaction="interaction" :selected-event-id="selectedEventId" />
-        <WallSetupHistoryPanel v-if="interaction.setup_reviews" :reviews="interaction.setup_reviews" />
       </template>
     </details>
     <p class="decision-footnote">Completed five-minute closes · Prices delayed at least 15 minutes · Full evidence is included in Export timeline JSON.</p>

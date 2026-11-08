@@ -3,7 +3,8 @@ import { computed, inject, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { WALL_ALERTS } from '@/Support/wallAlerts'
 import WallAlertDetails from '@/Components/WallAlertDetails.vue'
 import WallStatusFilters from '@/Components/WallStatusFilters.vue'
-import { wallInboxHistoryRows, filterWallRows, wallInboxRows } from '@/Support/wallLifecycle'
+import { wallInboxHistoryRows, filterWallRows } from '@/Support/wallLifecycle'
+import { wallInboxIdeaRows } from '@/Support/ideaPresentation'
 import { SWING_RESEARCH_ALERTS } from '@/Support/swingResearch'
 import { INTRADAY_RESEARCH_ALERTS } from '@/Support/intradayResearch'
 import ExperimentalSwingAlerts from '@/Components/ExperimentalSwingAlerts.vue'
@@ -16,11 +17,11 @@ const experimentalUnread = computed(() => [researchAlerts, intradayResearchAlert
   .reduce((total, source) => total + (source?.owner.value ? source.unreadCount.value : 0), 0))
 const open = ref(false), trigger = ref(null), panel = ref(null), closeButton = ref(null)
 const selectedStatus = ref('all'), symbol = ref(''), direction = ref('all'), unread = ref(false)
-const entries = computed(() => wallInboxHistoryRows(wallInboxRows(alerts.history.value, alerts.activity?.value, alerts.clock?.value || Date.now(), !!alerts.error.value)))
+const entries = computed(() => wallInboxHistoryRows(wallInboxIdeaRows(alerts.history.value, alerts.activity?.value, alerts.clock?.value || Date.now(), !!alerts.accessDenied?.value)))
 const visibleEntries = computed(() => filterWallRows(entries.value, { status: selectedStatus.value, symbol: symbol.value, direction: direction.value, unread: unread.value }))
 const example = computed(() => alerts.notifications.value.find(item => item.preview))
 const status = computed(() => !alerts.settings.value.enabled ? 'Popups off' : alerts.error.value ? 'Updates paused' : 'Popups on')
-const initialHistoryLoading = computed(() => !!alerts.loading?.value && !alerts.error.value)
+const initialHistoryLoading = computed(() => !!alerts.loading?.value && !alerts.initialized?.value && !alerts.error.value)
 const triggerLabel = computed(() => initialHistoryLoading.value ? "Recent alerts, loading today's history"
   : `Recent alerts${alerts.unreadCount.value ? `, ${alerts.unreadCount.value} unread wall alerts` : ''}${experimentalUnread.value ? `, ${experimentalUnread.value} unread experimental alerts` : ''}`)
 let previousOverflow = ''
@@ -79,7 +80,7 @@ onScopeDispose(() => close(false))
         <div class="wall-inbox-body" :aria-busy="initialHistoryLoading">
           <div class="wall-inbox-tools"><span :class="['monitoring', { off: !alerts.settings.value.enabled || alerts.error.value }]">{{ researchAlerts?.owner.value ? 'Intraday: ' : '' }}{{ status }}</span>
             <button v-if="!initialHistoryLoading && alerts.unreadCount.value" type="button" @click="alerts.markRead()">{{ researchAlerts?.owner.value ? 'Mark intraday read' : 'Mark all read' }}</button></div>
-          <p class="intro">Today's intraday watchlist alerts are saved even while you are away. Open an assessment to review its original levels and latest outcome.</p>
+          <p class="intro">Today's intraday ideas stay here until the next day, including while you are away. Open an assessment to review the recorded conditions and reference levels.</p>
           <WallStatusFilters v-if="!initialHistoryLoading" v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" v-model:unread="unread" :rows="entries" inbox />
           <p v-if="!alerts.inboxPersistent.value" class="storage-note" role="status">Your browser cannot save read status. Today's server alerts remain available when you return.</p>
           <p v-if="!alerts.settings.value.enabled" class="notice">Popup notifications are off. Today's recorded alerts remain below. <a href="/scanner?scan=activity">Manage alerts in Scanner</a></p>

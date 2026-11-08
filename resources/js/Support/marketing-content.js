@@ -425,7 +425,7 @@ export const tradingWorkflows = Object.freeze([
     href: '/features#intraday-wall-tracking', link: 'Explore the intraday tools', media: productMedia.wallTracking },
   { id: 'swing-example', label: 'Swing trading', title: 'Plan beyond today’s session.',
     description: 'Holding QQQ or TSLA for several days? Swing ideas brings your saved symbols into separate 2–5 day and 1–3 week views, with a price condition and clear levels for each qualifying plan.',
-    steps: ['Choose your holding period and review the ideas for your saved symbols.', 'See what price must do before entry, plus the entry area, target and invalidation.', 'Follow daily updates to see whether the plan is developing, in progress or has reached an outcome.'],
+    steps: ['Choose your holding period and review the ideas for your saved symbols.', 'See what price must do before entry, plus the entry area, reference target and risk boundary.', 'Check the idea’s availability date and compare its levels with the latest completed daily close.'],
     note: 'Updated from completed end-of-day data. Review current price, earnings and upcoming events before acting.',
     href: '/swing-trading-ideas', link: 'Explore Swing ideas', visual: 'swing-ideas' },
 ])
@@ -441,7 +441,7 @@ export const homeStories = Object.freeze([
     href: '/features#intraday-iv-skew', link: 'Explore IV and put-versus-call pricing', media: productMedia.intradayPricing },
   { id: 'alerts-workflow', eyebrow: '03 · Get the setup and its boundaries', title: 'Follow more symbols without watching every chart.',
     description: 'While the site is open, on-screen alerts bring new qualifying intraday setups to you. Read the scenario, its recorded entry area, invalidation and target in one place.',
-    bullets: ['Filter Scanner and Recent alerts by conditions met, watching or in progress', 'Setup alerts on by default, with optional sound and wall-test alerts', 'Each alert links to the matching recorded assessment'],
+    bullets: ['Filter Scanner and Recent alerts by watching ideas or recorded conditions met', 'Setup alerts on by default, with optional sound and wall-test alerts', 'Each alert links to the matching recorded assessment'],
     href: '/intraday-alerts', link: 'Explore alerts and the inbox', media: productMedia.setupAlerts, portrait: true },
 ])
 
@@ -715,9 +715,9 @@ const wallWorkflow = {
     { id: 'wall-setups', learnHref: '/guides/how-to-use-intraday-setup-alerts', title: 'Setup conditions and clear price boundaries', description: 'Know what price still needs to do. When a qualifying sequence is recorded, review the entry area, invalidation boundary and reference target together.',
       bullets: ['Bullish and bearish bounce, rejection, break-and-retest and reclaim scenarios', 'The next condition still needed, including confirming-close progress', 'Recorded assessments link to their supporting price observations'], setupExample: wallSetupExample },
     { id: 'wall-activity', title: 'Scanner: which symbols need attention?', description: 'Monitor wall reactions across your saved symbols. See the next condition for developing setups and open the matching symbol and assessment in one step.',
-      bullets: ['Focus on developing and active setups with clear status filters', 'Price response, completed-close time and setup levels', 'Near walls and Options volume scanners remain available'], media: productMedia.wallActivity },
+      bullets: ['Compare Watching and Conditions met ideas with clear filters', 'Price response, completed-close time and idea levels', 'Near walls and Options volume scanners remain available'], media: productMedia.wallActivity },
     { id: 'setup-alerts', learnHref: '/intraday-alerts', title: 'Setup alerts and your Recent alerts inbox', description: 'Keep the site open and receive on-screen alerts for new qualifying setups across your watchlist. The navigation bell keeps today’s received alerts available after the popup closes.',
-      bullets: ['Setup alerts on by default; sound and wall-test alerts are optional', 'Filter by setup status, symbol, direction or unread alerts', 'Original recorded levels, outcomes and assessment links stay with each alert'], media: productMedia.setupAlerts },
+      bullets: ['Setup alerts on by default; sound and wall-test alerts are optional', 'Filter ideas by conditions met, symbol, direction or unread alerts', 'Today’s recorded idea levels and assessment links stay available in the inbox'], media: productMedia.setupAlerts },
     { id: 'gamma-context', title: 'Gamma context beside your wall chart', description: 'Compare the modeled gamma regime and flip with price using the same near-term expirations as your wall timeline.',
       bullets: ['Modeled positive or negative gamma at the selected price', 'Gamma flip, price distance and flip movement', 'Changing price and time with prior-session OI and reference IV held fixed'], media: productMedia.gammaContext },
   ],
@@ -728,7 +728,7 @@ const swingResearch = {
   features: [
     { id: 'swing-ideas', learnHref: '/swing-trading-ideas', title: 'Swing ideas for 2–5 days and 1–3 weeks',
       description: 'See a level to watch, the daily-close confirmation required before entry, a reference target and the price that invalidates the idea. Review price trend, options positioning and volatility together.',
-      bullets: ['Separate 2–5 day and 1–3 week views for your saved symbols', 'Entry conditions, entry area, target, invalidation and time limits in one plan', 'Daily reviews track the original plan from watching through its recorded outcome', 'Open the related EOD analysis or intraday price response for more context'],
+      bullets: ['Separate 2–5 day and 1–3 week views for your saved symbols', 'Price conditions, entry area, reference target and risk boundary in one idea', 'Five- or fifteen-trading-session availability, with current EOD price context', 'Open the related EOD analysis or intraday price response for more context'],
       visual: 'swing-ideas' },
   ],
 }

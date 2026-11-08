@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildHomeFaqs, featureFaqs, featureGroups, homeStories, productMedia, buildPublicMarketingContent } from '@/Support/marketing-content'
+import { buildHomeFaqs, featureFaqs, featureGroups, homeStories, productMedia, tradingWorkflows, buildPublicMarketingContent } from '@/Support/marketing-content'
 
 describe('public marketing content registry', () => {
   it('covers all delivered product areas and the required EOD and intraday tabs', () => {
@@ -77,5 +77,18 @@ describe('public marketing content registry', () => {
     expect(publicCopy).toContain('delayed at least 15 minutes')
     expect(publicCopy).toContain('while the site is open')
     expect(publicCopy).not.toContain('guaranteed profit')
+  })
+
+  it('describes customer alerts and swing cards as dated ideas without promising trade outcome tracking', () => {
+    const features = featureGroups.flatMap(group => group.features)
+    const publicIdeas = JSON.stringify([
+      features.find(feature => feature.id === 'setup-alerts'),
+      features.find(feature => feature.id === 'swing-ideas'),
+      tradingWorkflows.find(workflow => workflow.id === 'swing-example'),
+    ]).toLowerCase()
+    expect(publicIdeas).not.toMatch(/in progress|recorded outcome|levels, outcomes|track.*outcome/)
+    expect(publicIdeas).toContain('availability')
+    expect(publicIdeas).toContain('risk boundary')
+    expect(publicIdeas).toContain('latest completed daily close')
   })
 })

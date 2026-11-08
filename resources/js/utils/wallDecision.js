@@ -19,6 +19,19 @@ export function wallSetupTitle(setup) {
   return `${bullish ? 'Bullish' : 'Bearish'} ${pattern}`
 }
 
+export function wallIdeaSetup(setup) {
+  if (!setup) return null
+  const hasLevels = [setup.entry_zone?.low, setup.entry_zone?.high, setup.invalidation?.price, setup.target?.strike]
+    .every(value => Number.isFinite(value) && value > 0) && setup.entry_zone.low < setup.entry_zone.high
+  const qualified = hasLevels && (setup.status === 'conditions_met' || setup.status_at_observation === 'conditions_met'
+    || setup.entry_eligible_at_observation === true)
+  const next = setup.status === 'watch' && setup.next_condition?.setup_status === 'watch'
+    ? setup.next_condition : null
+  return { ...setup, status: qualified ? 'conditions_met' : 'watch', next_condition: next,
+    reason: qualified ? 'Price conditions passed at this recorded assessment. Compare these idea levels with current price.'
+      : next?.text || 'Watch for a completed price sequence at this wall.' }
+}
+
 export function wallDecisionCards(interaction, latestReading, selectedEvent) {
   return (selectedEvent ? [selectedEvent.side] : ['put', 'call']).map(side => {
     const current = interaction.current?.[side]
@@ -29,7 +42,7 @@ export function wallDecisionCards(interaction, latestReading, selectedEvent) {
     const setup = selectedEvent
       ? [...(interaction.setups?.readings || [])].reverse().find(row => row.side === side && row.observed_at === selectedEvent.observed_at)
       : interaction.setups?.current?.[side]
-    const matchingSetup = setup?.strike === strike ? setup : null
+    const matchingSetup = setup?.strike === strike ? wallIdeaSetup(setup) : null
     const hasLevels = [matchingSetup?.entry_zone?.low, matchingSetup?.entry_zone?.high,
       matchingSetup?.invalidation?.price, matchingSetup?.target?.strike].every(Number.isFinite)
     const ready = matchingSetup?.status === 'conditions_met' && hasLevels

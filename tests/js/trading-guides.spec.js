@@ -39,4 +39,15 @@ describe('public trading guide navigation', () => {
     expect(sanitizeEventParams({ source: 'guides', location: 'guide_final', email: 'private@example.com' })).toEqual({ event_origin: 'guides', location: 'guide_final' })
     expect(sanitizeEventParams({ source: 'untrusted', location: 'untrusted' })).toEqual({})
   })
+
+  it('explains recorded ideas and availability without customer trade-outcome tracking', () => {
+    const ideaGuides = guides.filter(guide => ['how-to-use-intraday-wall-tracking',
+      'how-to-use-intraday-setup-alerts', 'how-to-use-swing-trading-ideas'].includes(guide.slug))
+    const copy = JSON.stringify(ideaGuides)
+    expect(copy).not.toMatch(/In progress|Past setups|product records a price outcome|follow-up ends/)
+    expect(copy).toContain('five trading sessions')
+    expect(copy).toContain('fifteen')
+    expect(copy).toContain('availability date')
+    expect(copy).toContain('recorded while you were away')
+  })
 })

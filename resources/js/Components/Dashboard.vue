@@ -106,6 +106,7 @@
             <strong>{{ intradaySourceLabel }}</strong>
             <span v-if="intradaySnapshotAsOf">{{ intradaySourceTimeKind }} {{ intradayAsOfEtLabel }} ET</span>
             <span v-else>Update time unavailable</span>
+            <span v-if="intradayRefreshNotice" role="status">{{ intradayRefreshNotice }}</span>
           </template>
           <UiButton :disabled="intradayLoading || intradayRefreshing || intradayTransition" @click="manualRefresh">
             {{ intradayLoading || intradayTransition ? 'Loading…' : (intradayRefreshing ? 'Refreshing…' : 'Refresh') }}
@@ -1046,6 +1047,7 @@ const uaSideOptions = [
 // Separate error states
 const eodError = ref('')
 const intradayError = ref('')
+const intradayRefreshNotice = ref('')
 const preparing = ref({
   active: false,
   phase: 'queued',
@@ -2477,8 +2479,14 @@ function intradayResponseMeta(summaryPayload = {}, strikesPayload = {}) {
   }
 }
 
+function updateIntradaySourceAge(now = Date.now()) {
+  const sourceMs = intradaySnapshotAsOf.value ? new Date(intradaySnapshotAsOf.value).getTime() : Number.NaN
+  intradaySourceAge.value = Number.isFinite(sourceMs)
+    ? Math.max(0, Math.floor((now - sourceMs) / 1000))
+    : null
+}
+
 function applyIntradayResponseMeta(meta, now = Date.now()) {
-  const sourceMs = meta?.sourceAsOf ? new Date(meta.sourceAsOf).getTime() : Number.NaN
   marketOpen.value = typeof meta?.open === 'boolean' ? meta.open : null
   intradaySnapshotAsOf.value = meta?.sourceAsOf ?? null
   intradaySnapshotAvailable.value = Boolean(meta?.snapshotAvailable)
@@ -2489,9 +2497,7 @@ function applyIntradayResponseMeta(meta, now = Date.now()) {
   intradayTradeDate.value = meta?.tradeDate ?? null
   intradayMarketSession.value = meta?.marketSession ?? null
   intradaySourceTimestampStatus.value = meta?.sourceTimestampStatus ?? 'unknown'
-  intradaySourceAge.value = Number.isFinite(sourceMs)
-    ? Math.max(0, Math.floor((now - sourceMs) / 1000))
-    : null
+  updateIntradaySourceAge(now)
   lastUpdated.value = meta?.sourceAsOf ?? null
 }
 
@@ -2506,6 +2512,7 @@ async function refreshIntraday({ force = false } = {}) {
   const sym = userSymbol.value
   const now = Date.now()
   intradayError.value = ''
+  updateIntradaySourceAge(now)
 
   // 1) Use in-memory cache if recent and not forced
   const cached = cacheIntraday.get(sym)
@@ -2569,6 +2576,19 @@ async function refreshIntraday({ force = false } = {}) {
       const compData = comp.data || {}
       if (userSymbol.value !== sym || dataMode.value !== 'intraday' || ctl.signal.aborted) return
       const responseMeta = intradayResponseMeta(sumData, compData)
+      const retainedDate = intradayTradeDate.value || intradayMarketSession.value?.trade_date
+      const requestedDate = responseMeta.tradeDate || responseMeta.marketSession?.trade_date
+      // An in-progress replacement is not a new reading. Keep this session's
+      // mounted panels until the next complete snapshot arrives.
+      if (!responseMeta.snapshotAvailable && intradayHasData.value
+        && retainedDate && retainedDate === requestedDate) {
+        cacheIntraday.delete(sym)
+        intradayRefreshNotice.value = 'Update pending. Showing the last recorded readings.'
+        if (responseMeta.marketSession?.refresh_allowed === false) clearIntradayPendingRetry()
+        else scheduleIntradayPendingRetry(sym)
+        return
+      }
+      intradayRefreshNotice.value = ''
       const rawStrikeRows = Array.isArray(compData.items) ? compData.items : []
       const totals = compData.totals && typeof compData.totals === 'object' ? compData.totals : {}
       const snapshotMeta = Object.fromEntries(Object.entries(compData).filter(([field]) => field !== 'items'))
@@ -2623,6 +2643,7 @@ async function refreshIntraday({ force = false } = {}) {
       }
     } finally {
       if (userSymbol.value === sym && !ctl.signal.aborted) {
+        updateIntradaySourceAge()
         intradayLoading.value = false
         intradayRefreshing.value = false
       }
@@ -2685,6 +2706,7 @@ watch(userSymbol, (s) => {
   intradayLoading.value = dataMode.value === 'intraday'
   intradayRefreshing.value = false
   intradayError.value = ''
+  intradayRefreshNotice.value = ''
   intradayUnavailableDetailsOpen.value = false
   for (const candidate of bootstrapStartResponses.keys()) {
     if (candidate !== s) bootstrapStartResponses.delete(candidate)

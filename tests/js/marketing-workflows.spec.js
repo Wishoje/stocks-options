@@ -8,6 +8,13 @@ vi.mock('@inertiajs/vue3', () => ({
 }))
 import Workflow from '@/Pages/Marketing/Workflow.vue'
 describe('public workflow explanations', () => {
+  it('keeps the public workflow copy aligned with ideas and dated availability', () => {
+    const copy = JSON.stringify(workflows)
+    expect(copy).not.toMatch(/In progress|follow-up ends|records subsequent price behavior|Ended intraday scenarios are removed/)
+    expect(copy).toContain('Idea availability')
+    expect(copy).toContain('available-through date')
+    expect(copy).toContain('Today’s recorded ideas remain available')
+  })
   it.each(Object.values(workflows))('shows the explanation, examples and guide links for $heading', content => {
     const wrapper = mount(Workflow, { props: { content }, global: { stubs: { MarketingLayout: { template: '<main><slot /></main>' }, MarketingCta: true, ProductMedia: true, SwingIdeasPreview: true } } })
     expect(wrapper.findAll('h1')).toHaveLength(1)

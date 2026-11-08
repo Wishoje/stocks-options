@@ -16,18 +16,18 @@ const interaction = () => ({ state: 'session_review', events: [{ id: 'event', ob
     readings: [setup(), setup({ side: 'call', strike: 110, pattern: null, direction: null, status: 'watch' })] } })
 
 describe('Conditional wall setups', () => {
-  it('keeps expired assessments distinct from recorded eligibility and explains grades', () => {
+  it('keeps proven recorded ideas and their reference levels without showing private outcome tracking', () => {
     const w = mount(WallSetupPanel, { props: { interaction: interaction() } })
-    expect(w.text()).toContain('Expired')
-    expect(w.text()).toContain('not currently active')
+    expect(w.get('[aria-label="Put wall setup"]').text()).toContain('Conditions met')
+    expect(w.text()).not.toMatch(/Expired|Invalidated|Target reached|not currently active|Follow-up/)
     expect(w.text()).toContain('Based on delayed five-minute closes')
     expect(w.get('[aria-label="Put wall setup"]').text()).toContain('99.85–99.95')
     expect(w.text()).toContain('100.05')
     expect(w.text()).toContain('4.25×')
     expect(w.text()).toContain('strong evidence')
     expect(w.get('.setup-guide').attributes('open')).toBeUndefined()
-    expect(w.text()).toContain('not established a trading edge or a win probability')
-    expect(w.find('.ready').exists()).toBe(false)
+    expect(w.text()).toContain('Ideas stay available for this session')
+    expect(w.find('.ready').exists()).toBe(true)
   })
   it('inspects recorded assessments and returns to latest without a network request', async () => {
     const w = mount(WallSetupPanel, { props: { interaction: interaction() } })
@@ -36,7 +36,8 @@ describe('Conditional wall setups', () => {
     expect(w.get('.ready').text()).toContain('Conditions met · 10:30 AM ET')
     expect(w.text()).not.toContain('not currently active')
     await w.get('select').setValue('')
-    expect(w.text()).toContain('Expired')
+    expect(w.get('.ready').text()).toContain('Conditions met')
+    expect(w.text()).not.toContain('Expired')
   })
   it('follows a selected price event and clears inspection on a scope change', async () => {
     const payload = interaction()
@@ -52,11 +53,11 @@ describe('Conditional wall setups', () => {
   })
   it('does not invent a target or offer current entry for blocked or missed setups', () => {
     const payload = interaction()
-    payload.setups.current.put = setup({ status: 'no_setup', target: null, target_room_ratio: null, reason: 'No recorded target supports this direction.' })
-    payload.setups.current.call = setup({ side: 'call', status: 'entry_missed' })
+    payload.setups.current.put = setup({ status: 'no_setup', status_at_observation: 'no_setup', target: null, target_room_ratio: null, reason: 'No recorded target supports this direction.' })
+    payload.setups.current.call = setup({ side: 'call', status: 'entry_missed', status_at_observation: 'entry_missed' })
     const w = mount(WallSetupPanel, { props: { interaction: payload } })
-    expect(w.text()).toContain('No setup')
-    expect(w.text()).toContain('Entry missed')
+    expect(w.text()).toContain('Watching')
+    expect(w.text()).not.toMatch(/No setup|Entry missed|Invalidated|Expired/)
     expect(w.text()).toContain('Requires a recorded level')
     expect(w.find('.ready').exists()).toBe(false)
   })

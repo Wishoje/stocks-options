@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { findWallAssessment } from '@/utils/wallDecision'
+import { findWallAssessment, wallIdeaSetup } from '@/utils/wallDecision'
 const props = defineProps({ interaction: { type: Object, required: true }, selectedEventId: String })
 const at = ref('')
 const data = computed(() => props.interaction.setups)
@@ -10,19 +10,19 @@ watch(() => props.selectedEventId, id => {
   at.value = findWallAssessment(props.interaction, id)?.observed_at || ''
 }, { immediate: true })
 watch(times, values => { if (at.value && !values.includes(at.value)) at.value = '' })
-const cards = computed(() => ['put', 'call'].map(side => at.value
+const cards = computed(() => ['put', 'call'].map(side => wallIdeaSetup(at.value
   ? [...(data.value?.readings || [])].reverse().find(row => row.side === side && row.observed_at === at.value) || { side, status: 'watch', reason: 'No setup assessment at this recorded time.' }
-  : data.value?.current?.[side] || { side, status: 'watch' }))
+  : data.value?.current?.[side] || { side, status: 'watch' })))
 const time = value => value ? new Date(value).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) : '—'
 const number = value => Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 3 }) : '—'
-const status = value => ({ watch: 'Watching', conditions_met: 'Conditions met', entry_missed: 'Entry missed', invalidated: 'Invalidated', expired: 'Expired', no_setup: 'No setup', target_reached: 'Reference target reached', awaiting_update: 'Waiting for next assessment' }[value] || 'Watching')
+const status = value => value === 'conditions_met' ? 'Conditions met' : 'Watching'
 const pattern = card => card.pattern ? `${card.direction === 'bullish' ? 'Bullish' : 'Bearish'} ${card.pattern === 'continuation' ? 'break and retest' : card.pattern === 'reclaim' ? 'reclaim and retest' : card.direction === 'bullish' ? 'bounce' : 'rejection'}` : 'Watch for a price sequence'
 const trigger = card => ({ continuation: 'Two closes through the wall, a later retest, a separate close back through it, then a further close at least one band width beyond the failed retest.', reversal: 'A touch followed by two consecutive completed closes away from the wall on the original side.', reclaim: 'Two closes reclaim the wall, followed by a later retest and a separate close away on the reclaimed side.' }[card.pattern] || 'A completed bounce, rejection, reclaim, or break-and-retest sequence.')
 </script>
 
 <template>
   <section v-if="data" class="wall-setups" aria-label="Conditional wall setups">
-    <header><div><p class="eyebrow">CONDITIONAL SETUPS</p><h3>What would confirm the next setup?</h3><p>Follow the trigger, check the room to the next level, and know what ends the scenario.</p></div>
+    <header><div><p class="eyebrow">CONDITIONAL IDEAS</p><h3>What would confirm the next idea?</h3><p>Follow the price condition and compare the entry area, target and risk boundary.</p></div>
       <span class="timing">{{ data.symbol }} · {{ data.session }} · {{ at ? 'Inspecting' : 'Latest assessment' }}<template v-if="at || data.as_of"> · {{ time(at || data.as_of) }} ET</template></span></header>
     <p class="recorded-note">Based on delayed five-minute closes. “Conditions met” applies at the recorded time; check current price before using a setup.</p>
     <label v-if="times.length" class="setup-selector">Inspect setup time<select v-model="at" aria-label="Inspect setup time"><option value="">Latest assessment</option><option v-for="value in times" :key="value" :value="value">{{ time(value) }} ET</option></select></label>
@@ -31,25 +31,24 @@ const trigger = card => ({ continuation: 'Two closes through the wall, a later r
         <div class="card-top"><strong>{{ card.side === 'put' ? 'Put' : 'Call' }} wall {{ number(card.strike) }}</strong><span v-if="card.pattern && card.evidence_grade" class="grade">{{ card.evidence_grade }} evidence</span></div>
         <h4>{{ pattern(card) }}</h4><p :class="['setup-status', { ready: card.status === 'conditions_met' }]">{{ status(card.status) }}<small v-if="card.observed_at"> · {{ time(card.observed_at) }} ET</small></p>
         <p class="setup-reason">{{ card.reason }}</p>
-        <p v-if="!at && card.status_at_observation === 'conditions_met' && card.status !== 'conditions_met'" class="past-status">Conditions were met at the last recorded assessment. This scenario is not currently active.</p>
         <dl v-if="card.pattern" class="setup-levels">
           <div><dt>{{ card.confirmed_at ? 'Entry zone' : 'Conditional entry zone' }}</dt><dd>{{ number(card.entry_zone?.low) }}–{{ number(card.entry_zone?.high) }}</dd><small>Underlying price · after confirmation</small></div>
-          <div><dt>Invalidation</dt><dd>{{ number(card.invalidation?.price) }}</dd><small>A five-minute close {{ card.invalidation?.close_side }} this boundary</small></div>
+          <div><dt>Risk boundary</dt><dd>{{ number(card.invalidation?.price) }}</dd><small>A five-minute close {{ card.invalidation?.close_side }} this reference</small></div>
           <div><dt>Reference target</dt><dd>{{ number(card.target?.strike) }}</dd><small>{{ card.target ? `Recorded ${card.target.side} wall · ${time(card.target.observed_at)} ET` : 'Requires a recorded level in this direction' }}</small></div>
           <div><dt>Room to target</dt><dd>{{ Number.isFinite(card.target_room_ratio) ? `${number(card.target_room_ratio)}×` : '—' }}</dd><small>Versus invalidation distance · 1.5× minimum</small></div>
         </dl>
-        <details><summary>Trigger and evidence</summary><p><b>Price trigger.</b> {{ trigger(card) }}</p><p v-if="card.expires_at"><template v-if="card.status === 'conditions_met'">Entry window ends at {{ time(card.expires_at) }} ET. Follow-up keeps the original target and invalidation through session close.</template><template v-else>This sequence expires by {{ time(card.expires_at) }} ET, or when the wall comparison changes.</template></p>
+        <details><summary>Trigger and evidence</summary><p><b>Price trigger.</b> {{ trigger(card) }}</p>
           <ul><li v-for="check in card.evidence_checks || []" :key="check.key"><span aria-hidden="true">{{ check.passed ? '✓' : '○' }}</span> {{ check.label }} <b>{{ check.passed ? 'Recorded' : 'Pending' }}</b></li></ul>
           <p v-if="card.confirmed_at">Price sequence completed at {{ time(card.confirmed_at) }} ET. Entry, invalidation and target levels remain fixed for this sequence.</p>
         </details>
       </article>
     </div>
     <details class="setup-guide"><summary>How to use these setup cards</summary>
-      <p><b>Start with the status.</b> Watching means a condition still needs to happen. Conditions met means the completed price sequence, entry zone and target room passed at the displayed time. Entry missed means price already closed beyond that zone. Invalidated or Expired ends that scenario.</p>
+      <p><b>Start with the recorded condition.</b> Watching means a price condition still needs to happen. Conditions met means the price sequence, entry zone and target room passed at the displayed time. Compare the reference levels with current price.</p>
       <p><b>Read levels as underlying prices.</b> These are not option-contract prices. The entry zone runs from one to three touch-band widths beyond the wall in the scenario direction. A close beyond the opposite band edge invalidates it. The band is 0.05% of the wall price, with a one-cent minimum.</p>
       <p><b>Check the target room.</b> The nearest ranked wall in the scenario direction is chosen when the price sequence confirms. Room is measured from the far edge of the entry zone and must be at least 1.5 times the distance to invalidation. A closer obstacle cannot be skipped to make the ratio look better. This ratio is price geometry; it excludes fees, slippage and option returns.</p>
-      <p><b>Read the evidence separately.</b> Strong means all three checks are recorded: the ordered price sequence, the same leading wall across at least three readings and ten minutes, and sufficient room to a recorded target. Moderate means two checks; Weak means zero or one. A strong grade can remain on an expired or invalidated scenario because it describes the recorded evidence, not present readiness.</p>
-      <p>These initial rules have not established a trading edge or a win probability. Levels freeze at confirmation, entries expire after 15 minutes or at the session close, and a missed entry does not reopen without a new price sequence. Use Inspect setup time to review earlier assessments.</p>
+      <p><b>Read the evidence separately.</b> Strong means all three checks are recorded: the ordered price sequence, the same leading wall across at least three readings and ten minutes, and sufficient room to a recorded target. Moderate means two checks; Weak means zero or one. The grade describes the evidence at that recorded time.</p>
+      <p>Ideas stay available for this session. Use Inspect setup time to review a recorded price condition and its reference levels.</p>
     </details>
     <p class="setup-footnote">{{ props.interaction.state === 'demonstration' ? 'Local synthetic example' : 'Recorded scenarios' }} · Evidence and rules are included in Export timeline JSON.</p>
   </section>

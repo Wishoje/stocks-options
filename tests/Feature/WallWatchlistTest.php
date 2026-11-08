@@ -109,6 +109,30 @@ class WallWatchlistTest extends TestCase
             'truncated' => false, 'items' => $rows]];
     }
 
+    public function test_customer_api_keeps_today_ideas_but_hides_private_outcome_tracking(): void
+    {
+        $this->watchlist('SPY');
+        $model = $this->model();
+        $this->record($model, 'intraday_capture');
+        $this->record($this->withHistory($this->assessment($model), [$this->historyCase()]), 'wall_interactions');
+        $before = WallObservation::count();
+        $user = (new User)->forceFill(['id' => 987, 'email' => 'ideas.reader@example.test', 'trial_ends_at' => now()->addDays(2)]);
+        $user->setRelation('subscriptions', collect());
+        Sanctum::actingAs($user);
+
+        $this->getJson('/api/intraday/wall-watchlist')->assertOk()
+            ->assertJsonPath('presentation', 'ideas.v1')
+            ->assertJsonPath('lifecycle_items.0.status_group', 'conditions_met')
+            ->assertJsonPath('alert_history.0.lifecycle.status_group', 'conditions_met')
+            ->assertJsonMissingPath('lifecycle_items.0.outcome')
+            ->assertJsonMissingPath('alert_history.0.lifecycle.outcome');
+
+        $this->assertSame('target_reached', app(WallWatchlistService::class)->read(987)['alert_history'][0]['lifecycle']['outcome']);
+        $this->assertSame($before, WallObservation::count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
     public function test_today_history_recovers_original_qualified_alerts_after_an_offline_visit_and_market_close(): void
     {
         $this->watchlist('SPY');
