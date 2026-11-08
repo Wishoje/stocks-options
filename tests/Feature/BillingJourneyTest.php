@@ -52,6 +52,13 @@ class BillingJourneyTest extends TestCase
             $table->timestamp('trial_ends_at')->nullable();
             $table->timestamps();
         });
+        Schema::create('watchlists', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->string('symbol', 10);
+            $table->timestamps();
+            $table->unique(['user_id', 'symbol']);
+        });
         Schema::create('subscriptions', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();

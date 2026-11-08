@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Actions\Fortify\CreateNewUser;
+use App\Models\Watchlist;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -47,6 +49,13 @@ class RegistrationTest extends TestCase
             $table->string('pm_last_four', 4)->nullable();
             $table->timestamp('trial_ends_at')->nullable();
             $table->timestamps();
+        });
+        Schema::create('watchlists', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->string('symbol', 10);
+            $table->timestamps();
+            $table->unique(['user_id', 'symbol']);
         });
 
         $conversionMigration = require database_path('migrations/2026_09_17_000100_create_conversion_events_table.php');
@@ -101,5 +110,37 @@ class RegistrationTest extends TestCase
 
         $this->assertAuthenticated();
         $response->assertRedirect(route('registration.handoff', absolute: false));
+        $this->assertDatabaseHas('watchlists', ['user_id' => auth()->id(), 'symbol' => 'SPY']);
+        $this->assertDatabaseCount('watchlists', 1);
+    }
+
+    public function test_registration_rolls_back_the_account_if_the_default_watchlist_cannot_be_saved(): void
+    {
+        Schema::drop('watchlists');
+
+        try {
+            (new CreateNewUser)->create([
+                'name' => 'Test User', 'email' => 'atomic@example.test',
+                'password' => 'password', 'password_confirmation' => 'password', 'terms' => true,
+            ]);
+            $this->fail('Registration should fail when its default cannot be saved.');
+        } catch (\Illuminate\Database\QueryException) {
+            $this->assertDatabaseMissing('users', ['email' => 'atomic@example.test']);
+        }
+    }
+
+    public function test_deleting_the_default_symbol_is_respected_on_later_reads_and_login(): void
+    {
+        $user = (new CreateNewUser)->create([
+            'name' => 'Test User', 'email' => 'empty@example.test',
+            'password' => 'password', 'password_confirmation' => 'password', 'terms' => true,
+        ]);
+        Watchlist::where('user_id', $user->id)->delete();
+        $user->forceFill(['trial_ends_at' => now()->addDay()]);
+        $user->setRelation('subscriptions', collect());
+        $this->actingAs($user);
+
+        $this->getJson('/api/watchlist')->assertOk()->assertExactJson([]);
+        $this->assertDatabaseCount('watchlists', 0);
     }
 }
