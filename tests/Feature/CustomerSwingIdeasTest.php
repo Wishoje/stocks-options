@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\User;
 use App\Services\SwingIdeaService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
@@ -9,6 +10,8 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Inertia\Testing\AssertableInertia as Assert;
+use Laravel\Sanctum\Sanctum;
 use Tests\Fixtures\SwingInput;
 use Tests\TestCase;
 
@@ -60,7 +63,8 @@ class CustomerSwingIdeasTest extends TestCase
         $this->assertSame(111.2, $idea['latest_price']['close']);
         $this->assertArrayNotHasKey('outcome', $idea);
         $this->assertStringNotContainsString('reached the frozen', json_encode($public));
-        $this->assertSame([], $service->readCustomerIdeas(2, 'short')['items']);
+        $this->assertCount(1, $service->readCustomerIdeas(2, 'short')['items']);
+        $this->assertSame([], $service->readCustomerIdeas(2, 'short', 'watchlist')['items']);
         $this->assertEquals($before, DB::table('swing_ideas')->where('id', $row->id)->first());
         $this->assertSame('target_reached', $service->read(1, 'short')['items'][0]['outcome']);
         Http::assertNothingSent();
@@ -81,6 +85,56 @@ class CustomerSwingIdeasTest extends TestCase
         $this->travelTo(CarbonImmutable::parse('2026-11-16 10:00', 'America/New_York'));
         $this->assertSame([], $service->readCustomerIdeas(1, 'position')['items']);
         $this->assertSame(2, DB::table('swing_ideas')->count());
+    }
+
+    public function test_shared_ideas_include_configured_and_other_saved_symbols_without_changing_personal_research(): void
+    {
+        config(['product_universe.enabled' => true, 'product_universe.symbols' => ['AVGO']]);
+        $service = new SwingIdeaService;
+        foreach (['SPY', 'QQQ', 'AVGO', 'ZZZ'] as $symbol) {
+            $service->refresh([...SwingInput::make(), 'symbol' => $symbol]);
+        }
+        DB::table('watchlists')->insert([
+            ['user_id' => 1, 'symbol' => 'SPY'], ['user_id' => 2, 'symbol' => 'QQQ'],
+        ]);
+
+        foreach ([1, 2, 3] as $userId) {
+            $ideas = $service->readCustomerIdeas($userId, 'short');
+            $this->assertSame(['AVGO', 'QQQ', 'SPY'], array_column($ideas['items'], 'symbol'));
+            $this->assertSame(3, $ideas['symbolCount']);
+            foreach ($ideas['items'] as $idea) {
+                $this->assertArrayNotHasKey('outcome', $idea);
+                $this->assertArrayNotHasKey('user_id', $idea);
+            }
+        }
+        $this->assertSame(['SPY'], array_column($service->readCustomerIdeas(1, 'short', 'watchlist')['items'], 'symbol'));
+        $this->assertSame(['QQQ'], array_column($service->readCustomerIdeas(2, 'short', 'watchlist')['items'], 'symbol'));
+        $this->assertSame([], $service->readCustomerIdeas(3, 'short', 'watchlist')['items']);
+        $this->assertSame(['SPY'], array_column($service->read(1, 'short')['items'], 'symbol'));
+        $this->assertSame(2, DB::table('watchlists')->count());
+        $this->assertSame(8, DB::table('swing_ideas')->count());
+        $this->assertSame(0, DB::table('swing_idea_reviews')->count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_page_defaults_to_shared_ideas_and_validates_the_optional_watchlist_scope(): void
+    {
+        (new SwingIdeaService)->refresh(SwingInput::make());
+        DB::table('watchlists')->insert(['user_id' => 2, 'symbol' => 'SPY']);
+        $user = (new User)->forceFill(['id' => 1, 'email' => 'swing.reader@example.test', 'trial_ends_at' => now()->addDays(2)]);
+        $user->setRelation('subscriptions', collect());
+        Sanctum::actingAs($user);
+
+        $this->get('/swing-ideas')->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->component('SwingIdeas')->where('scope', 'universe')->has('items', 1));
+        $this->get('/swing-ideas?scope=watchlist&horizon=position')->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->where('scope', 'watchlist')->where('horizon', 'position')->has('items', 0));
+        $this->get('/swing-ideas?scope=')->assertOk()->assertInertia(fn (Assert $page) => $page->where('scope', 'universe'));
+        $this->getJson('/swing-ideas?scope=other')->assertUnprocessable();
+        $this->assertSame(2, DB::table('swing_ideas')->count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
     }
 
     public function test_customer_read_chooses_the_newest_eligible_idea_without_deleting_older_research(): void

@@ -133,6 +133,61 @@ class WallWatchlistTest extends TestCase
         Bus::assertNothingDispatched();
     }
 
+    public function test_shared_scanner_reads_configured_and_other_users_symbols_without_changing_personal_alerts(): void
+    {
+        config(['product_universe.enabled' => true, 'product_universe.symbols' => ['AVGO']]);
+        $this->watchlist('SPY');
+        $this->watchlist('QQQ', 999);
+        foreach (['SPY', 'QQQ', 'AVGO'] as $symbol) {
+            $model = $this->model($symbol);
+            $this->record($model, 'intraday_capture');
+            $this->record($this->withHistory($this->assessment($model), [$this->historyCase($symbol)]), 'wall_interactions');
+        }
+        $before = WallObservation::count();
+        $user = (new User)->forceFill(['id' => 987, 'email' => 'scanner.reader@example.test', 'trial_ends_at' => now()->addDays(2)]);
+        $user->setRelation('subscriptions', collect());
+        Sanctum::actingAs($user);
+
+        // Warm the shared projection first; a later inbox read must remain personal.
+        $shared = $this->getJson('/api/intraday/wall-watchlist?scope=universe')->assertOk()
+            ->assertJsonPath('scope', 'universe')->assertJsonPath('watchlist_count', 3)
+            ->assertJsonCount(3, 'items')->assertJsonCount(3, 'alert_history')
+            ->assertJsonMissingPath('alert_history.0.lifecycle.outcome');
+        $this->assertEqualsCanonicalizing(['AVGO', 'QQQ', 'SPY'], array_column($shared->json('items'), 'symbol'));
+        $this->getJson('/api/intraday/wall-watchlist')->assertOk()->assertJsonPath('scope', 'watchlist')
+            ->assertJsonPath('watchlist_count', 1)->assertJsonCount(1, 'items')->assertJsonPath('items.0.symbol', 'SPY')
+            ->assertJsonCount(1, 'alert_history')->assertJsonPath('alert_history.0.symbol', 'SPY');
+        $this->getJson('/api/intraday/wall-watchlist?scope=watchlist')->assertOk()
+            ->assertJsonPath('watchlist_count', 1)->assertJsonPath('items.0.symbol', 'SPY');
+        $this->getJson('/api/intraday/wall-watchlist?scope=someone_else')->assertUnprocessable();
+        $this->assertSame($before, WallObservation::count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_shared_projection_uses_bounded_indexed_seeks_even_without_personal_membership(): void
+    {
+        config(['product_universe.enabled' => true, 'product_universe.symbols' => ['AVGO', 'MARA', 'NFLX']]);
+        foreach (['AVGO', 'MARA', 'NFLX'] as $symbol) {
+            $model = $this->model($symbol);
+            $this->record($model, 'intraday_capture');
+            $this->record($this->assessment($model), 'wall_interactions');
+        }
+        DB::enableQueryLog();
+        $shared = app(WallWatchlistService::class)->read(987, 'universe');
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        $this->assertCount(3, $queries);
+        $this->assertCount(3, $shared['items']);
+        $this->assertStringContainsString('limit 1', strtolower($queries[1]['query']));
+        $this->assertStringContainsString('limit 1', strtolower($queries[2]['query']));
+        $this->assertStringNotContainsString('select *', strtolower($queries[1]['query']));
+        $this->assertStringNotContainsString('"bars"', $queries[2]['query']);
+        $this->assertSame([], app(WallWatchlistService::class)->read(987)['items']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
     public function test_today_history_recovers_original_qualified_alerts_after_an_offline_visit_and_market_close(): void
     {
         $this->watchlist('SPY');

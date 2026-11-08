@@ -114,7 +114,7 @@ const volumeErrorMessage = computed(() => {
   return `${error.value} Retaining the applied top ${appliedVolumeScope.value.limit} results (${volumeScopeLabel.value}).`
 })
 const wallUniverseSymbols = computed(() => scannerUniverseSymbols.value.length ? scannerUniverseSymbols.value : [...watchlistSymbols.value])
-const wallUniverseSource = computed(() => scannerUniverseSymbols.value.length ? 'Global watchlists' : 'Your watchlist fallback')
+const wallUniverseSource = computed(() => scannerUniverseSymbols.value.length ? 'Product universe' : 'Your watchlist fallback')
 const wallRequestCount = computed(() => scannerChunks(wallUniverseSymbols.value).length)
 const wallDraftValidationMessage = computed(() => {
   const percent = scannerNumber(wallDraftNearPct.value)
@@ -544,7 +544,7 @@ onBeforeUnmount(() => {
           </header>
 
           <section v-if="scannerMode === 'activity'" id="scanner-mode-panel" role="tabpanel" aria-labelledby="scanner-mode-activity" class="scanner-mode-panel">
-            <WallWatchlist :chart-href="wallActivityDashboardUrl" />
+            <WallWatchlist :chart-href="wallActivityDashboardUrl" initial-scope="universe" show-scope />
           </section>
           <section v-else-if="scannerMode === 'volume'" id="scanner-mode-panel" role="tabpanel" aria-labelledby="scanner-mode-volume" class="scanner-mode-panel">
             <div class="scanner-toolbar gex-panel" aria-label="Volume scanner filters">

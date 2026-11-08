@@ -16,11 +16,22 @@ const newRow = () => row({ observed_at: '2026-09-30T14:20:00Z', alert_keys: { se
 beforeEach(() => localStorage.clear())
 
 describe('wall alert eligibility and event identity', () => {
-  it('defaults to quiet setup alerts and preserves an account-specific opt-out', () => {
-    expect(wallAlertSettings(1)).toEqual({ enabled: true, testing: false, sound: false })
-    localStorage.setItem('gex:wall-alert-settings:v1:1', JSON.stringify({ ...settings, enabled: false }))
-    expect(wallAlertSettings(1).enabled).toBe(false)
-    expect(wallAlertSettings(2)).toEqual({ enabled: true, testing: false, sound: false })
+  it('enables all alert options by default and preserves each saved account preference', () => {
+    expect(wallAlertSettings(1)).toEqual({ enabled: true, testing: true, sound: true })
+    const optedOut = { enabled: false, testing: false, sound: false }
+    localStorage.setItem('gex:wall-alert-settings:v1:1', JSON.stringify(optedOut))
+    expect(wallAlertSettings(1)).toEqual(optedOut)
+    expect(wallAlertSettings(2)).toEqual({ enabled: true, testing: true, sound: true })
+    localStorage.setItem('gex:wall-alert-settings:v1:3', JSON.stringify({ testing: false }))
+    expect(wallAlertSettings(3)).toEqual({ enabled: true, testing: false, sound: true })
+    localStorage.setItem('gex:wall-alert-settings:v1:4', 'corrupt')
+    expect(wallAlertSettings(4)).toEqual({ enabled: true, testing: true, sound: true })
+  })
+  it('includes newly recorded wall-testing events with the default settings', () => {
+    const engine = createWallAlertEngine(1), defaults = wallAlertSettings(1)
+    engine.consume(data([]), defaults, first)
+    const testing = row({ observed_at: '2026-09-30T14:20:00Z', status: 'testing', setup: null, alert_keys: { testing: key('b') } })
+    expect(engine.consume(data([testing]), defaults, later)).toHaveLength(1)
   })
   it('primes existing events silently and only emits a later newly confirmed setup', () => {
     const engine = createWallAlertEngine(1)

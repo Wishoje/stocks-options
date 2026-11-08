@@ -3,6 +3,7 @@
 namespace App\Services\SetupStudy;
 
 use App\Support\SetupStudy\SetupStudyMetrics;
+use App\Support\ProductUniverse;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +22,7 @@ class SetupStudyService
             return ['prepared' => true, 'busy' => true, 'symbols' => 0, 'records' => 0, 'warnings' => ['Study collection is already running.']];
         }
         try {
-            $symbols = DB::table('watchlists')->where('user_id', $ownerId)->distinct()->pluck('symbol')->all();
+            $symbols = ProductUniverse::symbols();
             $open = DB::table('setup_study_records')->where('owner_id', $ownerId)
                 ->where('session', '>=', now()->subDays(45)->toDateString())->distinct()->pluck('symbol')->all();
             $symbols = array_values(array_unique(array_merge($symbols, $open)));
@@ -171,15 +172,14 @@ class SetupStudyService
 
     private function coverage(int $ownerId, bool $prepared): array
     {
-        $saved = DB::table('watchlists')->where('user_id', $ownerId);
-        $savedCount = (clone $saved)->distinct()->count('symbol');
+        $symbols = ProductUniverse::symbols();
         $recent = $prepared ? DB::table('setup_study_records')->where('owner_id', $ownerId)
             ->where('session', '>=', now()->subDays(45)->toDateString())
-            ->whereNotIn('symbol', (clone $saved)->select('symbol'))->distinct()->pluck('symbol')->all() : [];
+            ->whereNotIn('symbol', $symbols)->distinct()->pluck('symbol')->all() : [];
+        $symbols = array_values(array_unique([...$symbols, ...$recent]));
         $covered = array_keys(Cache::get('setup-study:covered:'.$ownerId, []));
-        $collected = ($covered ? (clone $saved)->whereIn('symbol', $covered)->distinct()->count('symbol') : 0)
-            + count(array_intersect($recent, $covered));
-        $total = $savedCount + count($recent);
+        $collected = count(array_intersect($symbols, $covered));
+        $total = count($symbols);
 
         return ['collected_symbols' => $collected, 'total_symbols' => $total, 'first_pass_complete' => $collected === $total];
     }

@@ -1,7 +1,9 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
 import axios from 'axios'
 import WallWatchlist from '@/Components/WallWatchlist.vue'
+import { WALL_WATCHLIST_OWNER } from '@/Support/wallWatchlistFeed'
 
 vi.mock('axios', () => ({ default: { get: vi.fn() } }))
 const wrappers = []
@@ -27,6 +29,41 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('Watchlist wall activity', () => {
+  it('keeps shared Scanner discovery separate from personal alert polling and defaults both to conditions met', async () => {
+    const owner = ref('shared-discovery-test')
+    axios.get.mockImplementation((url, options) => Promise.resolve({ data: options.params.scope === 'universe'
+      ? payload([row('AVGO', { status: 'conditions_met', setup: setup() }), row('MARA')], { scope: 'universe' })
+      : payload([row('SPY', { status: 'conditions_met', setup: setup() })], { scope: 'watchlist' }) }))
+    const personal = mount(WallWatchlist, { global: { provide: { [WALL_WATCHLIST_OWNER]: owner } } })
+    const shared = mount(WallWatchlist, { props: { initialScope: 'universe', showScope: true },
+      global: { provide: { [WALL_WATCHLIST_OWNER]: owner } } })
+    wrappers.push(personal, shared)
+    await flushPromises()
+    expect(axios.get).toHaveBeenCalledTimes(2)
+    expect(axios.get.mock.calls.map(([, options]) => options.params)).toEqual([{}, { scope: 'universe' }])
+    expect(personal.findAll('.activity-row').map(item => item.get('.symbol').text())).toEqual(['SPY'])
+    expect(shared.findAll('.activity-row').map(item => item.get('.symbol').text())).toEqual(['AVGO'])
+    expect(shared.get('.filters button[aria-pressed="true"]').text()).toContain('Conditions met')
+    expect(shared.text()).toContain('Notification popups follow your watchlist')
+    await shared.get('[aria-label="Intraday ideas scope"] button[aria-pressed="false"]').trigger('click')
+    await flushPromises()
+    expect(shared.findAll('.activity-row').map(item => item.get('.symbol').text())).toEqual(['SPY'])
+    expect(personal.findAll('.activity-row').map(item => item.get('.symbol').text())).toEqual(['SPY'])
+    expect(axios.get).toHaveBeenCalledTimes(2)
+  })
+  it('does not remove universe ideas when a personal watchlist changes during a background refresh', async () => {
+    axios.get.mockResolvedValueOnce({ data: payload([row('AVGO', { status: 'conditions_met', setup: setup() })], { scope: 'universe' }) })
+    const w = mount(WallWatchlist, { props: { initialScope: 'universe', showScope: true } }); wrappers.push(w)
+    await flushPromises()
+    let finish
+    axios.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    window.dispatchEvent(new CustomEvent('watchlist-updated', { detail: { symbols: ['SPY'] } }))
+    await flushPromises()
+    expect(w.get('.activity-row .symbol').text()).toBe('AVGO')
+    finish({ data: payload([row('AVGO', { status: 'conditions_met', setup: setup() })], { scope: 'universe' }) })
+    await flushPromises()
+    expect(w.get('.activity-row .symbol').text()).toBe('AVGO')
+  })
   it('defaults to conditions met and keeps that zero-count selection during updates', async () => {
     axios.get.mockResolvedValueOnce({ data: payload([]) })
     const w = mount(WallWatchlist); wrappers.push(w); await flushPromises()

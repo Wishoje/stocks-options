@@ -13,8 +13,13 @@ final class SwingIdeaController extends Controller
 {
     public function __invoke(Request $request, SwingIdeaService $service)
     {
-        $input = $request->validate(['horizon' => ['nullable', Rule::in(array_keys(SwingIdeaRules::HORIZONS))], 'demo' => ['nullable', 'boolean']]);
+        $input = $request->validate([
+            'horizon' => ['nullable', Rule::in(array_keys(SwingIdeaRules::HORIZONS))],
+            'scope' => ['nullable', Rule::in(['universe', 'watchlist'])],
+            'demo' => ['nullable', 'boolean'],
+        ]);
         $horizon = ($input['horizon'] ?? '') ?: 'short';
+        $scope = ($input['scope'] ?? '') ?: 'universe';
 
         if ($request->boolean('demo')) {
             $data = app(\App\Support\Swing\SwingIdeaDemo::class)->build($horizon);
@@ -22,11 +27,11 @@ final class SwingIdeaController extends Controller
             $data['items'] = array_map(fn (array $row): array => \App\Support\CustomerIdeaPresentation::swing($row, $row,
                 array_intersect_key($row, array_flip(['id', 'demonstration', 'is_current', 'reviewed_through']))), $examples);
         } else {
-            $data = $service->readCustomerIdeas($request->user()->id, $horizon);
+            $data = $service->readCustomerIdeas($request->user()->id, $horizon, $scope);
         }
 
         return Inertia::render('SwingIdeas', [...$data, 'localDemoAvailable' => app()->environment('local'),
-            'horizon' => $horizon, 'horizons' => SwingIdeaRules::HORIZONS,
+            'horizon' => $horizon, 'horizons' => SwingIdeaRules::HORIZONS, 'scope' => $scope,
             'completedSession' => PublicSpyPreview::completedSession()]);
     }
 }

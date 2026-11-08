@@ -155,15 +155,7 @@ class ComputeSymbolWallSnapshots extends Command
 
     private function watchlistSymbols(): array
     {
-        return DB::table('watchlists')
-            ->select('symbol')
-            ->distinct()
-            ->pluck('symbol')
-            ->map(fn ($s) => \App\Support\Symbols::canon($s))
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
+        return \App\Support\ProductUniverse::symbols();
     }
 
     private function allSymbols(): array

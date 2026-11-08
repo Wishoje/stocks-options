@@ -2,7 +2,6 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Watchlist;
 use App\Services\WallInteractionService;
 use App\Support\Symbols;
 use Illuminate\Console\Command;
@@ -23,7 +22,7 @@ final class RefreshWallSetupReviews extends Command
             return self::FAILURE;
         }
         $requested = $this->option('symbol');
-        $symbols = $requested ?: Watchlist::query()->distinct()->orderBy('symbol')->pluck('symbol')->all();
+        $symbols = $requested ?: \App\Support\ProductUniverse::symbols();
         $symbols = array_values(array_unique(array_map(fn ($symbol) => Symbols::canon($symbol), $symbols)));
         if (count($symbols) > 500 || array_filter($symbols, fn ($symbol) => ! Symbols::isValid($symbol))) {
             $this->error('Use up to 500 valid symbols per run.');

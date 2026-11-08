@@ -8,9 +8,12 @@ import WallAlertControls from '@/Components/WallAlertControls.vue'
 import WallStatusFilters from '@/Components/WallStatusFilters.vue'
 import WallStatusBadge from '@/Components/WallStatusBadge.vue'
 
-const props = defineProps({ selectedSymbol: String, chartHref: Function })
+const props = defineProps({ selectedSymbol: String, chartHref: Function,
+  initialScope: { type: String, default: 'watchlist' }, showScope: { type: Boolean, default: false } })
 const emit = defineEmits(['open'])
-const { data, loading, refreshing, error, demo, load, chooseDemo } = useWallWatchlist()
+const selectedScope = ref(props.initialScope === 'universe' ? 'universe' : 'watchlist')
+const universe = computed(() => selectedScope.value === 'universe')
+const { data, loading, refreshing, error, demo, load, chooseDemo } = useWallWatchlist({ scope: selectedScope })
 const selectedStatus = ref('conditions_met'), symbol = ref(''), direction = ref('all'), limit = ref(6)
 const clock = ref(Date.now())
 const timer = setInterval(() => { clock.value = Date.now() }, 10000)
@@ -29,19 +32,25 @@ const progress = row => Number.isInteger(row.next_condition?.completed_closes) &
   ? `${row.next_condition.completed_closes} of ${row.next_condition.required_closes} confirming closes recorded` : ''
 const closed = computed(() => data.value?.state === 'outside_session' || (!demo.value && data.value?.refresh_until && Date.parse(data.value.refresh_until) <= clock.value))
 watch([selectedStatus, symbol, direction], () => { limit.value = 6 })
+watch(selectedScope, () => { limit.value = 6; symbol.value = '' })
 watch(() => data.value?.session, () => { limit.value = 6 })
 </script>
 
 <template>
-  <section class="wall-watchlist" aria-label="Watchlist wall activity" :aria-busy="loading || refreshing">
-    <header><div><h3>Which symbols need attention?</h3><p>Today's intraday ideas · All saved symbols · 1W expiries · Prices delayed 15 min</p></div>
-      <button type="button" :disabled="loading || refreshing" @click="load()">{{ refreshing ? 'Refreshing…' : 'Refresh watchlist' }}</button></header>
+  <section class="wall-watchlist" :aria-label="universe ? 'All symbols wall activity' : 'Watchlist wall activity'" :aria-busy="loading || refreshing">
+    <header><div><h3>Which symbols need attention?</h3><p>Today's intraday ideas · {{ universe ? 'All symbols' : 'My watchlist' }} · 1W expiries · Prices delayed 15 min</p></div>
+      <button type="button" :disabled="loading || refreshing" @click="load()">{{ refreshing ? 'Refreshing…' : 'Refresh ideas' }}</button></header>
+    <div v-if="showScope" class="discovery-scope" role="group" aria-label="Intraday ideas scope">
+      <button type="button" :aria-pressed="universe" @click="selectedScope = 'universe'">All symbols</button>
+      <button type="button" :aria-pressed="!universe" @click="selectedScope = 'watchlist'">My watchlist</button>
+    </div>
     <WallAlertControls />
-    <p v-if="loading" class="notice" role="status">Checking your watchlist’s wall assessments…</p>
+    <p v-if="showScope" class="footnote">Notification popups follow your watchlist.</p>
+    <p v-if="loading" class="notice" role="status">{{ universe ? 'Checking wall assessments for all symbols…' : 'Checking your watchlist’s wall assessments…' }}</p>
     <p v-if="error" class="notice error" role="alert">{{ error }} <button type="button" @click="load()">Retry</button></p>
     <template v-if="data">
-      <div v-if="demo" class="demo" role="status">Local demonstration · Synthetic historical examples <button type="button" @click="chooseDemo(false)">Back to my watchlist</button></div>
-      <div v-else class="watchlist-summary"><strong>{{ qualifiedCount ? `${qualifiedCount} setup${qualifiedCount === 1 ? '' : 's'} with conditions met` : data.assessed_count ? 'No confirmed setups in your watchlist' : 'Waiting for current wall assessments' }}</strong>
+      <div v-if="demo" class="demo" role="status">Local demonstration · Synthetic historical examples <button type="button" @click="chooseDemo(false)">Back to ideas</button></div>
+      <div v-else class="watchlist-summary"><strong>{{ qualifiedCount ? `${qualifiedCount} setup${qualifiedCount === 1 ? '' : 's'} with conditions met` : data.assessed_count ? `No confirmed setups ${universe ? 'across all symbols' : 'in your watchlist'}` : 'Waiting for current wall assessments' }}</strong>
         <span>{{ data.assessed_count }} of {{ data.watchlist_count }} symbols assessed · {{ data.session }}</span></div>
       <WallStatusFilters v-model="selectedStatus" v-model:symbol="symbol" v-model:direction="direction" :rows="items" current-only />
       <div v-if="visible.length" class="activity-list">
@@ -61,7 +70,7 @@ watch(() => data.value?.session, () => { limit.value = 6 })
           </div>
         </article>
       </div>
-      <p v-else-if="!error" class="notice" role="status">{{ !data.watchlist_count ? 'Add symbols to your watchlist to follow their wall activity here.' : `No ${selectedStatus === 'all' ? 'ideas' : ideaStatusLabel(selectedStatus).toLowerCase() + ' ideas'} match these filters. Your selection stays in place as updates arrive.` }}</p>
+      <p v-else-if="!error" class="notice" role="status">{{ !data.watchlist_count ? (universe ? 'Ideas appear as session assessments are recorded.' : 'Add symbols to your watchlist to follow their wall activity here.') : `No ${selectedStatus === 'all' ? 'ideas' : ideaStatusLabel(selectedStatus).toLowerCase() + ' ideas'} match these filters. Your selection stays in place as updates arrive.` }}</p>
       <p v-if="closed" class="footnote">The market is closed. These are the latest recorded states for this session.</p>
       <button v-if="filtered.length > limit" class="show-more" type="button" @click="limit += 6">Show more · {{ filtered.length - limit }} remaining</button>
       <details class="footnote"><summary>How to use these ideas</summary><p>Watching means the price conditions have not passed. Conditions met means they passed at the recorded close. Today's recorded ideas stay here until the next day. Entry areas, risk boundaries and targets are reference levels to compare with current price.</p></details>
@@ -72,6 +81,7 @@ watch(() => data.value?.session, () => { limit.value = 6 })
 </template>
 
 <style scoped>
+.discovery-scope{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
 .activity-next{color:#e1eaf8;max-width:620px}.progress{color:#b9c5fc;font-size:.73rem}
 .wall-watchlist{margin-bottom:22px;padding:20px;border:1px solid #43536a;border-radius:14px;background:#171d29;color:#edf3fc}header,.activity-heading,.activity-heading>div,.watchlist-summary,.filters{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}h3{font-size:1.15rem;font-weight:700;margin:0 0 6px}p{font-size:.8rem;line-height:1.5;color:#bfccde;margin:5px 0}button{border:1px solid #536382;border-radius:7px;background:#26334a;color:#edf3fc;padding:8px 12px;font-size:.8rem;white-space:nowrap}button:hover,button[aria-pressed=true]{background:#37486a;border-color:#acbaff}button:disabled{opacity:.6}button:focus-visible{outline:2px solid #b5bcff;outline-offset:3px}.watchlist-summary{margin:16px 0;font-size:.83rem}.watchlist-summary>span,.observed-time{font-size:.73rem;color:#bac9dc}.activity-list{display:grid;gap:10px}.activity-row{padding:15px;border:1px solid #3b495f;border-radius:9px;background:#1c2433}.activity-row.selected{border-color:#a6b4e9}.activity-row.qualified{border-left:3px solid #7ee0b0}.symbol{font-size:1rem}.put{color:#ef9d8f}.call{color:#7ee0b0}.activity-heading>div{justify-content:flex-start;font-size:.8rem}.activity-body{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:12px;flex-wrap:wrap}.activity-body>div{flex:1;min-width:180px}.activity-body strong{font-size:.88rem}.qualified .activity-body strong{color:#7ee0b0}dl{display:flex;flex-wrap:wrap;gap:18px;margin:0}dt{font-size:.7rem;color:#bac9dc}dd{font-size:.8rem;font-weight:600;margin:4px 0 0;font-variant-numeric:tabular-nums}.filters{justify-content:flex-start;margin:12px 0}.notice,.demo{margin:14px 0;padding:12px;border-radius:8px;background:#242c3e;font-size:.83rem;color:#c4d2e6}.error{color:#ffc8bb}.demo{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border:1px dashed #8e9dbe}.show-more{margin-top:12px}.footnote{font-size:.73rem;margin-top:14px}.preview{margin-top:12px;background:transparent}@media(max-width:650px){.wall-watchlist{padding:14px}.activity-body{align-items:flex-start;flex-direction:column}dl{gap:16px}.activity-heading{align-items:flex-start;flex-direction:column;gap:6px}.watchlist-summary{align-items:flex-start;flex-direction:column;gap:6px}}
 .chart-link{display:inline-flex;align-items:center;gap:8px;border:1px solid #536382;border-radius:7px;background:#26334a;color:#edf3fc;padding:8px 12px;font-size:.8rem;white-space:nowrap;text-decoration:none}.chart-link:hover{background:#37486a;border-color:#acbaff}.chart-link:focus-visible{outline:2px solid #b5bcff;outline-offset:3px}

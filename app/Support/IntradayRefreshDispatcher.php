@@ -3,7 +3,6 @@
 namespace App\Support;
 
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use LogicException;
@@ -46,17 +45,10 @@ final class IntradayRefreshDispatcher
         return true;
     }
 
-    /** Read one canonical symbol per watchlist entry before materializing it. @return list<string> */
+    /** Read the shared collection universe once before materializing it. @return list<string> */
     public function watchlistSymbols(): array
     {
-        return DB::table('watchlists')
-            ->whereNotNull('symbol')
-            ->whereRaw("TRIM(symbol) <> ''")
-            ->selectRaw('UPPER(TRIM(symbol)) as symbol')
-            ->distinct()
-            ->orderBy('symbol')
-            ->pluck('symbol')
-            ->all();
+        return ProductUniverse::symbols();
     }
 
     /**

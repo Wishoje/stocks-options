@@ -231,9 +231,11 @@ describe('scanner page', () => {
     window.history.replaceState({}, '', '/scanner')
     axios.get.mockImplementation(url => {
       if (url === '/api/intraday/wall-watchlist') return Promise.resolve({ data: {
-        schema_version: 'wall-watchlist.v1', session: '2026-09-30', timeframe: '7d', state: 'ready', quote_delay_seconds: 900,
+        schema_version: 'wall-watchlist.v1', scope: 'universe', session: '2026-09-30', timeframe: '7d', state: 'ready', quote_delay_seconds: 900,
         watchlist_count: 1, assessed_count: 1, refresh_until: '2026-09-30T20:00:00Z', local_demo_available: false,
-        items: [{ symbol: 'QQQ', side: 'put', strike: 100, close: 100.1, observed_at: '2026-09-30T14:15:00Z', reaction: 'testing', status: 'testing', setup: null }],
+        items: [{ symbol: 'QQQ', side: 'put', strike: 100, close: 100.1, observed_at: '2026-09-30T14:15:00Z', reaction: 'reclaim', status: 'conditions_met',
+          setup: { direction: 'bullish', pattern: 'reclaim', entry_zone: { low: 100.05, high: 100.15 },
+            invalidation: { price: 99.95, close_side: 'below' }, target: { strike: 101 } } }],
       } })
       if (url === '/api/watchlist' || url === '/api/watchlist/universe') return Promise.resolve({ data: [{ id: 1, symbol: 'SPY' }] })
       if (url === '/api/hot-options') return Promise.resolve({ data: volumePayload([]) })
@@ -241,9 +243,12 @@ describe('scanner page', () => {
     })
     const wrapper = mountScanner(); await flushPromises()
     expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['Wall activity', 'Near walls', 'Options volume'])
-    expect(wrapper.text()).toContain('All saved symbols')
+    expect(wrapper.text()).toContain('All symbols')
+    expect(wrapper.get('[aria-label="Intraday ideas scope"] button[aria-pressed="true"]').text()).toBe('All symbols')
+    expect(wrapper.get('.filters button[aria-pressed="true"]').text()).toContain('Conditions met')
     expect(wrapper.get('[aria-label="View QQQ wall assessment"]').attributes('href')).toBe('/dashboard?symbol=QQQ&mode=intraday&tab=walls&timeframe=7d')
     expect(axios.get.mock.calls.map(([url]) => url)).toEqual(['/api/intraday/wall-watchlist'])
+    expect(axios.get.mock.calls[0][1].params).toEqual({ scope: 'universe' })
     expect(axios.post).not.toHaveBeenCalled()
     const signal = axios.get.mock.calls[0][1].signal
     await wrapper.get('#scanner-mode-gex').trigger('click'); await flushPromises()

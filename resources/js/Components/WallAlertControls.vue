@@ -13,7 +13,7 @@ const alerts = inject(WALL_ALERTS, null)
       <button type="button" @click="alerts.preview()">Test alert</button>
     </div>
     <p v-if="alerts.settings.value.enabled">Popups follow your saved symbols across pages. Today's alert history is saved even when the site is closed or popups are off.</p>
-    <p v-if="alerts.settings.value.enabled && alerts.settings.value.sound && !alerts.soundReady.value">Click Test alert to activate saved sound for this visit.</p>
+    <p v-if="alerts.settings.value.enabled && alerts.settings.value.sound && !alerts.soundReady.value">Click Test alert to activate sound for this visit.</p>
     <p v-if="alerts.message.value" role="status">{{ alerts.message.value }}</p>
     <p v-if="alerts.settings.value.enabled && alerts.error.value" role="status">Popup updates are paused until wall activity refreshes. {{ alerts.error.value }}</p>
   </div>

@@ -34,14 +34,7 @@ final class CalculatorPrimeScheduler
             return $this->result('market_closed');
         }
 
-        $configured = DB::table('watchlists')
-            ->pluck('symbol')
-            ->map(static fn ($symbol): string => Symbols::canon((string) $symbol))
-            ->filter()
-            ->unique()
-            ->sort()
-            ->values()
-            ->all();
+        $configured = ProductUniverse::symbols();
 
         $source = $configured === [] ? 'fallback' : 'watchlist';
         $symbols = $configured === [] ? $this->fallbackSymbols() : $configured;

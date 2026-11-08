@@ -90,6 +90,19 @@ Schedule::command('watchlist:preload')
     ->onOneServer()
     ->at('16:15');
 
+// Fill newly configured coverage in small batches away from the intraday queues.
+Schedule::command('universe:prepare --limit=2')
+    ->timezone('America/New_York')
+    ->everyTenMinutes()
+    ->when(function () {
+        $time = now('America/New_York')->format('Hi');
+
+        return $time >= '1800' || $time <= '0830';
+    })
+    ->withoutOverlapping(10)
+    ->onOneServer()
+    ->name('universe:prepare');
+
 // Strict repair for core liquid names.
 Schedule::command('watchlist:repair-missing --check-incomplete --profile=core --symbols=SPY,QQQ,IWM,AAPL,MSFT,NVDA --chunk=1 --days=90')
     ->cron('15,45 18-20 * * 1-5')

@@ -56,6 +56,15 @@ class RefreshSwingIdeasTest extends TestCase
         $this->assertRefreshIsDue();
     }
 
+    public function test_a_configured_symbol_gets_swing_preparation_without_any_user_saving_it(): void
+    {
+        DB::table('watchlists')->delete();
+        config(['product_universe.enabled' => true, 'product_universe.symbols' => ['SPY']]);
+
+        $this->assertRefreshIsDue();
+        $this->assertDatabaseCount('watchlists', 0);
+    }
+
     public function test_both_current_horizons_need_no_source_read_or_refresh(): void
     {
         $this->record('short', 'watching', '2026-10-26');

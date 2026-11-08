@@ -4,8 +4,8 @@ import axios from 'axios'
 export const WALL_WATCHLIST_OWNER = Symbol('wall-watchlist-owner')
 const sessionToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 
-// Scanner and alerts share one current-session read per signed-in account.
-export function createWallWatchlistFeed(demonstration = false) {
+// Personal alerts and shared discovery poll independently without mixing results.
+export function createWallWatchlistFeed(demonstration = false, scope = 'watchlist') {
   const data = ref(null), loading = ref(false), refreshing = ref(false), error = ref(''), revision = ref(0)
   const initialized = ref(false), accessDenied = ref(false)
   let controller, generation = 0, lastAttempt = 0, retryAfter = 0, consumers = 0, timer, denied = false, resumePending = false
@@ -23,10 +23,11 @@ export function createWallWatchlistFeed(demonstration = false) {
     loading.value = !data.value; refreshing.value = !!data.value; lastAttempt = Date.now()
     try {
       const { data: result } = await axios.get('/api/intraday/wall-watchlist', {
-        params: demonstration ? { demo: 1 } : {}, signal: controller.signal, timeout: 20000,
+        params: demonstration ? { demo: 1 } : scope === 'universe' ? { scope } : {}, signal: controller.signal, timeout: 20000,
       })
       if (run !== generation) return
       if (result?.schema_version !== 'wall-watchlist.v1' || result.timeframe !== '7d' || !Array.isArray(result.items)
+        || (!demonstration && (result.scope || 'watchlist') !== scope)
         || (demonstration ? result.state !== 'demonstration' || !result.local_demo_available
           : result.state === 'demonstration' || result.session !== sessionToday())) throw new Error('scope')
       data.value = result
@@ -60,6 +61,7 @@ export function createWallWatchlistFeed(demonstration = false) {
   function resumeVisible() { refreshVisible(true) }
   function watchlistChanged(event) {
     revision.value++
+    if (scope === 'universe') { load({ restart: true }); return }
     const symbols = Array.isArray(event?.detail?.symbols) ? new Set(event.detail.symbols) : null
     if (data.value?.session === sessionToday()) {
       // Remove uncertain current membership immediately. Recorded alerts stay
@@ -92,12 +94,14 @@ export function createWallWatchlistFeed(demonstration = false) {
   return { data, loading, refreshing, error, revision, initialized, accessDenied, load, subscribe, stop }
 }
 
-let sharedOwner, sharedFeed
-export function accountWallWatchlistFeed(owner) {
+let sharedOwner
+const sharedFeeds = new Map()
+export function accountWallWatchlistFeed(owner, scope = 'watchlist') {
   if (sharedOwner !== owner) {
-    sharedFeed?.stop()
+    for (const source of sharedFeeds.values()) source.stop()
+    sharedFeeds.clear()
     sharedOwner = owner
-    sharedFeed = createWallWatchlistFeed()
   }
-  return sharedFeed
+  if (!sharedFeeds.has(scope)) sharedFeeds.set(scope, createWallWatchlistFeed(false, scope))
+  return sharedFeeds.get(scope)
 }

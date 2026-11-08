@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Services\SwingDataSource;
 use App\Services\SwingIdeaService;
 use App\Support\CoordinationCache;
+use App\Support\ProductUniverse;
 use App\Support\Swing\PausedSwingPlan;
 use App\Support\Swing\SwingIdeaRules;
 use App\Support\Symbols;
@@ -14,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 
 class RefreshSwingIdeas extends Command
 {
-    protected $signature = 'swing:refresh {--symbols= : Comma-separated symbols, at most 20} {--watchlist : Process an outdated saved-symbol batch} {--limit=10 : Maximum watchlist symbols per run, at most 20}';
+    protected $signature = 'swing:refresh {--symbols= : Comma-separated symbols, at most 20} {--watchlist : Process an outdated shared-universe batch} {--limit=10 : Maximum symbols per run, at most 20}';
 
     protected $description = 'Prepare swing research plans from existing completed EOD data; no provider fetches or notifications';
 
@@ -29,19 +30,20 @@ class RefreshSwingIdeas extends Command
         if ($this->option('watchlist')) {
             $date = \App\Support\PublicSpyPreview::completedSession();
             $limit = max(1, min(20, (int) $this->option('limit')));
-            $known = DB::table('watchlists as saved')->where(function ($due) use ($date) {
-                foreach (array_keys(SwingIdeaRules::HORIZONS) as $horizon) {
-                    $due->orWhereNotExists(fn ($q) => $q->selectRaw('1')->from('swing_ideas')
-                        ->whereColumn('swing_ideas.symbol', 'saved.symbol')->where('rule_version', SwingIdeaRules::VERSION)
-                        ->where('horizon', $horizon)->where(fn ($review) => $review->where('reviewed_through', '>=', $date)
-                        ->orWhere('status', 'needs_update')));
-                }
-                // A current publication must not hide an older plan still awaiting its daily review.
-                $due->orWhereExists(fn ($q) => $q->selectRaw('1')->from('swing_ideas')
-                    ->whereColumn('swing_ideas.symbol', 'saved.symbol')->where('rule_version', SwingIdeaRules::VERSION)
-                    ->whereIn('status', ['watching', 'conditions_met', 'in_progress'])->where('reviewed_through', '<', $date));
-            })->orderBy('symbol')->distinct()->limit(500)->pluck('symbol')->all();
-            $known = array_values(array_unique([...$known, ...$this->replaceablePausedSymbols($date)]));
+            $universe = ProductUniverse::symbols();
+            $horizons = array_keys(SwingIdeaRules::HORIZONS);
+            $current = DB::table('swing_ideas')->whereIn('symbol', $universe)
+                ->where('rule_version', SwingIdeaRules::VERSION)->whereIn('horizon', $horizons)
+                ->where(fn ($review) => $review->where('reviewed_through', '>=', $date)->orWhere('status', 'needs_update'))
+                ->distinct()->get(['symbol', 'horizon'])->groupBy('symbol');
+            $known = array_values(array_filter($universe,
+                fn ($symbol) => $current->get($symbol, collect())->count() < count($horizons)));
+            // A current publication must not hide an older plan still awaiting its daily review.
+            $unreviewed = DB::table('swing_ideas')->whereIn('symbol', $universe)
+                ->where('rule_version', SwingIdeaRules::VERSION)
+                ->whereIn('status', ['watching', 'conditions_met', 'in_progress'])->where('reviewed_through', '<', $date)
+                ->distinct()->pluck('symbol')->all();
+            $known = array_values(array_unique([...$known, ...$unreviewed, ...$this->replaceablePausedSymbols($date, $universe)]));
             sort($known);
             $keys = array_map(fn ($s) => 'swing:attempt:'.$date.':'.$s, $known);
             $attempts = $keys ? Cache::many($keys) : [];
@@ -92,10 +94,10 @@ class RefreshSwingIdeas extends Command
         return $failed ? self::FAILURE : self::SUCCESS;
     }
 
-    private function replaceablePausedSymbols(string $date): array
+    private function replaceablePausedSymbols(string $date, array $universe): array
     {
         $paused = DB::table('swing_ideas')->where('rule_version', SwingIdeaRules::VERSION)->where('status', 'needs_update')
-            ->whereIn('symbol', DB::table('watchlists')->select('symbol')->distinct())
+            ->whereIn('symbol', $universe)
             ->orderBy('symbol')->orderBy('horizon')->orderByDesc('source_date')->limit(500)
             ->get(['symbol', 'horizon', 'current_state']);
         if ($paused->isEmpty()) {

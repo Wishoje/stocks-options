@@ -14,6 +14,36 @@ const plan = () => ({ id: 'original', symbol: 'SPY', horizon: 'short', source_da
 const latestPrice = overrides => ({ date: '2026-10-28', close: 100, distance_to_entry_pct: 6.2, entry_position: 'below', ...overrides })
 const mountPlan = overrides => mount(SwingIdeas, { props: { items: [{ ...plan(), ...overrides }], prepared: true, horizon: 'short', horizons, completedSession: '2026-10-28' } })
 describe('Swing ideas', () => {
+  it('defaults to all symbols and preserves the horizon when choosing a personal watchlist', async () => {
+    state.get.mockClear()
+    const w = mount(SwingIdeas, { props: { items: [plan()], prepared: true, horizon: 'position', horizons, symbolCount: 143 } })
+    const coverage = w.get('[aria-label="Swing symbol coverage"]')
+    expect(coverage.get('button[aria-pressed="true"]').text()).toBe('All symbols')
+    expect(w.get('.swing-coverage').text()).toContain('Ideas across all symbols followed by GexOptions. 143 symbols in this view.')
+    await coverage.get('button[aria-pressed="false"]').trigger('click')
+    expect(state.get).toHaveBeenLastCalledWith('/swing-ideas', { horizon: 'position', scope: 'watchlist' }, { preserveScroll: true })
+    w.unmount()
+  })
+
+  it('retains a personal scope when switching holding periods and demonstration links', async () => {
+    state.get.mockClear()
+    const w = mount(SwingIdeas, { props: { items: [plan()], prepared: true, horizon: 'short', horizons,
+      scope: 'watchlist', demonstration: true, symbolCount: 1 } })
+    expect(w.get('[aria-label="Swing symbol coverage"] button[aria-pressed="true"]').text()).toBe('My watchlist')
+    expect(w.get('.swing-coverage').text()).toContain('Ideas for your saved symbols.')
+    expect(w.get('.swing-intro a').attributes('href')).toBe('/swing-ideas?horizon=short&scope=watchlist')
+    await w.get('[aria-label="Swing holding period"] button[aria-pressed="false"]').trigger('click')
+    expect(state.get).toHaveBeenLastCalledWith('/swing-ideas', { horizon: 'position', scope: 'watchlist', demo: 1 }, { preserveScroll: true })
+    w.unmount()
+  })
+
+  it.each(['universe', 'watchlist'])('only suggests All symbols from an unprepared personal view (%s)', scope => {
+    const w = mount(SwingIdeas, { props: { items: [], prepared: false, horizon: 'short', horizons, scope } })
+    expect(w.get('.swing-empty h2').text()).toBe('Ideas are being prepared.')
+    expect(w.get('.swing-empty').text().includes('Choose All symbols')).toBe(scope === 'watchlist')
+    w.unmount()
+  })
+
   it('shows separate holding horizons and concrete trigger target invalidation and dates', async () => {
     const w = mount(SwingIdeas, { props: { items: [plan()], prepared: true, horizon: 'short', horizons, completedSession: '2026-10-23' } })
     expect(w.findAll('h1')).toHaveLength(1)
@@ -27,7 +57,7 @@ describe('Swing ideas', () => {
     expect(w.text()).not.toContain('Entry deadline')
     expect(w.text()).not.toContain('0% / 0%')
     await w.get('.swing-horizons button[aria-pressed="false"]').trigger('click')
-    expect(state.get).toHaveBeenCalledWith('/swing-ideas', { horizon: 'position' }, { preserveScroll: true })
+    expect(state.get).toHaveBeenCalledWith('/swing-ideas', { horizon: 'position', scope: 'universe' }, { preserveScroll: true })
     w.unmount()
   })
   it('keeps an available older idea readable and never fabricates an entry on an empty page', () => {
@@ -38,7 +68,7 @@ describe('Swing ideas', () => {
     w.unmount()
     const empty = mount(SwingIdeas, { props: { items: [], prepared: true, horizon: 'short', horizons } })
     expect(empty.text()).toContain('No qualifying swing ideas in this EOD review')
-    expect(empty.text()).not.toContain('Your swing ideas are being prepared')
+    expect(empty.text()).not.toContain('Ideas are being prepared')
     expect(empty.find('.swing-levels').exists()).toBe(false)
     empty.unmount()
   })

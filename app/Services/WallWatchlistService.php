@@ -2,9 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\Watchlist;
 use App\Support\MarketSession;
-use App\Support\Symbols;
+use App\Support\ProductUniverse;
 use App\Support\WallIntelligence\IntradayWallDemo;
 use App\Support\WallIntelligence\IntradayWallModel;
 use App\Support\WallIntelligence\WallAlertHistory;
@@ -19,7 +18,7 @@ use Illuminate\Support\Facades\DB;
 
 final class WallWatchlistService
 {
-    public function read(int $userId): array
+    public function read(int $userId, string $scope = 'watchlist'): array
     {
         $now = CarbonImmutable::now('UTC');
         $market = MarketSession::describe($now);
@@ -27,9 +26,9 @@ final class WallWatchlistService
         // Continue reading those saved outcomes without extending current-entry eligibility.
         $lifecycleUntil = $market['is_trading_day'] && $now->greaterThanOrEqualTo(CarbonImmutable::parse($market['opens_at']))
             ? CarbonImmutable::parse($market['closes_at'])->addMinutes(30) : null;
-        $symbols = Watchlist::where('user_id', $userId)->orderBy('symbol')->distinct()->pluck('symbol')
-            ->filter(fn ($symbol) => Symbols::isValid($symbol) && $symbol === Symbols::canon($symbol))->values()->all();
+        $symbols = ProductUniverse::symbols($scope === 'universe' ? null : $userId);
         $result = ['schema_version' => 'wall-watchlist.v1', 'session' => $market['session_date'],
+            'scope' => $scope,
             'timeframe' => IntradayWallTracker::LIVE_TIMEFRAME, 'generated_at' => $now->toIso8601String(),
             'quote_delay_seconds' => max(900, (int) config('wall_tracking.quote_delay_seconds')),
             'watchlist_count' => count($symbols), 'assessed_count' => 0,
@@ -43,14 +42,14 @@ final class WallWatchlistService
             return $result;
         }
         $cutoff = app(WallInteractionService::class)->cutoff($now);
-        $key = 'wall-watchlist:projection:v4:'.hash('sha256', json_encode([$userId, $symbols, $result['session']]));
-        [$models, $assessments] = Cache::remember($key, 30, function () use ($userId, $symbols, $result, $now, $cutoff) {
-            $models = $this->latest($userId, $symbols, $result['session'], 'intraday_capture', IntradayWallModel::SCHEMA,
+        $key = 'wall-watchlist:projection:v5:'.hash('sha256', json_encode([$scope, $scope === 'watchlist' ? $userId : null, $symbols, $result['session']]));
+        [$models, $assessments] = Cache::remember($key, 30, function () use ($symbols, $result, $now, $cutoff) {
+            $models = $this->latest($symbols, $result['session'], 'intraday_capture', IntradayWallModel::SCHEMA,
                 IntradayWallModel::MODEL, 'model_observation', 'scope->timeframe', $now)
                 ->select(['w.symbol', 'w.observed_at', 'w.payload_json->scope as scope', 'w.payload_json->scope_key as scope_key',
                     'w.payload_json->basis_key as basis_key', 'w.payload_json->provenance->quote_source as quote_source',
                     'w.payload_json->revision_of as revision_of', 'w.payload_json->walls as walls'])->get()->keyBy('symbol');
-            $assessments = $this->latest($userId, $symbols, $result['session'], 'wall_interactions', WallInteractionDetector::SCHEMA,
+            $assessments = $this->latest($symbols, $result['session'], 'wall_interactions', WallInteractionDetector::SCHEMA,
                 WallInteractionRules::VERSION, 'interaction_assessment', 'timeframe', $cutoff)
                 ->select(['w.symbol', 'w.observed_at', 'w.payload_json->current as current', 'w.payload_json->state as state',
                     'w.payload_json->setups->current as setups', 'w.payload_json->setups->rule_version as setup_rules',
@@ -166,7 +165,7 @@ final class WallWatchlistService
     }
 
     /** Two bounded projection queries, independent of the number of symbols. */
-    private function latest(int $userId, array $symbols, string $session, string $dataset, string $schema, string $version,
+    private function latest(array $symbols, string $session, string $dataset, string $schema, string $version,
         string $kind, string $scopePath, CarbonImmutable $cutoff): Builder
     {
         $base = DB::table('wall_observations')->whereColumn('wall_observations.symbol', 'saved.symbol')->where('dataset', $dataset)
@@ -182,11 +181,12 @@ final class WallWatchlistService
         } else {
             $base->where('payload_json->'.$scopePath, IntradayWallTracker::LIVE_TIMEFRAME);
         }
-        // Seek the newest indexed record for each saved symbol. Aggregating
+        // Seek the newest indexed record for each selected symbol. Aggregating
         // every assessment in the session repeatedly parses large JSON bundles.
         $newest = $base->select('wall_observations.id')->orderByDesc('observed_at')->orderByDesc('id')->limit(1);
-        $ids = DB::table('watchlists as saved')->where('saved.user_id', $userId)->whereIn('saved.symbol', $symbols)
-            ->selectSub($newest, 'latest_id')->distinct();
+        // Bind ticker values rather than depending on anyone's personal membership.
+        $selectedSymbols = implode(' union all ', array_fill(0, count($symbols), 'select ? as symbol'));
+        $ids = DB::query()->fromRaw('('.$selectedSymbols.') as saved', $symbols)->selectSub($newest, 'latest_id');
 
         // Materialize the distinct IDs once before projecting JSON by primary key.
         return DB::table('wall_observations as w')->joinSub($ids, 'latest_wall_ids',

@@ -1,5 +1,5 @@
 export const WALL_ALERTS = Symbol('wall-alerts')
-export const DEFAULT_WALL_ALERT_SETTINGS = Object.freeze({ enabled: true, testing: false, sound: false })
+export const DEFAULT_WALL_ALERT_SETTINGS = Object.freeze({ enabled: true, testing: true, sound: true })
 const validKey = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const sessionDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
 export const wallAlertSessionDate = now => sessionDateFormatter.format(new Date(now))

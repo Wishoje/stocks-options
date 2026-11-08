@@ -1,14 +1,16 @@
 import { computed, inject, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
 import { accountWallWatchlistFeed, createWallWatchlistFeed, WALL_WATCHLIST_OWNER } from '@/Support/wallWatchlistFeed'
 
-export function useWallWatchlist({ owner = inject(WALL_WATCHLIST_OWNER, ref(null)), active = ref(true) } = {}) {
+export function useWallWatchlist({ owner = inject(WALL_WATCHLIST_OWNER, ref(null)), active = ref(true), scope = ref('watchlist') } = {}) {
   const demo = ref(false), feed = shallowRef(null)
-  let release, privateFeed, demoFeed
-  const stop = watch(() => [toValue(owner), toValue(active), demo.value], ([id, enabled, example]) => {
+  let release, demoFeed
+  const privateFeeds = new Map()
+  const stop = watch(() => [toValue(owner), toValue(active), demo.value, toValue(scope)], ([id, enabled, example, selectedScope]) => {
     release?.(); release = null; feed.value = null
     if (!enabled) return
+    if (!privateFeeds.has(selectedScope)) privateFeeds.set(selectedScope, createWallWatchlistFeed(false, selectedScope))
     const source = example ? (demoFeed ||= createWallWatchlistFeed(true))
-      : id ? accountWallWatchlistFeed(String(id)) : (privateFeed ||= createWallWatchlistFeed())
+      : id ? accountWallWatchlistFeed(String(id), selectedScope) : privateFeeds.get(selectedScope)
     feed.value = source
     release = source.subscribe()
   }, { immediate: true, flush: 'sync' })

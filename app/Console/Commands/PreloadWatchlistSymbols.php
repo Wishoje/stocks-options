@@ -13,17 +13,16 @@ use App\Jobs\PublishEodCacheVersionJob;
 use App\Jobs\Seasonality5DJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\DB;
 
 class PreloadWatchlistSymbols extends Command
 {
     protected $signature = 'watchlist:preload';
 
-    protected $description = 'Preload EOD datasets for all unique watchlisted symbols.';
+    protected $description = 'Preload EOD datasets for the shared symbol universe.';
 
     public function handle(): int
     {
-        $symbols = DB::table('watchlists')->select('symbol')->distinct()->pluck('symbol')->all();
+        $symbols = \App\Support\ProductUniverse::symbols();
         if (! $symbols) {
             $this->info('No symbols to preload.');
 

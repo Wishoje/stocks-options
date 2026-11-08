@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\PublicSpyPreview;
+use App\Support\ProductUniverse;
 use App\Support\Swing\PausedSwingPlan;
 use App\Support\Swing\SwingIdeaRules;
 use Illuminate\Support\Facades\DB;
@@ -144,8 +145,8 @@ class SwingIdeaService
         return ['items' => $items, 'prepared' => true];
     }
 
-    /** Read the newest dated idea for each saved symbol without publishing private outcome research. */
-    public function readCustomerIdeas(int $userId, string $horizon): array
+    /** Read shared or personal dated ideas without publishing private outcome research. */
+    public function readCustomerIdeas(int $userId, string $horizon, string $scope = 'universe'): array
     {
         if (! Schema::hasTable('swing_ideas')) {
             return ['items' => [], 'prepared' => false];
@@ -161,7 +162,7 @@ class SwingIdeaService
                 $remaining--;
             }
         }
-        $symbols = DB::table('watchlists')->where('user_id', $userId)->select('symbol')->distinct();
+        $symbols = ProductUniverse::symbols($scope === 'watchlist' ? $userId : null);
         $newest = DB::table('swing_ideas')->whereIn('symbol', $symbols)->where('horizon', $horizon)
             ->where('rule_version', SwingIdeaRules::VERSION)->where('original_plan->status', 'watching')
             ->whereBetween('source_date', [$cutoff->toDateString(), $completedSession])
@@ -195,7 +196,8 @@ class SwingIdeaService
             }
         }
 
-        return ['items' => $items, 'prepared' => true, 'presentation' => \App\Support\CustomerIdeaPresentation::VERSION];
+        return ['items' => $items, 'prepared' => true, 'symbolCount' => count($symbols),
+            'presentation' => \App\Support\CustomerIdeaPresentation::VERSION];
     }
 
     /** Read-time price context; original plan evidence and entry conditions stay frozen. */

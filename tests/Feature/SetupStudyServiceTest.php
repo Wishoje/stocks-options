@@ -215,17 +215,17 @@ class SetupStudyServiceTest extends TestCase
         DB::table('watchlists')->insert(['user_id' => 1, 'symbol' => 'QQQ']);
         $before = $this->rawSnapshot();
         $service = new SetupStudyService;
-        $first = $service->collect(self::OWNER, 1);
+        $first = $service->collect(self::OWNER, 2);
         $payloads = DB::table('setup_study_records')->orderBy('id')->pluck('payload', 'sample_id')->all();
-        $second = $service->collect(self::OWNER, 1);
+        $second = $service->collect(self::OWNER, 2);
 
-        $this->assertSame(1, $first['symbols']);
+        $this->assertSame(2, $first['symbols']);
         $this->assertSame(2, $first['records']);
         $this->assertSame(2, $second['records']);
         $this->assertSame(2, DB::table('setup_study_records')->count());
         $this->assertSame($payloads, DB::table('setup_study_records')->orderBy('id')->pluck('payload', 'sample_id')->all());
         $this->assertSame($before, $this->rawSnapshot());
-        $this->assertSame(['SPY' => '2026-10-28'], Cache::get('setup-study:covered:'.self::OWNER));
+        $this->assertSame(['QQQ' => '2026-10-28', 'SPY' => '2026-10-28'], Cache::get('setup-study:covered:'.self::OWNER));
         $report = $service->report(self::OWNER, [...$this->filters(), 'cohort' => 'swing_short']);
         $this->assertSame(1, $report['summary']['completed']);
         $this->assertSame('target_reached', $report['rows'][0]['metrics']['strict_outcome']);
@@ -317,7 +317,7 @@ class SetupStudyServiceTest extends TestCase
         Bus::assertNothingDispatched();
     }
 
-    public function test_coverage_uses_only_the_current_owner_universe_and_stays_read_only_with_bounded_queries(): void
+    public function test_coverage_uses_the_shared_universe_and_owner_records_with_bounded_read_only_queries(): void
     {
         DB::table('watchlists')->insert([
             ['user_id' => self::OWNER, 'symbol' => 'SPY'], ['user_id' => self::OWNER, 'symbol' => 'SPY'],
@@ -332,7 +332,7 @@ class SetupStudyServiceTest extends TestCase
         DB::flushQueryLog();
 
         $report = (new SetupStudyService)->report(self::OWNER, [...$this->filters(), 'symbol' => 'NO-MATCH']);
-        $this->assertSame(['collected_symbols' => 2, 'total_symbols' => 3, 'first_pass_complete' => false], $report['coverage']);
+        $this->assertSame(['collected_symbols' => 2, 'total_symbols' => 4, 'first_pass_complete' => false], $report['coverage']);
         $this->assertSame([], $report['rows']);
         $this->assertLessThanOrEqual(5, count(DB::getQueryLog()));
         foreach (DB::getQueryLog() as $query) {
@@ -348,6 +348,31 @@ class SetupStudyServiceTest extends TestCase
         Cache::put('setup-study:covered:'.self::OWNER, ['REMOVED' => '2026-10-28']);
         $this->assertSame(['collected_symbols' => 0, 'total_symbols' => 0, 'first_pass_complete' => true],
             (new SetupStudyService)->report(self::OWNER, $this->filters())['coverage']);
+    }
+
+    public function test_configured_symbol_is_archived_without_a_personal_watchlist_and_study_stays_private(): void
+    {
+        $this->completedSwing();
+        DB::table('watchlists')->delete();
+        config(['product_universe.enabled' => true, 'product_universe.symbols' => ['SPY']]);
+
+        $service = new SetupStudyService;
+        $result = $service->collect(self::OWNER, 6);
+
+        $this->assertSame(1, $result['total_symbols']);
+        $this->assertSame(2, $result['records']);
+        $this->assertSame(['SPY'], DB::table('setup_study_records')->distinct()->pluck('symbol')->all());
+        $this->assertSame([self::OWNER], DB::table('setup_study_records')->distinct()->pluck('owner_id')->all());
+        $this->assertSame(['collected_symbols' => 1, 'total_symbols' => 1, 'first_pass_complete' => true],
+            $service->report(self::OWNER, $this->filters())['coverage']);
+        $this->assertSame(0, DB::table('watchlists')->count());
+
+        $this->signIn(1);
+        $this->get('/setup-study')->assertForbidden();
+        $this->getJson('/api/setup-study?owner_id='.self::OWNER)->assertForbidden();
+        $this->postJson('/api/setup-study/refresh', ['owner_id' => self::OWNER])->assertForbidden();
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
     }
 
     public function test_collection_catches_up_retained_days_after_an_outage_without_unbounded_backfill(): void

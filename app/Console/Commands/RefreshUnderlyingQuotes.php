@@ -34,15 +34,7 @@ class RefreshUnderlyingQuotes extends Command
         $symbols = collect();
 
         if (in_array($source, ['watchlist', 'both'], true)) {
-            $symbols = $symbols->merge(
-                $durable
-                    ? DB::table('watchlists')
-                        ->whereNotNull('symbol')
-                        ->whereRaw("TRIM(symbol) <> ''")
-                        ->selectRaw('UPPER(TRIM(symbol)) as symbol')
-                        ->distinct()->orderBy('symbol')->pluck('symbol')
-                    : DB::table('watchlists')->pluck('symbol')
-            );
+            $symbols = $symbols->merge(\App\Support\ProductUniverse::symbols());
         }
 
         if (in_array($source, ['hot', 'both'], true)) {

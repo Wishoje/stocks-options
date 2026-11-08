@@ -28,13 +28,8 @@ class WatchlistController extends Controller
 
     public function universe()
     {
-        return Watchlist::query()
-            ->select('symbol')
-            ->distinct()
-            ->orderBy('symbol')
-            ->get()
-            ->map(fn (Watchlist $row) => ['symbol' => $row->symbol])
-            ->values();
+        return collect(\App\Support\ProductUniverse::symbols())
+            ->map(fn (string $symbol) => ['symbol' => $symbol]);
     }
 
     public function store(

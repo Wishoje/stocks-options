@@ -41,11 +41,12 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-30T14:
 afterEach(() => { wrappers.splice(0).forEach(w=>w.unmount()); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('wall alert controls and shared polling', () => {
-  it('starts setup alerts automatically without sound or testing and offers a dismissible test notification', async () => {
+  it('starts all alert options enabled and waits for a user action to activate sound', async () => {
     const { wrapper } = render()
     await flushPromises()
     expect(wrapper.get('.alert-switch input').element.checked).toBe(true)
-    expect(wrapper.findAll('.alert-options input').every(input => !input.element.checked)).toBe(true)
+    expect(wrapper.findAll('.alert-options input').every(input => input.element.checked)).toBe(true)
+    expect(wrapper.text()).toContain('Click Test alert to activate sound for this visit.')
     expect(axios.get).toHaveBeenCalledTimes(1)
     await wrapper.get('.alert-options button').trigger('click'); await flushPromises()
     expect(document.body.textContent).toContain('Example notification. No market event.')
@@ -59,6 +60,17 @@ describe('wall alert controls and shared polling', () => {
     document.querySelector('[aria-label="Dismiss test wall alert"]').click(); await flushPromises()
     expect(document.querySelector('.wall-alert-toast')).toBeNull()
     expect(document.querySelector('.wall-alert-notifications').getAttribute('aria-live')).toBe('polite')
+  })
+  it('keeps explicitly disabled testing and sound preferences after reopening the account', async () => {
+    const owner = ref(++id)
+    localStorage.setItem(`gex:wall-alert-settings:v1:${owner.value}`, JSON.stringify({ enabled: true, testing: false, sound: false }))
+    const first = render({ owner }); await flushPromises()
+    expect(first.alerts.settings.value).toEqual({ enabled: true, testing: false, sound: false })
+    expect(first.wrapper.findAll('.alert-options input').every(input => !input.element.checked)).toBe(true)
+    first.wrapper.unmount()
+    const second = render({ owner }); await flushPromises()
+    expect(second.alerts.settings.value).toEqual({ enabled: true, testing: false, sound: false })
+    expect(second.wrapper.text()).not.toContain('Click Test alert to activate sound')
   })
   it('preserves a popup opt-out while still reading daily history', async () => {
     const owner = ref(++id)
@@ -391,9 +403,8 @@ describe('wall alert controls and shared polling', () => {
   it('fails quietly when sound is unsupported and preserves visual alerts', async () => {
     vi.stubGlobal('AudioContext', undefined); vi.stubGlobal('webkitAudioContext', undefined)
     const { wrapper } = render(); await flushPromises()
-    await wrapper.findAll('.alert-options input')[1].setValue(true); await flushPromises()
-    expect(wrapper.text()).toContain('On-screen alerts still work')
     await wrapper.get('.alert-options button').trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('On-screen alerts still work')
     expect(document.querySelector('.wall-alert-toast')).not.toBeNull()
   })
 
@@ -494,7 +505,7 @@ describe('wall alert controls and shared polling', () => {
     expect(alerts.unreadCount.value).toBe(0)
     expect(document.querySelectorAll('.wall-inbox-item')).toHaveLength(2)
     expect(document.querySelector('.unread-label')).toBeNull()
-    expect(alerts.settings.value).toEqual({ enabled: true, testing: false, sound: false })
+    expect(alerts.settings.value).toEqual({ enabled: true, testing: true, sound: true })
   })
   it('opens a keyboard-accessible panel and keeps preview examples out of saved and unread alerts', async () => {
     const { wrapper, alerts, owner } = render(); await flushPromises()
@@ -724,7 +735,9 @@ describe('server history recovery independent of browser presence', () => {
   it('does not recover testing history until opted in, and never creates a trade setup from it', async () => {
     vi.setSystemTime(new Date('2026-09-30T21:00:00Z'))
     axios.get.mockResolvedValue({ data: dayFeed([archived('d', { status: 'testing', setup: null, lifecycle: null })]) })
-    const { alerts, wrapper } = render(); await flushPromises()
+    const owner = ref(++id)
+    localStorage.setItem(`gex:wall-alert-settings:v1:${owner.value}`, JSON.stringify({ testing: false }))
+    const { alerts, wrapper } = render({ owner }); await flushPromises()
     expect(alerts.history.value).toEqual([])
     alerts.update({ testing: true }); await flushPromises()
     expect(alerts.history.value).toHaveLength(1)

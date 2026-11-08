@@ -356,13 +356,7 @@ class RepairMissingWatchlistSymbols extends Command
                 ->all();
         }
 
-        return DB::table('watchlists')
-            ->pluck('symbol')
-            ->map(fn ($s) => Symbols::canon((string) $s))
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
+        return \App\Support\ProductUniverse::symbols();
     }
 
     protected function resolveTargetDate(string $dateOpt): ?string
