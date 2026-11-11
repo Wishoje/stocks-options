@@ -241,6 +241,32 @@ class SwingReactionStudyTest extends TestCase
         $this->assertSame(2, $service->report(1, [...$filters, 'rule_version' => 'all'])['summary']['total']);
     }
 
+    public function test_incremental_archive_skips_unchanged_records_and_never_replays_legacy_history(): void
+    {
+        (require database_path('migrations/0001_01_01_000000_create_users_table.php'))->up();
+        (require database_path('migrations/2026_10_28_000000_create_setup_study_records_table.php'))->up();
+        DB::table('users')->insert(['id' => 1, 'name' => 'Owner', 'email' => 'owner@example.test', 'password' => 'unused']);
+        $this->insert(['status' => 'cancelled', 'outcome' => 'target_before_entry', 'outcome_at' => '2026-11-10T17:00:00Z']);
+        $forbidden = new class
+        {
+            public function read(...$arguments): array
+            {
+                throw new \RuntimeException('Legacy history must not be read by the incremental archive.');
+            }
+        };
+        app()->instance(IntradayStudySource::class, $forbidden);
+        app()->instance(SwingStudySource::class, $forbidden);
+        $archive = new \App\Services\SetupStudy\SwingReactionStudyArchive;
+        $this->assertSame(1, $archive->collect(1));
+        $this->assertSame(0, $archive->collect(1));
+        $payload = json_decode(DB::table('setup_study_records')->value('payload'), true);
+        $this->assertFalse($payload['qualified']);
+        $this->assertNull($payload['metrics']['strict_outcome']);
+        $this->assertSame('target_before_entry', $payload['outcome']);
+        $this->assertSame('swing_short', DB::table('setup_study_records')->value('cohort'));
+        Http::assertNothingSent();
+    }
+
     private function samples(array $symbols = ['SPY']): array
     {
         return (new SwingReactionStudySource)->read($symbols, '2026-11-06', '2026-11-10')['samples'];

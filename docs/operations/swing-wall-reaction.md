@@ -32,6 +32,8 @@ Run an initial shared-universe assessment with `php artisan swing:react --all`. 
 
 Collection reuses existing EOD structure and retained five-minute price bundles. It creates no provider requests, queue jobs or extra queue workers. Existing wall-price ingestion must remain enabled. Prices retain the existing fifteen-minute delay and completion buffer. New publications cannot claim past entries merely because historical price bars are available.
 
+Each collection tick also archives changed v2 scenarios to the owner’s Study in a compact batch of at most two hundred records. It does not replay the legacy intraday archive. The original bounded Study collector remains available for historical cohorts.
+
 Only changed source bundles are pinned. Symbols without active scenarios skip price pinning. A daily bounded `swing:prune-prices` task removes shared price observations older than ninety days when no active scenario needs them. Plans, transition reviews and Study records are retained.
 
 Rollback the customer route and scheduler to the previous release if necessary. Leave the additive tables and existing Study records intact; no destructive rollback is required.

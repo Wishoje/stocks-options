@@ -14,6 +14,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class CollectSwingReactions extends Command
 {
@@ -88,6 +89,12 @@ class CollectSwingReactions extends Command
                 Cache::put('swing:reaction:cursor:v2', ($cursor + $result['symbols']) % count($symbols), now()->addDays(7));
             }
             Cache::put('swing:reaction:last:v2', [...$result, 'at' => now('UTC')->toIso8601String()], now()->addDays(7));
+            if (config('setup_study.enabled') && Schema::hasTable('users')) {
+                $owner = DB::table('users')->where('email', config('setup_study.owner_email'))->value('id');
+                if ($owner) {
+                    $result['study_records'] = app(\App\Services\SetupStudy\SwingReactionStudyArchive::class)->collect((int) $owner);
+                }
+            }
             $this->line(json_encode($result));
 
             return self::SUCCESS;
