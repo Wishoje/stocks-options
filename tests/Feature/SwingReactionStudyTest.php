@@ -214,7 +214,8 @@ class SwingReactionStudyTest extends TestCase
         app()->instance(IntradayStudySource::class, $empty);
         app()->instance(SwingStudySource::class, $empty);
         $id = $this->insert($this->entered(['status' => 'completed', 'outcome' => 'target_reached',
-            'outcome_at' => '2026-11-10T17:00:00Z']));
+            'outcome_at' => '2026-11-10T17:00:00Z',
+            'tier' => $this->tier('gold', 'swing-idea-tier.v1', '2026-11-06T14:00:00Z')]));
         $oldId = hash('sha256', 'old-close-plan');
         $old = ['id' => $oldId, 'symbol' => 'SPY', 'direction' => 'bullish', 'pattern' => 'wall_pullback_reclaim',
             'rule_version' => 'swing-wall-reclaim.v1.1', 'metric_version' => 'recorded-close-study.v1',
@@ -233,12 +234,21 @@ class SwingReactionStudyTest extends TestCase
         $this->assertSame(1, $report['summary']['strict_target']['hits']);
         $this->assertSame(['swing-wall-reaction.v2', 'swing-wall-reclaim.v1.1'], array_column($report['breakdowns']['rule_versions'], 'label'));
         $this->assertSame(['price-touch-study.v2', 'recorded-close-study.v1'], array_column($report['breakdowns']['measurement_methods'], 'label'));
+        $this->assertSame([['label' => 'Gold · swing-idea-tier.v1', 'hits' => 1]],
+            array_map(fn ($row) => ['label' => $row['label'], 'hits' => $row['strict_target']['hits']], $report['breakdowns']['tiers']));
         $this->assertSame($before, DB::table('setup_study_records')->where('sample_id', $oldId)->value('payload'));
         $this->assertNotNull(DB::table('setup_study_records')->where('sample_id', $id)->first());
         $filters = ['cohort' => 'swing_short', 'from' => '2026-11-06', 'to' => '2026-11-10'];
         $this->assertSame(1, $service->report(1, [...$filters, 'rule_version' => 'swing-wall-reaction.v2'])['summary']['total']);
         $this->assertSame(1, $service->report(1, [...$filters, 'rule_version' => 'swing-wall-reclaim.v1.1'])['summary']['total']);
         $this->assertSame(2, $service->report(1, [...$filters, 'rule_version' => 'all'])['summary']['total']);
+        $stored = json_decode(DB::table('setup_study_records')->where('sample_id', $id)->value('payload'), true);
+        $stored['tier']['assigned_at'] = '2026-11-11T14:00:00Z';
+        DB::table('setup_study_records')->where('sample_id', $id)->update(['payload' => json_encode($stored)]);
+        $earlier = $service->report(1, $filters);
+        $this->assertSame('Not assigned', $earlier['breakdowns']['tiers'][0]['label']);
+        $this->assertNull(collect($earlier['rows'])->firstWhere('id', $id)['tier']);
+        $this->assertSame('gold', json_decode(DB::table('setup_study_records')->where('sample_id', $id)->value('payload'), true)['tier']['key']);
     }
 
     public function test_incremental_archive_skips_unchanged_records_and_never_replays_legacy_history(): void
@@ -265,6 +275,68 @@ class SwingReactionStudyTest extends TestCase
         $this->assertSame('target_before_entry', $payload['outcome']);
         $this->assertSame('swing_short', DB::table('setup_study_records')->value('cohort'));
         Http::assertNothingSent();
+    }
+
+    public function test_tier_metadata_is_frozen_and_only_appears_after_its_recorded_assignment(): void
+    {
+        $gold = $this->tier('gold', 'swing-idea-tier.v1', '2026-11-10T16:00:00Z');
+        $this->insert(['tier' => $gold]);
+        $sample = $this->samples()[0];
+        $this->assertSame($gold, $sample['tier']);
+        $this->assertSame($gold, (new SwingReactionStudyMetrics)->measure($sample)['tier']);
+
+        $historical = (new SwingReactionStudySource)->read(['SPY'], '2026-11-06', '2026-11-09');
+        $this->assertNull($historical['samples'][0]['tier']);
+        $this->assertNull($historical['samples'][0]['native_outcome']);
+    }
+
+    public function test_a_publication_tier_is_not_replaced_by_later_state_metadata_or_outcomes(): void
+    {
+        $id = $this->insert($this->entered(['status' => 'completed', 'outcome' => 'stop_reached',
+            'outcome_at' => '2026-11-10T17:00:00Z', 'tier' => $this->tier('bronze', 'future.v2', '2026-11-10T16:00:00Z')]));
+        $original = $this->plan(['tier' => $this->tier('gold', 'swing-idea-tier.v1', '2026-11-06T14:00:00Z')]);
+        DB::table('swing_reaction_ideas')->where('id', $id)->update(['original_plan' => json_encode($original)]);
+
+        $sample = $this->samples()[0];
+        $this->assertSame('gold', $sample['tier']['key']);
+        $this->assertSame('swing-idea-tier.v1', $sample['tier']['version']);
+        $this->assertSame('invalidated', (new SwingReactionStudyMetrics)->measure($sample)['metrics']['strict_outcome']);
+    }
+
+    public function test_incremental_archive_backfills_missing_tiers_but_preserves_a_previously_recorded_version(): void
+    {
+        (require database_path('migrations/0001_01_01_000000_create_users_table.php'))->up();
+        (require database_path('migrations/2026_10_28_000000_create_setup_study_records_table.php'))->up();
+        DB::table('users')->insert(['id' => 1, 'name' => 'Owner', 'email' => 'owner@example.test', 'password' => 'unused']);
+        $id = $this->insert(['status' => 'cancelled', 'outcome' => 'target_before_entry', 'outcome_at' => '2026-11-10T17:00:00Z']);
+        $archive = new \App\Services\SetupStudy\SwingReactionStudyArchive;
+        $this->assertSame(1, $archive->collect(1));
+        $before = json_decode(DB::table('setup_study_records')->value('payload'), true);
+        $this->assertNull($before['tier']);
+
+        $this->travel(1)->minutes();
+        $state = json_decode(DB::table('swing_reaction_ideas')->where('id', $id)->value('current_state'), true);
+        $gold = $this->tier('gold', 'swing-idea-tier.v1', now('UTC')->toIso8601String());
+        $state['tier'] = $gold;
+        DB::table('swing_reaction_ideas')->where('id', $id)->update(['current_state' => json_encode($state), 'updated_at' => now()]);
+        $this->assertSame(1, $archive->collect(1));
+        $ranked = json_decode(DB::table('setup_study_records')->value('payload'), true);
+        $this->assertSame($gold, $ranked['tier']);
+        $this->assertSame($before['metrics'], $ranked['metrics']);
+        $this->assertSame($before['outcome'], $ranked['outcome']);
+
+        $this->travel(1)->minutes();
+        $state['tier'] = $this->tier('bronze', 'future.v2', now('UTC')->toIso8601String());
+        DB::table('swing_reaction_ideas')->where('id', $id)->update(['current_state' => json_encode($state), 'updated_at' => now()]);
+        $this->assertSame(1, $archive->collect(1));
+        $this->assertSame($gold, json_decode(DB::table('setup_study_records')->value('payload'), true)['tier']);
+    }
+
+    private function tier(string $key, string $version, string $assigned): array
+    {
+        return ['key' => $key, 'label' => ucfirst($key), 'rank' => $key === 'gold' ? 3 : 1,
+            'version' => $version, 'assigned_at' => $assigned, 'reasons' => ['Recorded publication geometry'],
+            'tradeoffs' => [], 'metrics' => ['reward_risk' => 2]];
     }
 
     private function samples(array $symbols = ['SPY']): array

@@ -121,4 +121,49 @@ class SwingReactionServiceTest extends TestCase
         Http::assertNothingSent();
         Bus::assertNothingDispatched();
     }
+
+    public function test_assigning_tiers_preserves_originals_and_every_price_state_and_is_idempotent(): void
+    {
+        $this->idea('a', 'SPY');
+        $this->idea('b', 'SPY', 'completed');
+        $before = DB::table('swing_reaction_ideas')->orderBy('id')->get();
+        $this->artisan('swing:assign-tiers --dry-run')->assertSuccessful();
+        $this->assertSame(0, DB::table('swing_reaction_reviews')->count());
+        $this->assertEquals($before, DB::table('swing_reaction_ideas')->orderBy('id')->get());
+        $this->artisan('swing:assign-tiers')->assertSuccessful();
+        foreach ($before as $row) {
+            $after = DB::table('swing_reaction_ideas')->where('id', $row->id)->first();
+            $this->assertSame($row->original_plan, $after->original_plan);
+            $this->assertSame($row->status, $after->status);
+            $state = json_decode($after->current_state, true);
+            $this->assertSame('swing-tier.v1', $state['tier']['version']);
+            $this->assertNotEmpty($state['tier']['assigned_at']);
+            unset($state['tier']);
+            $this->assertSame(json_decode($row->current_state, true), $state);
+        }
+        $this->assertSame(2, DB::table('swing_reaction_reviews')->count());
+        $this->artisan('swing:assign-tiers')->assertSuccessful();
+        $this->assertSame(2, DB::table('swing_reaction_reviews')->count());
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_gold_sorts_first_within_status_without_becoming_a_ready_signal(): void
+    {
+        DB::table('watchlists')->insert([['user_id' => 1, 'symbol' => 'SPY'], ['user_id' => 2, 'symbol' => 'QQQ']]);
+        $this->idea('a', 'QQQ');
+        $this->idea('b', 'SPY');
+        $row = DB::table('swing_reaction_ideas')->where('id', 'b')->first();
+        $state = json_decode($row->current_state, true);
+        $state['tier'] = ['version' => 'swing-tier.v1', 'key' => 'gold', 'label' => 'Gold', 'rank' => 1];
+        DB::table('swing_reaction_ideas')->where('id', 'b')->update(['current_state' => json_encode($state)]);
+        $read = (new SwingReactionService)->read(1, 'short');
+        $this->assertSame(['SPY', 'QQQ'], array_column($read['items'], 'symbol'));
+        $this->assertSame('watching', $read['items'][0]['status']);
+        $this->assertSame('gold', $read['items'][0]['tier']['key']);
+        $row = DB::table('swing_reaction_ideas')->where('id', 'a')->first();
+        $state = [...json_decode($row->current_state, true), 'status' => 'ready'];
+        DB::table('swing_reaction_ideas')->where('id', 'a')->update(['status' => 'ready', 'current_state' => json_encode($state)]);
+        $this->assertSame(['QQQ', 'SPY'], array_column((new SwingReactionService)->read(1, 'short')['items'], 'symbol'));
+    }
 }

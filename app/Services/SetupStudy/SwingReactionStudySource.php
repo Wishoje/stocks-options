@@ -57,7 +57,8 @@ final class SwingReactionStudySource
             }
             $updated = $this->instant($row->updated_at);
             $review = $reviews->get($row->id);
-            $state = $updated && $updated <= $cutoff ? $this->decode($row->current_state)
+            $retainedState = $this->decode($row->current_state);
+            $state = $updated && $updated <= $cutoff ? $retainedState
                 : ($review ? $this->decode($review->state_json) : $original);
             if (! $state) {
                 $result['warnings'][] = 'A swing reaction plan contains unreadable retained state.';
@@ -77,6 +78,7 @@ final class SwingReactionStudySource
                 'id' => (string) $row->id, 'mode' => 'swing', 'metric_basis' => 'price_touch',
                 'horizon' => $row->horizon, 'symbol' => $row->symbol, 'session' => $row->source_date,
                 'source_date' => $row->source_date, 'rule_version' => $row->rule_version,
+                'tier' => $this->tier($original, $retainedState, $cutoff),
                 'timeframe' => $row->horizon === 'short' ? '30d' : '90d',
                 'pattern' => $original['pattern'] ?? null, 'direction' => $original['direction'] ?? null,
                 'side' => $original['side'] ?? null,
@@ -110,6 +112,23 @@ final class SwingReactionStudySource
         $result['warnings'] = array_values(array_unique($result['warnings']));
 
         return $result;
+    }
+
+    /** Tier inputs are frozen original evidence, but assignment must already be known at the report cutoff. */
+    private function tier(array $original, array $retainedState, CarbonImmutable $cutoff): ?array
+    {
+        foreach ([$original['tier'] ?? null, $retainedState['tier'] ?? null] as $tier) {
+            if (! is_array($tier) || ! in_array($tier['key'] ?? null, ['gold', 'silver', 'bronze'], true)
+                || ! is_string($tier['version'] ?? null) || $tier['version'] === '') {
+                continue;
+            }
+            $assigned = $this->instant($tier['assigned_at'] ?? null);
+            if ($assigned && $assigned <= $cutoff) {
+                return $tier;
+            }
+        }
+
+        return null;
     }
 
     private function decode(mixed $json): array

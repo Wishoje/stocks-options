@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Support\ProductUniverse;
 use App\Support\PublicSpyPreview;
+use App\Support\Swing\SwingIdeaTier;
 use App\Support\Swing\SwingReactionRules;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -58,6 +59,8 @@ class SwingReactionService
                 $id = hash('sha256', json_encode([SwingReactionRules::VERSION, $input['symbol'], $input['data_date'], $this->key($plan)]));
                 $plan = [...$plan, 'id' => $id, 'first_recorded_at' => $now->toIso8601String(),
                     'source_version' => $input['source_version'] ?? null, 'volatility_version' => $input['volatility_version'] ?? null];
+                $plan['tier'] = [...(new SwingIdeaTier)->assess($plan), 'assigned_at' => $now->toIso8601String(),
+                    'basis_date' => $plan['source_date']];
                 $json = json_encode($plan, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
                 $created += DB::table('swing_reaction_ideas')->insertOrIgnore([
                     'id' => $id, 'symbol' => $input['symbol'], 'horizon' => $plan['horizon'],
@@ -155,8 +158,12 @@ class SwingReactionService
             $public['next_condition'] = ['text' => $state['next_condition'] ?? $state['reason'] ?? 'Watch the price sequence at this wall.'];
             $public['latest_price'] = isset($state['last_price'], $state['last_at']) ? ['value' => $state['last_price'], 'at' => $state['last_at']] : null;
             $public['scope_label'] = SwingReactionRules::HORIZONS[$horizon]['scope_label'];
+            $public['tier'] = is_array($state['tier'] ?? null) ? $state['tier'] : (new SwingIdeaTier)->assess($state);
             $items[] = $public;
         }
+        $statuses = ['ready' => 0, 'entry_touched' => 1, 'watching' => 2];
+        usort($items, fn ($a, $b) => [$statuses[$a['status']], $a['tier']['rank'], $a['symbol'], $a['pattern'], $a['id']]
+            <=> [$statuses[$b['status']], $b['tier']['rank'], $b['symbol'], $b['pattern'], $b['id']]);
 
         return ['prepared' => true, 'items' => $items, 'symbolCount' => count($symbols),
             'evaluatedAt' => $evaluated ? CarbonImmutable::parse($evaluated, 'UTC')->toIso8601String() : null,

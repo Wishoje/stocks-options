@@ -11,6 +11,7 @@ const wrappers = []
 const reaction = {
   id: 'reaction-1', symbol: 'SPY', direction: 'bullish', horizon: 'short', pattern: 'hold_reclaim',
   rule_version: 'swing-wall-reaction.v2', metric_version: 'price-touch-study.v2', metric_basis: 'price_touch',
+  tier: { key: 'gold', label: 'Gold', version: 'swing-idea-tier.v1', assigned_at: '2026-11-06T14:00:00Z' },
   signal_at: '2026-11-09T15:00:00Z', available_at: '2026-11-06T14:00:00Z',
   status: 'completed', outcome: 'target_reached', qualified: true, followup_complete: true, needs_update: false,
   signal_price: 101, entry_low: 100.5, entry_high: 101, invalidation: 99, target: 105,
@@ -23,6 +24,7 @@ const report = () => ({
   methodology: {}, breakdowns: {
     rule_versions: [{ label: 'swing-wall-reaction.v2', total: 1, completed: 1 }],
     measurement_methods: [{ label: 'price-touch-study.v2', total: 1, completed: 1 }],
+    tiers: [{ label: 'Gold · swing-idea-tier.v1', total: 1, completed: 1 }],
   },
 })
 
@@ -38,6 +40,9 @@ describe('Touch-based swing study', () => {
     expect(cell('Rule version')).toBe('"swing-wall-reaction.v2"')
     expect(cell('Measurement method')).toBe('"Observed price touches"')
     expect(cell('Measurement version')).toBe('"price-touch-study.v2"')
+    expect(cell('Idea tier')).toBe('"Gold"')
+    expect(cell('Tier version')).toBe('"swing-idea-tier.v1"')
+    expect(cell('Tier assigned time (ET)')).toContain('Nov 6, 2026')
     expect(cell('Advanced: Best close R')).toBe('""')
     expect(cell('Advanced: Best range move R')).toBe('"2"')
   })
@@ -47,6 +52,7 @@ describe('Touch-based swing study', () => {
     expect(wrapper.text()).toContain('Before entry: 1 cancelled · 1 entry windows ended')
     expect(wrapper.text()).toContain('By strategy version')
     expect(wrapper.text()).toContain('By measurement method')
+    expect(wrapper.text()).toContain('By frozen idea tier')
     expect(wrapper.text()).toContain('Wall reactions v2 uses observed ranges after the entry touch')
     await wrapper.get('.study-inspect').trigger('click')
     expect(wrapper.get('.study-detail-content').text()).toContain('Observed price bars20')

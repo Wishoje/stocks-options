@@ -41,6 +41,11 @@ final class SwingReactionStudyArchive
                         continue;
                     }
                     $measurement = (new SwingReactionStudyMetrics)->measure($sample, $now);
+                    $old = $existing->has($sample['id'])
+                        ? json_decode($existing->get($sample['id'])->payload, true, flags: JSON_THROW_ON_ERROR) : [];
+                    if (is_array($old['tier'] ?? null)) {
+                        $measurement['tier'] = $old['tier'];
+                    }
                     $date = CarbonImmutable::parse($sample['signal_at'] ?? $sample['first_recorded_at'])->setTimezone('America/New_York')->toDateString();
                     $measurement['study_date'] = $date;
                     $measurement['collected_at'] = $now->toIso8601String();

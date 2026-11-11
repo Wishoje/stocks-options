@@ -22,6 +22,18 @@ Original plans are immutable. New daily structure can withdraw an unentered scen
 
 The owner-only Setup Study defaults to the v2 strategy for swing cohorts. The original daily-close version remains selectable. CSV includes the rule and measurement versions. Before-entry cancellations and no-entry scenarios are recorded separately from completed, entered outcomes. Ambiguous observations are excluded from verified target rates.
 
+## Structure tiers
+
+`swing-tier.v1` classifies the original published idea as Gold, Silver or Bronze. The tier is separate from readiness and does not alter price predicates, entry windows, stops or outcomes. Within each lifecycle status, the active list places Gold before Silver before Bronze. The tier filter does not remove lower tiers from the default view.
+
+Gold requires all of: at least 2.5 times target room versus risk, stop distance no more than 3.5% of the conservative entry reference, entry distance no more than 1.5% from the original EOD price, at most 40% of watched-wall exposure expiring before the maximum review ends, at most 25% of target exposure rolling off, relative wall magnitude at least two, and a direction consistent with the original price versus its twenty-day average.
+
+Silver requires at least 1.8 times target room, stop distance no more than 6%, entry distance no more than 5%, watched-wall rolloff no more than 80%, target rolloff no more than 50% and relative wall magnitude at least 1.5. Other ideas are Bronze. These are comparison rules, not calibrated success probabilities. The rule does not include a live earnings calendar or option bid/ask execution costs.
+
+Wall rolloff and target rolloff refer to different strikes. Watched-wall expiry shares are normalized using absolute exposure weights. Percent returns and risk distances use the far entry-area edge, not the current stock price. Later prices cannot upgrade the original grade.
+
+New ideas receive a frozen tier at publication. For previously published v2 ideas, `php artisan swing:assign-tiers --dry-run` previews a bounded metadata assignment and `php artisan swing:assign-tiers` saves it. Original plans, levels, price events and outcomes remain unchanged. Assignment time and rubric version are retained in transition reviews and the owner’s Study. Historical reports before assignment remain unranked. Study tables and CSV separate results by tier version.
+
 ## Collection and rollout
 
 Apply migration `2026_11_11_000000_create_swing_reaction_tables.php`. It adds separate ideas, transition reviews and shared price-evidence tables. It does not delete or rewrite existing swing records.

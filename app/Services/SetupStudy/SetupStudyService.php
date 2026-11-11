@@ -79,6 +79,10 @@ class SetupStudyService
                 $measurement['collected_at'] = $now->toIso8601String();
                 if ($existing) {
                     $old = json_decode($existing->payload, true, flags: JSON_THROW_ON_ERROR);
+                    // A published tier is a dated classification, not a score to rewrite after outcomes arrive.
+                    if (is_array($old['tier'] ?? null)) {
+                        $measurement['tier'] = $old['tier'];
+                    }
                     $measurement['source']['retrospective'] = $old['source']['retrospective'] ?? false;
                     // Never replace previously complete evidence with a shorter retained history.
                     if ($old['source']['correction_detected'] ?? false) {
@@ -130,6 +134,7 @@ class SetupStudyService
         $rows = [];
         $warnings = [];
         $last = null;
+        $tierCutoff = min(CarbonImmutable::now('UTC'), CarbonImmutable::parse($filters['to'], 'America/New_York')->endOfDay()->utc());
         if ($prepared) {
             $query = DB::table('setup_study_records')->where('owner_id', $ownerId)->where('cohort', $filters['cohort'])
                 ->whereBetween('session', [$filters['from'], $filters['to']]);
@@ -145,6 +150,12 @@ class SetupStudyService
             }
             foreach ($records->take(5000) as $record) {
                 $row = json_decode($record->payload, true, flags: JSON_THROW_ON_ERROR);
+                if (is_array($row['tier'] ?? null)) {
+                    $assigned = $row['tier']['assigned_at'] ?? null;
+                    if (! is_string($assigned) || strtotime($assigned) === false || CarbonImmutable::parse($assigned)->utc() > $tierCutoff) {
+                        $row['tier'] = null;
+                    }
+                }
                 if (! empty($filters['direction']) && $row['direction'] !== $filters['direction']) {
                     continue;
                 }
@@ -164,7 +175,8 @@ class SetupStudyService
             'summary' => $this->summarize($rows), 'rows' => $rows, 'breakdowns' => [
                 'patterns' => $this->breakdown($rows, 'pattern'), 'symbols' => $this->breakdown($rows, 'symbol'),
                 'rule_versions' => $this->breakdown($rows, 'rule_version'),
-                'measurement_methods' => $this->breakdown($rows, 'metric_version')],
+                'measurement_methods' => $this->breakdown($rows, 'metric_version'),
+                'tiers' => $this->tierBreakdown($rows)],
             'warnings' => $warnings,
             'methodology' => [
                 'version' => SetupStudyMetrics::VERSION,
@@ -178,6 +190,7 @@ class SetupStudyService
                 'scope' => 'Your saved symbols at collection time, plus symbols already in this study. This is a selected sample, not all market opportunities.',
                 'retention' => 'Compact study records are kept independently of raw observation retention. Repeated confirmations of the same active intraday levels are grouped.',
                 'touch_order' => 'Swing v2 uses ordered five-minute ranges. Entry and an exit in one bar, both exit boundaries in one bar, or gaps that prevent ordering are excluded from verified target rates. Old close-based results are preserved without reinterpretation.',
+                'tiers' => 'Gold, Silver and Bronze use the frozen original idea evidence and a recorded rubric version. Tier assignment time is retained. Later price outcomes do not upgrade a tier. Historical views before assignment remain unranked.',
             ]];
     }
 
@@ -255,5 +268,21 @@ class SetupStudyService
         }
 
         return $result;
+    }
+
+    private function tierBreakdown(array $rows): array
+    {
+        $ranked = [];
+        foreach ($rows as $row) {
+            if (($row['metric_basis'] ?? null) !== 'price_touch') {
+                continue;
+            }
+            $tier = $row['tier'] ?? null;
+            $row['tier_group'] = is_array($tier)
+                ? ($tier['label'] ?? ucfirst($tier['key'])).' · '.$tier['version'] : 'Not assigned';
+            $ranked[] = $row;
+        }
+
+        return $this->breakdown($ranked, 'tier_group');
     }
 }
