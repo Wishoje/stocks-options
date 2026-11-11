@@ -41,12 +41,16 @@ final class SetupStudyController extends Controller
             'to' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today', 'after_or_equal:from'],
             'symbol' => ['nullable', 'string', 'regex:/^[A-Za-z0-9.\-]{1,16}$/'],
             'direction' => ['nullable', Rule::in(['bullish', 'bearish'])],
+            'rule_version' => ['nullable', 'string', 'max:64', 'regex:/^[A-Za-z0-9_.-]+$/D'],
         ]);
         $from = $input['from'] ?? now('America/New_York')->subDays(13)->toDateString();
         $to = $input['to'] ?? now('America/New_York')->toDateString();
         abort_if($from > $to || \Carbon\CarbonImmutable::parse($from)->diffInDays($to) > (int) config('setup_study.maximum_report_days', 180), 422, 'Choose a date range of 180 days or less.');
 
-        return ['cohort' => $input['cohort'] ?? 'intraday', 'from' => $from, 'to' => $to,
-            'symbol' => strtoupper($input['symbol'] ?? ''), 'direction' => $input['direction'] ?? ''];
+        $cohort = $input['cohort'] ?? 'intraday';
+
+        return ['cohort' => $cohort, 'from' => $from, 'to' => $to,
+            'symbol' => strtoupper($input['symbol'] ?? ''), 'direction' => $input['direction'] ?? '',
+            'rule_version' => $input['rule_version'] ?? ($cohort === 'intraday' ? '' : 'swing-wall-reaction.v2')];
     }
 }

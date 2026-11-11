@@ -11,6 +11,7 @@ import {
 
 const props = defineProps({ localDemoAvailable: Boolean })
 const filters = reactive(defaultStudyFilters())
+filters.rule_version = ''
 const demonstration = ref(false)
 const report = ref(null)
 const loading = ref(false)
@@ -25,6 +26,7 @@ let refreshController
 let disposed = false
 
 const rows = computed(() => report.value?.rows || [])
+const hasTouchRows = computed(() => rows.value.some(row => row.metric_basis === 'price_touch'))
 const summary = computed(() => report.value?.summary || {})
 const preparingStudy = computed(() => !demonstration.value && Number(report.value?.coverage?.total_symbols) > 0
   && !report.value?.coverage?.first_pass_complete)
@@ -38,7 +40,7 @@ const filterError = computed(() => !filters.from || !filters.to ? 'Choose both d
 const busy = computed(() => loading.value || refreshing.value)
 const counts = computed(() => [
   { label: 'Recorded plans', value: summary.value.total },
-  { label: 'Conditions met', value: summary.value.qualified },
+  { label: hasTouchRows.value ? 'Entry observed / legacy conditions met' : 'Conditions met', value: summary.value.qualified },
   { label: 'Waiting for confirmation', value: summary.value.watching },
   { label: 'Still being tracked', value: summary.value.in_progress },
   { label: 'Review complete', value: summary.value.completed },
@@ -53,6 +55,8 @@ const rates = computed(() => [
 const breakdowns = computed(() => [
   { key: 'patterns', title: 'By setup pattern', label: 'Pattern', rows: report.value?.breakdowns?.patterns || [] },
   { key: 'symbols', title: 'By symbol', label: 'Symbol', rows: report.value?.breakdowns?.symbols || [] },
+  { key: 'rule_versions', title: 'By strategy version', label: 'Strategy version', rows: report.value?.breakdowns?.rule_versions || [] },
+  { key: 'measurement_methods', title: 'By measurement method', label: 'Method', rows: report.value?.breakdowns?.measurement_methods || [] },
 ])
 const yesNo = value => value === true ? 'Yes' : value === false ? 'No' : '—'
 const rowStatus = row => row.needs_update ? 'needs_update' : row.status
@@ -100,7 +104,7 @@ async function load() {
   expandedPlans.value = new Set()
   try {
     const { data } = await axios.get('/api/setup-study', {
-      params: { ...studyFilterParams(filters), ...(expectedDemo ? { demo: 1 } : {}) }, signal: controller.signal, timeout: 30000,
+      params: { ...studyFilterParams(filters), ...(filters.rule_version ? { rule_version: filters.rule_version } : {}), ...(expectedDemo ? { demo: 1 } : {}) }, signal: controller.signal, timeout: 30000,
     })
     if (run !== request || disposed) return
     if (!data || !Array.isArray(data.rows) || !data.summary || typeof data.summary !== 'object') throw new Error('Invalid report')
@@ -125,6 +129,7 @@ function applyFilters() {
 function selectCohort(cohort) {
   if (refreshing.value || filters.cohort === cohort) return
   filters.cohort = cohort
+  filters.rule_version = cohort === 'intraday' ? '' : 'swing-wall-reaction.v2'
   applyFilters()
 }
 
@@ -197,6 +202,7 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
         <label>To<input v-model="filters.to" type="date" required aria-label="To date" :disabled="refreshing" /></label>
         <label>Symbol<input v-model="filters.symbol" type="text" placeholder="All symbols" maxlength="16" aria-label="Symbol" autocomplete="off" :disabled="refreshing" /></label>
         <label>Direction<select v-model="filters.direction" aria-label="Direction" :disabled="refreshing"><option value="">Both directions</option><option value="bullish">Bullish</option><option value="bearish">Bearish</option></select></label>
+        <label v-if="filters.cohort !== 'intraday'">Strategy<select v-model="filters.rule_version" aria-label="Strategy version" :disabled="refreshing"><option value="swing-wall-reaction.v2">Wall reactions · Price touches</option><option value="swing-wall-reclaim.v1.1">Original reclaim · Daily closes</option><option value="all">All strategies · Mixed methods</option></select></label>
         <button type="submit" class="study-button" :disabled="busy || !!filterError">Apply filters</button>
         <p v-if="filterError" class="study-filter-error" role="status">{{ filterError }}</p>
       </form>
@@ -212,7 +218,8 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
         <div v-if="preparingStudy" class="study-warning study-coverage" role="status">Preparing your study: {{ studyNumber(report.coverage.collected_symbols, 0) }} of {{ studyNumber(report.coverage.total_symbols, 0) }} symbols checked. Results are partial while the first collection finishes.</div>
         <div v-for="(warning, index) in report.warnings || []" :key="index" class="study-warning" role="status">{{ typeof warning === 'string' ? warning : warning.message || studyLabel(warning.code) }}</div>
         <section class="study-counts" aria-label="Plan counts"><div v-for="count in counts" :key="count.label" class="study-panel"><span>{{ count.label }}</span><strong>{{ studyNumber(count.value, 0) }}</strong></div></section>
-        <div class="study-section-heading"><h2>Signal-close response</h2><p>Observed price moves from the qualifying close, including moves before the app received the record.</p></div>
+        <p v-if="hasTouchRows" class="study-method-note">Before entry: {{ studyNumber(summary.cancelled_before_entry, 0) }} cancelled · {{ studyNumber(summary.no_entry, 0) }} entry windows ended. These do not count as trade wins or losses. Use the Strategy filter to compare price-touch results separately from original daily-close results.</p>
+        <div class="study-section-heading"><h2>{{ hasTouchRows ? 'Recorded price response' : 'Signal-close response' }}</h2><p>{{ hasTouchRows ? 'Wall reactions v2 uses observed ranges after the entry touch. Legacy records retain their original close-based measurement.' : 'Observed price moves from the qualifying close, including moves before the app received the record.' }}</p></div>
         <section class="study-metrics" aria-label="Observed outcomes">
           <article v-for="item in rates" :key="item.key" class="study-panel study-metric" :data-metric="item.key"><h2>{{ item.label }}</h2><strong>{{ planCount(item.metric) }}</strong><p>{{ rateCaption(item.metric) }}</p><span>{{ item.note }}</span></article>
           <article class="study-panel study-metric" data-metric="avg_mfe_pct"><h2>Average best price move</h2><strong>{{ studyFavorablePercent(summary.avg_mfe_pct) }}</strong><p>Underlying stock/ETF price move</p><span>Completed follow-up only</span></article>
@@ -234,16 +241,16 @@ onBeforeUnmount(() => { disposed = true; request++; controller?.abort(); refresh
               <tr><th scope="row"><strong>{{ row.symbol }}</strong><span class="study-direction" :class="row.direction">{{ studyLabel(row.direction) }}</span></th><td>{{ studyTime(row.signal_at) }}</td><td><span class="study-state" :class="{ 'study-state--stale': row.needs_update }">{{ statusLabel(row) }}</span></td><td>{{ studyLabel(row.metrics?.strict_outcome || row.outcome) }}<span v-if="row.metrics?.publication_timing" class="study-cell-line" :class="{ 'study-timing-late': row.metrics.publication_timing === 'resolved_before_publication' }">{{ studyLabel(row.metrics.publication_timing) }}</span></td><td class="study-price-move study-price-move--favorable"><strong>{{ studyFavorablePercent(row.metrics?.mfe_pct) }}</strong><span class="study-cell-line">{{ studyDollars(studyMoveDollars(row, 'favorable')) }}</span><span class="study-cell-line study-milestones">0.5%: {{ moveLabel(row, 0.5) }} · 1%: {{ moveLabel(row, 1) }}</span></td><td class="study-price-move study-price-move--adverse"><strong>{{ studyAdversePercent(row.metrics?.mae_pct) }}</strong><span class="study-cell-line">{{ studyDollars(studyMoveDollars(row, 'adverse')) }}</span></td><td><button type="button" class="study-inspect" :aria-expanded="expandedPlans.has(row.id)" :aria-controls="`study-plan-${row.id}`" @click="togglePlan(row.id)">{{ expandedPlans.has(row.id) ? 'Close details' : 'Inspect plan' }}</button></td></tr>
               <tr v-if="expandedPlans.has(row.id)" class="study-expanded-row"><td colspan="7"><div :id="`study-plan-${row.id}`" class="study-detail-content">
                 <h3>{{ row.symbol }} · {{ studyLabel(row.direction) }}</h3>
-                <dl class="study-detail-grid"><div><dt>Original signal time</dt><dd>{{ studyTime(row.signal_at) }}</dd></div><div><dt>Available to the app</dt><dd>{{ studyTime(row.available_at) }}</dd></div><div><dt>Signal price</dt><dd>{{ studyNumber(row.signal_price) }}</dd></div><div><dt>Entry area</dt><dd>{{ studyNumber(row.entry_low) }}–{{ studyNumber(row.entry_high) }}</dd></div><div><dt>Invalidation</dt><dd>{{ studyNumber(row.invalidation) }}</dd></div><div><dt>Recorded target</dt><dd>{{ studyNumber(row.target) }}</dd></div><div><dt>Distance to invalidation</dt><dd>{{ studyDollars(risk(row)).replace(/^\+/, '') }} · {{ studyPercent(riskPercent(row)) }}</dd></div><div><dt>Confirmations · one plan</dt><dd>{{ studyNumber(row.confirmation_count, 0) }}</dd></div><div><dt>Conditions met</dt><dd>{{ yesNo(row.qualified) }}</dd></div><div><dt>Review complete</dt><dd>{{ yesNo(row.followup_complete) }}</dd></div><div><dt>Entry area revisited</dt><dd>{{ yesNo(row.metrics?.entry_revisited) }}</dd></div><div><dt>Entry revisit observable</dt><dd>{{ yesNo(row.metrics?.entry_observable) }}</dd></div><div><dt>Outcome time</dt><dd>{{ studyTime(row.metrics?.strict_at) }}</dd></div><div><dt>Best stock/ETF price move</dt><dd>{{ studyFavorablePercent(row.metrics?.mfe_pct) }} · {{ studyDollars(studyMoveDollars(row, 'favorable')) }}</dd></div><div><dt>Move against the idea</dt><dd>{{ studyAdversePercent(row.metrics?.mae_pct) }} · {{ studyDollars(studyMoveDollars(row, 'adverse')) }}</dd></div><div><dt>Observed closes</dt><dd>{{ studyNumber(row.metrics?.observations, 0) }}</dd></div><div><dt>Latest observed close</dt><dd>{{ studyTime(row.metrics?.last_at) }}</dd></div><div><dt>State at app availability</dt><dd>{{ studyLabel(row.metrics?.publication_timing) }}</dd></div></dl>
-                <p class="study-detail-note">Price moves use observed closes from the signal, without an assumed entry fill. Target and favorable-move tests stop at invalidation. An outcome before app availability belongs only to the signal-close response.</p>
-                <details class="study-advanced"><summary>Advanced measurements</summary><p>R compares a price move with the original signal-to-invalidation distance. It is a separate measurement from the stock’s percentage price change.</p><dl class="study-detail-grid"><div><dt>Best close in R</dt><dd>{{ studyR(bestClose(row)) }}</dd></div><div><dt>Adverse close in R</dt><dd>{{ studyAdverseR(worstClose(row)) }}</dd></div><div><dt>First favorable 0.5R close</dt><dd>{{ studyTime(row.metrics?.first_05r_at) }}</dd></div><div><dt>First favorable 1R close</dt><dd>{{ studyTime(row.metrics?.first_1r_at) }}</dd></div></dl></details>
+                <dl class="study-detail-grid"><div><dt>Original signal time</dt><dd>{{ studyTime(row.signal_at) }}</dd></div><div><dt>Available to the app</dt><dd>{{ studyTime(row.available_at) }}</dd></div><div><dt>Signal price</dt><dd>{{ studyNumber(row.signal_price) }}</dd></div><div><dt>Entry area</dt><dd>{{ studyNumber(row.entry_low) }}–{{ studyNumber(row.entry_high) }}</dd></div><div><dt>Invalidation</dt><dd>{{ studyNumber(row.invalidation) }}</dd></div><div><dt>Recorded target</dt><dd>{{ studyNumber(row.target) }}</dd></div><div><dt>Distance to invalidation</dt><dd>{{ studyDollars(risk(row)).replace(/^\+/, '') }} · {{ studyPercent(riskPercent(row)) }}</dd></div><div><dt>Confirmations · one plan</dt><dd>{{ studyNumber(row.confirmation_count, 0) }}</dd></div><div><dt>Conditions met</dt><dd>{{ yesNo(row.qualified) }}</dd></div><div><dt>Review complete</dt><dd>{{ yesNo(row.followup_complete) }}</dd></div><div><dt>Entry area revisited</dt><dd>{{ yesNo(row.metrics?.entry_revisited) }}</dd></div><div><dt>Entry revisit observable</dt><dd>{{ yesNo(row.metrics?.entry_observable) }}</dd></div><div><dt>Outcome time</dt><dd>{{ studyTime(row.metrics?.strict_at) }}</dd></div><div><dt>Best stock/ETF price move</dt><dd>{{ studyFavorablePercent(row.metrics?.mfe_pct) }} · {{ studyDollars(studyMoveDollars(row, 'favorable')) }}</dd></div><div><dt>Move against the idea</dt><dd>{{ studyAdversePercent(row.metrics?.mae_pct) }} · {{ studyDollars(studyMoveDollars(row, 'adverse')) }}</dd></div><div><dt>{{ row.metric_basis === 'price_touch' ? 'Observed price bars' : 'Observed closes' }}</dt><dd>{{ studyNumber(row.metrics?.observations, 0) }}</dd></div><div><dt>{{ row.metric_basis === 'price_touch' ? 'Latest observed price bar' : 'Latest observed close' }}</dt><dd>{{ studyTime(row.metrics?.last_at) }}</dd></div><div><dt>State at app availability</dt><dd>{{ studyLabel(row.metrics?.publication_timing) }}</dd></div></dl>
+                <p v-if="row.metric_basis === 'price_touch'" class="study-detail-note">Price moves use observed high/low ranges after the published entry area was touched. The first reliably ordered target or stop touch ends measurement. Unclear ordering is excluded from verified results. No executed fill is assumed.</p><p v-else class="study-detail-note">Price moves use observed closes from the signal, without an assumed entry fill. Target and favorable-move tests stop at invalidation. An outcome before app availability belongs only to the signal-close response.</p>
+                <details class="study-advanced"><summary>Advanced measurements</summary><p>R compares a price move with the original signal-to-invalidation distance. It is a separate measurement from the stock’s percentage price change.</p><dl class="study-detail-grid"><div><dt>{{ row.metric_basis === 'price_touch' ? 'Best range move in R' : 'Best close in R' }}</dt><dd>{{ studyR(bestClose(row)) }}</dd></div><div><dt>{{ row.metric_basis === 'price_touch' ? 'Adverse range move in R' : 'Adverse close in R' }}</dt><dd>{{ studyAdverseR(worstClose(row)) }}</dd></div><div><dt>First favorable 0.5R observation</dt><dd>{{ studyTime(row.metrics?.first_05r_at) }}</dd></div><div><dt>First favorable 1R observation</dt><dd>{{ studyTime(row.metrics?.first_1r_at) }}</dd></div></dl></details>
                 <section><h4>Source provenance</h4><dl class="study-evidence"><div v-for="entry in studyEvidenceEntries(row.source)" :key="entry.label"><dt>{{ entry.label }}</dt><dd>{{ entry.value }}</dd></div></dl><p v-if="!studyEvidenceEntries(row.source).length">No source details recorded.</p></section>
                 <section><h4>Recorded evidence</h4><dl class="study-evidence"><div v-for="entry in studyEvidenceEntries(row.evidence)" :key="entry.label"><dt>{{ entry.label }}</dt><dd>{{ entry.value }}</dd></div></dl><p v-if="!studyEvidenceEntries(row.evidence).length">No additional evidence recorded.</p></section>
               </div></td></tr>
             </template>
           </tbody></table></div>
         </section>
-        <details class="study-panel study-methodology"><summary>How the study is measured</summary><p>The original signal, entry area, target and invalidation stay fixed. The available time shows when the app had the source evidence. A repeated same-level confirmation adds evidence to its existing plan.</p><p>The target outcome asks whether an observed close reached the recorded target before invalidation. The 0.5% and 1% milestones measure the underlying stock or ETF price change in the idea’s direction. A smaller favorable move can occur even when the target is never reached or the idea is later invalidated.</p><p>Each count shows how many completed plans met that condition. Its accompanying percentage is a share of eligible completed plans, not a stock return. Unfinished or insufficient follow-up does not count as a failed target. No-data measurements appear as a dash.</p><dl v-if="studyEvidenceEntries(report.methodology).length" class="study-evidence"><div v-for="entry in studyEvidenceEntries(report.methodology)" :key="entry.label"><dt>{{ entry.label }}</dt><dd>{{ entry.value }}</dd></div></dl></details>
+        <details class="study-panel study-methodology"><summary>How the study is measured</summary><p>The original signal, entry area, target and invalidation stay fixed. The available time shows when the app had the source evidence. A repeated same-level confirmation adds evidence to its existing plan.</p><p>The target outcome uses the recorded measurement method: observed closes for legacy records, ordered price-range touches after entry for swing wall reactions v2. The 0.5% and 1% milestones measure the underlying stock or ETF price change in the idea’s direction. A smaller favorable move can occur even when the target is never reached or the idea is later invalidated.</p><p>Each count shows how many completed plans met that condition. Its accompanying percentage is a share of eligible completed plans, not a stock return. Unfinished or insufficient follow-up does not count as a failed target. No-data measurements appear as a dash.</p><dl v-if="studyEvidenceEntries(report.methodology).length" class="study-evidence"><div v-for="entry in studyEvidenceEntries(report.methodology)" :key="entry.label"><dt>{{ entry.label }}</dt><dd>{{ entry.value }}</dd></div></dl></details>
       </template>
     </main>
   </AppLayout>

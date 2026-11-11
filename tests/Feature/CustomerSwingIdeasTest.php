@@ -127,7 +127,7 @@ class CustomerSwingIdeasTest extends TestCase
         Sanctum::actingAs($user);
 
         $this->get('/swing-ideas')->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->component('SwingIdeas')->where('scope', 'universe')->has('items', 1));
+            ->component('SwingIdeas')->where('scope', 'universe')->where('prepared', false)->has('items', 0));
         $this->get('/swing-ideas?scope=watchlist&horizon=position')->assertOk()->assertInertia(fn (Assert $page) => $page
             ->where('scope', 'watchlist')->where('horizon', 'position')->has('items', 0));
         $this->get('/swing-ideas?scope=')->assertOk()->assertInertia(fn (Assert $page) => $page->where('scope', 'universe'));

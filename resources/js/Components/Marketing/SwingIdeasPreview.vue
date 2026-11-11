@@ -10,7 +10,7 @@
       <li><span aria-hidden="true">02</span><strong>An entry area</strong></li>
       <li><span aria-hidden="true">03</span><strong>Target + risk boundary</strong></li>
     </ol>
-    <figcaption>Compare each idea with the latest daily close and its availability date.</figcaption>
+    <figcaption>Follow the wall reclaim or break and retest, with a clear entry area, stop and target.</figcaption>
   </figure>
 </template>
 

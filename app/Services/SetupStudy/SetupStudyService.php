@@ -2,8 +2,9 @@
 
 namespace App\Services\SetupStudy;
 
-use App\Support\SetupStudy\SetupStudyMetrics;
 use App\Support\ProductUniverse;
+use App\Support\SetupStudy\SetupStudyMetrics;
+use App\Support\SetupStudy\SwingReactionStudyMetrics;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -48,6 +49,7 @@ class SetupStudyService
             foreach ([
                 [IntradayStudySource::class, $intradayFrom],
                 [SwingStudySource::class, $now->subDays(45)->toDateString()],
+                [SwingReactionStudySource::class, $now->subDays(45)->toDateString()],
             ] as [$source, $from]) {
                 $result = app($source)->read($selected, $from, $through);
                 $warnings = array_merge($warnings, $result['warnings'] ?? []);
@@ -60,7 +62,9 @@ class SetupStudyService
                 ->whereIn('sample_id', array_column($samples, 'id'))->get()->keyBy('sample_id');
             $writes = [];
             foreach ($samples as $sample) {
-                $measurement = (new SetupStudyMetrics)->measure($sample, $now);
+                $measurement = ($sample['metric_basis'] ?? null) === 'price_touch'
+                    ? (new SwingReactionStudyMetrics)->measure($sample, $now)
+                    : (new SetupStudyMetrics)->measure($sample, $now);
                 $studyDate = ! empty($sample['signal_at']) ? CarbonImmutable::parse($sample['signal_at'])->setTimezone('America/New_York')->toDateString()
                     : (! empty($sample['first_recorded_at']) ? CarbonImmutable::parse($sample['first_recorded_at'])->setTimezone('America/New_York')->toDateString() : $sample['session']);
                 $measurement['study_date'] = $studyDate;
@@ -80,7 +84,8 @@ class SetupStudyService
                     if ($old['source']['correction_detected'] ?? false) {
                         $measurement = $old;
                     } elseif (($old['followup_complete'] ?? false) && ! $measurement['followup_complete']) {
-                        $conflict = $measurement['needs_update'] && ($sample['native_status'] ?? null) === 'needs_update';
+                        $conflict = $measurement['needs_update'] && (($sample['native_status'] ?? null) === 'needs_update'
+                            || ($sample['metric_basis'] ?? null) === 'price_touch');
                         $measurement = $old;
                         if ($conflict) {
                             $measurement['needs_update'] = true;
@@ -131,6 +136,9 @@ class SetupStudyService
             if (! empty($filters['symbol'])) {
                 $query->where('symbol', $filters['symbol']);
             }
+            if (! empty($filters['rule_version']) && $filters['rule_version'] !== 'all') {
+                $query->where('rule_version', $filters['rule_version']);
+            }
             $records = $query->orderByDesc('session')->orderByDesc('id')->limit(5001)->get(['payload', 'collected_at']);
             if ($records->count() > 5000) {
                 $warnings[] = 'The report is limited to 5,000 records. Narrow the dates or select a symbol.';
@@ -154,19 +162,22 @@ class SetupStudyService
             'collection_enabled' => (bool) config('setup_study.enabled'), 'collection' => $lastCollection,
             'coverage' => $this->coverage($ownerId, $prepared),
             'summary' => $this->summarize($rows), 'rows' => $rows, 'breakdowns' => [
-                'patterns' => $this->breakdown($rows, 'pattern'), 'symbols' => $this->breakdown($rows, 'symbol')],
+                'patterns' => $this->breakdown($rows, 'pattern'), 'symbols' => $this->breakdown($rows, 'symbol'),
+                'rule_versions' => $this->breakdown($rows, 'rule_version'),
+                'measurement_methods' => $this->breakdown($rows, 'metric_version')],
             'warnings' => $warnings,
             'methodology' => [
                 'version' => SetupStudyMetrics::VERSION,
-                'reference' => 'Moves start at the recorded qualifying close. Prices are the underlying stock or ETF, not option returns or executed fills.',
-                'percentages' => 'Percent moves use each recorded signal close as the reference. Up is favorable for bullish plans; down is favorable for bearish plans. +0.5% and +1% are fixed stock-price milestones, separate from risk multiples and exact-target results.',
-                'risk' => '1R is the distance from that close to the original invalidation price. +0.5R and +1R use completed closes before target, invalidation or the review deadline.',
+                'reference' => 'Legacy records start at the qualifying close. Swing wall-reaction v2 starts at a later observed entry touch after publication and reaction confirmation. Prices are the underlying stock or ETF, not option returns or executed fills.',
+                'percentages' => 'Percent moves use the recorded signal close for legacy records and the observed entry reference for swing v2. Up is favorable for bullish plans; down is favorable for bearish plans. +0.5% and +1% are stock-price milestones, separate from risk multiples and exact-target results.',
+                'risk' => '1R is the distance from the recorded reference price to the original invalidation price. Legacy records use closes; price-touch v2 uses observed high/low ranges after entry. Rule and measurement versions separate those results.',
                 'denominator' => 'Outcome rates use only completed, continuous follow-ups. Open and incomplete records are counted separately. Later wins never erase an earlier invalidation.',
-                'entry' => 'Entry revisit means a later full bar overlaps the original entry area after the assessment was available. It does not establish an executed entry.',
+                'entry' => 'Legacy entry revisit means a later full bar overlaps the entry area after availability. Swing v2 requires a later observed entry touch after readiness was published. A target or stop before entry cancels the idea without a trade win or loss. Neither method establishes an executed fill.',
                 'timing' => 'Intraday evidence is delayed. Signal time and first retained publication time are shown separately. Backfilled records are labelled retrospective.',
                 'publication' => 'After-publication target rate includes only completed continuous plans still open when the app received the assessment. Earlier targets and invalidations are counted separately and remain in the all-signal response rates.',
                 'scope' => 'Your saved symbols at collection time, plus symbols already in this study. This is a selected sample, not all market opportunities.',
                 'retention' => 'Compact study records are kept independently of raw observation retention. Repeated confirmations of the same active intraday levels are grouped.',
+                'touch_order' => 'Swing v2 uses ordered five-minute ranges. Entry and an exit in one bar, both exit boundaries in one bar, or gaps that prevent ordering are excluded from verified target rates. Old close-based results are preserved without reinterpretation.',
             ]];
     }
 
@@ -211,6 +222,10 @@ class SetupStudyService
         };
 
         return ['total' => count($rows), 'qualified' => count($qualified),
+            'cancelled_before_entry' => count(array_filter($rows, fn ($r) => ! ($r['qualified'] ?? false)
+                && ($r['metric_basis'] ?? null) === 'price_touch' && ($r['native_status'] ?? null) === 'cancelled')),
+            'no_entry' => count(array_filter($rows, fn ($r) => ! ($r['qualified'] ?? false)
+                && ($r['metric_basis'] ?? null) === 'price_touch' && ($r['native_outcome'] ?? null) === 'no_entry')),
             'watching' => count(array_filter($rows, fn ($r) => ($r['status'] ?? '') === 'watching')),
             'in_progress' => count(array_filter($qualified, fn ($r) => ($r['status'] ?? '') === 'in_progress')),
             'completed' => count($completed), 'needs_update' => count(array_filter($rows, fn ($r) => $r['needs_update'] ?? false)),

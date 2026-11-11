@@ -310,9 +310,11 @@ Schedule::command('emails:lifecycle-run')
     ->onOneServer();
 
 if (config('swing_ideas.automatic_refresh_enabled')) {
-    Schedule::command('swing:refresh --watchlist --limit=10')
-        ->timezone('America/New_York')->weekdays()->everyFifteenMinutes()->between('18:00', '22:00')
-        ->withoutOverlapping(10)->onOneServer()->name('swing:refresh-watchlist');
+    Schedule::command('swing:react --limit=60')
+        ->timezone('America/New_York')->weekdays()->everyMinute()->between('07:00', '22:00')
+        ->withoutOverlapping(3)->onOneServer()->runInBackground()->name('swing:reaction-universe');
+    Schedule::command('swing:prune-prices')->timezone('America/New_York')->dailyAt('02:25')
+        ->withoutOverlapping(10)->onOneServer()->runInBackground();
 }
 
 $monitorEnabled = (bool) config('queue.monitor.enabled');
